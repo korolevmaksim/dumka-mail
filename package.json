@@ -1,0 +1,64 @@
+{
+  "name": "dumka-mail-agy",
+  "version": "1.0.0",
+  "description": "Cross-platform agentic mail client based on Electron, React 19, and Tailwind CSS 4",
+  "main": "dist-electron/main/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac"
+  },
+  "build": {
+    "appId": "dev.dumka.mail",
+    "productName": "Dumka Mail",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
+      "identity": null,
+      "target": [
+        "dir"
+      ]
+    },
+    "dmg": {
+      "title": "Dumka Mail"
+    }
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^26.0.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.10",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^42.5.0",
+    "electron-builder": "^25.1.8",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwindcss": "^4.3.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0",
+    "vite-plugin-electron": "^1.1.0",
+    "vite-plugin-electron-renderer": "^1.0.0",
+    "vitest": "^4.1.9"
+  }
+}

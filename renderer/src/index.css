@@ -1,0 +1,223 @@
+@import "tailwindcss";
+
+:root {
+  /* ===== Color tokens — Light (reference-exact, Palette.swift) ===== */
+  --app-bg: #FBFCFE;
+  --rail-bg: #F7F9FB;
+  --panel-bg: #FEFEFF;
+  --raised-surface: #FCFDFE;
+  --selected-row: #ECF0F7;
+  --hover-row: rgba(0, 0, 0, 0.035);
+  --border: rgba(0, 0, 0, 0.08);
+  --strong-border: rgba(0, 0, 0, 0.14);
+  --text-primary: rgba(0, 0, 0, 0.86);
+  --text-secondary: rgba(0, 0, 0, 0.50);
+  --text-tertiary: rgba(0, 0, 0, 0.34);
+  --ai-accent: #9173ED;
+  --success: #33A16E;
+  --warning: #EB8C3D;
+  --danger: #DF4A4A;
+  --failed: rgba(239, 68, 68, 0.72);
+
+  /* Accent is a SINGLE hex shared by both themes (overridden at runtime from
+     settings.appearance.accentColorHex). Do not diverge per-theme. */
+  --accent: #668FEA;
+
+  /* Font scale multiplier — set at runtime from settings.appearance.fontScale.
+     Only text scales; layout dimensions (widths, heights, paddings) stay fixed. */
+  --font-scale: 1;
+
+  /* ===== Density metrics — default = compact (Spacing.swift parity) ===== */
+  --account-bar-h: 34px;
+  --account-chip-h: 24px;
+  --top-chrome-h: 40px;
+  --split-tabs-h: 44px;
+  --split-tab-h: 30px;
+  --thread-row-h: 33px;
+  --row-px: 16px;
+  --bottom-bar-h: 28px;
+  --right-panel-w: 300px;
+  --settings-sidebar-row-h: 28px;
+  --settings-row-min-h: 42px;
+  --settings-row-py: 8px;
+  --settings-control-h: 28px;
+}
+
+[data-density="compact"] {
+  --account-bar-h: 34px; --account-chip-h: 24px; --top-chrome-h: 40px;
+  --split-tabs-h: 44px; --split-tab-h: 30px; --thread-row-h: 33px;
+  --row-px: 16px; --bottom-bar-h: 28px; --right-panel-w: 300px;
+  --settings-sidebar-row-h: 28px; --settings-row-min-h: 42px;
+  --settings-row-py: 8px; --settings-control-h: 28px;
+}
+
+[data-density="comfortable"] {
+  --account-bar-h: 40px; --account-chip-h: 28px; --top-chrome-h: 46px;
+  --split-tabs-h: 50px; --split-tab-h: 34px; --thread-row-h: 39px;
+  --row-px: 18px; --bottom-bar-h: 32px; --right-panel-w: 320px;
+  --settings-sidebar-row-h: 32px; --settings-row-min-h: 50px;
+  --settings-row-py: 10px; --settings-control-h: 32px;
+}
+
+[data-density="spacious"] {
+  --account-bar-h: 46px; --account-chip-h: 32px; --top-chrome-h: 52px;
+  --split-tabs-h: 56px; --split-tab-h: 38px; --thread-row-h: 45px;
+  --row-px: 24px; --bottom-bar-h: 36px; --right-panel-w: 340px;
+  --settings-sidebar-row-h: 36px; --settings-row-min-h: 58px;
+  --settings-row-py: 14px; --settings-control-h: 36px;
+}
+
+[data-theme="dark"] {
+  /* ===== Color tokens — Dark (reference-exact, Palette.swift) ===== */
+  --app-bg: #0E0F12;
+  --rail-bg: #121317;
+  --panel-bg: #15161B;
+  --raised-surface: #1B1D22;
+  --selected-row: #262F3E;
+  --hover-row: rgba(255, 255, 255, 0.075);
+  --border: rgba(255, 255, 255, 0.105);
+  --strong-border: rgba(255, 255, 255, 0.18);
+  --text-primary: rgba(255, 255, 255, 0.90);
+  --text-secondary: rgba(255, 255, 255, 0.62);
+  --text-tertiary: rgba(255, 255, 255, 0.42);
+  --ai-accent: #B39CFF;
+  --success: #54C78F;
+  --warning: #FFAD5C;
+  --danger: #EB5B5B;
+  --failed: rgba(239, 68, 68, 0.72);
+  /* --accent intentionally NOT overridden here (single value, runtime-set) */
+}
+
+body {
+  background-color: var(--app-bg);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Dense typography matching reference client (Typography.swift).
+   All sizes use calc(base * var(--font-scale)) so font-scale only
+   affects text, not layout geometry (widths, heights, paddings). */
+.text-chrome {
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 500;
+}
+.text-tab {
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 500;
+}
+.text-row-sender {
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 600;
+}
+.text-row-subject {
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 500;
+}
+.text-row-preview {
+  font-size: calc(12px * var(--font-scale));
+}
+.text-thread-title {
+  font-size: calc(20px * var(--font-scale));
+  font-weight: 500;
+}
+.text-meta {
+  font-size: calc(11px * var(--font-scale));
+}
+.text-small-meta {
+  font-size: calc(10px * var(--font-scale));
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--strong-border);
+}
+
+/* Hairline borders (Surface.swift HairlineBorder → inset box-shadows) */
+.hairline-t { box-shadow: inset 0 1px 0 0 var(--border); }
+.hairline-b { box-shadow: inset 0 -1px 0 0 var(--border); }
+.hairline-l { box-shadow: inset 1px 0 0 0 var(--border); }
+.hairline-r { box-shadow: inset -1px 0 0 0 var(--border); }
+
+/* Panel surface + translucency (MailPanelBackground vibrancy) */
+.panel-surface {
+  background: var(--panel-bg);
+}
+[data-translucent="true"] .panel-surface {
+  background: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Glassmorphism utility (legacy — kept for overlays) */
+.glassmorphism {
+  background: var(--panel-bg);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+}
+
+/* Traffic-light / top-chrome padding tracks density */
+.traffic-light-margin {
+  padding-top: var(--top-chrome-h);
+}
+
+/* Loading skeleton shimmer (PP-G8) */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--hover-row);
+  border-radius: 4px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--text-tertiary) 14%, transparent),
+    transparent
+  );
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeletonShimmer {
+  100% { transform: translateX(100%); }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.scale-in {
+  animation: scaleIn 0.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up {
+  animation: fadeInUp 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
