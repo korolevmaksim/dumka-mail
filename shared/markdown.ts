@@ -1,3 +1,44 @@
+function parseBlockquotes(html: string): string {
+  const lines = html.split('\n');
+  const processedLines: string[] = [];
+  let currentLevel = 0;
+
+  for (const line of lines) {
+    let remaining = line;
+    let level = 0;
+    while (true) {
+      remaining = remaining.trimStart();
+      if (remaining.startsWith('&gt;')) {
+        level++;
+        remaining = remaining.substring(4); // Remove '&gt;'
+        if (remaining.startsWith(' ')) {
+          remaining = remaining.substring(1);
+        }
+      } else {
+        break;
+      }
+    }
+
+    while (currentLevel < level) {
+      processedLines.push(`<blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex; border-left:1px solid rgb(204,204,204); padding-left:1ex">`);
+      currentLevel++;
+    }
+    while (currentLevel > level) {
+      processedLines.push(`</blockquote>`);
+      currentLevel--;
+    }
+
+    processedLines.push(remaining);
+  }
+
+  while (currentLevel > 0) {
+    processedLines.push(`</blockquote>`);
+    currentLevel--;
+  }
+
+  return processedLines.join('\n');
+}
+
 export function compileMarkdownToHtml(md: string): string {
   if (!md) return '';
   
@@ -6,6 +47,9 @@ export function compileMarkdownToHtml(md: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+
+  // Parse blockquotes
+  html = parseBlockquotes(html);
 
   // Headings
   html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
@@ -38,5 +82,19 @@ export function compileMarkdownToHtml(md: string): string {
   // Line breaks
   html = html.replace(/\n/g, '<br/>');
 
+  // Clean up line breaks around block elements
+  html = html
+    .replace(/<br\/>(<\/blockquote>)/g, '$1')
+    .replace(/(<blockquote[^>]*>)<br\/>/g, '$1')
+    .replace(/<br\/>(<\/ul>)/g, '$1')
+    .replace(/(<ul>)<br\/>/g, '$1')
+    .replace(/<br\/>(<\/li>)/g, '$1')
+    .replace(/(<li>)<br\/>/g, '$1')
+    .replace(/<br\/>(<\/pre>)/g, '$1')
+    .replace(/(<pre[^>]*>)<br\/>/g, '$1')
+    .replace(/<br\/>(<h[1-6]>)/g, '$1')
+    .replace(/(<\/h[1-6]>)<br\/>/g, '$1');
+
   return `<html><body><div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1f2937;">${html}</div></body></html>`;
 }
+

@@ -20,10 +20,10 @@ export function InlineReplyComposer() {
       const isNewDraft = store.activeDraft.id !== lastDraftIdRef.current;
       if (isNewDraft) {
         lastDraftIdRef.current = store.activeDraft.id;
-        // Focus reply editor on new draft
         setTimeout(() => {
           if (inlineReplyRef.current) {
             inlineReplyRef.current.focus();
+            inlineReplyRef.current.setSelectionRange(0, 0);
             // Scroll to composer
             inlineReplyRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
