@@ -399,6 +399,7 @@ export interface AppearanceSettings {
   useTranslucentPanels: boolean;
   enablePreviewPane: boolean;
   fontScale: number;
+  readerMaxWidth?: 'full' | 'wide' | 'standard' | 'narrow';
 }
 
 export interface MCPServerConfig {

@@ -1,0 +1,97 @@
+import { useState } from 'react';
+import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
+import { Command, X } from 'lucide-react';
+
+interface CommandPaletteProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
+  const store = useAppStore();
+  const [paletteSearch, setPaletteSearch] = useState('');
+
+  if (!isOpen) return null;
+
+  // Command palette actions list
+  const commands = [
+    { title: 'Mark Done (Archive)', shortcut: 'E', action: () => store.executeMailAction('markDone') },
+    { title: 'Mark Read', shortcut: 'R', action: () => store.executeMailAction('markRead') },
+    { title: 'Mark Unread', shortcut: 'Shift+R', action: () => store.executeMailAction('markUnread') },
+    { title: 'Set Reminder', shortcut: 'H', action: () => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(9, 0, 0, 0);
+      const targetThreadId = store.openedThread?.id || store.focusedThreadId;
+      const thread = store.threads.find(t => t.id === targetThreadId);
+      const targetEmail = thread ? thread.accountId : (store.activeAccount?.email || '');
+      store.executeMailAction('autoMarkRead', null, null, async () => {
+        await window.electronAPI.saveReminder(targetEmail, targetThreadId!, tomorrow.toISOString());
+      });
+    }},
+    { title: 'AI Summarize Thread', shortcut: 'S', action: () => store.runAITriagePlan() },
+    { title: 'Compose Message', shortcut: 'C', action: () => store.setActiveDraft({
+      id: crypto.randomUUID(),
+      accountId: store.activeAccount?.id === 'unified' ? (store.accounts[0]?.email || '') : store.activeAccount!.email,
+      to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
+    })},
+    { title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', action: () => {
+      store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
+      store.setSettingsOpen(false);
+    } },
+    { title: 'Undo Last Action', shortcut: 'Z', action: () => store.undoLastAction() },
+    { title: 'Toggle Theme', shortcut: 'Cmd+Shift+T', action: () => {
+      const nextTheme = store.theme === 'system' ? 'light' : (store.theme === 'light' ? 'dark' : 'system');
+      store.setTheme(nextTheme);
+    }},
+    { title: 'Cache Visible Bodies', shortcut: 'Cmd+Shift+B', action: () => store.triggerVisibleBodyRepair() },
+    { title: 'Resume Older Mail Indexing', shortcut: 'Cmd+Shift+I', action: () => store.triggerBackfillManual() },
+  ];
+
+  const filteredCommands = commands.filter(c => 
+    c.title.toLowerCase().includes(paletteSearch.toLowerCase())
+  );
+
+  return (
+    <div className="absolute inset-0 bg-black/40 flex items-start justify-center pt-24 z-50 select-none">
+      <div className="w-[500px] bg-[var(--panel-bg)] rounded-xl border border-[var(--strong-border)] shadow-2xl flex flex-col overflow-hidden max-h-[360px]">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2.5 focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-[-1px]">
+          <Command className="w-4 h-4 text-[var(--text-secondary)]" />
+          <input
+            autoFocus
+            type="text"
+            placeholder="Type a command…"
+            value={paletteSearch}
+            onChange={(e) => setPaletteSearch(e.target.value)}
+            className="flex-1 bg-transparent border-0 outline-none text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
+          />
+          <button onClick={onClose} className="cursor-pointer">
+            <X className="w-4 h-4 text-[var(--text-secondary)]" />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto py-1">
+          {filteredCommands.length === 0 ? (
+            <div className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] text-center py-6">No commands found</div>
+          ) : (
+            filteredCommands.map((c, idx) => (
+              <div
+                key={idx}
+                onClick={() => {
+                  c.action();
+                  onClose();
+                }}
+                className="flex justify-between items-center px-4 py-2 hover:bg-[var(--hover-row)] cursor-pointer text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]"
+              >
+                <span>{c.title}</span>
+                <kbd className="text-[calc(10px*var(--font-scale))] bg-[var(--border)] px-1.5 rounded text-[var(--text-secondary)]">
+                  {c.shortcut}
+                </kbd>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

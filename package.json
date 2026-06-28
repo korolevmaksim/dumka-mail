@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "package:mac": "npm run build && electron-builder --mac --dir",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "install-app": "./install.sh"
   },
   "build": {
     "appId": "dev.dumka.mail",

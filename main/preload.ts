@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Messages
   listMessagesForThread: (accountId: string, threadId: string) => ipcRenderer.invoke('db:listMessagesForThread', accountId, threadId),
-  saveMessages: (messages: MailMessage[]) => ipcRenderer.invoke('db:saveMessages', messages),
+  saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => ipcRenderer.invoke('db:saveMessages', messages, options),
 
   // Drafts
   listDrafts: (accountId: string) => ipcRenderer.invoke('db:listDrafts', accountId),
@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   syncIncremental: (email: string, startHistoryId: string) => ipcRenderer.invoke('api:syncIncremental', email, startHistoryId),
   syncBackfillPage: (email: string, pageToken?: string) => ipcRenderer.invoke('api:syncBackfillPage', email, pageToken),
   fetchThreadDetail: (email: string, threadId: string) => ipcRenderer.invoke('api:fetchThreadDetail', email, threadId),
+  fetchRawMessage: (email: string, messageId: string) => ipcRenderer.invoke('api:fetchRawMessage', email, messageId),
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => ipcRenderer.invoke('api:modifyLabels', email, threadId, addLabelIds, removeLabelIds, actionId),
   sendDraft: (email: string, draft: any, actionId?: string) => ipcRenderer.invoke('api:sendDraft', email, draft, actionId),
   downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => ipcRenderer.invoke('api:downloadAttachment', email, messageId, attachmentId, filename),
@@ -70,5 +71,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('db:getSetting', key),
-  setSetting: (key: string, value: string) => ipcRenderer.invoke('db:setSetting', key, value)
+  setSetting: (key: string, value: string) => ipcRenderer.invoke('db:setSetting', key, value),
+
+  // Native Find in Page
+  findInPage: (text: string, options?: any) => ipcRenderer.invoke('api:findInPage', text, options),
+  stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => ipcRenderer.invoke('api:stopFindInPage', action),
+  onFoundInPageResult: (callback: (result: any) => void) => {
+    const listener = (_: any, result: any) => callback(result);
+    ipcRenderer.on('api:foundInPageResult', listener);
+    return () => {
+      ipcRenderer.off('api:foundInPageResult', listener);
+    };
+  },
+  onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => {
+    const listener = (_: any, data: any) => callback(data);
+    ipcRenderer.on('api:openThread', listener);
+    return () => {
+      ipcRenderer.off('api:openThread', listener);
+    };
+  },
+  getPendingOpenThread: () => ipcRenderer.invoke('api:getPendingOpenThread')
 });

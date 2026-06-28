@@ -16,7 +16,7 @@ export interface IElectronAPI {
 
   // Messages
   listMessagesForThread: (accountId: string, threadId: string) => Promise<MailMessage[]>;
-  saveMessages: (messages: MailMessage[]) => Promise<void>;
+  saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => Promise<void>;
 
   // Drafts
   listDrafts: (accountId: string) => Promise<Draft[]>;
@@ -55,6 +55,7 @@ export interface IElectronAPI {
   syncIncremental: (email: string, startHistoryId: string) => Promise<{ updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string }>;
   syncBackfillPage: (email: string, pageToken?: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; nextPageToken?: string }>;
   fetchThreadDetail: (email: string, threadId: string) => Promise<MailMessage[]>;
+  fetchRawMessage: (email: string, messageId: string) => Promise<string>;
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => Promise<{ offline: boolean }>;
   sendDraft: (email: string, draft: any, actionId?: string) => Promise<{ offline: boolean; threadId?: string }>;
   downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => Promise<void>;
@@ -71,6 +72,13 @@ export interface IElectronAPI {
   // Settings
   getSetting: (key: string) => Promise<string | null>;
   setSetting: (key: string, value: string) => Promise<void>;
+
+  // Native Find in Page
+  findInPage: (text: string, options?: any) => Promise<number>;
+  stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => Promise<void>;
+  onFoundInPageResult: (callback: (result: any) => void) => () => void;
+  onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
+  getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
 }
 
 declare global {

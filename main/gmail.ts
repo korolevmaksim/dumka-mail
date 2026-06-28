@@ -1,59 +1,10 @@
-import http from 'http';
-import url from 'url';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
-import { shell } from 'electron';
 import { MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
-import { getRefreshToken, saveRefreshToken } from './keychain';
+import { getRefreshToken } from './keychain';
 import { compileMarkdownToHtml } from '../shared/markdown';
+import { loadGoogleConfig, startOAuthFlow, base64urlSafe } from './gmailOAuth';
 
-// Scopes required for email triage, drafting, and profile information
-const SCOPES = [
-  'https://www.googleapis.com/auth/gmail.modify',
-  'https://www.googleapis.com/auth/userinfo.profile'
-];
-
-interface GoogleClientConfig {
-  installed: {
-    client_id: string;
-    project_id: string;
-    auth_uri: string;
-    token_uri: string;
-    client_secret?: string;
-    redirect_uris: string[];
-  }
-}
-
-export function loadGoogleConfig(): GoogleClientConfig {
-  const primaryPath = path.join(process.env.HOME || '', '.config', 'dumka-mail-agy', 'google-oauth-client.json');
-  const fallbackPath = path.join(process.env.HOME || '', '.config', 'personal-mail-client', 'google-oauth-client.json');
-
-  let configPath = primaryPath;
-  if (!fs.existsSync(primaryPath) && fs.existsSync(fallbackPath)) {
-    configPath = fallbackPath;
-  }
-
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`Google OAuth Client credentials not found at ${primaryPath} or ${fallbackPath}`);
-  }
-
-  const raw = fs.readFileSync(configPath, 'utf-8');
-  return JSON.parse(raw) as GoogleClientConfig;
-}
-
-// Helpers for PKCE (Code Challenge)
-function base64urlSafe(buf: Buffer): string {
-  return buf.toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
-function generateCodeChallenge(verifier: string): string {
-  const hash = crypto.createHash('sha256').update(verifier).digest();
-  return base64urlSafe(hash);
-}
+export { startOAuthFlow };
 
 // Helper: Fetch with Timeout to prevent hung requests
 async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 15000): Promise<Response> {
@@ -67,167 +18,6 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 1500
   } finally {
     clearTimeout(id);
   }
-}
-
-// Onboarding: OAuth browser consent flow with loopback listener
-export function startOAuthFlow(emailHint?: string): Promise<{ email: string; refreshToken: string; displayName?: string; avatarUrl?: string }> {
-  return new Promise((resolve, reject) => {
-    // Start loopback HTTP server on random port
-    const server = http.createServer();
-    
-    // 5-minute timeout to close the server and reject the promise to prevent port leaks
-    const timeoutId = setTimeout(() => {
-      server.close();
-      reject(new Error('OAuth flow timed out after 5 minutes.'));
-    }, 5 * 60 * 1000);
-
-    const cleanResolve = (val: { email: string; refreshToken: string; displayName?: string; avatarUrl?: string }) => {
-      clearTimeout(timeoutId);
-      resolve(val);
-    };
-
-    const cleanReject = (err: any) => {
-      clearTimeout(timeoutId);
-      reject(err);
-    };
-
-    try {
-      const config = loadGoogleConfig().installed;
-      const state = base64urlSafe(crypto.randomBytes(32));
-      const codeVerifier = base64urlSafe(crypto.randomBytes(64));
-      const codeChallenge = generateCodeChallenge(codeVerifier);
-
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address() as any;
-        const port = address.port;
-        const redirectURI = `http://localhost:${port}/`;
-
-        // Build Auth URL
-        const authUrlObj = new URL(config.auth_uri);
-        authUrlObj.searchParams.set('client_id', config.client_id);
-        authUrlObj.searchParams.set('redirect_uri', redirectURI);
-        authUrlObj.searchParams.set('response_type', 'code');
-        authUrlObj.searchParams.set('scope', SCOPES.join(' '));
-        authUrlObj.searchParams.set('access_type', 'offline');
-        authUrlObj.searchParams.set('prompt', 'consent');
-        authUrlObj.searchParams.set('state', state);
-        authUrlObj.searchParams.set('code_challenge', codeChallenge);
-        authUrlObj.searchParams.set('code_challenge_method', 'S256');
-        if (emailHint) {
-          authUrlObj.searchParams.set('login_hint', emailHint);
-        }
-
-        // Open browser
-        shell.openExternal(authUrlObj.toString()).catch(cleanReject);
-
-        // Handle OAuth callback
-        server.on('request', async (req, res) => {
-          try {
-            const reqUrl = url.parse(req.url || '', true);
-            const { code, state: returnedState, error } = reqUrl.query;
-
-            if (error) {
-              res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-              res.end('Authentication denied by user.');
-              server.close();
-              cleanReject(new Error(`OAuth Denied: ${error}`));
-              return;
-            }
-
-            if (returnedState !== state) {
-              res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-              res.end('CSRF State mismatch.');
-              server.close();
-              cleanReject(new Error('OAuth Error: CSRF State mismatch.'));
-              return;
-            }
-
-            if (!code || typeof code !== 'string') {
-              res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-              res.end('Missing code in redirect parameters.');
-              server.close();
-              cleanReject(new Error('OAuth Error: Missing authorization code.'));
-              return;
-            }
-
-            // Exhange code for tokens
-            const tokenParams = new URLSearchParams();
-            tokenParams.set('client_id', config.client_id);
-            if (config.client_secret) tokenParams.set('client_secret', config.client_secret);
-            tokenParams.set('code', code);
-            tokenParams.set('grant_type', 'authorization_code');
-            tokenParams.set('redirect_uri', redirectURI);
-            tokenParams.set('code_verifier', codeVerifier);
-
-            const tokenRes = await fetchWithTimeout(config.token_uri, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: tokenParams.toString()
-            });
-
-            if (!tokenRes.ok) {
-              throw new Error(`Token exchange HTTP ${tokenRes.status}: ${await tokenRes.text()}`);
-            }
-
-            const tokens = await tokenRes.json() as any;
-            const { access_token, refresh_token } = tokens;
-
-            if (!refresh_token) {
-              throw new Error('OAuth Error: Google did not return a refresh token. Revoke app permissions and retry onboarding.');
-            }
-
-            // Fetch profile to verify email
-            const profileRes = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
-              headers: { 'Authorization': `Bearer ${access_token}` }
-            });
-
-            if (!profileRes.ok) {
-              throw new Error(`Failed to fetch profile: ${await profileRes.text()}`);
-            }
-
-            const profile = await profileRes.json() as any;
-            const email = profile.emailAddress;
-
-            if (emailHint && email.toLowerCase() !== emailHint.toLowerCase()) {
-              throw new Error(`OAuth Email Mismatch: Onboarded ${email} does not match expected ${emailHint}`);
-            }
-
-            // Fetch extra profile details (name, picture)
-            let displayName = '';
-            let avatarUrl = '';
-            try {
-              const userInfoRes = await fetchWithTimeout('https://www.googleapis.com/oauth2/v2/userinfo', {
-                headers: { 'Authorization': `Bearer ${access_token}` }
-              });
-              if (userInfoRes.ok) {
-                const userInfo = await userInfoRes.json() as any;
-                if (userInfo.name) displayName = userInfo.name;
-                if (userInfo.picture) avatarUrl = userInfo.picture;
-              }
-            } catch (err) {
-              console.error('Failed to fetch userinfo from Google:', err);
-            }
-
-            // Save refresh token securely in Keychain
-            await saveRefreshToken(email, refresh_token);
-
-            res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-            res.end(`Authentication complete for ${email}. You can close this tab.`);
-            server.close();
-
-            cleanResolve({ email, refreshToken: refresh_token, displayName, avatarUrl });
-          } catch (err: any) {
-            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-            res.end(`Authentication failed: ${err.message}`);
-            server.close();
-            cleanReject(err);
-          }
-        });
-      });
-    } catch (e) {
-      cleanReject(e);
-    }
-  });
 }
 
 // Token rotation service
@@ -602,6 +392,25 @@ export const GmailSyncService = {
 
     const data = await res.json() as any;
     return data.data;
+  },
+
+  // Fetch raw RFC822 mail source
+  async fetchRawMessage(email: string, messageId: string): Promise<string> {
+    const accessToken = await getAccessToken(email);
+    const endpoint = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=raw`;
+    const res = await fetchWithTimeout(endpoint, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok) {
+      throw new Error(`fetchRawMessage error: ${await res.text()}`);
+    }
+
+    const data = await res.json() as any;
+    if (!data.raw) {
+      throw new Error('No raw message field returned from Gmail API');
+    }
+    return Buffer.from(data.raw, 'base64url').toString('utf-8');
   },
 
   // Mutation: Modify labels on thread

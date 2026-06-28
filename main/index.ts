@@ -1,13 +1,15 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Notification } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { initializeDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
+import { initializeDatabase, getDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { getRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfig, listProviderModels, loadAIConfig } from './ai';
 import { MCPManager } from './mcpManager';
 
 let mainWindow: BrowserWindow | null = null;
+let pendingOpenThread: { accountId: string; threadId: string } | null = null;
+const activeNotifications = new Set<Notification>();
 
 function createWindow() {
   const iconPath = path.join(__dirname, '../../assets/icon.png');
@@ -39,6 +41,12 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false
+    }
+  });
+
+  mainWindow.webContents.on('found-in-page', (_, result) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('api:foundInPageResult', result);
     }
   });
 
@@ -117,7 +125,106 @@ ipcMain.handle('db:saveThreads', (_, threads) => ThreadsRepo.save(threads));
 ipcMain.handle('db:deleteThread', (_, accountId, threadId) => ThreadsRepo.delete(accountId, threadId));
 
 ipcMain.handle('db:listMessagesForThread', (_, accountId, threadId) => MessagesRepo.listForThread(accountId, threadId));
-ipcMain.handle('db:saveMessages', (_, messages) => MessagesRepo.save(messages));
+ipcMain.handle('db:saveMessages', async (_, messages, options?: { notifyOfNew?: boolean }) => {
+  let newMessages: any[] = [];
+  if (options?.notifyOfNew) {
+    try {
+      const db = getDatabase();
+      const checkExist = db.prepare('SELECT 1 FROM messages WHERE account_id = ? AND id = ?');
+      for (const m of messages) {
+        const exists = checkExist.get(m.accountId, m.id);
+        if (!exists) {
+          newMessages.push(m);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to check existing messages:', err);
+    }
+  }
+
+  MessagesRepo.save(messages);
+
+  if (options?.notifyOfNew && newMessages.length > 0) {
+    let showNotifications = true;
+    let notifyImportantOnly = true;
+    try {
+      const rawSettings = SettingsRepo.get('appSettings');
+      if (rawSettings) {
+        const parsed = JSON.parse(rawSettings);
+        if (parsed.notifications) {
+          showNotifications = parsed.notifications.desktopNotifications !== false;
+          notifyImportantOnly = parsed.notifications.notifyImportantOnly !== false;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to read notification settings:', err);
+    }
+
+    if (showNotifications) {
+      for (const m of newMessages) {
+        const isInbox = m.labelIds.includes('INBOX') || m.labelIds.includes('inbox');
+        const isUnread = m.labelIds.includes('UNREAD') || m.labelIds.includes('unread');
+        
+        if (isInbox && isUnread) {
+          if (notifyImportantOnly) {
+            const isImportant = m.labelIds.includes('IMPORTANT') || m.labelIds.includes('important') || m.labelIds.includes('CATEGORY_PRIMARY');
+            if (!isImportant) {
+              continue;
+            }
+          }
+
+          try {
+            const sender = m.senderName || m.senderEmail;
+            const notification = new Notification({
+              title: sender,
+              subtitle: m.subject || '(No Subject)',
+              body: m.snippet || '',
+            });
+
+            activeNotifications.add(notification);
+
+            notification.on('click', () => {
+              activeNotifications.delete(notification);
+              if (mainWindow) {
+                if (mainWindow.isMinimized()) mainWindow.restore();
+                mainWindow.focus();
+                mainWindow.webContents.send('api:openThread', {
+                  accountId: m.accountId,
+                  threadId: m.threadId
+                });
+              } else {
+                pendingOpenThread = {
+                  accountId: m.accountId,
+                  threadId: m.threadId
+                };
+                createWindow();
+              }
+            });
+
+            notification.on('close', () => {
+              activeNotifications.delete(notification);
+            });
+
+            notification.on('failed', (_, error) => {
+              activeNotifications.delete(notification);
+              console.error('Notification failed to show:', error);
+            });
+
+            notification.show();
+          } catch (err) {
+            console.error('Failed to show push notification:', err);
+          }
+        }
+      }
+    }
+  }
+});
+
+ipcMain.handle('api:getPendingOpenThread', () => {
+  const pending = pendingOpenThread;
+  pendingOpenThread = null;
+  return pending;
+});
 
 ipcMain.handle('db:listDrafts', (_, accountId) => DraftsRepo.list(accountId));
 ipcMain.handle('db:getDraft', (_, id) => DraftsRepo.get(id));
@@ -168,6 +275,7 @@ ipcMain.handle('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email))
 ipcMain.handle('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 ipcMain.handle('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
 ipcMain.handle('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
+ipcMain.handle('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
 ipcMain.handle('api:downloadAttachment', async (_, email, messageId, attachmentId, filename) => {
   if (!mainWindow) return;
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
@@ -273,6 +381,12 @@ ipcMain.handle('api:completeAI', (_, request, preference, overrideModel) => comp
 ipcMain.handle('api:loadAIConfig', () => loadAIConfig());
 ipcMain.handle('api:saveAIConfig', (_, config) => saveAIConfig(config));
 ipcMain.handle('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
+ipcMain.handle('api:findInPage', (event, text, options) => {
+  event.sender.findInPage(text, options);
+});
+ipcMain.handle('api:stopFindInPage', (event, action) => {
+  event.sender.stopFindInPage(action);
+});
 
 // === Helper Functions and Background Sync Worker ===
 
