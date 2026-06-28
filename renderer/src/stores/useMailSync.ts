@@ -72,7 +72,7 @@ export function useMailSync({
   }, [triggerSilentBackfill]);
 
   // Sync Inbox logic
-  const runSync = useCallback(async (silent = false, forceFull = false) => {
+  const runSync = useCallback(async (silent = false, forceFull = false, syncAll = false) => {
     if (isSyncingRef.current || !activeAccount) return;
     isSyncingRef.current = true;
     setIsSyncing(true);
@@ -84,7 +84,7 @@ export function useMailSync({
 
     try {
       const start = performance.now();
-      const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
+      const targetAccounts = (syncAll || activeAccount.id === 'unified') ? accounts : [activeAccount];
 
       for (const acc of targetAccounts) {
         const syncState = await window.electronAPI.getSyncState(acc.email);
@@ -185,7 +185,7 @@ export function useMailSync({
     runSync(false, true);
 
     const intervalId = setInterval(() => {
-      runSync(true);
+      runSync(true, false, true);
     }, 60000);
 
     return () => {

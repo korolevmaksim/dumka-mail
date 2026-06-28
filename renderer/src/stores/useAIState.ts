@@ -45,6 +45,14 @@ export function useAIState({
   const [selectedTriageThreadIds, setSelectedTriageThreadIds] = useState<Set<string>>(new Set());
   const [activeAccountCredentialsValid, setActiveAccountCredentialsValid] = useState<boolean>(true);
 
+  // Sync provider and model from settings on load/change
+  useEffect(() => {
+    if (settings?.ai) {
+      setAiProviderState(settings.ai.provider);
+      setAiModel(settings.ai.globalDefaultModel);
+    }
+  }, [settings?.ai?.provider, settings?.ai?.globalDefaultModel]);
+
   // Check connected account credentials
   useEffect(() => {
     if (!activeAccount || activeAccount.id === 'unified') {

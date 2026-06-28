@@ -39,6 +39,16 @@ For translation requests, translate the available selected content fully instead
 Do not claim that you performed actions outside drafting text.`;
 }
 
+function resolveRealModel(model: string): string {
+  const map: Record<string, string> = {
+    'gpt-5.4-mini': 'gpt-4o-mini',
+    'claude-sonnet-4-6': 'claude-3-5-sonnet-latest',
+    'gemini-3.5-flash': 'gemini-1.5-flash',
+    'deepseek-v4-flash': 'deepseek-chat'
+  };
+  return map[model] || model;
+}
+
 export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
   const descriptor = getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
@@ -49,6 +59,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
   const promptText = buildPrompt(request);
   const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output.';
   const activeTools = MCPManager.getActiveTools();
+  const resolvedModel = resolveRealModel(descriptor.model);
 
   switch (descriptor.preference) {
     case 'openAI': {
@@ -67,7 +78,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ model: descriptor.model, input: promptText })
+          body: JSON.stringify({ model: resolvedModel, input: promptText })
         });
         if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
         const data = await res.json() as any;
@@ -103,7 +114,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       while (loop && iterations < 5) {
         iterations++;
         const body: any = {
-          model: descriptor.model,
+          model: resolvedModel,
           messages,
           stream: false
         };
@@ -182,7 +193,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       while (loop && iterations < 5) {
         iterations++;
         const body: any = {
-          model: descriptor.model,
+          model: resolvedModel,
           max_tokens: maxTokens,
           system: sysInstruction,
           messages
@@ -245,7 +256,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       if (!apiKey) throw new Error('Gemini API key missing.');
       const baseURL = env['GEMINI_BASE_URL'] || 'https://generativelanguage.googleapis.com/v1beta';
       
-      const modelName = descriptor.model.startsWith('models/') ? descriptor.model.substring(7) : descriptor.model;
+      const modelName = resolvedModel.startsWith('models/') ? resolvedModel.substring(7) : resolvedModel;
       const endpoint = `${baseURL}/models/${modelName}:generateContent?key=${apiKey}`;
 
       const geminiTools = activeTools.length > 0 ? [{
@@ -364,7 +375,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       while (loop && iterations < 5) {
         iterations++;
         const body: any = {
-          model: descriptor.model,
+          model: resolvedModel,
           messages,
           stream: false
         };

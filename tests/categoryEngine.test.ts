@@ -234,4 +234,22 @@ describe('categorize', () => {
     const builtIn = defaultBuiltIn().filter(b => b.id !== 'other');
     expect(categorize(baseThread, builtIn, [])).toBe('other');
   });
+
+  it('filters rules by accountId', () => {
+    const threadMe: MailThread = { ...baseThread, accountId: 'me@gmail.com', subject: 'Invoice' };
+    const threadWork: MailThread = { ...baseThread, accountId: 'work@gmail.com', subject: 'Invoice' };
+
+    // Rule matches both but only targets 'me@gmail.com'
+    const meRule = rule({ field: 'subject', operation: 'contains', value: 'Invoice', accountId: 'me@gmail.com' });
+    expect(ruleMatches(threadMe, meRule)).toBe(true);
+    expect(ruleMatches(threadWork, meRule)).toBe(false);
+
+    // Rule is global (no accountId or 'global')
+    const globalRule1 = rule({ field: 'subject', operation: 'contains', value: 'Invoice' });
+    const globalRule2 = rule({ field: 'subject', operation: 'contains', value: 'Invoice', accountId: 'global' });
+    expect(ruleMatches(threadMe, globalRule1)).toBe(true);
+    expect(ruleMatches(threadWork, globalRule1)).toBe(true);
+    expect(ruleMatches(threadMe, globalRule2)).toBe(true);
+    expect(ruleMatches(threadWork, globalRule2)).toBe(true);
+  });
 });

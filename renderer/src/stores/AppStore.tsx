@@ -216,7 +216,7 @@ interface AppStoreContextType {
   setActiveSplit: (s: SplitInboxKind) => void;
   splitCounts: Record<string, number>;
   tabCategories: TabCategory[];
-  addTabCategory: (displayName: string, colorHex?: string) => void;
+  addTabCategory: (displayName: string, colorHex?: string, accountId?: string) => void;
   toggleTabCategory: (id: string, active: boolean) => void;
   deleteTabCategory: (id: string) => void;
   updateTabCategoriesOrder: (categories: TabCategory[]) => void;
@@ -287,8 +287,15 @@ interface AppStoreContextType {
   triggerVisibleBodyRepair: () => Promise<void>;
   settings: AppSettings;
   updateSettings: (updater: (s: AppSettings) => void) => Promise<void>;
+  selectedThreadIds: Set<string>;
+  setSelectedThreadIds: (ids: Set<string>) => void;
+  toggleThreadSelection: (threadId: string) => void;
+  selectAllThreads: () => void;
+  clearThreadSelection: () => void;
+  executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone', threadIds: string[]) => Promise<void>;
   selectedTriageThreadIds: Set<string>;
   toggleTriagePlanItemSelection: (threadId: string) => void;
+
   selectAllApplicableTriagePlanItems: () => void;
   clearTriagePlanSelection: () => void;
   applySelectedTriagePlanItems: () => Promise<void>;

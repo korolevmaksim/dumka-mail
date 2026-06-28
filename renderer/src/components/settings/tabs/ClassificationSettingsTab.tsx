@@ -7,6 +7,7 @@ export function ClassificationSettingsTab() {
   const store = useAppStore();
   const [draggedSettingId, setDraggedSettingId] = useState<string | null>(null);
   const [dragOverSettingId, setDragOverSettingId] = useState<string | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<any | null>(null);
 
   const handleDragStartSetting = (e: React.DragEvent, id: string) => {
     setDraggedSettingId(id);
@@ -45,6 +46,41 @@ export function ClassificationSettingsTab() {
 
   return (
     <div className="flex flex-col gap-5 max-w-[600px] select-text">
+      {/* Delete Confirmation Modal */}
+      {categoryToDelete && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[999] fade-in select-none">
+          <div className="bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[340px] w-full flex flex-col gap-4 scale-up-in select-text">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Delete Custom Tab?</span>
+              <p className="text-[calc(10.5px*var(--font-scale))] text-[var(--text-secondary)] leading-relaxed">
+                Are you sure you want to delete the tab <strong className="text-[var(--text-primary)]">“{categoryToDelete.displayName}”</strong>?
+                Any classification rules targeting this tab will be automatically routed to <strong className="text-[var(--text-primary)]">Other</strong>.
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setCategoryToDelete(null)}
+                className="px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--border)]/20 text-[var(--text-secondary)] rounded-lg font-medium text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  store.deleteTabCategory(categoryToDelete.id);
+                  setCategoryToDelete(null);
+                  emitToast({ type: 'success', message: `Deleted tab “${categoryToDelete.displayName}”` });
+                }}
+                className="px-3 py-1.5 bg-[var(--danger)] text-white hover:bg-[var(--danger)]/90 rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div>
         <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">Classification Rules</h2>
         <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Create custom routing rules to sort mail based on headers or domains.</p>
@@ -55,21 +91,21 @@ export function ClassificationSettingsTab() {
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Manage Inbox Tabs</span>
         <div className="flex flex-col gap-2 p-3 bg-[var(--panel-bg)] border border-[var(--border)] rounded-md">
           <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Create Custom Tab</span>
-          <div className="flex gap-2 items-end">
-            <div className="flex-1 flex flex-col gap-1">
+          <div className="flex gap-2.5 items-end flex-wrap sm:flex-nowrap w-full">
+            <div className="flex-1 min-w-[140px] flex flex-col gap-1">
               <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</span>
               <input
                 id="new-tab-name-pref"
                 type="text"
                 placeholder="e.g. Work, Github, Family"
-                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none w-full h-[26px]"
               />
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="w-[100px] flex flex-col gap-1 shrink-0">
               <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Color:</span>
               <select
                 id="new-tab-color-pref"
-                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
               >
                 <option value="#8b5cf6">Purple</option>
                 <option value="#10b981">Green</option>
@@ -80,16 +116,29 @@ export function ClassificationSettingsTab() {
                 <option value="#14b8a6">Teal</option>
               </select>
             </div>
+            <div className="w-[130px] flex flex-col gap-1 shrink-0">
+              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Account:</span>
+              <select
+                id="new-tab-account-pref"
+                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
+              >
+                <option value="global">Global</option>
+                {store.accounts.map(acc => (
+                  <option key={acc.id} value={acc.email}>{acc.displayName || acc.email}</option>
+                ))}
+              </select>
+            </div>
             <button
               type="button"
               onClick={() => {
                 const nameEl = document.getElementById('new-tab-name-pref') as HTMLInputElement;
                 const colorEl = document.getElementById('new-tab-color-pref') as HTMLSelectElement;
+                const accountEl = document.getElementById('new-tab-account-pref') as HTMLSelectElement;
                 if (!nameEl.value.trim()) return;
-                store.addTabCategory(nameEl.value.trim(), colorEl.value);
+                store.addTabCategory(nameEl.value.trim(), colorEl.value, accountEl ? accountEl.value : 'global');
                 nameEl.value = '';
               }}
-              className="px-3 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/90 transition-colors h-[26px]"
+              className="px-3.5 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/90 transition-colors h-[26px] shrink-0"
             >
               Add
             </button>
@@ -122,8 +171,15 @@ export function ClassificationSettingsTab() {
                 ) : (
                   <span className="w-2 h-2 rounded-full border border-[var(--border)] bg-[var(--app-bg)]" />
                 )}
-                <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">
-                  {category.displayName} {category.isSystem && <span className="text-[calc(8px*var(--font-scale))] opacity-40 uppercase">(System)</span>}
+                <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] flex items-center gap-1.5 flex-wrap">
+                  <span>{category.displayName}</span>
+                  {category.isSystem ? (
+                    <span className="text-[calc(8px*var(--font-scale))] opacity-40 uppercase">(System)</span>
+                  ) : (
+                    <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)] opacity-80">
+                      • Account: <strong>{(!category.accountId || category.accountId === 'global') ? 'Global' : category.accountId}</strong>
+                    </span>
+                  )}
                 </span>
               </div>
 
@@ -141,15 +197,7 @@ export function ClassificationSettingsTab() {
                 {!category.isSystem && (
                   <button
                     type="button"
-                    onClick={() => {
-                      emitToast({
-                        type: 'warning',
-                        message: `Delete the “${category.displayName}” tab?`,
-                        actionLabel: 'Delete',
-                        onAction: () => store.deleteTabCategory(category.id),
-                        duration: 6000,
-                      });
-                    }}
+                    onClick={() => setCategoryToDelete(category)}
                     className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -199,16 +247,30 @@ export function ClassificationSettingsTab() {
           />
         </div>
 
-        <div className="flex flex-col gap-1">
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Target Split:</span>
-          <select
-            id="new-rule-target-pref"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
-          >
-            {store.tabCategories.filter(c => c.active).map(c => (
-              <option key={c.id} value={c.id}>{c.displayName}</option>
-            ))}
-          </select>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Target Split:</span>
+            <select
+              id="new-rule-target-pref"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
+            >
+              {store.tabCategories.filter(c => c.active).map(c => (
+                <option key={c.id} value={c.id}>{c.displayName}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Apply to Account:</span>
+            <select
+              id="new-rule-account-pref"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
+            >
+              <option value="global">Global (All Accounts)</option>
+              {store.accounts.map(acc => (
+                <option key={acc.id} value={acc.email}>{acc.displayName || acc.email}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <button
@@ -218,13 +280,15 @@ export function ClassificationSettingsTab() {
             const cond = document.getElementById('new-rule-condition-pref') as HTMLSelectElement;
             const val = document.getElementById('new-rule-value-pref') as HTMLInputElement;
             const target = document.getElementById('new-rule-target-pref') as HTMLSelectElement;
+            const account = document.getElementById('new-rule-account-pref') as HTMLSelectElement;
             if (!val.value.trim()) return;
             store.addCustomClassifierRule({
               field: field.value as any,
               condition: cond.value as any,
               value: val.value.trim(),
               targetCategory: target.value,
-              active: true
+              active: true,
+              accountId: account ? account.value : 'global'
             });
             val.value = '';
           }}
@@ -249,7 +313,11 @@ export function ClassificationSettingsTab() {
                 />
                 <div className="flex flex-col text-[calc(10px*var(--font-scale))]">
                   <span>If <strong>{rule.field}</strong> {rule.condition} "{rule.value}"</span>
-                  <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Route: <strong className="uppercase">{rule.targetCategory}</strong></span>
+                  <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
+                    <span>Route: <strong className="uppercase">{rule.targetCategory}</strong></span>
+                    <span>•</span>
+                    <span>Account: <strong>{(!rule.accountId || rule.accountId === 'global') ? 'Global' : rule.accountId}</strong></span>
+                  </span>
                 </div>
               </div>
               <button

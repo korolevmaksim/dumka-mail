@@ -1,5 +1,5 @@
 import React from 'react';
-import { Paperclip, Clock } from 'lucide-react';
+import { Paperclip, Clock, Check } from 'lucide-react';
 import { MailThread } from '../../../shared/types';
 import { primaryRowLabel } from '../../../shared/labels';
 import { normalizePreview } from '../../../shared/textNormalizer';
@@ -16,7 +16,10 @@ interface ThreadRowProps {
   isFocused: boolean;
   isOpened: boolean;
   showAvatars: boolean;
+  isSelected: boolean;
+  isSelectionModeActive: boolean;
   onClick: () => void;
+  onToggleSelect: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
 
@@ -24,37 +27,89 @@ interface ThreadRowProps {
 // sender + subject (unread shown only via accent dot/badge + weight), one label
 // pill, bare attachment/reminder glyphs, 24h timestamp, density-driven height,
 // 2px accent selection bar.
-export function ThreadRow({ thread, isFocused, isOpened, showAvatars, onClick, onContextMenu }: ThreadRowProps) {
+export function ThreadRow({
+  thread,
+  isFocused,
+  isOpened,
+  showAvatars,
+  isSelected,
+  isSelectionModeActive,
+  onClick,
+  onToggleSelect,
+  onContextMenu
+}: ThreadRowProps) {
   const senderText = thread.senderNames.length > 0 ? thread.senderNames.join(', ') : thread.senderEmail;
   const initials = (senderText || '?').trim().substring(0, 2).toUpperCase();
   const label = primaryRowLabel(thread);
   const preview = normalizePreview(thread.snippet);
+  const [isHovered, setIsHovered] = React.useState(false);
+
+  const showCheckbox = isSelected || isHovered || isSelectionModeActive;
 
   return (
     <div
       data-thread-row
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       className={`relative shrink-0 flex items-start gap-2.5 px-[var(--row-px)] py-2 cursor-pointer select-none border-b border-[var(--border)] transition-colors min-h-[var(--thread-row-h)] ${
-        isOpened ? 'bg-[var(--selected-row)]' : isFocused ? 'bg-[var(--hover-row)]' : 'hover:bg-[var(--hover-row)]'
+        isSelected ? 'bg-[var(--selected-row)] bg-opacity-80' : isOpened ? 'bg-[var(--selected-row)]' : isFocused ? 'bg-[var(--hover-row)]' : 'hover:bg-[var(--hover-row)]'
       }`}
     >
       {(isFocused || isOpened) && <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-[var(--accent)]" />}
 
       {/* Avatar (with unread badge) or unread dot */}
       {showAvatars ? (
-        <div
-          className="relative w-6 h-6 rounded-full flex items-center justify-center text-[calc(10px*var(--font-scale))] font-bold text-white shrink-0 mt-0.5"
-          style={{ backgroundColor: avatarColor(thread.senderEmail || senderText) }}
-        >
-          {initials}
-          {thread.isUnread && (
-            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel-bg)]" />
+        <div className="w-6 h-6 flex items-center justify-center shrink-0 mt-0.5">
+          {showCheckbox ? (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSelect(e);
+              }}
+              className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center transition-all cursor-pointer ${
+                isSelected 
+                  ? 'bg-[var(--accent)] border-[var(--accent)] text-white shadow-sm' 
+                  : 'border-[var(--strong-border)] hover:border-[var(--accent)] bg-[var(--panel-bg)]'
+              }`}
+            >
+              {isSelected && <Check className="w-3 h-3 stroke-[3.5px]" />}
+            </div>
+          ) : (
+            <div
+              className="relative w-6 h-6 rounded-full flex items-center justify-center text-[calc(10px*var(--font-scale))] font-bold text-white shrink-0"
+              style={{ backgroundColor: avatarColor(thread.senderEmail || senderText) }}
+            >
+              {initials}
+              {thread.isUnread && (
+                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--accent)] border-2 border-[var(--panel-bg)]" />
+              )}
+            </div>
           )}
         </div>
       ) : (
-        <span className={`w-2 h-2 rounded-full shrink-0 mt-[7px] ${thread.isUnread ? 'bg-[var(--accent)]' : 'bg-transparent'}`} />
+        <div className="w-6 h-6 flex items-center justify-center shrink-0">
+          {showCheckbox ? (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSelect(e);
+              }}
+              className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center transition-all cursor-pointer ${
+                isSelected 
+                  ? 'bg-[var(--accent)] border-[var(--accent)] text-white shadow-sm' 
+                  : 'border-[var(--strong-border)] hover:border-[var(--accent)] bg-[var(--panel-bg)]'
+              }`}
+            >
+              {isSelected && <Check className="w-3 h-3 stroke-[3.5px]" />}
+            </div>
+          ) : (
+            <span className={`w-2 h-2 rounded-full shrink-0 ${thread.isUnread ? 'bg-[var(--accent)]' : 'bg-transparent'}`} />
+          )}
+        </div>
       )}
+
 
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
         {/* Line 1: sender + time */}

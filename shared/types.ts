@@ -241,6 +241,7 @@ export interface TabCategory {
   isSystem: boolean;
   colorHex?: string;
   active: boolean;
+  accountId?: string;
 }
 
 export interface CustomClassifierRule {
@@ -250,6 +251,7 @@ export interface CustomClassifierRule {
   value: string;
   targetCategory: string;
   active: boolean;
+  accountId?: string;
 }
 
 // === Unified AppSettings Schema ===
@@ -277,6 +279,7 @@ export interface MailCategoryRule {
   operation: 'contains' | 'equals' | 'startsWith' | 'endsWith';
   value: string;
   isNegated: boolean;
+  accountId?: string;
 }
 
 export interface BuiltInMailCategorySettings {
@@ -293,6 +296,7 @@ export interface CustomMailCategorySettings {
   isEnabled: boolean;
   matchMode: 'all' | 'any';
   rules: MailCategoryRule[];
+  accountId?: string;
 }
 
 export interface InboxSettings {

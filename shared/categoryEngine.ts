@@ -102,6 +102,9 @@ function systemSignalMatches(thread: MailThread, value: string): boolean {
  * exactly like the Swift implementation.
  */
 export function ruleMatches(thread: MailThread, rule: MailCategoryRule): boolean {
+  if (rule.accountId && rule.accountId !== 'global' && thread.accountId !== rule.accountId) {
+    return false;
+  }
   let result: boolean;
   switch (rule.field) {
     case 'systemSignal':

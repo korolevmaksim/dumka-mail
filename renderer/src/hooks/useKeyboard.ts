@@ -53,6 +53,14 @@ export function useKeyboard(options: KeyboardOptions) {
       const isMetaOrCtrl = e.metaKey || e.ctrlKey;
       const noModifiers = !e.metaKey && !e.ctrlKey && !e.altKey;
 
+      // Command/Ctrl + A: Select All Threads
+      if (isMetaOrCtrl && (e.code === 'KeyA' || e.key === 'a')) {
+        e.preventDefault();
+        currentStore.selectAllThreads();
+        return;
+      }
+
+
       // Command + K: Toggle Command Palette
       if (isMetaOrCtrl && (e.code === 'KeyK' || e.key === 'k')) {
         e.preventDefault();
@@ -108,7 +116,12 @@ export function useKeyboard(options: KeyboardOptions) {
 
       // Split switching (unmodified keys 1 to 9 based on active tabs)
       if (noModifiers && e.key >= '1' && e.key <= '9') {
-        const activeTabs = currentStore.tabCategories.filter(c => c.active);
+        const activeTabs = currentStore.tabCategories.filter(c => {
+          if (!c.active) return false;
+          if (c.isSystem) return true;
+          if (!currentStore.activeAccount || currentStore.activeAccount.id === 'unified') return true;
+          return !c.accountId || c.accountId === 'global' || c.accountId === currentStore.activeAccount.email;
+        });
         const idx = parseInt(e.key, 10) - 1;
         if (activeTabs[idx]) {
           e.preventDefault();
@@ -252,6 +265,16 @@ export function useKeyboard(options: KeyboardOptions) {
         currentStore.undoLastAction();
         return;
       }
+
+      // X: Toggle selection of focused thread
+      if (noModifiers && (e.code === 'KeyX' || e.key === 'x')) {
+        e.preventDefault();
+        if (currentStore.focusedThreadId) {
+          currentStore.toggleThreadSelection(currentStore.focusedThreadId);
+        }
+        return;
+      }
+
     };
 
     window.addEventListener('keydown', handleKeyDown);

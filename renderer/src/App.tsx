@@ -4,7 +4,7 @@ import { useKeyboard } from './hooks/useKeyboard';
 import {
   Inbox, Clock, CheckCircle, X, ArrowLeft,
   Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles,
-  ChevronUp, ChevronDown
+  ChevronUp, ChevronDown, MailOpen
 } from 'lucide-react';
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
@@ -44,6 +44,40 @@ function AppContent() {
   } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const [lastSelectedThreadId, setLastSelectedThreadId] = useState<string | null>(null);
+
+  const handleThreadSelectToggle = (e: React.MouseEvent, threadId: string) => {
+    if (e.shiftKey && lastSelectedThreadId && store.selectedThreadIds.has(lastSelectedThreadId)) {
+      const allVisible = store.visibleThreads;
+      const lastIdx = allVisible.findIndex(t => t.id === lastSelectedThreadId);
+      const clickedIdx = allVisible.findIndex(t => t.id === threadId);
+      if (lastIdx !== -1 && clickedIdx !== -1) {
+        const start = Math.min(lastIdx, clickedIdx);
+        const end = Math.max(lastIdx, clickedIdx);
+        const rangeThreads = allVisible.slice(start, end + 1);
+        
+        const newSelected = new Set(store.selectedThreadIds);
+        const shouldSelect = !store.selectedThreadIds.has(threadId);
+        
+        rangeThreads.forEach(t => {
+          if (shouldSelect) {
+            newSelected.add(t.id);
+          } else {
+            newSelected.delete(t.id);
+          }
+        });
+        
+        store.setSelectedThreadIds(newSelected);
+        setLastSelectedThreadId(threadId);
+        return;
+      }
+    }
+
+    store.toggleThreadSelection(threadId);
+    setLastSelectedThreadId(threadId);
+  };
+
 
   // Reader search states
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
@@ -241,7 +275,12 @@ function AppContent() {
             {/* SPLIT TABS BAR */}
             <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
               <div className="flex gap-1 h-full items-end">
-                {store.tabCategories.filter(c => c.active).map((category, i) => {
+                {store.tabCategories.filter(c => {
+                  if (!c.active) return false;
+                  if (c.isSystem) return true;
+                  if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
+                  return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
+                }).map((category, i) => {
                   const count = store.splitCounts[category.id] || 0;
                   return (
                     <button
@@ -311,9 +350,9 @@ function AppContent() {
                 <SettingsPanel />
               ) : (
                 <>
-                  {/* THREAD LIST */}
+                  {/* THREAD LIST CONTAINER */}
                   <div
-                    className="flex flex-col border-r border-[var(--border)] overflow-y-auto"
+                    className="relative flex flex-col border-r border-[var(--border)] h-full overflow-hidden"
                     style={{
                       width: store.enablePreviewPane 
                         ? `${store.previewPaneWidth}px` 
@@ -321,30 +360,82 @@ function AppContent() {
                       display: !store.enablePreviewPane && store.openedThread ? 'none' : 'flex'
                     }}
                   >
-                    {store.visibleThreads.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
-                        <Inbox className="w-10 h-10 mb-2 opacity-30" />
-                        <p className="font-semibold">Clear inbox split</p>
-                        <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">Jump to other splits or press C to compose.</p>
+                    {/* SCROLLABLE THREAD LIST */}
+                    <div className="flex-1 overflow-y-auto flex flex-col">
+                      {store.visibleThreads.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
+                          <Inbox className="w-10 h-10 mb-2 opacity-30" />
+                          <p className="font-semibold">Clear inbox split</p>
+                          <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">Jump to other splits or press C to compose.</p>
+                        </div>
+                      ) : (
+                        store.visibleThreads.map((thread) => (
+                          <ThreadRow
+                            key={thread.id}
+                            thread={thread}
+                            isFocused={store.focusedThreadId === thread.id}
+                            isOpened={store.openedThread?.id === thread.id}
+                            showAvatars={store.settings.appearance.showAvatars}
+                            isSelected={store.selectedThreadIds.has(thread.id)}
+                            isSelectionModeActive={store.selectedThreadIds.size > 0}
+                            onClick={() => store.openThread(thread)}
+                            onToggleSelect={(e) => handleThreadSelectToggle(e, thread.id)}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setContextMenu({ x: e.clientX, y: e.clientY, thread });
+                            }}
+                          />
+                        ))
+                      )}
+                    </div>
+
+                    {/* FLOATING BATCH ACTIONS BAR */}
+                    {store.selectedThreadIds.size > 0 && (
+                      <div className="absolute bottom-4 left-4 right-4 z-10 bg-[var(--panel-bg)]/90 backdrop-blur-md border border-[var(--strong-border)] shadow-xl rounded-xl px-3 py-2.5 flex items-center justify-between animate-fade-in gap-3">
+                        <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
+                          {store.selectedThreadIds.size} selected
+                        </span>
+                        
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => store.executeBatchMailAction('markRead', Array.from(store.selectedThreadIds))}
+                            title="Mark as Read"
+                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                          >
+                            <MailOpen className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => store.executeBatchMailAction('markUnread', Array.from(store.selectedThreadIds))}
+                            title="Mark as Unread"
+                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => store.executeBatchMailAction('markDone', Array.from(store.selectedThreadIds))}
+                            title="Archive / Done"
+                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                          </button>
+                          <div className="w-px h-3.5 bg-[var(--border)] mx-1" />
+                          <button
+                            type="button"
+                            onClick={() => store.clearThreadSelection()}
+                            title="Cancel Selection (Esc)"
+                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                    ) : (
-                      store.visibleThreads.map((thread) => (
-                        <ThreadRow
-                          key={thread.id}
-                          thread={thread}
-                          isFocused={store.focusedThreadId === thread.id}
-                          isOpened={store.openedThread?.id === thread.id}
-                          showAvatars={store.settings.appearance.showAvatars}
-                          onClick={() => store.openThread(thread)}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setContextMenu({ x: e.clientX, y: e.clientY, thread });
-                          }}
-                        />
-                      ))
                     )}
                   </div>
+
 
                   {/* RESIZER BAR */}
                   {store.enablePreviewPane && (

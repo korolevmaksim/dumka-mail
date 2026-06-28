@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig } from '../../../shared/types';
+import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule } from '../../../shared/types';
 import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, mergeSettings } from './AppStore';
 
 export function useSettingsState() {
@@ -27,11 +27,61 @@ export function useSettingsState() {
     });
   };
 
+  const syncToSettings = (newCats: TabCategory[], newRules: CustomClassifierRule[]) => {
+    updateSettings(s => {
+      const builtInCats = newCats.filter(c => c.isSystem);
+      s.inbox.categories.builtIn = builtInCats.map(bc => {
+        const existing = s.inbox.categories.builtIn.find(x => x.id === bc.id);
+        const extraRules = newRules
+          .filter(r => r.targetCategory === bc.id)
+          .map(r => ({
+            id: r.id,
+            field: (r.field === 'from' ? 'from' : 'subject') as 'from' | 'subject',
+            operation: r.condition,
+            value: r.value,
+            isNegated: false,
+            accountId: r.accountId
+          } as MailCategoryRule));
+        return {
+          id: bc.id,
+          title: bc.displayName,
+          isEnabled: bc.active,
+          matchMode: existing?.matchMode || 'any',
+          extraRules
+        };
+      });
+
+      const customCats = newCats.filter(c => !c.isSystem);
+      s.inbox.categories.custom = customCats.map(cc => {
+        const existing = s.inbox.categories.custom.find(x => x.id === cc.id);
+        const rules = newRules
+          .filter(r => r.targetCategory === cc.id)
+          .map(r => ({
+            id: r.id,
+            field: (r.field === 'from' ? 'from' : 'subject') as 'from' | 'subject',
+            operation: r.condition,
+            value: r.value,
+            isNegated: false,
+            accountId: r.accountId
+          } as MailCategoryRule));
+        return {
+          id: cc.id,
+          title: cc.displayName,
+          isEnabled: cc.active,
+          matchMode: existing?.matchMode || 'any',
+          rules,
+          accountId: cc.accountId
+        };
+      });
+    });
+  };
+
   const saveRules = (rules: CustomClassifierRule[]) => {
     setCustomClassifierRulesState(rules);
     window.electronAPI.setSetting('customClassifierRules', JSON.stringify(rules)).catch(err => {
       console.error('Failed to save customClassifierRules to SQLite:', err);
     });
+    syncToSettings(tabCategories, rules);
   };
 
   const saveTabCategories = (categories: TabCategory[]) => {
@@ -39,6 +89,7 @@ export function useSettingsState() {
     window.electronAPI.setSetting('tabCategories', JSON.stringify(categories)).catch(err => {
       console.error('Failed to save tabCategories to SQLite:', err);
     });
+    syncToSettings(categories, customClassifierRules);
   };
 
   const updateSettings = async (updater: (s: AppSettings) => void) => {
@@ -62,7 +113,8 @@ export function useSettingsState() {
         id: c.id,
         displayName: c.title,
         isSystem: false,
-        active: c.isEnabled
+        active: c.isEnabled,
+        accountId: c.accountId
       })));
       setTabCategoriesState(cats);
       
@@ -75,7 +127,8 @@ export function useSettingsState() {
             condition: r.operation,
             value: r.value,
             targetCategory: b.id,
-            active: b.isEnabled
+            active: b.isEnabled,
+            accountId: r.accountId
           });
         });
       });
@@ -87,7 +140,8 @@ export function useSettingsState() {
             condition: r.operation,
             value: r.value,
             targetCategory: c.id,
-            active: c.isEnabled
+            active: c.isEnabled,
+            accountId: r.accountId
           });
         });
       });
@@ -147,7 +201,8 @@ export function useSettingsState() {
                   field: (r.field === 'from' ? 'from' : 'subject') as 'from' | 'subject',
                   operation: r.condition,
                   value: r.value,
-                  isNegated: false
+                  isNegated: false,
+                  accountId: r.accountId
                 };
                 const b = loaded.inbox.categories.builtIn.find(bc => bc.id === r.targetCategory);
                 if (b) {
@@ -191,7 +246,8 @@ export function useSettingsState() {
           id: c.id,
           displayName: c.title,
           isSystem: false,
-          active: c.isEnabled
+          active: c.isEnabled,
+          accountId: c.accountId
         })));
         setTabCategoriesState(tabCats);
         
@@ -204,7 +260,8 @@ export function useSettingsState() {
               condition: r.operation,
               value: r.value,
               targetCategory: b.id,
-              active: b.isEnabled
+              active: b.isEnabled,
+              accountId: r.accountId
             });
           });
         });
@@ -216,7 +273,8 @@ export function useSettingsState() {
               condition: r.operation,
               value: r.value,
               targetCategory: c.id,
-              active: c.isEnabled
+              active: c.isEnabled,
+              accountId: r.accountId
             });
           });
         });
@@ -259,7 +317,7 @@ export function useSettingsState() {
     saveRules(customClassifierRules.filter(r => r.id !== id));
   };
 
-  const addTabCategory = (displayName: string, colorHex?: string) => {
+  const addTabCategory = (displayName: string, colorHex?: string, accountId?: string) => {
     const slug = displayName.toLowerCase().replace(/[^a-z0-9]/g, '-');
     const id = `${slug}-${Math.random().toString(36).substring(2, 6)}`;
     const newCategory: TabCategory = {
@@ -268,6 +326,7 @@ export function useSettingsState() {
       isSystem: false,
       colorHex: colorHex || '#8b5cf6',
       active: true,
+      accountId: accountId || 'global'
     };
     saveTabCategories([...tabCategories, newCategory]);
   };
@@ -282,13 +341,22 @@ export function useSettingsState() {
     const category = tabCategories.find(c => c.id === id);
     if (!category || category.isSystem) return;
     
-    const updated = tabCategories.filter(c => c.id !== id);
-    saveTabCategories(updated);
-
+    const updatedCats = tabCategories.filter(c => c.id !== id);
     const updatedRules = customClassifierRules.map(rule => 
       rule.targetCategory === id ? { ...rule, targetCategory: 'other' } : rule
     );
-    saveRules(updatedRules);
+
+    setTabCategoriesState(updatedCats);
+    window.electronAPI.setSetting('tabCategories', JSON.stringify(updatedCats)).catch(err => {
+      console.error('Failed to save tabCategories to SQLite:', err);
+    });
+
+    setCustomClassifierRulesState(updatedRules);
+    window.electronAPI.setSetting('customClassifierRules', JSON.stringify(updatedRules)).catch(err => {
+      console.error('Failed to save customClassifierRules to SQLite:', err);
+    });
+
+    syncToSettings(updatedCats, updatedRules);
   };
 
   const updateTabCategoriesOrder = (categories: TabCategory[]) => {
@@ -299,6 +367,9 @@ export function useSettingsState() {
     setThemeState(t);
     window.electronAPI.setSetting('theme', t).catch(err => {
       console.error('Failed to save theme to SQLite:', err);
+    });
+    updateSettings(s => {
+      s.appearance.theme = t;
     });
   };
 

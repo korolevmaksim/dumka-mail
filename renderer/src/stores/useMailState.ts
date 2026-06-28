@@ -43,6 +43,9 @@ export function useMailState({
     detailCacheCoverage: '0% detail · 0% bodies'
   });
 
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
+
+
 
 
   const setActiveSplit = (split: SplitInboxKind) => {
@@ -50,11 +53,17 @@ export function useMailState({
     setOpenedThread(null);
     setOpenedThreadMessages([]);
     setFocusedThreadId(null);
+    setSelectedThreadIds(new Set());
   };
+
 
   const getThreadCategory = useCallback((t: MailThread): string => {
     for (const rule of customClassifierRules) {
       if (!rule.active) continue;
+
+      if (rule.accountId && rule.accountId !== 'global' && t.accountId !== rule.accountId) {
+        continue;
+      }
 
       const category = tabCategories.find(c => c.id === rule.targetCategory);
       if (!category || !category.active) continue;
@@ -109,7 +118,9 @@ export function useMailState({
     setOpenedThreadMessages([]);
     setFocusedThreadId(null);
     setSearchQuery('');
+    setSelectedThreadIds(new Set());
   }, []);
+
 
   // Listen to open thread requests from push notification click
   useEffect(() => {
@@ -526,6 +537,106 @@ export function useMailState({
     }
   };
 
+  const toggleThreadSelection = useCallback((threadId: string) => {
+    setSelectedThreadIds(prev => {
+      const next = new Set(prev);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllThreads = useCallback(() => {
+    setSelectedThreadIds(new Set(visibleThreads.map(t => t.id)));
+  }, [visibleThreads]);
+
+  const clearThreadSelection = useCallback(() => {
+    setSelectedThreadIds(new Set());
+  }, []);
+
+  const handleSetSearchQuery = useCallback((q: string) => {
+    setSearchQuery(q);
+    setSelectedThreadIds(new Set());
+  }, []);
+
+  const executeBatchMailAction = async (
+    kind: 'markRead' | 'markUnread' | 'markDone',
+    threadIds: string[]
+  ) => {
+    if (!activeAccount || threadIds.length === 0) return;
+
+    setSelectedThreadIds(new Set());
+
+    // OPTIMISTIC UI STATE TRANSITIONS
+    if (kind === 'markDone') {
+      setThreads(prev => prev.filter(t => !threadIds.includes(t.id)));
+      if (openedThread && threadIds.includes(openedThread.id)) {
+        const remainingVisible = visibleThreads.filter(t => !threadIds.includes(t.id));
+        if (remainingVisible.length > 0) {
+          openThread(remainingVisible[0]);
+        } else {
+          openThread(null);
+        }
+      }
+      setFocusedThreadId(null);
+    } else if (kind === 'markRead') {
+      setThreads(prev => prev.map(t => threadIds.includes(t.id) ? { ...t, isUnread: false } : t));
+    } else if (kind === 'markUnread') {
+      setThreads(prev => prev.map(t => threadIds.includes(t.id) ? { ...t, isUnread: true } : t));
+    }
+
+    const promises = threadIds.map(async (targetThreadId) => {
+      const actionId = crypto.randomUUID();
+      const thread = threads.find(t => t.id === targetThreadId);
+      const targetAccountId = thread ? thread.accountId : activeAccount.email;
+
+      const log: MailActionLog = {
+        id: actionId,
+        accountId: targetAccountId,
+        threadId: targetThreadId,
+        kind,
+        status: 'queued',
+        createdAt: new Date().toISOString()
+      };
+
+      try {
+        await window.electronAPI.saveActionLog(log);
+        log.status = 'running';
+        await window.electronAPI.saveActionLog(log);
+
+        let res: any = null;
+        if (kind === 'markDone') {
+          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId);
+        } else if (kind === 'markRead') {
+          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
+        } else if (kind === 'markUnread') {
+          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
+        }
+
+        if (res && res.offline) {
+          // keep pending
+        } else {
+          log.status = 'completed';
+          log.completedAt = new Date().toISOString();
+          await window.electronAPI.saveActionLog(log);
+        }
+      } catch (err: any) {
+        console.error(`Batch action item failed for thread ${targetThreadId}:`, err);
+        log.status = 'failed';
+        log.failureMessage = err.message;
+        await window.electronAPI.saveActionLog(log);
+      }
+    });
+
+    await Promise.all(promises);
+    loadActionLog();
+    loadThreadsFromDB();
+  };
+
+
   return {
     activeSplit,
     setActiveSplit,
@@ -545,12 +656,19 @@ export function useMailState({
     backfillProgress,
     isSyncing,
     speedProof,
+    selectedThreadIds,
+    setSelectedThreadIds,
+    toggleThreadSelection,
+    selectAllThreads,
+    clearThreadSelection,
+    executeBatchMailAction,
+
     setThreads,
     setVisibleThreads,
     setFocusedThreadId,
     setOpenedThread,
     setOpenedThreadMessages,
-    setSearchQuery,
+    setSearchQuery: handleSetSearchQuery,
     setActionLog,
     setSyncHealth,
     setSyncStatusText,
@@ -573,3 +691,4 @@ export function useMailState({
     getThreadCategory
   };
 }
+
