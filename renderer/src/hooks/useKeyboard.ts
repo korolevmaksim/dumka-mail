@@ -41,11 +41,9 @@ export function useKeyboard(options: KeyboardOptions) {
       }
 
       // Compose specific shortcut: Command+Return to send email
-      if (currentOptions.isComposeActive) {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          currentStore.sendDraftWithUndo();
-        }
+      if (currentOptions.isComposeActive && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        currentStore.sendDraftWithUndo();
         return;
       }
 

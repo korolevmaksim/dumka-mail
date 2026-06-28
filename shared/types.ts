@@ -401,6 +401,28 @@ export interface AppearanceSettings {
   fontScale: number;
 }
 
+export interface MCPServerConfig {
+  id: string;
+  name: string;
+  type: 'stdio' | 'sse';
+  enabled: boolean;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+}
+
+export interface SearchProviderConfig {
+  enabled: boolean;
+  apiKey: string;
+}
+
+export interface SearchProvidersSettings {
+  tavily: SearchProviderConfig;
+  brave: SearchProviderConfig;
+  perplexity: SearchProviderConfig;
+}
+
 export interface AppSettings {
   settingsSchemaVersion: number;
   profile: ProfileSettings;
@@ -413,6 +435,8 @@ export interface AppSettings {
   ai: AISettings;
   privacy: PrivacySettings;
   appearance: AppearanceSettings;
+  mcpServers?: MCPServerConfig[];
+  searchProviders?: SearchProvidersSettings;
 }
 
 // === Triage action preview structures ===

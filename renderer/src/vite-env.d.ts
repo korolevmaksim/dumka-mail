@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor } from '../../shared/types';
+import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, MCPServerConfig } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 
 export interface IElectronAPI {
@@ -66,6 +66,7 @@ export interface IElectronAPI {
   loadAIConfig: () => Promise<Record<string, string>>;
   saveAIConfig: (config: Record<string, string>) => Promise<void>;
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;
+  verifyMCPServer: (config: MCPServerConfig) => Promise<{ success: boolean; toolsCount?: number; error?: string }>;
 
   // Settings
   getSetting: (key: string) => Promise<string | null>;

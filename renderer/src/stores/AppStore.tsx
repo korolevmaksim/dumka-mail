@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriageQueueReadiness, MailTriagePlanItem, MailTriagePlan, CustomMailCategorySettings, MailCategoryRule, AutomationRulePreview, TriageRecommendation, AIAction } from '../../../shared/types';
+import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriageQueueReadiness, MailTriagePlanItem, MailTriagePlan, CustomMailCategorySettings, MailCategoryRule, AutomationRulePreview, TriageRecommendation, AIAction, MCPServerConfig } from '../../../shared/types';
 import { SplitInboxRouter, SplitInboxKind, MailSignalClassifier } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
 import { buildThreadContext } from '../../../shared/aiContext';
@@ -100,6 +100,7 @@ interface AppStoreContextType {
   cancelPendingSend: () => void;
   addAttachmentToDraft: () => Promise<void>;
   removeAttachmentFromDraft: (id: string) => Promise<void>;
+  discardDraft: (draftId: string) => Promise<void>;
 
   // Sync & Backfill
   syncHealth: 'ready' | 'syncing' | 'indexing' | 'paused' | 'failed' | 'reconnect';
@@ -138,6 +139,7 @@ interface AppStoreContextType {
   fetchModelsForProvider: (provider: string) => Promise<string[]>;
   modelsCache: Record<string, string[]>;
   verifyConnectionAndFetchModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;
+  verifyMCPServer: (config: MCPServerConfig) => Promise<{ success: boolean; toolsCount?: number; error?: string }>;
 
   // Performance Telemetry
   speedProof: SpeedProof;
@@ -273,6 +275,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     useTranslucentPanels: false,
     enablePreviewPane: true,
     fontScale: 1.0
+  },
+  mcpServers: [],
+  searchProviders: {
+    tavily: { enabled: false, apiKey: '' },
+    brave: { enabled: false, apiKey: '' },
+    perplexity: { enabled: false, apiKey: '' }
   }
 };
 
@@ -856,6 +864,10 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return models;
   };
 
+  const verifyMCPServer = async (config: MCPServerConfig): Promise<{ success: boolean; toolsCount?: number; error?: string }> => {
+    return await window.electronAPI.verifyMCPServer(config);
+  };
+
   // Load accounts initially
   const loadAccounts = useCallback(async () => {
     const accList = await window.electronAPI.listAccounts();
@@ -1431,6 +1443,18 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
     await window.electronAPI.saveDraft(updatedDraft);
     setActiveDraft(updatedDraft);
+    loadDrafts();
+  };
+
+  const discardDraft = async (draftId: string) => {
+    try {
+      await window.electronAPI.deleteDraft(draftId);
+    } catch (e) {
+      console.error('Failed to delete draft:', e);
+    }
+    if (activeDraft?.id === draftId) {
+      setActiveDraft(null);
+    }
     loadDrafts();
   };
 
@@ -2194,13 +2218,13 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       searchQuery, setSearchQuery, searchCoverage,
       actionLog, executeMailAction, undoLastAction, snoozeThread, clearThreadReminder,
       activeDraft, setActiveDraft, draftsList, saveDraftLocally, startReply, startForward, updateDraftBody, sendDraftWithUndo, pendingSend, pendingSendSeconds, cancelPendingSend,
-      addAttachmentToDraft, removeAttachmentFromDraft,
+      addAttachmentToDraft, removeAttachmentFromDraft, discardDraft,
       syncHealth, syncStatusText, backfillProgress, triggerBackfillManual, isSyncing, triggerSyncManual,
       aiPanelOpen, setAiPanelOpen, aiProvider, setAiProvider: setAiProviderState, aiProviderDesc,
       aiConversations, activeAIConversation, activeAIMessages, startNewAIConversation, selectAIConversation, sendAIMessage,
       runAIAction, runAITriagePlan, triagePlan, setTriagePlan, aiPanelLoading,
       settingsOpen, setSettingsOpen, aiModel, setAiModel, customEnv, loadAIConfig, saveAIConfig, fetchModelsForProvider,
-      modelsCache, verifyConnectionAndFetchModels,
+      modelsCache, verifyConnectionAndFetchModels, verifyMCPServer,
       speedProof, triggerVisibleBodyRepair,
       settings, updateSettings, selectedTriageThreadIds, toggleTriagePlanItemSelection, selectAllApplicableTriagePlanItems,
       clearTriagePlanSelection, applySelectedTriagePlanItems, applyTriagePlanItem, triageQueueReadiness, triageActionPreview

@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),
   saveAIConfig: (config: Record<string, string>) => ipcRenderer.invoke('api:saveAIConfig', config),
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),
+  verifyMCPServer: (config: any) => ipcRenderer.invoke('api:verifyMCPServer', config),
 
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('db:getSetting', key),

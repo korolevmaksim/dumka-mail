@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { AIChatMessage, AIProviderDescriptor, AIProviderPreference } from '../shared/types';
+import { MCPManager } from './mcpManager';
 
 export interface AIRequest {
   action: string;
@@ -281,6 +282,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
   const env = loadAIConfig();
   const promptText = buildPrompt(request);
   const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output.';
+  const activeTools = MCPManager.getActiveTools();
 
   switch (descriptor.preference) {
     case 'openAI': {
@@ -291,43 +293,103 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       const endpoint = customResponsesUrl || env['OPENAI_BASE_URL'] || 'https://api.openai.com/v1/chat/completions';
       const isResponsesApi = endpoint.includes('/responses');
 
-      const body = isResponsesApi
-        ? { model: descriptor.model, input: promptText }
-        : {
-            model: descriptor.model,
-            messages: [
-              { role: 'system', content: sysInstruction },
-              { role: 'user', content: promptText }
-            ]
-          };
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!res.ok) {
-        throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
-      }
-
-      const data = await res.json() as any;
-      let text = '';
       if (isResponsesApi) {
+        // Responses API doesn't support tools in the same way, fallback to simple completion
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ model: descriptor.model, input: promptText })
+        });
+        if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
+        const data = await res.json() as any;
+        let text = '';
         if (data.output_text) {
           text = data.output_text;
         } else if (data.output) {
           text = data.output.flatMap((o: any) => o.content || []).map((c: any) => c.text || '').join('\n');
         }
-      } else {
-        text = data.choices?.[0]?.message?.content || '';
+        if (!text) throw new Error('Empty response from OpenAI API.');
+        return { text };
       }
 
-      if (!text) throw new Error('Empty response from OpenAI API.');
-      return { text };
+      // Standard Chat Completions with Tool Calling Loop
+      const openAITools = activeTools.map(t => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema
+        }
+      }));
+
+      const messages: any[] = [
+        { role: 'system', content: sysInstruction },
+        { role: 'user', content: promptText }
+      ];
+
+      let loop = true;
+      let iterations = 0;
+      let finalResponseText = '';
+
+      while (loop && iterations < 5) {
+        iterations++;
+        const body: any = {
+          model: descriptor.model,
+          messages,
+          stream: false
+        };
+        if (openAITools.length > 0) {
+          body.tools = openAITools;
+        }
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
+        }
+
+        const data = await res.json() as any;
+        const message = data.choices?.[0]?.message;
+        if (!message) throw new Error('Empty response from OpenAI.');
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          messages.push(message);
+          for (const tc of message.tool_calls) {
+            const name = tc.function.name;
+            const args = JSON.parse(tc.function.arguments || '{}');
+            console.log(`[AI] OpenAI requested tool "${name}" with args:`, args);
+            let result;
+            try {
+              result = await MCPManager.executeTool(name, args);
+            } catch (err: any) {
+              console.error(`[AI] Tool execution failed:`, err);
+              result = { error: err.message || String(err) };
+            }
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              name,
+              content: typeof result === 'string' ? result : JSON.stringify(result)
+            });
+          }
+        } else {
+          finalResponseText = message.content || '';
+          loop = false;
+        }
+      }
+
+      if (!finalResponseText) throw new Error('Empty response from OpenAI.');
+      return { text: finalResponseText };
     }
 
     case 'anthropic': {
@@ -337,29 +399,79 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       const version = env['ANTHROPIC_VERSION'] || '2023-06-01';
       const maxTokens = parseInt(env['ANTHROPIC_MAX_TOKENS'] || '4096', 10);
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': version,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+      const anthropicTools = activeTools.map(t => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema
+      }));
+
+      const messages: any[] = [
+        { role: 'user', content: promptText }
+      ];
+
+      let loop = true;
+      let iterations = 0;
+      let finalResponseText = '';
+
+      while (loop && iterations < 5) {
+        iterations++;
+        const body: any = {
           model: descriptor.model,
           max_tokens: maxTokens,
           system: sysInstruction,
-          messages: [{ role: 'user', content: promptText }]
-        })
-      });
+          messages
+        };
+        if (anthropicTools.length > 0) {
+          body.tools = anthropicTools;
+        }
 
-      if (!res.ok) {
-        throw new Error(`Anthropic HTTP ${res.status}: ${await res.text()}`);
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': version,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          throw new Error(`Anthropic HTTP ${res.status}: ${await res.text()}`);
+        }
+
+        const data = await res.json() as any;
+        if (data.stop_reason === 'tool_use') {
+          messages.push({ role: 'assistant', content: data.content });
+
+          const toolResults = [];
+          for (const block of data.content) {
+            if (block.type === 'tool_use') {
+              const name = block.name;
+              const input = block.input;
+              console.log(`[AI] Anthropic requested tool "${name}" with args:`, input);
+              let result;
+              try {
+                result = await MCPManager.executeTool(name, input);
+              } catch (err: any) {
+                console.error(`[AI] Tool execution failed:`, err);
+                result = { error: err.message || String(err) };
+              }
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content: typeof result === 'string' ? result : JSON.stringify(result)
+              });
+            }
+          }
+          messages.push({ role: 'user', content: toolResults });
+        } else {
+          finalResponseText = (data.content || []).map((c: any) => c.type === 'text' ? c.text : '').join('\n');
+          loop = false;
+        }
       }
 
-      const data = await res.json() as any;
-      const text = (data.content || []).map((c: any) => c.type === 'text' ? c.text : '').join('\n');
-      if (!text) throw new Error('Empty response from Anthropic.');
-      return { text };
+      if (!finalResponseText) throw new Error('Empty response from Anthropic.');
+      return { text: finalResponseText };
     }
 
     case 'gemini': {
@@ -370,27 +482,82 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       const modelName = descriptor.model.startsWith('models/') ? descriptor.model.substring(7) : descriptor.model;
       const endpoint = `${baseURL}/models/${modelName}:generateContent?key=${apiKey}`;
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: sysInstruction }] },
-          contents: [{ role: 'user', parts: [{ text: promptText }] }]
-        })
-      });
+      const geminiTools = activeTools.length > 0 ? [{
+        functionDeclarations: activeTools.map(t => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema
+        }))
+      }] : undefined;
 
-      if (!res.ok) {
-        throw new Error(`Gemini HTTP ${res.status}: ${await res.text()}`);
+      const contents: any[] = [
+        { role: 'user', parts: [{ text: promptText }] }
+      ];
+
+      let loop = true;
+      let iterations = 0;
+      let finalResponseText = '';
+
+      while (loop && iterations < 5) {
+        iterations++;
+        const body: any = {
+          system_instruction: { parts: [{ text: sysInstruction }] },
+          contents
+        };
+        if (geminiTools) {
+          body.tools = geminiTools;
+        }
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          throw new Error(`Gemini HTTP ${res.status}: ${await res.text()}`);
+        }
+
+        const data = await res.json() as any;
+        const candidate = data.candidates?.[0];
+        if (!candidate) throw new Error('Empty response from Gemini.');
+
+        const parts = candidate.content?.parts || [];
+        const functionCalls = parts.filter((p: any) => p.functionCall);
+
+        if (functionCalls.length > 0) {
+          contents.push(candidate.content);
+
+          const responseParts = [];
+          for (const p of parts) {
+            if (p.functionCall) {
+              const name = p.functionCall.name;
+              const args = p.functionCall.args || {};
+              console.log(`[AI] Gemini requested tool "${name}" with args:`, args);
+              let result;
+              try {
+                result = await MCPManager.executeTool(name, args);
+              } catch (err: any) {
+                console.error(`[AI] Tool execution failed:`, err);
+                result = { error: err.message || String(err) };
+              }
+              responseParts.push({
+                functionResponse: {
+                  name,
+                  response: { result }
+                }
+              });
+            }
+          }
+          contents.push({ role: 'function', parts: responseParts });
+        } else {
+          finalResponseText = parts.map((p: any) => p.text || '').join('\n');
+          loop = false;
+        }
       }
 
-      const data = await res.json() as any;
-      const text = (data.candidates || [])
-        .flatMap((cand: any) => cand.content?.parts || [])
-        .map((p: any) => p.text || '')
-        .join('\n');
-
-      if (!text) throw new Error('Empty response from Gemini.');
-      return { text };
+      if (!finalResponseText) throw new Error('Empty response from Gemini.');
+      return { text: finalResponseText };
     }
 
     case 'deepSeek':
@@ -405,48 +572,95 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       if (!apiKey) throw new Error(`${isDeepSeek ? 'DeepSeek' : 'OpenAI-compatible'} API key missing.`);
       if (!endpoint) throw new Error(`${isDeepSeek ? 'DeepSeek' : 'OpenAI-compatible'} endpoint URL missing.`);
 
-      // Format endpoint to end with chat/completions if not done
       let url = endpoint;
       if (!url.endsWith('/chat/completions') && !url.endsWith('/completions')) {
         url = url.endsWith('/') ? `${url}chat/completions` : `${url}/chat/completions`;
       }
 
-      const body: any = {
-        model: descriptor.model,
-        messages: [
-          { role: 'system', content: sysInstruction },
-          { role: 'user', content: promptText }
-        ],
-        stream: false
-      };
+      const openAITools = activeTools.map(t => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema
+        }
+      }));
 
-      if (isDeepSeek) {
-        const thinking = env['DEEPSEEK_THINKING'] || 'disabled';
-        if (thinking !== 'disabled') {
-          body.thinking = { type: thinking };
-          if (env['DEEPSEEK_REASONING_EFFORT']) {
-            body.reasoning_effort = env['DEEPSEEK_REASONING_EFFORT'];
+      const messages: any[] = [
+        { role: 'system', content: sysInstruction },
+        { role: 'user', content: promptText }
+      ];
+
+      let loop = true;
+      let iterations = 0;
+      let finalResponseText = '';
+
+      while (loop && iterations < 5) {
+        iterations++;
+        const body: any = {
+          model: descriptor.model,
+          messages,
+          stream: false
+        };
+        if (openAITools.length > 0) {
+          body.tools = openAITools;
+        }
+
+        if (isDeepSeek) {
+          const thinking = env['DEEPSEEK_THINKING'] || 'disabled';
+          if (thinking !== 'disabled') {
+            body.thinking = { type: thinking };
+            if (env['DEEPSEEK_REASONING_EFFORT']) {
+              body.reasoning_effort = env['DEEPSEEK_REASONING_EFFORT'];
+            }
           }
+        }
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          throw new Error(`Chat Completions HTTP ${res.status}: ${await res.text()}`);
+        }
+
+        const data = await res.json() as any;
+        const message = data.choices?.[0]?.message;
+        if (!message) throw new Error('Empty response from Chat completions API.');
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          messages.push(message);
+          for (const tc of message.tool_calls) {
+            const name = tc.function.name;
+            const args = JSON.parse(tc.function.arguments || '{}');
+            console.log(`[AI] Chat completions requested tool "${name}" with args:`, args);
+            let result;
+            try {
+              result = await MCPManager.executeTool(name, args);
+            } catch (err: any) {
+              console.error(`[AI] Tool execution failed:`, err);
+              result = { error: err.message || String(err) };
+            }
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              name,
+              content: typeof result === 'string' ? result : JSON.stringify(result)
+            });
+          }
+        } else {
+          finalResponseText = message.content || '';
+          loop = false;
         }
       }
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!res.ok) {
-        throw new Error(`Chat Completions HTTP ${res.status}: ${await res.text()}`);
-      }
-
-      const data = await res.json() as any;
-      const text = data.choices?.[0]?.message?.content;
-      if (!text) throw new Error('Empty response from Chat completions API.');
-      return { text };
+      if (!finalResponseText) throw new Error('Empty response from Chat completions API.');
+      return { text: finalResponseText };
     }
 
     default:

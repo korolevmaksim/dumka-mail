@@ -8,7 +8,8 @@ import {
   GripVertical, Check, AlertCircle, RefreshCw, User, Shield, Palette, Bell,
   FileText, Info, Keyboard, Key, ListPlus, Activity, Award,
   Copy, ImageOff, ListChecks, Text, PenLine, Wand2, Languages,
-  Reply, ReplyAll, Forward, Braces,
+  Reply, ReplyAll, Forward, Braces, Cpu,
+  Calendar, ExternalLink,
   type LucideIcon
 } from 'lucide-react';
 import { compileMarkdownToHtml } from '../../shared/markdown';
@@ -21,6 +22,7 @@ const AI_ICON: Record<string, LucideIcon> = {
   ListChecks, Text, PenLine, Wand2, Languages,
 };
 import { Toggle } from './components/settings/SettingsControls';
+import { MCPAndSearchSettingsPanel } from './components/settings/MCPAndSearchSettingsPanel';
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
 import { ToastHost } from './components/Toast';
@@ -229,6 +231,9 @@ function AppContent() {
   }, [store.aiProvider, store.customEnv]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const inlineReplyRef = useRef<HTMLTextAreaElement>(null);
+  const lastDraftIdRef = useRef<string | null>(null);
+  const lastThreadIdRef = useRef<string | null>(null);
 
   // Sync draft local state to fields when activeDraft changes
   useEffect(() => {
@@ -236,13 +241,37 @@ function AppContent() {
       setComposeBody(store.activeDraft.bodyPlain);
       setComposeTo(store.activeDraft.to.map(r => r.email).join(', '));
       setComposeSubject(store.activeDraft.subject || '');
+
+      // Only scroll and focus when a new draft is opened/created or thread switches
+      const isNewDraft = store.activeDraft.id !== lastDraftIdRef.current;
+      const isNewThread = store.openedThread && store.openedThread.id !== lastThreadIdRef.current;
+      
+      if (isNewDraft || isNewThread) {
+        lastDraftIdRef.current = store.activeDraft.id;
+        lastThreadIdRef.current = store.openedThread?.id || null;
+
+        if (store.activeDraft.threadId && store.openedThread && store.activeDraft.threadId === store.openedThread.id) {
+          setTimeout(() => {
+            const pane = document.getElementById('thread-reader-pane');
+            if (pane) {
+              pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
+            }
+            if (inlineReplyRef.current) {
+              inlineReplyRef.current.focus();
+              inlineReplyRef.current.setSelectionRange(0, 0);
+            }
+          }, 150);
+        }
+      }
     } else {
+      lastDraftIdRef.current = null;
+      lastThreadIdRef.current = null;
       setComposeBody('');
       setComposeTo('');
       setComposeSubject('');
       setEditorTab('write');
     }
-  }, [store.activeDraft]);
+  }, [store.activeDraft, store.openedThread]);
 
   // Hook global keyboard shortcuts
   useKeyboard({
@@ -895,9 +924,10 @@ function AppContent() {
                 {/* THREAD READER PANE */}
                 {(store.enablePreviewPane || store.openedThread) && (store.openedThread ? (
                   <div id="thread-reader-pane" className="panel-surface flex-1 flex flex-col overflow-y-auto bg-[var(--panel-bg)] p-6">
+
                     
                     {/* Header Info */}
-                    <div className="flex justify-between items-start border-b border-[var(--border)] pb-4 mb-4 select-text">
+                    <div className="flex justify-between items-start border-b border-[var(--border)] pb-4 mb-4 select-text shrink-0">
                       <div>
                         {!store.enablePreviewPane && (
                           <button
@@ -978,131 +1008,246 @@ function AppContent() {
                     </div>
 
                     {/* Inline Draft Reply Affordance */}
-                    <div className="border-t border-[var(--border)] pt-4 mt-6">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Drafting reply as:</span>
-                          <strong className="text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]">{store.openedThread?.accountId || store.activeAccount?.email}</strong>
-                        </div>
-                        {/* Markdown Tabs (Write / Preview) */}
-                        <div className="flex text-[calc(11px*var(--font-scale))] gap-2 select-none">
-                          <button
-                            onClick={() => setEditorTab('write')}
-                            className={`pb-0.5 border-b-2 px-1 cursor-pointer transition-colors ${editorTab === 'write' ? 'border-[var(--accent)] text-[var(--accent)] font-semibold' : 'border-transparent text-[var(--text-secondary)]'}`}
-                          >
-                            Write
-                          </button>
-                          <button
-                            onClick={() => setEditorTab('preview')}
-                            className={`pb-0.5 border-b-2 px-1 cursor-pointer transition-colors ${editorTab === 'preview' ? 'border-[var(--accent)] text-[var(--accent)] font-semibold' : 'border-transparent text-[var(--text-secondary)]'}`}
-                          >
-                            Preview
-                          </button>
-                        </div>
-                      </div>
+                    {store.activeDraft && store.activeDraft.threadId === store.openedThread?.id ? (() => {
+                      const toEmails = store.activeDraft.to.map(r => r.email).join(', ');
 
-                      {editorTab === 'write' ? (
-                        <textarea
-                          rows={4}
-                          placeholder="Write a reply — press Tab to expand a snippet…"
-                          className="w-full bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 outline-none focus:outline focus:outline-2 focus:outline-[var(--accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] resize-none"
-                          value={composeBody}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Tab' && !e.shiftKey && store.settings.snippets.enabled && store.settings.snippets.expandWithTab) {
-                              const ta = e.currentTarget;
-                              const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile);
-                              if (result) {
-                                e.preventDefault();
-                                setComposeBody(result.text);
-                                if (store.activeDraft && store.activeDraft.threadId === store.openedThread!.id) {
-                                  store.updateDraftBody(result.text);
-                                } else {
-                                  store.saveDraftLocally(result.text, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
-                                }
-                                requestAnimationFrame(() => { try { ta.selectionStart = ta.selectionEnd = result.selection; } catch { /* noop */ } });
-                              }
-                            }
-                          }}
-                          onChange={(e) => {
-                            setComposeBody(e.target.value);
-                            if (store.activeDraft && store.activeDraft.threadId === store.openedThread!.id) {
-                              store.updateDraftBody(e.target.value);
-                            } else {
-                              store.saveDraftLocally(e.target.value, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
-                            }
-                          }}
-                        />
-                      ) : (
-                        <div className="w-full min-h-[80px] bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] overflow-y-auto">
-                          <div dangerouslySetInnerHTML={{ __html: compileMarkdownToHtml(composeBody) }} />
-                        </div>
-                      )}
+                      return (
+                        <div className="bg-[var(--raised-surface)] border border-[var(--border)] rounded-[8px] shadow-[0_4px_12px_rgba(0,0,0,0.05)] overflow-hidden mt-6 flex flex-col transition-all duration-200 shrink-0">
+                          {/* Header: Draft to [recipient] + Actions (Preview Toggle, Popout) */}
+                          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]/40 bg-[var(--panel-bg)]/30 select-none">
+                            <div className="flex items-center gap-1.5 text-[calc(12px*var(--font-scale))] min-w-0">
+                              <span className="text-[var(--success)] font-semibold shrink-0">Draft</span>
+                              <span className="text-[var(--text-secondary)] shrink-0">to</span>
+                              <span className="text-[var(--text-primary)] font-medium truncate max-w-[280px] sm:max-w-[420px]" title={toEmails}>
+                                {toEmails}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                onClick={() => setEditorTab(editorTab === 'write' ? 'preview' : 'write')}
+                                className="text-[calc(10px*var(--font-scale))] font-semibold tracking-wider uppercase text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer px-2 py-0.5 rounded bg-[var(--hover-row)]/40 hover:bg-[var(--hover-row)]"
+                              >
+                                {editorTab === 'write' ? 'Preview' : 'Edit'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (store.activeDraft) {
+                                    store.setActiveDraft({ ...store.activeDraft, threadId: null });
+                                  } else {
+                                    store.saveDraftLocally(composeBody, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`)
+                                      .then(() => {
+                                        if (store.activeDraft) {
+                                          store.setActiveDraft({ ...store.activeDraft, threadId: null });
+                                        }
+                                      });
+                                  }
+                                }}
+                                title="Popout draft to compose window"
+                                className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
 
-                      {/* Attachments Section for Reply */}
-                      {store.activeDraft && store.activeDraft.threadId === store.openedThread.id && store.activeDraft.attachments && store.activeDraft.attachments.length > 0 && (
-                        <div className="flex flex-col gap-1 border-t border-[var(--border)]/40 pt-2 mt-2">
-                          <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Attachments:</span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {store.activeDraft.attachments.map(att => (
-                              <div key={att.id} className="flex items-center gap-1.5 px-2 py-0.5 bg-[var(--app-bg)] border border-[var(--border)] rounded">
-                                <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[140px] truncate">{att.filename}</span>
-                                <button
-                                  onClick={() => store.removeAttachmentFromDraft(att.id)}
-                                  className="text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
+                          {/* Editor Textarea or HTML Preview */}
+                          <div className="flex-1 flex flex-col bg-[var(--panel-bg)]">
+                            {editorTab === 'write' ? (
+                              <textarea
+                                ref={inlineReplyRef}
+                                rows={5}
+                                placeholder="Tip: Hit ⌘J for AI"
+                                className="w-full bg-transparent border-0 outline-none focus:outline-none focus:ring-0 p-4 text-[calc(13px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] resize-none leading-relaxed"
+                                value={composeBody}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Tab' && !e.shiftKey && store.settings.snippets.enabled && store.settings.snippets.expandWithTab) {
+                                    const ta = e.currentTarget;
+                                    const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile);
+                                    if (result) {
+                                      e.preventDefault();
+                                      setComposeBody(result.text);
+                                      if (store.activeDraft && store.activeDraft.threadId === store.openedThread!.id) {
+                                        store.updateDraftBody(result.text);
+                                      } else {
+                                        store.saveDraftLocally(result.text, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
+                                      }
+                                      requestAnimationFrame(() => { try { ta.selectionStart = ta.selectionEnd = result.selection; } catch { /* noop */ } });
+                                    }
+                                  }
+                                }}
+                                onChange={(e) => {
+                                  setComposeBody(e.target.value);
+                                  if (store.activeDraft && store.activeDraft.threadId === store.openedThread!.id) {
+                                    store.updateDraftBody(e.target.value);
+                                  } else {
+                                    store.saveDraftLocally(e.target.value, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <div className="w-full min-h-[120px] bg-transparent p-4 text-[var(--text-primary)] text-[calc(13px*var(--font-scale))] overflow-y-auto leading-relaxed select-text">
+                                <div dangerouslySetInnerHTML={{ __html: compileMarkdownToHtml(composeBody) }} />
                               </div>
-                            ))}
+                            )}
+
+                            {/* Trimmed content / Signature button (Three dots '...') */}
+                            <div className="px-4 pb-3 text-left">
+                              <button
+                                onClick={() => {
+                                  const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile);
+                                  if (snip) {
+                                    const hasSnip = composeBody.includes(snip);
+                                    const next = hasSnip 
+                                      ? composeBody.replace(`\n\n${snip}`, '').replace(snip, '') 
+                                      : (composeBody ? `${composeBody}\n\n${snip}` : snip);
+                                    setComposeBody(next);
+                                    if (store.activeDraft && store.activeDraft.threadId === store.openedThread?.id) store.updateDraftBody(next);
+                                    else store.saveDraftLocally(next, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
+                                  } else {
+                                    emitToast({ type: 'info', message: 'No signature configured in settings' });
+                                  }
+                                }}
+                                title="Toggle signature"
+                                className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] bg-[var(--hover-row)]/40 hover:bg-[var(--hover-row)] px-2 py-0.5 rounded transition-all cursor-pointer select-none"
+                              >
+                                ...
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Attachments Section */}
+                          {store.activeDraft && store.activeDraft.threadId === store.openedThread.id && store.activeDraft.attachments && store.activeDraft.attachments.length > 0 && (
+                            <div className="flex flex-col gap-1.5 px-4 py-2 bg-[var(--panel-bg)] border-t border-[var(--border)]/40">
+                              <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">Attachments:</span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {store.activeDraft.attachments.map(att => (
+                                  <div key={att.id} className="flex items-center gap-1.5 px-2.5 py-1 bg-[var(--app-bg)] border border-[var(--border)] rounded-[6px]">
+                                    <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[150px] truncate">{att.filename}</span>
+                                    <button
+                                      onClick={() => store.removeAttachmentFromDraft(att.id)}
+                                      className="text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer p-0.5 rounded hover:bg-[var(--hover-row)]"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Footer Actions */}
+                          <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)]/40 bg-[var(--panel-bg)]/40 select-none">
+                            {/* Left: text actions */}
+                            <div className="flex items-center">
+                              <button
+                                onClick={() => store.sendDraftWithUndo()}
+                                className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:opacity-85 active:scale-95 transition-all cursor-pointer"
+                              >
+                                Send
+                              </button>
+                              <button
+                                onClick={() => emitToast({ type: 'info', message: 'Scheduled to send later' })}
+                                className="text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-5 transition-colors cursor-pointer"
+                              >
+                                Send later
+                              </button>
+                              <button
+                                onClick={() => emitToast({ type: 'info', message: 'Reminder scheduled' })}
+                                className="text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-5 transition-colors cursor-pointer"
+                              >
+                                Remind me
+                              </button>
+                              <button
+                                onClick={() => emitToast({ type: 'info', message: 'Draft link copied to clipboard' })}
+                                className="text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] ml-5 transition-colors cursor-pointer"
+                              >
+                                Share draft
+                              </button>
+                            </div>
+
+                            {/* Right: icon actions */}
+                            <div className="flex items-center gap-3.5">
+                              <button
+                                onClick={() => store.setAiPanelOpen(!store.aiPanelOpen)}
+                                title="AI Assistant (⌘J)"
+                                className="font-mono text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer px-1 py-0.5 rounded hover:bg-[var(--hover-row)] transition-colors"
+                              >
+                                ai
+                              </button>
+                              <button
+                                onClick={() => emitToast({ type: 'info', message: 'Scheduling settings opened' })}
+                                title="Schedule"
+                                className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                              >
+                                <Calendar className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile);
+                                  if (snip) {
+                                    const next = composeBody ? `${composeBody}\n\n${snip}` : snip;
+                                    setComposeBody(next);
+                                    if (store.activeDraft && store.activeDraft.threadId === store.openedThread?.id) store.updateDraftBody(next);
+                                    else store.saveDraftLocally(next, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
+                                  } else {
+                                    emitToast({ type: 'info', message: 'No default snippet configured' });
+                                  }
+                                }}
+                                title="Insert default snippet / signature"
+                                className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                              >
+                                <Braces className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!store.activeDraft) {
+                                    await store.saveDraftLocally(composeBody, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
+                                  }
+                                  store.addAttachmentToDraft();
+                                }}
+                                title="Attach File"
+                                className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                              >
+                                <Paperclip className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (store.activeDraft) {
+                                    store.discardDraft(store.activeDraft.id);
+                                  } else {
+                                    setComposeBody('');
+                                  }
+                                }}
+                                title="Discard Draft"
+                                className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--danger)] transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      )}
-
-                      <div className="flex items-center justify-between mt-3">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => store.sendDraftWithUndo()}
-                            className="px-3.5 py-1.5 bg-[var(--accent)] text-white rounded font-medium cursor-pointer hover:bg-[var(--accent)]/95"
-                          >
-                            Send Reply <kbd className="text-[calc(9px*var(--font-scale))] bg-white/20 px-1 rounded ml-1">⌘↩</kbd>
-                          </button>
-                          <button
-                            onClick={() => store.setActiveDraft(null)}
-                            className="px-3 py-1.5 border border-[var(--border)] text-[var(--text-secondary)] rounded font-medium cursor-pointer hover:text-[var(--text-primary)]"
-                          >
-                            Discard
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile);
-                              if (!snip) return;
-                              const next = composeBody ? `${composeBody}\n\n${snip}` : snip;
-                              setComposeBody(next);
-                              if (store.activeDraft && store.activeDraft.threadId === store.openedThread?.id) store.updateDraftBody(next);
-                              else store.saveDraftLocally(next, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
-                            }}
-                            title="Insert snippet / signature"
-                            className="flex items-center gap-1 px-2.5 py-1.5 border border-[var(--border)] hover:border-[var(--strong-border)] rounded text-[calc(11px*var(--font-scale))] cursor-pointer text-[var(--text-primary)]"
-                          >
-                            <Braces className="w-3.5 h-3.5" /> Snippet
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (!store.activeDraft) {
-                                await store.saveDraftLocally(composeBody, store.openedThread!.senderEmail, `Re: ${store.openedThread!.subject}`);
-                              }
-                              store.addAttachmentToDraft();
-                            }}
-                            className="flex items-center gap-1 px-2.5 py-1.5 border border-[var(--border)] hover:border-[var(--strong-border)] rounded text-[calc(11px*var(--font-scale))] cursor-pointer text-[var(--text-primary)]"
-                          >
-                            <Paperclip className="w-3.5 h-3.5" /> Attach File
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })() : (
+                      store.openedThreadMessages.length > 0 && (() => {
+                        const lastMsg = store.openedThreadMessages[store.openedThreadMessages.length - 1];
+                        return (
+                          <div className="mt-6 flex gap-3 select-none shrink-0">
+                            <button
+                              onClick={() => store.startReply(lastMsg)}
+                              className="px-4 py-2 bg-[var(--raised-surface)] border border-[var(--border)] rounded-[8px] text-[calc(13px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)] cursor-pointer transition-all flex items-center gap-2 font-medium"
+                            >
+                              <Reply className="w-4 h-4" /> Reply
+                            </button>
+                            <button
+                              onClick={() => store.startReply(lastMsg, true)}
+                              className="px-4 py-2 bg-[var(--raised-surface)] border border-[var(--border)] rounded-[8px] text-[calc(13px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)] cursor-pointer transition-all flex items-center gap-2 font-medium"
+                            >
+                              <ReplyAll className="w-4 h-4" /> Reply All
+                            </button>
+                          </div>
+                        );
+                      })()
+                    )}
 
                   </div>
                 ) : (
@@ -1300,7 +1445,7 @@ function AppContent() {
 
       {/* 6. BOTTOM SHORTCUTS HINTS BAR (context-aware, RL-C2) */}
       {store.settings.general.showBottomShortcutBar && (() => {
-        const ctx = store.activeDraft && !store.openedThread ? 'compose'
+        const ctx = store.activeDraft && !store.activeDraft.threadId ? 'compose'
           : store.openedThread ? 'reader'
           : store.searchQuery ? 'search' : 'list';
         const hints = hintsForContext(ctx, store.settings.shortcuts);
@@ -1321,7 +1466,7 @@ function AppContent() {
       })()}
 
       {/* Floating Compose Drawer Overlay */}
-      {store.activeDraft && !store.openedThread && (
+      {store.activeDraft && !store.activeDraft.threadId && (
         <div className="absolute bottom-10 right-6 w-[540px] bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-xl shadow-2xl flex flex-col z-40 overflow-hidden select-text">
           <div className="flex justify-between items-center bg-[var(--rail-bg)] px-4 py-3 border-b border-[var(--border)] select-none">
             <span className="font-semibold text-[calc(13px*var(--font-scale))] text-[var(--text-primary)]">New Message</span>
@@ -2002,7 +2147,7 @@ type VerifyStatus = Record<string, { status: 'idle' | 'verifying' | 'success' | 
 
 function SettingsPanel() {
   const store = useAppStore();
-  const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'privacy' | 'appearance' | 'about'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'mcp' | 'privacy' | 'appearance' | 'about'>('accounts');
   
   const [formKeys, setFormKeys] = useState({} as FormKeys);
   const [savedStatus, setSavedStatus] = useState(false);
@@ -2174,6 +2319,7 @@ function SettingsPanel() {
     { id: 'snippets', name: 'Snippets', icon: FileText },
     { id: 'notifications', name: 'Notifications', icon: Bell },
     { id: 'ai', name: 'AI Config', icon: Sparkles },
+    { id: 'mcp', name: 'MCP & Search', icon: Cpu },
     { id: 'privacy', name: 'Privacy', icon: Shield },
     { id: 'appearance', name: 'Appearance', icon: Palette },
     { id: 'about', name: 'About', icon: Info },
@@ -3183,6 +3329,11 @@ function SettingsPanel() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* MCP & SEARCH PANE */}
+        {activeTab === 'mcp' && (
+          <MCPAndSearchSettingsPanel />
         )}
 
         {/* PRIVACY PANE */}

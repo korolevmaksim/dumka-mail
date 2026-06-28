@@ -27,7 +27,7 @@ export default defineConfig({
             minify: false,
             outDir: 'dist-electron/main',
             rollupOptions: {
-              external: ['better-sqlite3']
+              external: ['better-sqlite3', '@modelcontextprotocol/sdk', 'eventsource']
             }
           }
         }

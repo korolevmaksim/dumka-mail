@@ -5,6 +5,7 @@ import { initializeDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { getRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfig, listProviderModels, loadAIConfig } from './ai';
+import { MCPManager } from './mcpManager';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -36,7 +37,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false
     }
   });
 
@@ -77,11 +79,25 @@ app.whenReady().then(() => {
   // Start background sync worker loop
   startBackgroundSyncWorker();
 
+  // Initialize MCPManager with stored settings
+  try {
+    const raw = SettingsRepo.get('appSettings');
+    if (raw) {
+      MCPManager.initialize(JSON.parse(raw));
+    }
+  } catch (err) {
+    console.error('Failed to initialize MCPManager on startup:', err);
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
+});
+
+app.on('will-quit', () => {
+  MCPManager.shutdown();
 });
 
 app.on('window-all-closed', () => {
@@ -126,7 +142,19 @@ ipcMain.handle('db:deleteConversation', (_, id) => AIConversationsRepo.deleteCon
 ipcMain.handle('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
 
 ipcMain.handle('db:getSetting', (_, key) => SettingsRepo.get(key));
-ipcMain.handle('db:setSetting', (_, key, value) => SettingsRepo.set(key, value));
+ipcMain.handle('db:setSetting', (_, key, value) => {
+  const result = SettingsRepo.set(key, value);
+  if (key === 'appSettings') {
+    try {
+      MCPManager.initialize(JSON.parse(value));
+    } catch (err) {
+      console.error('Failed to reload MCPManager after settings update:', err);
+    }
+  }
+  return result;
+});
+
+ipcMain.handle('api:verifyMCPServer', (_, config) => MCPManager.verifyServer(config));
 
 // === Bind IPC API / Service Channels ===
 ipcMain.handle('api:onboardAccount', (_, emailHint) => startOAuthFlow(emailHint));
