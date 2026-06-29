@@ -182,7 +182,9 @@ export function useMailSync({
 
   useEffect(() => {
     if (!activeAccount) return;
-    runSync(false, true);
+    // Do not force a full startup sync: it would advance the Gmail history cursor
+    // before incremental sync can notify about mail that arrived while the app was closed.
+    runSync(false, false);
 
     const intervalId = setInterval(() => {
       runSync(true, false, true);

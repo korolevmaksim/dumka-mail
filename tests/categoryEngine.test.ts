@@ -252,4 +252,23 @@ describe('categorize', () => {
     expect(ruleMatches(threadMe, globalRule2)).toBe(true);
     expect(ruleMatches(threadWork, globalRule2)).toBe(true);
   });
+
+  it('filters custom categories by accountId', () => {
+    const threadMe: MailThread = { ...baseThread, accountId: 'me@gmail.com', senderEmail: 'alert@billing.com' };
+    const threadWork: MailThread = { ...baseThread, accountId: 'work@gmail.com', senderEmail: 'alert@billing.com' };
+
+    const custom: CustomMailCategorySettings[] = [
+      {
+        id: 'custom-billing',
+        title: 'Billing',
+        isEnabled: true,
+        matchMode: 'any',
+        rules: [rule({ field: 'from', operation: 'contains', value: 'billing.com' })],
+        accountId: 'work@gmail.com'
+      }
+    ];
+
+    expect(categorize(threadWork, defaultBuiltIn(), custom)).toBe('custom-billing');
+    expect(categorize(threadMe, defaultBuiltIn(), custom)).toBe('other');
+  });
 });

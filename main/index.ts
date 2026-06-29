@@ -1,15 +1,237 @@
-import { app, BrowserWindow, ipcMain, dialog, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Notification, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { initializeDatabase, getDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { getRefreshToken } from './keychain';
-import { getAIProviderDescriptor, completeAI, saveAIConfig, listProviderModels, loadAIConfig } from './ai';
+import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { MCPManager } from './mcpManager';
+import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
+import type { MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenThread: { accountId: string; threadId: string } | null = null;
 const activeNotifications = new Set<Notification>();
+const DEFAULT_WINDOW_WIDTH = 1280;
+const DEFAULT_WINDOW_HEIGHT = 832;
+const MIN_WINDOW_WIDTH = 900;
+const MIN_WINDOW_HEIGHT = 600;
+const ALL_MAIL_NOTIFICATION_SCHEMA_VERSION = 4;
+const DEFAULT_NOTIFICATION_SETTINGS: MailNotificationSettings = {
+  desktopNotifications: true,
+  sound: false,
+  notifyImportantOnly: false,
+  reminderNotifications: true,
+  quietHoursEnabled: false,
+  quietHoursStart: '22:00',
+  quietHoursEnd: '08:00'
+};
+
+interface RestoredWindowState {
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  isMaximized?: boolean;
+}
+
+function assertTrustedSender(senderFrame: Electron.WebFrameMain | null) {
+  if (!senderFrame) return;
+  const url = senderFrame.url;
+  const isDev = process.env.VITE_DEV_SERVER_URL && url.startsWith(process.env.VITE_DEV_SERVER_URL);
+  const isProd = url.startsWith('file://');
+  if (!isDev && !isProd) {
+    throw new Error('Unauthorized IPC sender');
+  }
+}
+
+function parseClockMinutes(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function isInQuietHours(settings: MailNotificationSettings, now = new Date()): boolean {
+  if (!settings.quietHoursEnabled) return false;
+
+  const start = parseClockMinutes(settings.quietHoursStart);
+  const end = parseClockMinutes(settings.quietHoursEnd);
+  if (start === null || end === null || start === end) return false;
+
+  const current = now.getHours() * 60 + now.getMinutes();
+  return start < end
+    ? current >= start && current < end
+    : current >= start || current < end;
+}
+
+function hasLabel(message: MailMessage, label: string): boolean {
+  return message.labelIds.some(id => id.toUpperCase() === label);
+}
+
+function shouldNotifyOfNewMessage(message: MailMessage, settings: MailNotificationSettings): boolean {
+  if (!settings.desktopNotifications || isInQuietHours(settings)) return false;
+  if (!hasLabel(message, 'INBOX') || !hasLabel(message, 'UNREAD')) return false;
+
+  if (settings.notifyImportantOnly) {
+    return hasLabel(message, 'IMPORTANT') || hasLabel(message, 'CATEGORY_PRIMARY');
+  }
+
+  return true;
+}
+
+function readNotificationSettings(): MailNotificationSettings {
+  try {
+    const rawSettings = SettingsRepo.get('appSettings');
+    if (!rawSettings) return DEFAULT_NOTIFICATION_SETTINGS;
+
+    const parsed = JSON.parse(rawSettings);
+    const notifications = parsed?.notifications || {};
+    const schemaVersion = Number(parsed?.settingsSchemaVersion || 0);
+
+    return {
+      desktopNotifications: notifications.desktopNotifications !== false,
+      sound: notifications.sound === true,
+      notifyImportantOnly: schemaVersion >= ALL_MAIL_NOTIFICATION_SCHEMA_VERSION && notifications.notifyImportantOnly === true,
+      reminderNotifications: notifications.reminderNotifications !== false,
+      quietHoursEnabled: notifications.quietHoursEnabled === true,
+      quietHoursStart: typeof notifications.quietHoursStart === 'string' ? notifications.quietHoursStart : DEFAULT_NOTIFICATION_SETTINGS.quietHoursStart,
+      quietHoursEnd: typeof notifications.quietHoursEnd === 'string' ? notifications.quietHoursEnd : DEFAULT_NOTIFICATION_SETTINGS.quietHoursEnd
+    };
+  } catch (err) {
+    console.error('Failed to read notification settings:', err);
+    return DEFAULT_NOTIFICATION_SETTINGS;
+  }
+}
+
+function getNotificationIconPath(): string | undefined {
+  const iconPath = path.join(__dirname, '../../assets/icon.png');
+  return fs.existsSync(iconPath) ? iconPath : undefined;
+}
+
+function notifyOfNewMessages(messages: MailMessage[]) {
+  if (messages.length === 0) return;
+
+  const settings = readNotificationSettings();
+  if (!settings.desktopNotifications) return;
+
+  if (!Notification.isSupported()) {
+    console.warn('Native desktop notifications are not supported in this Electron runtime.');
+    return;
+  }
+
+  const icon = getNotificationIconPath();
+  for (const message of messages) {
+    if (!shouldNotifyOfNewMessage(message, settings)) continue;
+
+    try {
+      const sender = message.senderName || message.senderEmail || 'New mail';
+      const notification = new Notification({
+        title: sender,
+        subtitle: message.subject || '(No Subject)',
+        body: message.snippet || '',
+        silent: !settings.sound,
+        icon,
+        id: `new-mail:${message.accountId}:${message.id}`,
+        groupId: message.accountId
+      });
+
+      activeNotifications.add(notification);
+
+      notification.on('click', () => {
+        activeNotifications.delete(notification);
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.focus();
+          mainWindow.webContents.send('api:openThread', {
+            accountId: message.accountId,
+            threadId: message.threadId
+          });
+        } else {
+          pendingOpenThread = {
+            accountId: message.accountId,
+            threadId: message.threadId
+          };
+          createWindow();
+        }
+      });
+
+      notification.on('close', () => {
+        activeNotifications.delete(notification);
+      });
+
+      notification.on('failed', (_, error) => {
+        activeNotifications.delete(notification);
+        console.error('Notification failed to show:', error);
+      });
+
+      notification.show();
+    } catch (err) {
+      console.error('Failed to show push notification:', err);
+    }
+  }
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function intersectsAnyDisplay(bounds: { x: number; y: number; width: number; height: number }): boolean {
+  return screen.getAllDisplays().some(display => {
+    const area = display.workArea;
+    return (
+      bounds.x < area.x + area.width &&
+      bounds.x + bounds.width > area.x &&
+      bounds.y < area.y + area.height &&
+      bounds.y + bounds.height > area.y
+    );
+  });
+}
+
+function restoreWindowState(): RestoredWindowState {
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+  const maxWidth = Math.max(MIN_WINDOW_WIDTH, primaryWorkArea.width);
+  const maxHeight = Math.max(MIN_WINDOW_HEIGHT, primaryWorkArea.height);
+  const restored: RestoredWindowState = {
+    width: Math.min(DEFAULT_WINDOW_WIDTH, maxWidth),
+    height: Math.min(DEFAULT_WINDOW_HEIGHT, maxHeight)
+  };
+
+  try {
+    const saved = SettingsRepo.get('windowState');
+    if (!saved) return restored;
+
+    const parsed = JSON.parse(saved);
+    const width = isFiniteNumber(parsed.width)
+      ? clampNumber(parsed.width, MIN_WINDOW_WIDTH, maxWidth)
+      : restored.width;
+    const height = isFiniteNumber(parsed.height)
+      ? clampNumber(parsed.height, MIN_WINDOW_HEIGHT, maxHeight)
+      : restored.height;
+
+    restored.width = width;
+    restored.height = height;
+    restored.isMaximized = parsed.isMaximized === true;
+
+    if (isFiniteNumber(parsed.x) && isFiniteNumber(parsed.y)) {
+      const candidate = { x: parsed.x, y: parsed.y, width, height };
+      if (intersectsAnyDisplay(candidate)) {
+        restored.x = parsed.x;
+        restored.y = parsed.y;
+      }
+    }
+  } catch {}
+
+  return restored;
+}
 
 function createWindow() {
   const iconPath = path.join(__dirname, '../../assets/icon.png');
@@ -27,21 +249,66 @@ function createWindow() {
       ? { vibrancy: 'under-window' as const, visualEffectState: 'active' as const }
       : {};
 
+  const restoredWindowState = restoreWindowState();
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 832,
-    minWidth: 900,
-    minHeight: 600,
+    width: restoredWindowState.width,
+    height: restoredWindowState.height,
+    x: restoredWindowState.x,
+    y: restoredWindowState.y,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     title: 'Dumka Mail',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    titleBarStyle: 'hiddenInset', // Gives native macOS traffic lights inside chrome
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     ...vibrancyOptions,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false,
-      webSecurity: false
+      webSecurity: true
     }
+  });
+
+  if (restoredWindowState.isMaximized) {
+    mainWindow.maximize();
+  }
+
+  let saveBoundsTimer: NodeJS.Timeout | null = null;
+  const saveBounds = () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
+    try {
+      const b = mainWindow.isMaximized() ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+      SettingsRepo.set('windowState', JSON.stringify({
+        width: b.width,
+        height: b.height,
+        x: b.x,
+        y: b.y,
+        isMaximized: mainWindow.isMaximized()
+      }));
+    } catch (err) {
+      console.error('Failed to save window state:', err);
+    }
+  };
+
+  const queueSaveBounds = () => {
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer);
+    saveBoundsTimer = setTimeout(() => {
+      saveBoundsTimer = null;
+      saveBounds();
+    }, 500);
+  };
+
+  mainWindow.on('resize', queueSaveBounds);
+  mainWindow.on('move', queueSaveBounds);
+  mainWindow.on('close', () => {
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+      saveBoundsTimer = null;
+    }
+    saveBounds();
   });
 
   mainWindow.webContents.on('found-in-page', (_, result) => {
@@ -83,9 +350,13 @@ app.whenReady().then(() => {
   initializeDatabase();
 
   createWindow();
+
+  // Install the native application menu
+  installApplicationMenu(() => mainWindow);
   
   // Start background sync worker loop
   startBackgroundSyncWorker();
+  startBackgroundMailboxSyncWorker();
 
   // Initialize MCPManager with stored settings
   try {
@@ -114,27 +385,16 @@ app.on('window-all-closed', () => {
   }
 });
 
-// === Bind IPC Database Channels ===
-ipcMain.handle('db:listAccounts', () => AccountsRepo.list());
-ipcMain.handle('db:getAccount', (_, id) => AccountsRepo.get(id));
-ipcMain.handle('db:saveAccount', (_, account) => AccountsRepo.save(account));
-ipcMain.handle('db:deleteAccount', (_, id) => AccountsRepo.delete(id));
-
-ipcMain.handle('db:listThreads', (_, accountId) => ThreadsRepo.list(accountId));
-ipcMain.handle('db:saveThreads', (_, threads) => ThreadsRepo.save(threads));
-ipcMain.handle('db:deleteThread', (_, accountId, threadId) => ThreadsRepo.delete(accountId, threadId));
-
-ipcMain.handle('db:listMessagesForThread', (_, accountId, threadId) => MessagesRepo.listForThread(accountId, threadId));
-ipcMain.handle('db:saveMessages', async (_, messages, options?: { notifyOfNew?: boolean }) => {
-  let newMessages: any[] = [];
+function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }) {
+  const newMessages: MailMessage[] = [];
   if (options?.notifyOfNew) {
     try {
       const db = getDatabase();
       const checkExist = db.prepare('SELECT 1 FROM messages WHERE account_id = ? AND id = ?');
-      for (const m of messages) {
-        const exists = checkExist.get(m.accountId, m.id);
+      for (const message of messages) {
+        const exists = checkExist.get(message.accountId, message.id);
         if (!exists) {
-          newMessages.push(m);
+          newMessages.push(message);
         }
       }
     } catch (err) {
@@ -145,111 +405,80 @@ ipcMain.handle('db:saveMessages', async (_, messages, options?: { notifyOfNew?: 
   MessagesRepo.save(messages);
 
   if (options?.notifyOfNew && newMessages.length > 0) {
-    let showNotifications = true;
-    let notifyImportantOnly = true;
-    try {
-      const rawSettings = SettingsRepo.get('appSettings');
-      if (rawSettings) {
-        const parsed = JSON.parse(rawSettings);
-        if (parsed.notifications) {
-          showNotifications = parsed.notifications.desktopNotifications !== false;
-          notifyImportantOnly = parsed.notifications.notifyImportantOnly !== false;
-        }
-      }
-    } catch (err) {
-      console.error('Failed to read notification settings:', err);
-    }
-
-    if (showNotifications) {
-      for (const m of newMessages) {
-        const isInbox = m.labelIds.includes('INBOX') || m.labelIds.includes('inbox');
-        const isUnread = m.labelIds.includes('UNREAD') || m.labelIds.includes('unread');
-        
-        if (isInbox && isUnread) {
-          if (notifyImportantOnly) {
-            const isImportant = m.labelIds.includes('IMPORTANT') || m.labelIds.includes('important') || m.labelIds.includes('CATEGORY_PRIMARY');
-            if (!isImportant) {
-              continue;
-            }
-          }
-
-          try {
-            const sender = m.senderName || m.senderEmail;
-            const notification = new Notification({
-              title: sender,
-              subtitle: m.subject || '(No Subject)',
-              body: m.snippet || '',
-            });
-
-            activeNotifications.add(notification);
-
-            notification.on('click', () => {
-              activeNotifications.delete(notification);
-              if (mainWindow) {
-                if (mainWindow.isMinimized()) mainWindow.restore();
-                mainWindow.focus();
-                mainWindow.webContents.send('api:openThread', {
-                  accountId: m.accountId,
-                  threadId: m.threadId
-                });
-              } else {
-                pendingOpenThread = {
-                  accountId: m.accountId,
-                  threadId: m.threadId
-                };
-                createWindow();
-              }
-            });
-
-            notification.on('close', () => {
-              activeNotifications.delete(notification);
-            });
-
-            notification.on('failed', (_, error) => {
-              activeNotifications.delete(notification);
-              console.error('Notification failed to show:', error);
-            });
-
-            notification.show();
-          } catch (err) {
-            console.error('Failed to show push notification:', err);
-          }
-        }
-      }
-    }
+    notifyOfNewMessages(newMessages);
   }
+}
+
+function buildThreadFromMessages(accountId: string, threadId: string, messages: MailMessage[]): MailThread | null {
+  if (messages.length === 0) return null;
+
+  const lastMessage = messages[messages.length - 1];
+  return {
+    id: threadId,
+    accountId,
+    subject: lastMessage.subject || '',
+    snippet: lastMessage.snippet || '',
+    lastMessageAt: lastMessage.receivedAt,
+    senderNames: Array.from(new Set(messages.map(message => message.senderName || message.senderEmail))),
+    senderEmail: lastMessage.senderEmail,
+    labelIds: Array.from(new Set(messages.flatMap(message => message.labelIds))),
+    hasAttachments: messages.some(message => message.hasAttachments),
+    isUnread: messages.some(message => message.isUnread)
+  };
+}
+
+// === Bind IPC Database Channels ===
+function registerSecureHandler(channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event.senderFrame);
+    return listener(event, ...args);
+  });
+}
+
+registerSecureHandler('db:listAccounts', () => AccountsRepo.list());
+registerSecureHandler('db:getAccount', (_, id) => AccountsRepo.get(id));
+registerSecureHandler('db:saveAccount', (_, account) => AccountsRepo.save(account));
+registerSecureHandler('db:deleteAccount', (_, id) => AccountsRepo.delete(id));
+
+registerSecureHandler('db:listThreads', (_, accountId) => ThreadsRepo.list(accountId));
+registerSecureHandler('db:saveThreads', (_, threads) => ThreadsRepo.save(threads));
+registerSecureHandler('db:deleteThread', (_, accountId, threadId) => ThreadsRepo.delete(accountId, threadId));
+
+registerSecureHandler('db:listMessagesForThread', (_, accountId, threadId) => MessagesRepo.listForThread(accountId, threadId));
+registerSecureHandler('db:saveMessages', async (_, messages: MailMessage[], options?: { notifyOfNew?: boolean }) => {
+  saveMessagesToDatabase(messages, options);
 });
 
-ipcMain.handle('api:getPendingOpenThread', () => {
+registerSecureHandler('api:getPendingOpenThread', () => {
   const pending = pendingOpenThread;
   pendingOpenThread = null;
   return pending;
 });
 
-ipcMain.handle('db:listDrafts', (_, accountId) => DraftsRepo.list(accountId));
-ipcMain.handle('db:getDraft', (_, id) => DraftsRepo.get(id));
-ipcMain.handle('db:saveDraft', (_, draft) => DraftsRepo.save(draft));
-ipcMain.handle('db:deleteDraft', (_, id) => DraftsRepo.delete(id));
+registerSecureHandler('db:listDrafts', (_, accountId) => DraftsRepo.list(accountId));
+registerSecureHandler('db:getDraft', (_, id) => DraftsRepo.get(id));
+registerSecureHandler('db:saveDraft', (_, draft) => DraftsRepo.save(draft));
+registerSecureHandler('db:deleteDraft', (_, id) => DraftsRepo.delete(id));
 
-ipcMain.handle('db:getReminder', (_, accountId, threadId) => RemindersRepo.get(accountId, threadId));
-ipcMain.handle('db:saveReminder', (_, accountId, threadId, reminderAt) => RemindersRepo.save(accountId, threadId, reminderAt));
-ipcMain.handle('db:deleteReminder', (_, accountId, threadId) => RemindersRepo.delete(accountId, threadId));
+registerSecureHandler('db:getReminder', (_, accountId, threadId) => RemindersRepo.get(accountId, threadId));
+registerSecureHandler('db:saveReminder', (_, accountId, threadId, reminderAt) => RemindersRepo.save(accountId, threadId, reminderAt));
+registerSecureHandler('db:deleteReminder', (_, accountId, threadId) => RemindersRepo.delete(accountId, threadId));
 
-ipcMain.handle('db:getSyncState', (_, accountId) => SyncStateRepo.get(accountId));
-ipcMain.handle('db:saveSyncState', (_, state) => SyncStateRepo.save(state));
+registerSecureHandler('db:getSyncState', (_, accountId) => SyncStateRepo.get(accountId));
+registerSecureHandler('db:saveSyncState', (_, state) => SyncStateRepo.save(state));
 
-ipcMain.handle('db:listActionLog', (_, accountId) => ActionLogRepo.list(accountId));
-ipcMain.handle('db:saveActionLog', (_, log) => ActionLogRepo.save(log));
+registerSecureHandler('db:listActionLog', (_, accountId) => ActionLogRepo.list(accountId));
+registerSecureHandler('db:saveActionLog', (_, log) => ActionLogRepo.save(log));
 
-ipcMain.handle('db:listConversations', (_, accountId) => AIConversationsRepo.list(accountId));
-ipcMain.handle('db:getConversationMessages', (_, id) => AIConversationsRepo.getMessages(id));
-ipcMain.handle('db:saveConversation', (_, conv, messages) => AIConversationsRepo.saveConversation(conv, messages));
-ipcMain.handle('db:deleteConversation', (_, id) => AIConversationsRepo.deleteConversation(id));
+registerSecureHandler('db:listConversations', (_, accountId) => AIConversationsRepo.list(accountId));
+registerSecureHandler('db:getConversationMessages', (_, id) => AIConversationsRepo.getMessages(id));
+registerSecureHandler('db:saveConversation', (_, conv, messages) => AIConversationsRepo.saveConversation(conv, messages));
+registerSecureHandler('db:deleteConversation', (_, id) => AIConversationsRepo.deleteConversation(id));
 
-ipcMain.handle('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
+registerSecureHandler('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
 
-ipcMain.handle('db:getSetting', (_, key) => SettingsRepo.get(key));
-ipcMain.handle('db:setSetting', (_, key, value) => {
+registerSecureHandler('db:getSetting', (_, key) => SettingsRepo.get(key));
+registerSecureHandler('db:setSetting', (_, key, value) => {
   const result = SettingsRepo.set(key, value);
   if (key === 'appSettings') {
     try {
@@ -261,22 +490,22 @@ ipcMain.handle('db:setSetting', (_, key, value) => {
   return result;
 });
 
-ipcMain.handle('api:verifyMCPServer', (_, config) => MCPManager.verifyServer(config));
+registerSecureHandler('api:verifyMCPServer', (_, config) => MCPManager.verifyServer(config));
 
 // === Bind IPC API / Service Channels ===
-ipcMain.handle('api:onboardAccount', (_, emailHint) => startOAuthFlow(emailHint));
+registerSecureHandler('api:onboardAccount', (_, emailHint) => startOAuthFlow(emailHint));
 
-ipcMain.handle('api:verifyTokenExists', async (_, email) => {
+registerSecureHandler('api:verifyTokenExists', async (_, email) => {
   const token = await getRefreshToken(email);
   return token !== null;
 });
 
-ipcMain.handle('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));
-ipcMain.handle('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
-ipcMain.handle('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
-ipcMain.handle('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
-ipcMain.handle('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
-ipcMain.handle('api:downloadAttachment', async (_, email, messageId, attachmentId, filename) => {
+registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));
+registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
+registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
+registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
+registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
+registerSecureHandler('api:downloadAttachment', async (_, email, messageId, attachmentId, filename) => {
   if (!mainWindow) return;
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
     defaultPath: filename,
@@ -290,7 +519,7 @@ ipcMain.handle('api:downloadAttachment', async (_, email, messageId, attachmentI
   fs.writeFileSync(filePath, buffer);
 });
 
-ipcMain.handle('api:uploadAttachment', async () => {
+registerSecureHandler('api:uploadAttachment', async () => {
   if (!mainWindow) return null;
   const { filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
@@ -312,7 +541,7 @@ ipcMain.handle('api:uploadAttachment', async () => {
     base64Data
   };
 });
-ipcMain.handle('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string) => {
+registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string) => {
   // 1. Optimistically write to local SQLite database first for instant persistence
   ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
   
@@ -346,7 +575,7 @@ ipcMain.handle('api:modifyLabels', async (_, email, threadId, addLabelIds, remov
     throw err;
   }
 });
-ipcMain.handle('api:sendDraft', async (_, email, draft, actionId?: string) => {
+registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string) => {
   try {
     const threadId = await GmailSyncService.sendDraft(email, draft);
     return { offline: false, threadId };
@@ -376,15 +605,16 @@ ipcMain.handle('api:sendDraft', async (_, email, draft, actionId?: string) => {
   }
 });
 
-ipcMain.handle('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
-ipcMain.handle('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
-ipcMain.handle('api:loadAIConfig', () => loadAIConfig());
-ipcMain.handle('api:saveAIConfig', (_, config) => saveAIConfig(config));
-ipcMain.handle('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
-ipcMain.handle('api:findInPage', (event, text, options) => {
+registerSecureHandler('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
+registerSecureHandler('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
+registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
+registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
+registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
+registerSecureHandler('api:setMenuCommandState', (_, state) => updateApplicationMenuCommandState(state));
+registerSecureHandler('api:findInPage', (event, text, options) => {
   event.sender.findInPage(text, options);
 });
-ipcMain.handle('api:stopFindInPage', (event, action) => {
+registerSecureHandler('api:stopFindInPage', (event, action) => {
   event.sender.stopFindInPage(action);
 });
 
@@ -413,6 +643,7 @@ function isNetworkError(err: any): boolean {
 }
 
 let syncWorkerActive = false;
+let mailboxSyncWorkerActive = false;
 
 function startBackgroundSyncWorker() {
   setInterval(async () => {
@@ -489,6 +720,93 @@ function startBackgroundSyncWorker() {
       syncWorkerActive = false;
     }
   }, 15000);
+}
+
+function nextSyncState(accountId: string, base: SyncState | null, historyId: string, lastFullSyncAt?: string | null): SyncState {
+  return {
+    accountId,
+    historyId,
+    lastFullSyncAt: lastFullSyncAt ?? base?.lastFullSyncAt ?? null,
+    historyBackfillPageToken: base?.historyBackfillPageToken || null,
+    lastHistoryBackfillAt: base?.lastHistoryBackfillAt || null,
+    historyBackfillCompletedAt: base?.historyBackfillCompletedAt || null,
+    historyBackfillPagesSynced: base?.historyBackfillPagesSynced || 0,
+    historyBackfillThreadsSynced: base?.historyBackfillThreadsSynced || 0
+  };
+}
+
+async function runMailboxSyncForAccount(email: string) {
+  const syncState = SyncStateRepo.get(email);
+
+  if (!syncState?.historyId) {
+    const fullSync = await GmailSyncService.syncInbox(email);
+    ThreadsRepo.save(fullSync.threads);
+    saveMessagesToDatabase(fullSync.messages);
+    SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
+    return;
+  }
+
+  try {
+    const incrementalSync = await GmailSyncService.syncIncremental(email, syncState.historyId);
+
+    for (const threadId of incrementalSync.updatedThreadIds) {
+      try {
+        const messages = await GmailSyncService.fetchThreadDetail(email, threadId);
+        saveMessagesToDatabase(messages, { notifyOfNew: true });
+
+        const thread = buildThreadFromMessages(email, threadId, messages);
+        if (thread) {
+          ThreadsRepo.save([thread]);
+        }
+      } catch (err: any) {
+        console.warn(`[Mailbox Sync] Failed to fetch thread detail for ${threadId}:`, err);
+        if (err.message?.includes('not found') || err.message?.includes('404')) {
+          ThreadsRepo.delete(email, threadId);
+        }
+      }
+    }
+
+    for (const threadId of incrementalSync.deletedThreadIds) {
+      ThreadsRepo.delete(email, threadId);
+    }
+
+    SyncStateRepo.save(nextSyncState(email, syncState, incrementalSync.historyId));
+  } catch (err: any) {
+    if (err.message === 'HISTORY_EXPIRED') {
+      const fullSync = await GmailSyncService.syncInbox(email);
+      ThreadsRepo.save(fullSync.threads);
+      saveMessagesToDatabase(fullSync.messages);
+      SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
+      return;
+    }
+    throw err;
+  }
+}
+
+function startBackgroundMailboxSyncWorker() {
+  const run = async () => {
+    if (mailboxSyncWorkerActive) return;
+    mailboxSyncWorkerActive = true;
+
+    try {
+      const accounts = AccountsRepo.list();
+      for (const account of accounts) {
+        await runMailboxSyncForAccount(account.email);
+      }
+    } catch (err) {
+      console.error('[Mailbox Sync] Background mailbox sync failed:', err);
+    } finally {
+      mailboxSyncWorkerActive = false;
+    }
+  };
+
+  setTimeout(() => {
+    void run();
+  }, 10000);
+
+  setInterval(() => {
+    void run();
+  }, 60000);
 }
 
 function getMimeType(filePath: string): string {

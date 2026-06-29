@@ -22,7 +22,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -92,7 +92,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifications: {
     desktopNotifications: true,
     sound: false,
-    notifyImportantOnly: true,
+    notifyImportantOnly: false,
     reminderNotifications: true,
     quietHoursEnabled: false,
     quietHoursStart: '22:00',
@@ -167,6 +167,7 @@ function deepMerge(base: any, override: any): any {
 
 export function mergeSettings(parsed: any): AppSettings {
   const merged = deepMerge(DEFAULT_SETTINGS, parsed || {}) as AppSettings;
+  const parsedSchemaVersion = Number(parsed?.settingsSchemaVersion || 0);
 
   const defBuiltIn = DEFAULT_SETTINGS.inbox.categories.builtIn;
   const parsedBuiltIn: any[] = parsed?.inbox?.categories?.builtIn || [];
@@ -184,6 +185,10 @@ export function mergeSettings(parsed: any): AppSettings {
     return found ? deepMerge(def, found) : { ...def };
   });
   merged.ai.providerConfigurations = [...baseMerged, ...parsedProviders.filter((p: any) => !baseIds.has(p.id))];
+
+  if (parsedSchemaVersion < 4) {
+    merged.notifications.notifyImportantOnly = false;
+  }
 
   merged.settingsSchemaVersion = SETTINGS_SCHEMA_VERSION;
   return merged;
@@ -217,6 +222,7 @@ interface AppStoreContextType {
   splitCounts: Record<string, number>;
   tabCategories: TabCategory[];
   addTabCategory: (displayName: string, colorHex?: string, accountId?: string) => void;
+  updateTabCategory: (id: string, updated: Partial<TabCategory>) => void;
   toggleTabCategory: (id: string, active: boolean) => void;
   deleteTabCategory: (id: string) => void;
   updateTabCategoriesOrder: (categories: TabCategory[]) => void;

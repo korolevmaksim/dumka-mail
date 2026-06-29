@@ -19,6 +19,8 @@ import { RightContextPanel } from './components/layout/RightContextPanel';
 import { CommandPalette } from './components/layout/CommandPalette';
 import { InlineReplyComposer } from './components/layout/InlineReplyComposer';
 import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer';
+import { emitToast } from './lib/toastBus';
+import { resolveComposeAccountId } from './lib/composeAccount';
 
 const getMaxWidthStyle = (option?: string) => {
   switch (option) {
@@ -42,6 +44,61 @@ function AppContent() {
     y: number;
     thread: any;
   } | null>(null);
+
+  // Set platform attribute for cross-platform layout padding overrides (macOS vs Windows/Linux titlebars)
+  useEffect(() => {
+    const isMac = window.navigator.platform.includes('Mac');
+    document.documentElement.setAttribute('data-platform', isMac ? 'darwin' : 'other');
+  }, []);
+
+  // Listen to native Electron menu commands
+  useEffect(() => {
+    if (!window.electronAPI || !window.electronAPI.onExecuteCommand) return;
+    const unsubscribe = window.electronAPI.onExecuteCommand((cmdId: string) => {
+      switch (cmdId) {
+        case 'file.newDraft': {
+          const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
+          if (!accountId) {
+            store.setSettingsOpen(true);
+            emitToast({ type: 'warning', message: 'Connect an account before composing.' });
+            break;
+          }
+          store.setActiveDraft({
+            id: crypto.randomUUID(),
+            accountId,
+            to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
+          });
+          break;
+        }
+        case 'edit.undo':
+          store.undoLastAction();
+          break;
+        case 'view.toggleAiCopilot':
+          store.setAiPanelOpen(!store.aiPanelOpen);
+          break;
+        case 'view.settings':
+          store.setSettingsOpen(!store.settingsOpen);
+          break;
+        case 'view.toggleTheme': {
+          const nextTheme = store.theme === 'system' ? 'light' : (store.theme === 'light' ? 'dark' : 'system');
+          store.setTheme(nextTheme);
+          break;
+        }
+      }
+    });
+    return unsubscribe;
+  }, [store]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.setMenuCommandState) return;
+
+    const canCreateDraft = Boolean(resolveComposeAccountId(store.activeAccount, store.accounts));
+    const canUndo = store.actionLog.some(l => l.status === 'completed' && ['markRead', 'markUnread', 'markDone', 'restoreInbox'].includes(l.kind));
+
+    window.electronAPI.setMenuCommandState({ canCreateDraft, canUndo }).catch(err => {
+      console.error('Failed to update native menu command state:', err);
+    });
+  }, [store.activeAccount, store.accounts, store.actionLog]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -324,11 +381,19 @@ function AppContent() {
               
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => store.setActiveDraft({
-                    id: crypto.randomUUID(),
-                    accountId: store.activeAccount?.id === 'unified' ? (store.accounts[0]?.email || '') : store.activeAccount!.email,
-                    to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
-                  })}
+                  onClick={() => {
+                    const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
+                    if (!accountId) {
+                      store.setSettingsOpen(true);
+                      emitToast({ type: 'warning', message: 'Connect an account before composing.' });
+                      return;
+                    }
+                    store.setActiveDraft({
+                      id: crypto.randomUUID(),
+                      accountId,
+                      to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
+                    });
+                  }}
                   title="Compose Message (C)"
                   className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-all duration-150 active:scale-90"
                 >
@@ -718,7 +783,7 @@ function AppContent() {
               tomorrow.setDate(tomorrow.getDate() + 1);
               tomorrow.setHours(9, 0, 0, 0);
               store.executeMailAction('autoMarkRead', contextMenu.thread.id, null, async () => {
-                await window.electronAPI.saveReminder(store.activeAccount!.email, contextMenu.thread.id, tomorrow.toISOString());
+                await window.electronAPI.saveReminder(contextMenu.thread.accountId, contextMenu.thread.id, tomorrow.toISOString());
               });
               setContextMenu(null);
             }}

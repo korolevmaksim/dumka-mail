@@ -49,11 +49,20 @@ export function ThreadRow({
   return (
     <div
       data-thread-row
+      tabIndex={0}
+      role="row"
+      aria-selected={isSelected}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className={`relative shrink-0 flex items-start gap-2.5 px-[var(--row-px)] py-2 cursor-pointer select-none border-b border-[var(--border)] transition-colors min-h-[var(--thread-row-h)] ${
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className={`relative shrink-0 flex items-start gap-2.5 px-[var(--row-px)] py-2 cursor-pointer select-none border-b border-[var(--border)] transition-colors min-h-[var(--thread-row-h)] outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px] ${
         isSelected ? 'bg-[var(--selected-row)] bg-opacity-80' : isOpened ? 'bg-[var(--selected-row)]' : isFocused ? 'bg-[var(--hover-row)]' : 'hover:bg-[var(--hover-row)]'
       }`}
     >

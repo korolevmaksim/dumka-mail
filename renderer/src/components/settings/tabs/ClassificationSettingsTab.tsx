@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
-import { Trash2, GripVertical } from 'lucide-react';
+import { Trash2, GripVertical, Pencil } from 'lucide-react';
 import { emitToast } from '../../../lib/toastBus';
 
 export function ClassificationSettingsTab() {
@@ -8,6 +8,75 @@ export function ClassificationSettingsTab() {
   const [draggedSettingId, setDraggedSettingId] = useState<string | null>(null);
   const [dragOverSettingId, setDragOverSettingId] = useState<string | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<any | null>(null);
+  const [categoryToEdit, setCategoryToEdit] = useState<any | null>(null);
+  const deleteDialogRef = useRef<HTMLDivElement>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const editDialogRef = useRef<HTMLDivElement>(null);
+  const editNameInputRef = useRef<HTMLInputElement>(null);
+
+  const trapDialogTab = (event: KeyboardEvent, dialog: HTMLDivElement | null) => {
+    if (event.key !== 'Tab' || !dialog) return;
+
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(el => !el.hasAttribute('disabled') && el.tabIndex !== -1);
+
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  useEffect(() => {
+    if (!categoryToDelete) return;
+
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => deleteCancelRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setCategoryToDelete(null);
+        return;
+      }
+      trapDialogTab(event, deleteDialogRef.current);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [categoryToDelete?.id]);
+
+  useEffect(() => {
+    if (!categoryToEdit) return;
+
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => editNameInputRef.current?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setCategoryToEdit(null);
+        return;
+      }
+      trapDialogTab(event, editDialogRef.current);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [categoryToEdit?.id]);
 
   const handleDragStartSetting = (e: React.DragEvent, id: string) => {
     setDraggedSettingId(id);
@@ -49,16 +118,24 @@ export function ClassificationSettingsTab() {
       {/* Delete Confirmation Modal */}
       {categoryToDelete && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[999] fade-in select-none">
-          <div className="bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[340px] w-full flex flex-col gap-4 scale-up-in select-text">
+          <div
+            ref={deleteDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-category-title"
+            aria-describedby="delete-category-description"
+            className="bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[340px] w-full flex flex-col gap-4 scale-up-in select-text"
+          >
             <div className="flex flex-col gap-1.5">
-              <span className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Delete Custom Tab?</span>
-              <p className="text-[calc(10.5px*var(--font-scale))] text-[var(--text-secondary)] leading-relaxed">
+              <span id="delete-category-title" className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Delete Custom Tab?</span>
+              <p id="delete-category-description" className="text-[calc(10.5px*var(--font-scale))] text-[var(--text-secondary)] leading-relaxed">
                 Are you sure you want to delete the tab <strong className="text-[var(--text-primary)]">“{categoryToDelete.displayName}”</strong>?
                 Any classification rules targeting this tab will be automatically routed to <strong className="text-[var(--text-primary)]">Other</strong>.
               </p>
             </div>
             <div className="flex gap-2 justify-end">
               <button
+                ref={deleteCancelRef}
                 type="button"
                 onClick={() => setCategoryToDelete(null)}
                 className="px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--border)]/20 text-[var(--text-secondary)] rounded-lg font-medium text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
@@ -75,6 +152,102 @@ export function ClassificationSettingsTab() {
                 className="px-3 py-1.5 bg-[var(--danger)] text-white hover:bg-[var(--danger)]/90 rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Category Modal */}
+      {categoryToEdit && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[999] fade-in select-none">
+          <div
+            ref={editDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-category-title"
+            aria-describedby="edit-category-description"
+            className="bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[360px] w-full flex flex-col gap-4 scale-up-in select-text"
+          >
+            <div className="flex flex-col gap-1">
+              <span id="edit-category-title" className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Edit Tab Category</span>
+              <p id="edit-category-description" className="text-[calc(10.5px*var(--font-scale))] text-[var(--text-secondary)]">Modify settings for the selected tab category.</p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="edit-category-name" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</label>
+                <input
+                  ref={editNameInputRef}
+                  id="edit-category-name"
+                  type="text"
+                  value={categoryToEdit.displayName}
+                  onChange={(e) => setCategoryToEdit({ ...categoryToEdit, displayName: e.target.value })}
+                  placeholder="e.g. Work, Github, Family"
+                  className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none w-full h-[26px]"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label htmlFor="edit-category-color" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Color:</label>
+                <select
+                  id="edit-category-color"
+                  value={categoryToEdit.colorHex || '#8b5cf6'}
+                  onChange={(e) => setCategoryToEdit({ ...categoryToEdit, colorHex: e.target.value })}
+                  className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
+                >
+                  <option value="#8b5cf6">Purple</option>
+                  <option value="#10b981">Green</option>
+                  <option value="#3b82f6">Blue</option>
+                  <option value="#ef4444">Red</option>
+                  <option value="#f59e0b">Yellow</option>
+                  <option value="#ec4899">Pink</option>
+                  <option value="#14b8a6">Teal</option>
+                </select>
+              </div>
+
+              {!categoryToEdit.isSystem && (
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="edit-category-account" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Account:</label>
+                  <select
+                    id="edit-category-account"
+                    value={categoryToEdit.accountId || 'global'}
+                    onChange={(e) => setCategoryToEdit({ ...categoryToEdit, accountId: e.target.value })}
+                    className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
+                  >
+                    <option value="global">Global</option>
+                    {store.accounts.map(acc => (
+                      <option key={acc.id} value={acc.email}>{acc.displayName || acc.email}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setCategoryToEdit(null)}
+                className="px-3 py-1.5 border border-[var(--border)] hover:bg-[var(--border)]/20 text-[var(--text-secondary)] rounded-lg font-medium text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!categoryToEdit.displayName.trim()}
+                onClick={() => {
+                  if (!categoryToEdit.displayName.trim()) return;
+                  store.updateTabCategory(categoryToEdit.id, {
+                    displayName: categoryToEdit.displayName.trim(),
+                    colorHex: categoryToEdit.colorHex,
+                    accountId: categoryToEdit.isSystem ? undefined : categoryToEdit.accountId
+                  });
+                  setCategoryToEdit(null);
+                  emitToast({ type: 'success', message: `Saved changes to “${categoryToEdit.displayName}”` });
+                }}
+                className="px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent)]/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
+              >
+                Save
               </button>
             </div>
           </div>
@@ -194,10 +367,19 @@ export function ClassificationSettingsTab() {
                     className="w-3.5 h-3.5 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
                   />
                 </label>
+                <button
+                  type="button"
+                  onClick={() => setCategoryToEdit(category)}
+                  aria-label={`Edit ${category.displayName} tab category`}
+                  className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
                 {!category.isSystem && (
                   <button
                     type="button"
                     onClick={() => setCategoryToDelete(category)}
+                    aria-label={`Delete ${category.displayName} tab category`}
                     className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

@@ -3,9 +3,12 @@ import { useAppStore } from '../../../stores/AppStore';
 import { CheckCircle, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import { Toggle } from '../SettingsControls';
 import { emitToast } from '../../../lib/toastBus';
+import { AI_SECRET_STORED_PLACEHOLDER } from '../../../../../shared/types';
 
 type FormKeys = Record<string, string>;
 type VerifyStatus = Record<string, { status: 'idle' | 'verifying' | 'success' | 'error'; error?: string }>;
+
+const isStoredSecretPlaceholder = (value?: string) => value === AI_SECRET_STORED_PLACEHOLDER;
 
 export function AISettingsTab() {
   const store = useAppStore();
@@ -18,15 +21,20 @@ export function AISettingsTab() {
       OPENAI_API_KEY: store.customEnv['OPENAI_API_KEY'] || '',
       OPENAI_BASE_URL: store.customEnv['OPENAI_BASE_URL'] || '',
       OPENAI_MODEL: store.customEnv['OPENAI_MODEL'] || '',
+      OPENAI_REASONING_EFFORT: store.customEnv['OPENAI_REASONING_EFFORT'] || 'disabled',
       ANTHROPIC_API_KEY: store.customEnv['ANTHROPIC_API_KEY'] || '',
       ANTHROPIC_BASE_URL: store.customEnv['ANTHROPIC_BASE_URL'] || '',
       ANTHROPIC_MODEL: store.customEnv['ANTHROPIC_MODEL'] || '',
+      ANTHROPIC_THINKING_EFFORT: store.customEnv['ANTHROPIC_THINKING_EFFORT'] || 'disabled',
       GEMINI_API_KEY: store.customEnv['GEMINI_API_KEY'] || '',
       GEMINI_BASE_URL: store.customEnv['GEMINI_BASE_URL'] || '',
       GEMINI_MODEL: store.customEnv['GEMINI_MODEL'] || '',
+      GEMINI_THINKING_LEVEL: store.customEnv['GEMINI_THINKING_LEVEL'] || 'disabled',
       DEEPSEEK_API_KEY: store.customEnv['DEEPSEEK_API_KEY'] || '',
       DEEPSEEK_BASE_URL: store.customEnv['DEEPSEEK_BASE_URL'] || '',
       DEEPSEEK_MODEL: store.customEnv['DEEPSEEK_MODEL'] || '',
+      DEEPSEEK_THINKING: store.customEnv['DEEPSEEK_THINKING'] || 'disabled',
+      DEEPSEEK_REASONING_EFFORT: store.customEnv['DEEPSEEK_REASONING_EFFORT'] || 'disabled',
       OPENAI_COMPATIBLE_API_KEY: store.customEnv['OPENAI_COMPATIBLE_API_KEY'] || '',
       OPENAI_COMPATIBLE_BASE_URL: store.customEnv['OPENAI_COMPATIBLE_BASE_URL'] || '',
       OPENAI_COMPATIBLE_MODEL: store.customEnv['OPENAI_COMPATIBLE_MODEL'] || '',
@@ -34,12 +42,22 @@ export function AISettingsTab() {
     });
   }, [store.customEnv]);
 
+  const handleUpdateSetting = async (key: string, value: string) => {
+    setFormKeys(prev => ({ ...prev, [key]: value }));
+    await store.saveAIConfig({ [key]: value });
+  };
+
   const handleVerify = async (provider: string) => {
     const keyField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_API_KEY' : `${provider.toUpperCase()}_API_KEY`;
     const urlField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_BASE_URL' : `${provider.toUpperCase()}_BASE_URL`;
     
     const key = formKeys[keyField] || '';
     const baseUrl = formKeys[urlField] || '';
+
+    if (isStoredSecretPlaceholder(key)) {
+      emitToast({ type: 'info', message: 'Stored Keychain keys are available to AI requests. Enter a new key to verify or replace it.' });
+      return;
+    }
     
     if (provider !== 'openAICompatible' && !key) {
       emitToast({ type: 'warning', message: 'Please enter an API key first.' });
@@ -60,7 +78,7 @@ export function AISettingsTab() {
       
       const modelField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_MODEL' : `${provider.toUpperCase()}_MODEL`;
       if (!formKeys[modelField] && models.length > 0) {
-        setFormKeys(prev => ({ ...prev, [modelField]: models[0] }));
+        await handleUpdateSetting(modelField, models[0]);
       }
     } catch (err: any) {
       console.error(err);
@@ -72,9 +90,108 @@ export function AISettingsTab() {
   };
 
   const handleSaveAIKeys = async () => {
-    await store.saveAIConfig(formKeys);
+    const credentialsOnly = {
+      OPENAI_API_KEY: formKeys.OPENAI_API_KEY || '',
+      OPENAI_BASE_URL: formKeys.OPENAI_BASE_URL || '',
+      ANTHROPIC_API_KEY: formKeys.ANTHROPIC_API_KEY || '',
+      ANTHROPIC_BASE_URL: formKeys.ANTHROPIC_BASE_URL || '',
+      GEMINI_API_KEY: formKeys.GEMINI_API_KEY || '',
+      GEMINI_BASE_URL: formKeys.GEMINI_BASE_URL || '',
+      DEEPSEEK_API_KEY: formKeys.DEEPSEEK_API_KEY || '',
+      DEEPSEEK_BASE_URL: formKeys.DEEPSEEK_BASE_URL || '',
+      OPENAI_COMPATIBLE_API_KEY: formKeys.OPENAI_COMPATIBLE_API_KEY || '',
+      OPENAI_COMPATIBLE_BASE_URL: formKeys.OPENAI_COMPATIBLE_BASE_URL || '',
+    };
+    await store.saveAIConfig(credentialsOnly);
     setSavedStatus(true);
     setTimeout(() => setSavedStatus(false), 2000);
+  };
+
+  const renderThinkingConfig = (provider: string) => {
+    if (provider === 'openAI') {
+      return (
+        <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
+          <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
+          <select
+            value={formKeys.OPENAI_REASONING_EFFORT || 'disabled'}
+            onChange={(e) => handleUpdateSetting('OPENAI_REASONING_EFFORT', e.target.value)}
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          >
+            <option value="disabled">Disabled / None</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+      );
+    }
+    if (provider === 'anthropic') {
+      return (
+        <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
+          <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
+          <select
+            value={formKeys.ANTHROPIC_THINKING_EFFORT || 'disabled'}
+            onChange={(e) => handleUpdateSetting('ANTHROPIC_THINKING_EFFORT', e.target.value)}
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          >
+            <option value="disabled">Disabled</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High (Default)</option>
+            <option value="max">Max</option>
+          </select>
+        </div>
+      );
+    }
+    if (provider === 'gemini') {
+      return (
+        <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
+          <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
+          <select
+            value={formKeys.GEMINI_THINKING_LEVEL || 'disabled'}
+            onChange={(e) => handleUpdateSetting('GEMINI_THINKING_LEVEL', e.target.value)}
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          >
+            <option value="disabled">Disabled</option>
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+          </select>
+        </div>
+      );
+    }
+    if (provider === 'deepSeek') {
+      return (
+        <div className="flex flex-col gap-2 mt-1 max-w-[280px]">
+          <div className="flex flex-col gap-1">
+            <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking Mode:</label>
+            <select
+              value={formKeys.DEEPSEEK_THINKING || 'disabled'}
+              onChange={(e) => handleUpdateSetting('DEEPSEEK_THINKING', e.target.value)}
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            >
+              <option value="disabled">Disabled</option>
+              <option value="enabled">Enabled</option>
+            </select>
+          </div>
+          {formKeys.DEEPSEEK_THINKING === 'enabled' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Reasoning Effort:</label>
+              <select
+                value={formKeys.DEEPSEEK_REASONING_EFFORT || 'disabled'}
+                onChange={(e) => handleUpdateSetting('DEEPSEEK_REASONING_EFFORT', e.target.value)}
+                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+              >
+                <option value="disabled">Default / Standard</option>
+                <option value="high">High</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
   };
 
   const renderProviderVerificationAndModel = (provider: string) => {
@@ -116,7 +233,7 @@ export function AISettingsTab() {
             <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Model:</label>
             <select
               value={formKeys[modelField] || ''}
-              onChange={(e) => setFormKeys(prev => ({ ...prev, [modelField]: e.target.value }))}
+              onChange={(e) => handleUpdateSetting(modelField, e.target.value)}
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
             >
               <option value="">-- Select Model --</option>
@@ -126,6 +243,8 @@ export function AISettingsTab() {
             </select>
           </div>
         )}
+
+        {renderThinkingConfig(provider)}
       </div>
     );
   };
@@ -255,6 +374,9 @@ export function AISettingsTab() {
               placeholder="API Key"
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENAI_API_KEY || ''}
+              onFocus={(e) => {
+                if (isStoredSecretPlaceholder(formKeys.OPENAI_API_KEY)) e.currentTarget.select();
+              }}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENAI_API_KEY: e.target.value }))}
             />
             <input
@@ -278,6 +400,9 @@ export function AISettingsTab() {
               placeholder="API Key"
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.ANTHROPIC_API_KEY || ''}
+              onFocus={(e) => {
+                if (isStoredSecretPlaceholder(formKeys.ANTHROPIC_API_KEY)) e.currentTarget.select();
+              }}
               onChange={(e) => setFormKeys(prev => ({ ...prev, ANTHROPIC_API_KEY: e.target.value }))}
             />
             <input
@@ -301,6 +426,9 @@ export function AISettingsTab() {
               placeholder="API Key"
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.GEMINI_API_KEY || ''}
+              onFocus={(e) => {
+                if (isStoredSecretPlaceholder(formKeys.GEMINI_API_KEY)) e.currentTarget.select();
+              }}
               onChange={(e) => setFormKeys(prev => ({ ...prev, GEMINI_API_KEY: e.target.value }))}
             />
             <input
@@ -324,6 +452,9 @@ export function AISettingsTab() {
               placeholder="API Key"
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.DEEPSEEK_API_KEY || ''}
+              onFocus={(e) => {
+                if (isStoredSecretPlaceholder(formKeys.DEEPSEEK_API_KEY)) e.currentTarget.select();
+              }}
               onChange={(e) => setFormKeys(prev => ({ ...prev, DEEPSEEK_API_KEY: e.target.value }))}
             />
             <input
@@ -347,6 +478,9 @@ export function AISettingsTab() {
               placeholder="API Key"
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENAI_COMPATIBLE_API_KEY || ''}
+              onFocus={(e) => {
+                if (isStoredSecretPlaceholder(formKeys.OPENAI_COMPATIBLE_API_KEY)) e.currentTarget.select();
+              }}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENAI_COMPATIBLE_API_KEY: e.target.value }))}
             />
             <input

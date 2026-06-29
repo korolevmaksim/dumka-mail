@@ -11,8 +11,8 @@
   --border: rgba(0, 0, 0, 0.08);
   --strong-border: rgba(0, 0, 0, 0.14);
   --text-primary: rgba(0, 0, 0, 0.86);
-  --text-secondary: rgba(0, 0, 0, 0.50);
-  --text-tertiary: rgba(0, 0, 0, 0.34);
+  --text-secondary: rgba(0, 0, 0, 0.65);
+  --text-tertiary: rgba(0, 0, 0, 0.54);
   --ai-accent: #9173ED;
   --success: #33A16E;
   --warning: #EB8C3D;
@@ -78,8 +78,8 @@
   --border: rgba(255, 255, 255, 0.105);
   --strong-border: rgba(255, 255, 255, 0.18);
   --text-primary: rgba(255, 255, 255, 0.90);
-  --text-secondary: rgba(255, 255, 255, 0.62);
-  --text-tertiary: rgba(255, 255, 255, 0.42);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-tertiary: rgba(255, 255, 255, 0.54);
   --ai-accent: #B39CFF;
   --success: #54C78F;
   --warning: #FFAD5C;
@@ -163,16 +163,26 @@ body {
   -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
-/* Glassmorphism utility (legacy — kept for overlays) */
-.glassmorphism {
-  background: var(--panel-bg);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border);
-}
-
 /* Traffic-light / top-chrome padding tracks density */
 .traffic-light-margin {
   padding-top: var(--top-chrome-h);
+}
+
+[data-platform="other"] .traffic-light-margin {
+  padding-top: 0px;
+}
+
+/* Reduced motion preference override */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-delay: -1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    background-attachment: initial !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
 }
 
 /* Loading skeleton shimmer (PP-G8) */

@@ -68,6 +68,10 @@ export function useMailState({
       const category = tabCategories.find(c => c.id === rule.targetCategory);
       if (!category || !category.active) continue;
 
+      if (category.accountId && category.accountId !== 'global' && t.accountId !== category.accountId) {
+        continue;
+      }
+
       let match = false;
       const val = rule.value.toLowerCase().trim();
       if (!val) continue;

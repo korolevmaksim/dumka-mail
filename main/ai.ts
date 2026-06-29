@@ -1,8 +1,8 @@
 import { AIChatMessage, AIProviderPreference } from '../shared/types';
 import { MCPManager } from './mcpManager';
-import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels } from './aiConfig';
+import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
 
-export { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels };
+export { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer };
 
 export interface AIRequest {
   action: string;
@@ -40,22 +40,16 @@ Do not claim that you performed actions outside drafting text.`;
 }
 
 function resolveRealModel(model: string): string {
-  const map: Record<string, string> = {
-    'gpt-5.4-mini': 'gpt-4o-mini',
-    'claude-sonnet-4-6': 'claude-3-5-sonnet-latest',
-    'gemini-3.5-flash': 'gemini-1.5-flash',
-    'deepseek-v4-flash': 'deepseek-chat'
-  };
-  return map[model] || model;
+  return model;
 }
 
 export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
-  const descriptor = getAIProviderDescriptor(preference, overrideModel);
+  const descriptor = await getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
     throw new Error('AI operations are disabled.');
   }
 
-  const env = loadAIConfig();
+  const env = await loadAIConfigAsync();
   const promptText = buildPrompt(request);
   const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output.';
   const activeTools = MCPManager.getActiveTools();
@@ -202,6 +196,14 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           body.tools = anthropicTools;
         }
 
+        const anthropicThinkingEffort = env['ANTHROPIC_THINKING_EFFORT'];
+        if (anthropicThinkingEffort && anthropicThinkingEffort !== 'disabled') {
+          body.thinking = {
+            type: 'adaptive',
+            effort: anthropicThinkingEffort
+          };
+        }
+
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -283,6 +285,15 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
         };
         if (geminiTools) {
           body.tools = geminiTools;
+        }
+
+        const geminiThinkingLevel = env['GEMINI_THINKING_LEVEL'];
+        if (geminiThinkingLevel && geminiThinkingLevel !== 'disabled') {
+          body.generationConfig = {
+            thinkingConfig: {
+              thinkingLevel: geminiThinkingLevel
+            }
+          };
         }
 
         const res = await fetch(endpoint, {
@@ -390,6 +401,11 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             if (env['DEEPSEEK_REASONING_EFFORT']) {
               body.reasoning_effort = env['DEEPSEEK_REASONING_EFFORT'];
             }
+          }
+        } else if (preference === 'openAI') {
+          const openAIReasoningEffort = env['OPENAI_REASONING_EFFORT'];
+          if (openAIReasoningEffort && openAIReasoningEffort !== 'disabled') {
+            body.reasoning_effort = openAIReasoningEffort;
           }
         }
 

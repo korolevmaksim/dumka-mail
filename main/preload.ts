@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAIConfig: (config: Record<string, string>) => ipcRenderer.invoke('api:saveAIConfig', config),
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),
   verifyMCPServer: (config: any) => ipcRenderer.invoke('api:verifyMCPServer', config),
+  setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => ipcRenderer.invoke('api:setMenuCommandState', state),
 
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('db:getSetting', key),
@@ -90,5 +91,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.off('api:openThread', listener);
     };
   },
-  getPendingOpenThread: () => ipcRenderer.invoke('api:getPendingOpenThread')
+  getPendingOpenThread: () => ipcRenderer.invoke('api:getPendingOpenThread'),
+  onExecuteCommand: (callback: (cmdId: string) => void) => {
+    const listener = (_: any, cmdId: string) => callback(cmdId);
+    ipcRenderer.on('menu:executeCommand', listener);
+    return () => {
+      ipcRenderer.off('menu:executeCommand', listener);
+    };
+  }
 });

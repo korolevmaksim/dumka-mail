@@ -147,6 +147,17 @@ export interface MailActionLog {
 
 export type AIProviderPreference = 'automatic' | 'openAI' | 'anthropic' | 'gemini' | 'deepSeek' | 'openAICompatible' | 'disabled';
 
+export const AI_SECRET_STORED_PLACEHOLDER = '__DUMKA_SECRET_STORED__';
+export const AI_SECRET_KEYS = [
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'OPENAI_COMPATIBLE_API_KEY'
+] as const;
+
+export type AISecretKey = typeof AI_SECRET_KEYS[number];
+
 export interface AIProviderDescriptor {
   preference: AIProviderPreference;
   displayName: string;
@@ -288,6 +299,7 @@ export interface BuiltInMailCategorySettings {
   isEnabled: boolean;
   matchMode: 'all' | 'any';
   extraRules: MailCategoryRule[];
+  colorHex?: string;
 }
 
 export interface CustomMailCategorySettings {
@@ -297,6 +309,7 @@ export interface CustomMailCategorySettings {
   matchMode: 'all' | 'any';
   rules: MailCategoryRule[];
   accountId?: string;
+  colorHex?: string;
 }
 
 export interface InboxSettings {
@@ -463,5 +476,4 @@ export interface MailTriageQueueReadiness {
   canApplySelected: boolean;
   applyButtonTitle: string;
 }
-
 

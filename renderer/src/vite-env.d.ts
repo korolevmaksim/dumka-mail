@@ -68,6 +68,7 @@ export interface IElectronAPI {
   saveAIConfig: (config: Record<string, string>) => Promise<void>;
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;
   verifyMCPServer: (config: MCPServerConfig) => Promise<{ success: boolean; toolsCount?: number; error?: string }>;
+  setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => Promise<void>;
 
   // Settings
   getSetting: (key: string) => Promise<string | null>;
@@ -79,6 +80,7 @@ export interface IElectronAPI {
   onFoundInPageResult: (callback: (result: any) => void) => () => void;
   onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
+  onExecuteCommand: (callback: (cmdId: string) => void) => () => void;
 }
 
 declare global {

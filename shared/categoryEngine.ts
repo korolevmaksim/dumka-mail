@@ -173,6 +173,9 @@ export function categorize(
 ): string {
   // 1. Enabled custom categories (first match wins, in declared order).
   for (const category of custom) {
+    if (category.accountId && category.accountId !== 'global' && thread.accountId !== category.accountId) {
+      continue;
+    }
     if (category.isEnabled && rulesMatch(thread, category.rules, category.matchMode)) {
       return category.id;
     }

@@ -67,10 +67,10 @@ export function AICopilotPanel() {
         setModelList(fetched);
       } else {
         const fallbacks: Record<string, string[]> = {
-          openAI: ['gpt-4o', 'gpt-4o-mini', 'o1-mini', 'o3-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-          anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
-          gemini: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-2.5-flash', 'gemini-2.5-pro'],
-          deepSeek: ['deepseek-chat', 'deepseek-reasoner'],
+          openAI: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano'],
+          anthropic: ['claude-fable-5', 'claude-opus-4.8', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
+          gemini: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+          deepSeek: ['deepseek-v4-pro', 'deepseek-v4-flash'],
           openAICompatible: ['local-model']
         };
         setModelList(fallbacks[store.aiProvider] || []);

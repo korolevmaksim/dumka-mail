@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { Command, X } from 'lucide-react';
+import { emitToast } from '../../lib/toastBus';
+import { resolveComposeAccountId } from '../../lib/composeAccount';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -10,6 +12,7 @@ interface CommandPaletteProps {
 export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const store = useAppStore();
   const [paletteSearch, setPaletteSearch] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
 
   if (!isOpen) return null;
 
@@ -30,11 +33,19 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       });
     }},
     { title: 'AI Summarize Thread', shortcut: 'S', action: () => store.runAITriagePlan() },
-    { title: 'Compose Message', shortcut: 'C', action: () => store.setActiveDraft({
-      id: crypto.randomUUID(),
-      accountId: store.activeAccount?.id === 'unified' ? (store.accounts[0]?.email || '') : store.activeAccount!.email,
-      to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
-    })},
+    { title: 'Compose Message', shortcut: 'C', action: () => {
+      const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
+      if (!accountId) {
+        store.setSettingsOpen(true);
+        emitToast({ type: 'warning', message: 'Connect an account before composing.' });
+        return;
+      }
+      store.setActiveDraft({
+        id: crypto.randomUUID(),
+        accountId,
+        to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
+      });
+    }},
     { title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', action: () => {
       store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
       store.setSettingsOpen(false);
@@ -52,6 +63,23 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     c.title.toLowerCase().includes(paletteSearch.toLowerCase())
   );
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex((prev) => (filteredCommands.length > 0 ? (prev + 1) % filteredCommands.length : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((prev) => (filteredCommands.length > 0 ? (prev - 1 + filteredCommands.length) % filteredCommands.length : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const cmd = filteredCommands[activeIndex];
+      if (cmd) {
+        cmd.action();
+        onClose();
+      }
+    }
+  };
+
   return (
     <div className="absolute inset-0 bg-black/40 flex items-start justify-center pt-24 z-50 select-none">
       <div className="w-[500px] bg-[var(--panel-bg)] rounded-xl border border-[var(--strong-border)] shadow-2xl flex flex-col overflow-hidden max-h-[360px]">
@@ -62,7 +90,11 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             type="text"
             placeholder="Type a command…"
             value={paletteSearch}
-            onChange={(e) => setPaletteSearch(e.target.value)}
+            onChange={(e) => {
+              setPaletteSearch(e.target.value);
+              setActiveIndex(0);
+            }}
+            onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent border-0 outline-none text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
           />
           <button onClick={onClose} className="cursor-pointer">
@@ -81,10 +113,18 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                   c.action();
                   onClose();
                 }}
-                className="flex justify-between items-center px-4 py-2 hover:bg-[var(--hover-row)] cursor-pointer text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]"
+                className={`flex justify-between items-center px-4 py-2 cursor-pointer text-[calc(12px*var(--font-scale))] transition-colors ${
+                  idx === activeIndex
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'text-[var(--text-primary)] hover:bg-[var(--hover-row)]'
+                }`}
               >
                 <span>{c.title}</span>
-                <kbd className="text-[calc(10px*var(--font-scale))] bg-[var(--border)] px-1.5 rounded text-[var(--text-secondary)]">
+                <kbd className={`text-[calc(10px*var(--font-scale))] px-1.5 rounded ${
+                  idx === activeIndex
+                    ? 'bg-white/20 text-white'
+                    : 'bg-[var(--border)] text-[var(--text-secondary)]'
+                }`}>
                   {c.shortcut}
                 </kbd>
               </div>

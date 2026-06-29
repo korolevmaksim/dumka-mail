@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule } from '../../../shared/types';
-import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, mergeSettings } from './AppStore';
+import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, SETTINGS_SCHEMA_VERSION, mergeSettings } from './AppStore';
 
 export function useSettingsState() {
   const [settings, setSettingsState] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -47,7 +47,8 @@ export function useSettingsState() {
           title: bc.displayName,
           isEnabled: bc.active,
           matchMode: existing?.matchMode || 'any',
-          extraRules
+          extraRules,
+          colorHex: bc.colorHex
         };
       });
 
@@ -70,7 +71,8 @@ export function useSettingsState() {
           isEnabled: cc.active,
           matchMode: existing?.matchMode || 'any',
           rules,
-          accountId: cc.accountId
+          accountId: cc.accountId,
+          colorHex: cc.colorHex
         };
       });
     });
@@ -108,13 +110,15 @@ export function useSettingsState() {
         id: b.id,
         displayName: b.title,
         isSystem: true,
-        active: b.isEnabled
+        active: b.isEnabled,
+        colorHex: b.colorHex
       })).concat(copy.inbox.categories.custom.map((c: any) => ({
         id: c.id,
         displayName: c.title,
         isSystem: false,
         active: c.isEnabled,
-        accountId: c.accountId
+        accountId: c.accountId,
+        colorHex: c.colorHex
       })));
       setTabCategoriesState(cats);
       
@@ -155,11 +159,13 @@ export function useSettingsState() {
     async function loadSettingsFromSQLite() {
       try {
         let loaded: AppSettings = { ...DEFAULT_SETTINGS };
+        let shouldPersistLoadedSettings = false;
         const appSettingsStr = await window.electronAPI.getSetting('appSettings');
         if (appSettingsStr) {
           try {
             const parsed = JSON.parse(appSettingsStr);
             loaded = mergeSettings(parsed);
+            shouldPersistLoadedSettings = Number(parsed?.settingsSchemaVersion || 0) < SETTINGS_SCHEMA_VERSION;
           } catch (e) {
             console.error('Failed to parse appSettings:', e);
           }
@@ -228,6 +234,10 @@ export function useSettingsState() {
           }
           
           // Save migrated settings
+          await window.electronAPI.setSetting('appSettings', JSON.stringify(loaded));
+        }
+
+        if (shouldPersistLoadedSettings) {
           await window.electronAPI.setSetting('appSettings', JSON.stringify(loaded));
         }
 
@@ -329,6 +339,11 @@ export function useSettingsState() {
       accountId: accountId || 'global'
     };
     saveTabCategories([...tabCategories, newCategory]);
+  };
+
+  const updateTabCategory = (id: string, updated: Partial<TabCategory>) => {
+    const updatedCats = tabCategories.map(c => c.id === id ? { ...c, ...updated } : c);
+    saveTabCategories(updatedCats);
   };
 
   const toggleTabCategory = (id: string, active: boolean) => {
@@ -435,7 +450,7 @@ export function useSettingsState() {
 
   const saveAIConfig = async (config: Record<string, string>) => {
     await window.electronAPI.saveAIConfig(config);
-    setCustomEnv(config);
+    setCustomEnv(prev => ({ ...prev, ...config }));
   };
 
   const verifyConnectionAndFetchModels = async (provider: string, apiKey: string, baseUrl?: string): Promise<string[]> => {
@@ -485,6 +500,7 @@ export function useSettingsState() {
     updateCustomClassifierRule,
     deleteCustomClassifierRule,
     addTabCategory,
+    updateTabCategory,
     toggleTabCategory,
     deleteTabCategory,
     updateTabCategoriesOrder,

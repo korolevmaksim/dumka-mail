@@ -26,19 +26,19 @@ export function AboutTab() {
           <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
             <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">SQL Cache Latency</span>
             <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.cacheReadyMs ? `${store.speedProof.cacheReadyMs}ms` : '42ms (Cached)'}
+              {store.speedProof.cacheReadyMs ? `${store.speedProof.cacheReadyMs}ms` : 'Measuring…'}
             </span>
           </div>
           <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
             <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">Gmail Sync Latency</span>
             <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.syncReadyMs ? `${store.speedProof.syncReadyMs}ms` : '182ms (Ready)'}
+              {store.speedProof.syncReadyMs ? `${store.speedProof.syncReadyMs}ms` : 'Measuring…'}
             </span>
           </div>
           <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
             <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">Local Search Latency</span>
             <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.searchMs ? `${store.speedProof.searchMs}ms` : '8ms (FTS)'}
+              {store.speedProof.searchMs ? `${store.speedProof.searchMs}ms` : 'Measuring…'}
             </span>
           </div>
           <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
