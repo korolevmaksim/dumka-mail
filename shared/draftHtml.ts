@@ -169,7 +169,58 @@ export function renderComposeSignatureHtmlFragment(
 
   if (!signatureContent.trim()) return '';
 
-  return `<div class="gmail_signature" data-dumka-signature="true">${signatureContent}</div>`;
+  const accountAttr = escapeHtml(accountId?.trim().toLowerCase() || '');
+  return `<div class="gmail_signature" data-dumka-signature="true" data-dumka-signature-account="${accountAttr}">${signatureContent}</div>`;
+}
+
+function findComposeSignatureRange(html: string): { start: number; end: number } | null {
+  const openTagPattern = /<div\b[^>]*(?:data-dumka-signature\s*=\s*["']?true["']?|class\s*=\s*["'][^"']*\bgmail_signature\b[^"']*["'])[^>]*>/ig;
+  const openMatch = openTagPattern.exec(html);
+  if (!openMatch) return null;
+
+  const tagPattern = /<\/?div\b[^>]*>/ig;
+  tagPattern.lastIndex = openMatch.index + openMatch[0].length;
+  let depth = 1;
+
+  for (let match = tagPattern.exec(html); match; match = tagPattern.exec(html)) {
+    const tag = match[0];
+    if (/^<\s*\/\s*div\b/i.test(tag)) {
+      depth -= 1;
+      if (depth === 0) {
+        return { start: openMatch.index, end: tagPattern.lastIndex };
+      }
+    } else if (!/\/\s*>$/.test(tag)) {
+      depth += 1;
+    }
+  }
+
+  return { start: openMatch.index, end: openMatch.index + openMatch[0].length };
+}
+
+export function replaceComposeSignatureForAccount(
+  bodyHtml: string | null | undefined,
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): string | null {
+  const fragment = sanitizeDraftHtmlFragment(bodyHtml || '');
+  const nextSignature = renderComposeSignatureHtmlFragment(compose, profile, accountId);
+  const existingRange = findComposeSignatureRange(fragment);
+
+  if (existingRange) {
+    const nextHtml = `${fragment.slice(0, existingRange.start)}${nextSignature}${fragment.slice(existingRange.end)}`.trim();
+    return nextHtml || null;
+  }
+
+  if (!nextSignature) {
+    return fragment || null;
+  }
+
+  if (!htmlFragmentToPlainText(fragment).trim()) {
+    return `<p><br></p>${nextSignature}`;
+  }
+
+  return `${fragment}<br>${nextSignature}`;
 }
 
 export function buildInitialDraftBodyWithSignature(

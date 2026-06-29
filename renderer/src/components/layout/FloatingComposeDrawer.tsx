@@ -32,6 +32,7 @@ import {
   htmlFragmentToPlainText,
   plainTextToHtmlFragment,
   renderComposeSignaturePlain,
+  replaceComposeSignatureForAccount,
   sanitizeDraftHtmlFragment,
 } from '../../../../shared/draftHtml';
 import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
@@ -204,31 +205,35 @@ export function FloatingComposeDrawer() {
   };
 
   const updateFromAccount = (accountId: string) => {
-    const previousSignature = renderComposeSignaturePlain(
-      store.settings.compose,
-      store.settings.profile,
-      activeDraft.accountId,
-    ).trim();
-    const currentPlain = activeDraft.bodyPlain.trim();
-    const currentHtmlPlain = htmlFragmentToPlainText(activeDraft.bodyHtml || '').trim();
-    const bodyOnlyContainsPreviousSignature = Boolean(previousSignature)
-      && (currentPlain === previousSignature || currentHtmlPlain === previousSignature);
-
-    if (!bodyOnlyContainsPreviousSignature) {
-      store.updateDraft({ accountId });
-      return;
+    let nextHtml: string | null;
+    if (activeDraft.bodyHtml?.trim()) {
+      nextHtml = replaceComposeSignatureForAccount(
+        activeDraft.bodyHtml,
+        store.settings.compose,
+        store.settings.profile,
+        accountId,
+      );
+    } else {
+      const previousSignature = renderComposeSignaturePlain(
+        store.settings.compose,
+        store.settings.profile,
+        activeDraft.accountId,
+      ).trim();
+      const bodyPlain = previousSignature && activeDraft.bodyPlain.trim() === previousSignature
+        ? ''
+        : activeDraft.bodyPlain;
+      nextHtml = buildInitialDraftBodyWithSignature(
+        bodyPlain,
+        store.settings.compose,
+        store.settings.profile,
+        accountId,
+      ).bodyHtml;
     }
 
-    const nextBody = buildInitialDraftBodyWithSignature(
-      '',
-      store.settings.compose,
-      store.settings.profile,
-      accountId,
-    );
     store.updateDraft({
       accountId,
-      bodyPlain: nextBody.bodyPlain,
-      bodyHtml: nextBody.bodyHtml,
+      bodyPlain: nextHtml ? htmlFragmentToPlainText(nextHtml) : activeDraft.bodyPlain,
+      bodyHtml: nextHtml,
     });
   };
 
@@ -401,7 +406,7 @@ export function FloatingComposeDrawer() {
 
       <RichTextEditor
         ref={editorRef}
-        draftId={activeDraft.id}
+        draftId={`${activeDraft.id}:${activeDraft.accountId}`}
         bodyPlain={activeDraft.bodyPlain}
         bodyHtml={activeDraft.bodyHtml}
         placeholder="Write your email. Use the toolbar, paste an image, or ask AI to draft."

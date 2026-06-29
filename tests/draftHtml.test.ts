@@ -5,6 +5,7 @@ import {
   htmlFragmentToPlainText,
   plainTextToHtmlFragment,
   renderComposeSignatureHtmlFragment,
+  replaceComposeSignatureForAccount,
   sanitizeDraftHtmlFragment,
   stripTrailingPlainSignature,
 } from '../shared/draftHtml';
@@ -145,5 +146,55 @@ describe('rich draft HTML helpers', () => {
     expect(body.bodyHtml).toContain('<p><br></p>');
     expect(body.bodyHtml).toContain('<div class="gmail_signature"');
     expect(body.bodyHtml).toContain('<b>Max</b>');
+  });
+
+  it('replaces the managed signature when the compose account changes', () => {
+    const settings: ComposeSettings = {
+      ...compose,
+      signaturesByAccount: {
+        'personal@example.com': {
+          signaturePlain: 'Personal Max',
+          signatureHtml: '<div><b>Personal Max</b><br><img src="https://personal.example/logo.png" alt="Personal"></div>',
+          signatureFormat: 'html',
+        },
+        'work@example.com': {
+          signaturePlain: 'Work Max',
+          signatureHtml: '<div><b>Work Max</b><br><img src="https://example.com/logo.png" alt="Example Co"></div>',
+          signatureFormat: 'html',
+        },
+      },
+    };
+    const initial = buildInitialDraftBodyWithSignature('', settings, profile, 'personal@example.com');
+    const updated = replaceComposeSignatureForAccount(initial.bodyHtml, settings, profile, 'work@example.com');
+
+    expect(updated).toContain('data-dumka-signature-account="work@example.com"');
+    expect(updated).toContain('<b>Work Max</b>');
+    expect(updated).toContain('src="https://example.com/logo.png"');
+    expect(updated).not.toContain('Personal Max');
+    expect(updated).not.toContain('personal.example');
+  });
+
+  it('preserves written body content while replacing the managed signature', () => {
+    const settings: ComposeSettings = {
+      ...compose,
+      signaturesByAccount: {
+        'personal@example.com': {
+          signaturePlain: 'Personal Max',
+          signatureHtml: '<div><b>Personal Max</b></div>',
+          signatureFormat: 'html',
+        },
+        'work@example.com': {
+          signaturePlain: 'Work Max',
+          signatureHtml: '<div><b>Work Max</b></div>',
+          signatureFormat: 'html',
+        },
+      },
+    };
+    const personalSignature = renderComposeSignatureHtmlFragment(settings, profile, 'personal@example.com');
+    const updated = replaceComposeSignatureForAccount(`<p>Hello client</p>${personalSignature}`, settings, profile, 'work@example.com');
+
+    expect(updated).toContain('<p>Hello client</p>');
+    expect(updated).toContain('<b>Work Max</b>');
+    expect(updated).not.toContain('Personal Max');
   });
 });
