@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { AIProviderDescriptor, AIProviderPreference, AI_SECRET_KEYS, AI_SECRET_STORED_PLACEHOLDER } from '../shared/types';
+import { getAIProviderConfig } from '../shared/aiProviders';
 import { SettingsRepo } from './database';
 import { getRefreshToken, saveRefreshToken, deleteRefreshToken } from './keychain';
 
@@ -18,6 +19,11 @@ const AI_CONFIG_KEYS = [
   'GEMINI_BASE_URL',
   'GEMINI_MODEL',
   'GEMINI_THINKING_LEVEL',
+  'OPENROUTER_BASE_URL',
+  'OPENROUTER_MODEL',
+  'OPENROUTER_REASONING_EFFORT',
+  'OPENROUTER_REFERER',
+  'OPENROUTER_APP_TITLE',
   'DEEPSEEK_BASE_URL',
   'DEEPSEEK_MODEL',
   'DEEPSEEK_THINKING',
@@ -30,6 +36,11 @@ const AI_CONFIG_KEYS = [
 
 const AI_CONFIG_KEY_SET = new Set<string>(AI_CONFIG_KEYS);
 const AI_SECRET_KEY_SET = new Set<string>(AI_SECRET_KEYS);
+
+function supportsGenerateContent(model: any): boolean {
+  const methods = Array.isArray(model?.supportedGenerationMethods) ? model.supportedGenerationMethods : [];
+  return methods.some((method: unknown) => String(method).toLowerCase() === 'generatecontent');
+}
 
 // Loads env vars from dotenv file
 function parseEnvFile(filePath: string): Record<string, string> {
@@ -249,6 +260,15 @@ export async function getAIProviderDescriptor(preference: AIProviderPreference, 
           status: env['GEMINI_API_KEY'] ? 'Configured' : 'Missing API Key',
           capabilities: { canTriage: true, canSummarize: true, canDraft: true }
         };
+      case 'openRouter':
+        return {
+          preference: 'openRouter',
+          displayName: 'OpenRouter',
+          model: overrideModel || env['OPENROUTER_MODEL'] || getAIProviderConfig('openRouter').defaultModel,
+          transport: 'chat.completions',
+          status: env['OPENROUTER_API_KEY'] ? 'Configured' : 'Missing API Key',
+          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
+        };
       case 'deepSeek':
         return {
           preference: 'deepSeek',
@@ -272,6 +292,7 @@ export async function getAIProviderDescriptor(preference: AIProviderPreference, 
         if (env['OPENAI_API_KEY']) return selectDesc('openAI');
         if (env['ANTHROPIC_API_KEY']) return selectDesc('anthropic');
         if (env['GEMINI_API_KEY']) return selectDesc('gemini');
+        if (env['OPENROUTER_API_KEY']) return selectDesc('openRouter');
         if (env['DEEPSEEK_API_KEY']) return selectDesc('deepSeek');
         if (env['OPENAI_COMPATIBLE_API_KEY']) return selectDesc('openAICompatible');
         return {
@@ -290,7 +311,6 @@ export async function getAIProviderDescriptor(preference: AIProviderPreference, 
   if (preference === 'automatic') {
     return {
       ...defaultDesc,
-      preference: 'automatic',
       displayName: `Automatic (${defaultDesc.displayName})`
     };
   }
@@ -300,12 +320,23 @@ export async function getAIProviderDescriptor(preference: AIProviderPreference, 
 
 export async function listProviderModels(provider: string, apiKey: string, baseUrl?: string): Promise<string[]> {
   let realApiKey = apiKey;
+  let env: Record<string, string> | null = null;
+
+  const getEnv = async () => {
+    if (!env) {
+      env = await loadAIConfigAsync();
+    }
+    return env;
+  };
+
   if (!realApiKey || realApiKey === AI_SECRET_STORED_PLACEHOLDER) {
-    const env = await loadAIConfigAsync();
+    const env = await getEnv();
     if (provider === 'openAI') {
       realApiKey = env['OPENAI_API_KEY'] || '';
     } else if (provider === 'gemini') {
       realApiKey = env['GEMINI_API_KEY'] || '';
+    } else if (provider === 'openRouter') {
+      realApiKey = env['OPENROUTER_API_KEY'] || '';
     } else if (provider === 'deepSeek') {
       realApiKey = env['DEEPSEEK_API_KEY'] || '';
     } else if (provider === 'anthropic') {
@@ -347,9 +378,33 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
         }
         const data = await res.json() as any;
         return (data.models || [])
+          .filter(supportsGenerateContent)
           .map((m: any) => m.name.replace('models/', ''))
           .filter((name: string) => name.includes('gemini'))
           .sort();
+      }
+      case 'openRouter': {
+        const env = await getEnv();
+        const configuredBaseUrl = baseUrl || env['OPENROUTER_BASE_URL'] || getAIProviderConfig('openRouter').defaultBaseUrl;
+        const normalizedBaseUrl = configuredBaseUrl.replace(/\/+$/, '');
+        const urlEnd = normalizedBaseUrl.endsWith('/models') ? normalizedBaseUrl : `${normalizedBaseUrl}/models`;
+        const headers: Record<string, string> = {
+          'Authorization': `Bearer ${realApiKey}`
+        };
+        if (env['OPENROUTER_REFERER']) {
+          headers['HTTP-Referer'] = env['OPENROUTER_REFERER'];
+        }
+        if (env['OPENROUTER_APP_TITLE']) {
+          headers['X-OpenRouter-Title'] = env['OPENROUTER_APP_TITLE'];
+        }
+        const res = await fetch(urlEnd, { headers });
+        if (!res.ok) {
+          let errText = '';
+          try { errText = await res.text(); } catch {}
+          throw new Error(`HTTP ${res.status}${errText ? ': ' + errText : ''}`);
+        }
+        const data = await res.json() as any;
+        return (data.data || []).map((m: any) => m.id).sort();
       }
       case 'deepSeek': {
         const urlEnd = baseUrl || 'https://api.deepseek.com/models';

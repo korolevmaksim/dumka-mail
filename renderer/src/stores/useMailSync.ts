@@ -201,18 +201,7 @@ export function useMailSync({
 
   const onboardAccount = async (emailHint: string) => {
     try {
-      const { email, displayName, avatarUrl } = await window.electronAPI.onboardAccount(emailHint);
-      
-      const newAcc: Account = {
-        id: email,
-        email,
-        displayName: displayName || email.split('@')[0],
-        colorHex: '#' + Math.floor(Math.random()*16777215).toString(16),
-        createdAt: new Date().toISOString(),
-        avatarUrl: avatarUrl || undefined
-      };
-
-      await window.electronAPI.saveAccount(newAcc);
+      const newAcc = await window.electronAPI.onboardAccount(emailHint);
       await loadAccounts();
       setActiveAccountState(newAcc);
     } catch (e) {

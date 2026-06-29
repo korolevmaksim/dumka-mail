@@ -1,5 +1,6 @@
 import React, { createContext, useContext } from 'react';
 import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriagePlanItem, MailTriagePlan, AIAction, MCPServerConfig, MailTriageQueueReadiness } from '../../../shared/types';
+import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
 import { useMailState } from './useMailState';
@@ -103,12 +104,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     globalDefaultModel: '',
     fallback: {
       isEnabled: true,
-      orderText: 'openai, anthropic, gemini, deepseek'
+      orderText: 'openai, anthropic, gemini, openrouter, deepseek'
     },
     providerConfigurations: [
       { id: 'openAI', provider: 'openAI', displayName: 'OpenAI', defaultModel: 'gpt-4o-mini', modelSelectionMode: 'catalog', baseURL: '', isEnabled: true, canRemove: false },
       { id: 'anthropic', provider: 'anthropic', displayName: 'Anthropic', defaultModel: 'claude-3-5-sonnet-latest', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
       { id: 'gemini', provider: 'gemini', displayName: 'Gemini', defaultModel: 'gemini-3.5-flash', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
+      { id: 'openRouter', provider: 'openRouter', displayName: 'OpenRouter', defaultModel: '~openai/gpt-latest', modelSelectionMode: 'catalog', baseURL: 'https://openrouter.ai/api/v1', isEnabled: false, canRemove: false },
       { id: 'deepSeek', provider: 'deepSeek', displayName: 'DeepSeek', defaultModel: 'deepseek-chat', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
       { id: 'openAICompatible', provider: 'openAICompatible', displayName: 'Local Model', defaultModel: 'local-mail-model', modelSelectionMode: 'custom', baseURL: 'http://localhost:11434/v1', isEnabled: false, canRemove: false }
     ],
@@ -347,21 +349,10 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let key = '';
     let baseUrl = '';
     
-    if (provider === 'openAI') {
-      key = settingsState.customEnv['OPENAI_API_KEY'] || '';
-      baseUrl = settingsState.customEnv['OPENAI_BASE_URL'] || '';
-    } else if (provider === 'gemini') {
-      key = settingsState.customEnv['GEMINI_API_KEY'] || '';
-      baseUrl = settingsState.customEnv['GEMINI_BASE_URL'] || '';
-    } else if (provider === 'deepSeek') {
-      key = settingsState.customEnv['DEEPSEEK_API_KEY'] || '';
-      baseUrl = settingsState.customEnv['DEEPSEEK_BASE_URL'] || '';
-    } else if (provider === 'anthropic') {
-      key = settingsState.customEnv['ANTHROPIC_API_KEY'] || '';
-      baseUrl = settingsState.customEnv['ANTHROPIC_BASE_URL'] || '';
-    } else if (provider === 'openAICompatible') {
-      key = settingsState.customEnv['OPENAI_COMPATIBLE_API_KEY'] || '';
-      baseUrl = settingsState.customEnv['OPENAI_COMPATIBLE_BASE_URL'] || '';
+    if (isConfigurableAIProvider(provider)) {
+      const providerConfig = getAIProviderConfig(provider);
+      key = settingsState.customEnv[providerConfig.apiKeyEnv] || '';
+      baseUrl = settingsState.customEnv[providerConfig.baseUrlEnv] || '';
     }
     
     return await window.electronAPI.listProviderModels(provider, key, baseUrl);

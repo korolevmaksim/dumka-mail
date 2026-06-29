@@ -47,7 +47,7 @@ export interface IElectronAPI {
   searchFTS: (accountId: string, query: string) => Promise<{ threadId: string; messageId: string }[]>;
 
   // OAuth onboarding
-  onboardAccount: (emailHint?: string) => Promise<{ email: string; refreshToken: string; displayName?: string; avatarUrl?: string }>;
+  onboardAccount: (emailHint?: string) => Promise<Account>;
   verifyTokenExists: (email: string) => Promise<boolean>;
 
   // Gmail sync & mutations
@@ -58,6 +58,7 @@ export interface IElectronAPI {
   fetchRawMessage: (email: string, messageId: string) => Promise<string>;
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => Promise<{ offline: boolean }>;
   sendDraft: (email: string, draft: any, actionId?: string) => Promise<{ offline: boolean; threadId?: string }>;
+  fetchAttachmentData: (email: string, messageId: string, attachmentId: string) => Promise<string>;
   downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => Promise<void>;
   uploadAttachment: () => Promise<AttachmentMetadata | null>;
 

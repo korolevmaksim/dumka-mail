@@ -1,4 +1,5 @@
 import { AIChatMessage, AIProviderPreference } from '../shared/types';
+import { getAIProviderConfig } from '../shared/aiProviders';
 import { MCPManager } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
 
@@ -41,6 +42,26 @@ Do not claim that you performed actions outside drafting text.`;
 
 function resolveRealModel(model: string): string {
   return model;
+}
+
+function buildChatCompletionsUrl(endpoint: string): string {
+  const trimmed = endpoint.replace(/\/+$/, '');
+  if (trimmed.endsWith('/chat/completions') || trimmed.endsWith('/completions')) {
+    return trimmed;
+  }
+  return `${trimmed}/chat/completions`;
+}
+
+function addOpenRouterHeaders(headers: Record<string, string>, env: Record<string, string>): void {
+  if (env['OPENROUTER_REFERER']) {
+    headers['HTTP-Referer'] = env['OPENROUTER_REFERER'];
+  }
+  headers['X-OpenRouter-Title'] = env['OPENROUTER_APP_TITLE'] || 'Dumka Mail';
+}
+
+function supportsGeminiThinkingLevel(model: string): boolean {
+  const normalized = model.replace(/^models\//, '');
+  return /^gemini-3(?:[.-]|$)/.test(normalized);
 }
 
 export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
@@ -199,8 +220,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
         const anthropicThinkingEffort = env['ANTHROPIC_THINKING_EFFORT'];
         if (anthropicThinkingEffort && anthropicThinkingEffort !== 'disabled') {
           body.thinking = {
-            type: 'adaptive',
-            effort: anthropicThinkingEffort
+            type: 'adaptive'
+          };
+          body.output_config = {
+            effort: anthropicThinkingEffort === 'max' ? 'xhigh' : anthropicThinkingEffort
           };
         }
 
@@ -288,7 +311,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
         }
 
         const geminiThinkingLevel = env['GEMINI_THINKING_LEVEL'];
-        if (geminiThinkingLevel && geminiThinkingLevel !== 'disabled') {
+        if (geminiThinkingLevel && geminiThinkingLevel !== 'disabled' && supportsGeminiThinkingLevel(resolvedModel)) {
           body.generationConfig = {
             thinkingConfig: {
               thinkingLevel: geminiThinkingLevel
@@ -348,22 +371,28 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       return { text: finalResponseText };
     }
 
+    case 'openRouter':
     case 'deepSeek':
     case 'openAICompatible': {
       const isDeepSeek = descriptor.preference === 'deepSeek';
-      const apiKey = isDeepSeek ? env['DEEPSEEK_API_KEY'] : env['OPENAI_COMPATIBLE_API_KEY'];
-      const defaultEndpoint = isDeepSeek ? 'https://api.deepseek.com/chat/completions' : '';
-      const endpoint = isDeepSeek
-        ? (env['DEEPSEEK_BASE_URL'] || defaultEndpoint)
-        : (env['OPENAI_COMPATIBLE_BASE_URL'] || '');
+      const isOpenRouter = descriptor.preference === 'openRouter';
+      const config = getAIProviderConfig(descriptor.preference);
+      const apiKey = isDeepSeek
+        ? env['DEEPSEEK_API_KEY']
+        : isOpenRouter
+          ? env['OPENROUTER_API_KEY']
+          : env['OPENAI_COMPATIBLE_API_KEY'];
+      const defaultEndpoint = isDeepSeek
+        ? 'https://api.deepseek.com/chat/completions'
+        : isOpenRouter
+          ? `${getAIProviderConfig('openRouter').defaultBaseUrl}/chat/completions`
+          : '';
+      const endpoint = env[config.baseUrlEnv] || defaultEndpoint;
 
-      if (!apiKey) throw new Error(`${isDeepSeek ? 'DeepSeek' : 'OpenAI-compatible'} API key missing.`);
-      if (!endpoint) throw new Error(`${isDeepSeek ? 'DeepSeek' : 'OpenAI-compatible'} endpoint URL missing.`);
+      if (!apiKey) throw new Error(`${config.displayName} API key missing.`);
+      if (!endpoint) throw new Error(`${config.displayName} endpoint URL missing.`);
 
-      let url = endpoint;
-      if (!url.endsWith('/chat/completions') && !url.endsWith('/completions')) {
-        url = url.endsWith('/') ? `${url}chat/completions` : `${url}/chat/completions`;
-      }
+      const url = buildChatCompletionsUrl(endpoint);
 
       const openAITools = activeTools.map(t => ({
         type: 'function',
@@ -402,6 +431,11 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
               body.reasoning_effort = env['DEEPSEEK_REASONING_EFFORT'];
             }
           }
+        } else if (isOpenRouter) {
+          const openRouterReasoningEffort = env['OPENROUTER_REASONING_EFFORT'];
+          if (openRouterReasoningEffort && openRouterReasoningEffort !== 'disabled') {
+            body.reasoning = { effort: openRouterReasoningEffort };
+          }
         } else if (preference === 'openAI') {
           const openAIReasoningEffort = env['OPENAI_REASONING_EFFORT'];
           if (openAIReasoningEffort && openAIReasoningEffort !== 'disabled') {
@@ -409,12 +443,17 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           }
         }
 
+        const headers: Record<string, string> = {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        };
+        if (isOpenRouter) {
+          addOpenRouterHeaders(headers, env);
+        }
+
         const res = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-          },
+          headers,
           body: JSON.stringify(body)
         });
 

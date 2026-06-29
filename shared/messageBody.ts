@@ -147,6 +147,11 @@ function normalizeInlineBase64(value: string | null | undefined): string | null 
   if (value == null) {
     return null;
   }
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
+  const trimmed = value.trim().replace(/\s/g, '');
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/');
+  const remainder = normalized.length % 4;
+  return remainder === 0 ? normalized : `${normalized}${'='.repeat(4 - remainder)}`;
 }

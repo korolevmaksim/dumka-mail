@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
-import { MailMessage } from '../../../shared/types';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { AttachmentMetadata, MailMessage } from '../../../shared/types';
 import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
 import { hasRemoteImages, SafeHtmlRenderer } from './SafeHtmlRenderer';
+import { resolveInlineCids } from '../../../shared/messageBody';
 
 export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
@@ -10,6 +11,69 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
   const [showRawModal, setShowRawModal] = useState(false);
   const remoteImages = msg.bodyHtml ? hasRemoteImages(msg.bodyHtml) : false;
   const initials = (msg.senderName || msg.senderEmail || '?').trim().substring(0, 2).toUpperCase();
+  const [inlineAttachmentData, setInlineAttachmentData] = useState<Record<string, string>>({});
+
+  const htmlBody = msg.bodyHtml || '';
+  const htmlHasCidReferences = /cid:/i.test(htmlBody);
+  const inlineImageAttachments = useMemo(
+    () => msg.attachments.filter(att => shouldTreatAsInlineImage(att, htmlBody)),
+    [msg.attachments, htmlBody]
+  );
+  const renderedHtml = useMemo(() => {
+    if (!htmlBody) return '';
+    const attachmentsWithData = msg.attachments.map(att => {
+      const fetchId = attachmentFetchId(att);
+      const hydratedData = fetchId ? inlineAttachmentData[fetchId] : undefined;
+      if (!hydratedData || att.base64Data) return att;
+      return { ...att, base64Data: hydratedData };
+    });
+    return resolveInlineCids(htmlBody, attachmentsWithData);
+  }, [htmlBody, inlineAttachmentData, msg.attachments]);
+  const visibleAttachments = useMemo(
+    () => msg.attachments.filter(att => !shouldTreatAsInlineImage(att, htmlBody)),
+    [msg.attachments, htmlBody]
+  );
+
+  useEffect(() => {
+    setInlineAttachmentData({});
+  }, [msg.id]);
+
+  useEffect(() => {
+    if (!htmlHasCidReferences || inlineImageAttachments.length === 0) return;
+
+    let cancelled = false;
+    const targets = inlineImageAttachments
+      .map(att => attachmentFetchId(att))
+      .filter((id): id is string => Boolean(id))
+      .filter(id => !inlineAttachmentData[id]);
+
+    if (targets.length === 0) return;
+
+    void (async () => {
+      const entries = await Promise.all(targets.map(async attachmentId => {
+        try {
+          const data = await window.electronAPI.fetchAttachmentData(msg.accountId, msg.id, attachmentId);
+          return [attachmentId, data] as const;
+        } catch (err) {
+          console.error('Failed to hydrate inline attachment:', err);
+          return null;
+        }
+      }));
+
+      if (cancelled) return;
+      setInlineAttachmentData(prev => {
+        const next = { ...prev };
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1];
+        }
+        return next;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [htmlHasCidReferences, inlineAttachmentData, inlineImageAttachments, msg.accountId, msg.id]);
 
   const copyEmail = () => {
     try { navigator.clipboard.writeText(msg.senderEmail); } catch { /* clipboard unavailable */ }
@@ -84,7 +148,7 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
 
         {/* Body */}
         {msg.bodyHtml ? (
-          <SafeHtmlRenderer html={msg.bodyHtml} loadRemoteImages={imagesAllowed} />
+          <SafeHtmlRenderer html={renderedHtml} loadRemoteImages={imagesAllowed} />
         ) : (
           <pre className="text-[calc(12px*var(--font-scale))] whitespace-pre-wrap font-sans text-[var(--text-primary)] select-text leading-relaxed">
             {msg.bodyPlain || msg.snippet}
@@ -92,19 +156,19 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
         )}
 
         {/* Attachments */}
-        {msg.attachments.length > 0 && (
+        {visibleAttachments.length > 0 && (
           <div className="mt-4 flex flex-col gap-1.5 border-t border-[var(--border)] pt-3">
             <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
-              {msg.attachments.length} Attachment{msg.attachments.length === 1 ? '' : 's'}
+              {visibleAttachments.length} Attachment{visibleAttachments.length === 1 ? '' : 's'}
             </span>
             <div className="flex flex-wrap gap-2">
-              {msg.attachments.map((att: { id: string; filename: string; sizeBytes: number }) => (
+              {visibleAttachments.map((att) => (
                 <div key={att.id} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--app-bg)] border border-[var(--border)] rounded-[6px] hover:border-[var(--strong-border)] transition-colors">
                   <Paperclip className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
                   <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[180px] truncate">{att.filename}</span>
                   <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{att.sizeBytes >= 1048576 ? `${(att.sizeBytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(att.sizeBytes / 1024))} KB`}</span>
                   <button
-                    onClick={() => window.electronAPI.downloadAttachment(msg.accountId, msg.id, att.id, att.filename)}
+                    onClick={() => window.electronAPI.downloadAttachment(msg.accountId, msg.id, attachmentFetchId(att) || att.id, att.filename)}
                     title="Download attachment"
                     className="ml-1 p-0.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                   >
@@ -126,6 +190,17 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
       )}
     </div>
   );
+}
+
+function attachmentFetchId(att: AttachmentMetadata): string | null {
+  return att.attachmentId || att.id || null;
+}
+
+function shouldTreatAsInlineImage(att: AttachmentMetadata, html: string): boolean {
+  if (!html || !/cid:/i.test(html)) return false;
+  const isImage = att.mimeType.toLowerCase().startsWith('image/');
+  if (!isImage) return false;
+  return att.isInline === true || Boolean(att.contentId) || att.filename.toLowerCase() === 'inline';
 }
 
 function RawMessageModal({

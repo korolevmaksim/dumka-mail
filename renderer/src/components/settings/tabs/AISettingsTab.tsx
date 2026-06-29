@@ -4,11 +4,16 @@ import { CheckCircle, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import { Toggle } from '../SettingsControls';
 import { emitToast } from '../../../lib/toastBus';
 import { AI_SECRET_STORED_PLACEHOLDER } from '../../../../../shared/types';
+import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider } from '../../../../../shared/aiProviders';
 
 type FormKeys = Record<string, string>;
 type VerifyStatus = Record<string, { status: 'idle' | 'verifying' | 'success' | 'error'; error?: string }>;
 
 const isStoredSecretPlaceholder = (value?: string) => value === AI_SECRET_STORED_PLACEHOLDER;
+
+const getConfigurableProvider = (provider: string): ConfigurableAIProvider | null => {
+  return isConfigurableAIProvider(provider) ? provider : null;
+};
 
 export function AISettingsTab() {
   const store = useAppStore();
@@ -30,6 +35,12 @@ export function AISettingsTab() {
       GEMINI_BASE_URL: store.customEnv['GEMINI_BASE_URL'] || '',
       GEMINI_MODEL: store.customEnv['GEMINI_MODEL'] || '',
       GEMINI_THINKING_LEVEL: store.customEnv['GEMINI_THINKING_LEVEL'] || 'disabled',
+      OPENROUTER_API_KEY: store.customEnv['OPENROUTER_API_KEY'] || '',
+      OPENROUTER_BASE_URL: store.customEnv['OPENROUTER_BASE_URL'] || '',
+      OPENROUTER_MODEL: store.customEnv['OPENROUTER_MODEL'] || '',
+      OPENROUTER_REASONING_EFFORT: store.customEnv['OPENROUTER_REASONING_EFFORT'] || 'disabled',
+      OPENROUTER_REFERER: store.customEnv['OPENROUTER_REFERER'] || '',
+      OPENROUTER_APP_TITLE: store.customEnv['OPENROUTER_APP_TITLE'] || 'Dumka Mail',
       DEEPSEEK_API_KEY: store.customEnv['DEEPSEEK_API_KEY'] || '',
       DEEPSEEK_BASE_URL: store.customEnv['DEEPSEEK_BASE_URL'] || '',
       DEEPSEEK_MODEL: store.customEnv['DEEPSEEK_MODEL'] || '',
@@ -47,23 +58,28 @@ export function AISettingsTab() {
     await store.saveAIConfig({ [key]: value });
   };
 
+  const handleSecretBlur = async (key: string, value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || isStoredSecretPlaceholder(trimmed)) return;
+    await store.saveAIConfig({ [key]: trimmed });
+  };
+
   const handleVerify = async (provider: string) => {
-    const keyField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_API_KEY' : `${provider.toUpperCase()}_API_KEY`;
-    const urlField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_BASE_URL' : `${provider.toUpperCase()}_BASE_URL`;
+    const configurableProvider = getConfigurableProvider(provider);
+    if (!configurableProvider) return;
+
+    const providerConfig = getAIProviderConfig(configurableProvider);
+    const keyField = providerConfig.apiKeyEnv;
+    const urlField = providerConfig.baseUrlEnv;
     
     const key = formKeys[keyField] || '';
     const baseUrl = formKeys[urlField] || '';
-
-    if (isStoredSecretPlaceholder(key)) {
-      emitToast({ type: 'info', message: 'Stored Keychain keys are available to AI requests. Enter a new key to verify or replace it.' });
-      return;
-    }
     
-    if (provider !== 'openAICompatible' && !key) {
+    if (providerConfig.requiresApiKeyForModels && !key) {
       emitToast({ type: 'warning', message: 'Please enter an API key first.' });
       return;
     }
-    if (provider === 'openAICompatible' && !baseUrl) {
+    if (providerConfig.requiresBaseUrlForModels && !baseUrl) {
       emitToast({ type: 'warning', message: 'Please enter a Base URL first.' });
       return;
     }
@@ -71,12 +87,21 @@ export function AISettingsTab() {
     setVerifyStatus(prev => ({ ...prev, [provider]: { status: 'verifying' } }));
     try {
       const models = await store.verifyConnectionAndFetchModels(provider, key, baseUrl);
+      const settingsToSave: Record<string, string> = {
+        [keyField]: key,
+        [urlField]: baseUrl,
+      };
+      if (provider === 'openRouter') {
+        settingsToSave.OPENROUTER_REFERER = formKeys.OPENROUTER_REFERER || '';
+        settingsToSave.OPENROUTER_APP_TITLE = formKeys.OPENROUTER_APP_TITLE || 'Dumka Mail';
+      }
+      await store.saveAIConfig(settingsToSave);
       setVerifyStatus(prev => ({ 
         ...prev, 
         [provider]: { status: 'success' } 
       }));
       
-      const modelField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_MODEL' : `${provider.toUpperCase()}_MODEL`;
+      const modelField = providerConfig.modelEnv;
       if (!formKeys[modelField] && models.length > 0) {
         await handleUpdateSetting(modelField, models[0]);
       }
@@ -97,6 +122,10 @@ export function AISettingsTab() {
       ANTHROPIC_BASE_URL: formKeys.ANTHROPIC_BASE_URL || '',
       GEMINI_API_KEY: formKeys.GEMINI_API_KEY || '',
       GEMINI_BASE_URL: formKeys.GEMINI_BASE_URL || '',
+      OPENROUTER_API_KEY: formKeys.OPENROUTER_API_KEY || '',
+      OPENROUTER_BASE_URL: formKeys.OPENROUTER_BASE_URL || '',
+      OPENROUTER_REFERER: formKeys.OPENROUTER_REFERER || '',
+      OPENROUTER_APP_TITLE: formKeys.OPENROUTER_APP_TITLE || 'Dumka Mail',
       DEEPSEEK_API_KEY: formKeys.DEEPSEEK_API_KEY || '',
       DEEPSEEK_BASE_URL: formKeys.DEEPSEEK_BASE_URL || '',
       OPENAI_COMPATIBLE_API_KEY: formKeys.OPENAI_COMPATIBLE_API_KEY || '',
@@ -107,59 +136,24 @@ export function AISettingsTab() {
     setTimeout(() => setSavedStatus(false), 2000);
   };
 
+  const renderReasoningSelect = (key: string, options: Array<[string, string]>) => (
+    <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
+      <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
+      <select
+        value={formKeys[key] || 'disabled'}
+        onChange={(e) => handleUpdateSetting(key, e.target.value)}
+        className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+      >
+        {options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+    </div>
+  );
+
   const renderThinkingConfig = (provider: string) => {
-    if (provider === 'openAI') {
-      return (
-        <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
-          <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
-          <select
-            value={formKeys.OPENAI_REASONING_EFFORT || 'disabled'}
-            onChange={(e) => handleUpdateSetting('OPENAI_REASONING_EFFORT', e.target.value)}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-          >
-            <option value="disabled">Disabled / None</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
-      );
-    }
-    if (provider === 'anthropic') {
-      return (
-        <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
-          <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
-          <select
-            value={formKeys.ANTHROPIC_THINKING_EFFORT || 'disabled'}
-            onChange={(e) => handleUpdateSetting('ANTHROPIC_THINKING_EFFORT', e.target.value)}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-          >
-            <option value="disabled">Disabled</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High (Default)</option>
-            <option value="max">Max</option>
-          </select>
-        </div>
-      );
-    }
-    if (provider === 'gemini') {
-      return (
-        <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
-          <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
-          <select
-            value={formKeys.GEMINI_THINKING_LEVEL || 'disabled'}
-            onChange={(e) => handleUpdateSetting('GEMINI_THINKING_LEVEL', e.target.value)}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-          >
-            <option value="disabled">Disabled</option>
-            <option value="LOW">Low</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="HIGH">High</option>
-          </select>
-        </div>
-      );
-    }
+    if (provider === 'openAI') return renderReasoningSelect('OPENAI_REASONING_EFFORT', [['disabled', 'Disabled / None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]);
+    if (provider === 'anthropic') return renderReasoningSelect('ANTHROPIC_THINKING_EFFORT', [['disabled', 'Disabled'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High (Default)'], ['max', 'Max']]);
+    if (provider === 'gemini') return renderReasoningSelect('GEMINI_THINKING_LEVEL', [['disabled', 'Disabled'], ['LOW', 'Low'], ['MEDIUM', 'Medium'], ['HIGH', 'High']]);
+    if (provider === 'openRouter') return renderReasoningSelect('OPENROUTER_REASONING_EFFORT', [['disabled', 'Disabled'], ['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'XHigh'], ['max', 'Max']]);
     if (provider === 'deepSeek') {
       return (
         <div className="flex flex-col gap-2 mt-1 max-w-[280px]">
@@ -195,7 +189,11 @@ export function AISettingsTab() {
   };
 
   const renderProviderVerificationAndModel = (provider: string) => {
-    const modelField = provider === 'openAICompatible' ? 'OPENAI_COMPATIBLE_MODEL' : `${provider.toUpperCase()}_MODEL`;
+    const configurableProvider = getConfigurableProvider(provider);
+    if (!configurableProvider) return null;
+
+    const providerConfig = getAIProviderConfig(configurableProvider);
+    const modelField = providerConfig.modelEnv;
     const statusObj = verifyStatus[provider] || { status: 'idle' };
     const cachedModels = store.modelsCache[provider] || [];
     const hasCached = cachedModels.length > 0;
@@ -276,6 +274,7 @@ export function AISettingsTab() {
             <option value="openAI">OpenAI</option>
             <option value="anthropic">Anthropic</option>
             <option value="gemini">Gemini</option>
+            <option value="openRouter">OpenRouter</option>
             <option value="deepSeek">DeepSeek</option>
             <option value="openAICompatible">Local OpenCompatible</option>
             <option value="disabled">Disabled</option>
@@ -297,7 +296,6 @@ export function AISettingsTab() {
             onChange={(e) => {
               const val = e.target.value;
               store.updateSettings(s => { s.ai.globalDefaultModel = val; });
-              store.setAiModel(val);
             }}
           />
         </div>
@@ -377,6 +375,7 @@ export function AISettingsTab() {
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.OPENAI_API_KEY)) e.currentTarget.select();
               }}
+              onBlur={(e) => void handleSecretBlur('OPENAI_API_KEY', e.currentTarget.value)}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENAI_API_KEY: e.target.value }))}
             />
             <input
@@ -403,6 +402,7 @@ export function AISettingsTab() {
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.ANTHROPIC_API_KEY)) e.currentTarget.select();
               }}
+              onBlur={(e) => void handleSecretBlur('ANTHROPIC_API_KEY', e.currentTarget.value)}
               onChange={(e) => setFormKeys(prev => ({ ...prev, ANTHROPIC_API_KEY: e.target.value }))}
             />
             <input
@@ -429,6 +429,7 @@ export function AISettingsTab() {
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.GEMINI_API_KEY)) e.currentTarget.select();
               }}
+              onBlur={(e) => void handleSecretBlur('GEMINI_API_KEY', e.currentTarget.value)}
               onChange={(e) => setFormKeys(prev => ({ ...prev, GEMINI_API_KEY: e.target.value }))}
             />
             <input
@@ -445,6 +446,47 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
 
         <div className="flex flex-col gap-3">
+          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenRouter</span>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="password"
+              placeholder="API Key"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              value={formKeys.OPENROUTER_API_KEY || ''}
+              onFocus={(e) => {
+                if (isStoredSecretPlaceholder(formKeys.OPENROUTER_API_KEY)) e.currentTarget.select();
+              }}
+              onBlur={(e) => void handleSecretBlur('OPENROUTER_API_KEY', e.currentTarget.value)}
+              onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_API_KEY: e.target.value }))}
+            />
+            <input
+              type="text"
+              placeholder="Base URL (optional)"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              value={formKeys.OPENROUTER_BASE_URL || ''}
+              onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_BASE_URL: e.target.value }))}
+            />
+            <input
+              type="text"
+              placeholder="HTTP Referer (optional)"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              value={formKeys.OPENROUTER_REFERER || ''}
+              onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_REFERER: e.target.value }))}
+            />
+            <input
+              type="text"
+              placeholder="App title"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              value={formKeys.OPENROUTER_APP_TITLE || ''}
+              onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_APP_TITLE: e.target.value }))}
+            />
+          </div>
+          {renderProviderVerificationAndModel('openRouter')}
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
+
+        <div className="flex flex-col gap-3">
           <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">DeepSeek</span>
           <div className="grid grid-cols-2 gap-2">
             <input
@@ -455,6 +497,7 @@ export function AISettingsTab() {
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.DEEPSEEK_API_KEY)) e.currentTarget.select();
               }}
+              onBlur={(e) => void handleSecretBlur('DEEPSEEK_API_KEY', e.currentTarget.value)}
               onChange={(e) => setFormKeys(prev => ({ ...prev, DEEPSEEK_API_KEY: e.target.value }))}
             />
             <input
@@ -481,6 +524,7 @@ export function AISettingsTab() {
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.OPENAI_COMPATIBLE_API_KEY)) e.currentTarget.select();
               }}
+              onBlur={(e) => void handleSecretBlur('OPENAI_COMPATIBLE_API_KEY', e.currentTarget.value)}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENAI_COMPATIBLE_API_KEY: e.target.value }))}
             />
             <input

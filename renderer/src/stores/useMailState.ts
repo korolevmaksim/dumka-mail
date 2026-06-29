@@ -19,6 +19,18 @@ interface UseMailStateProps {
   tabCategories: TabCategory[];
 }
 
+function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
+  return messages.some(message => {
+    const html = message.bodyHtml || '';
+    if (!/cid:/i.test(html)) return false;
+
+    const imageAttachments = message.attachments.filter(att => att.mimeType.toLowerCase().startsWith('image/'));
+    if (imageAttachments.length === 0) return true;
+
+    return imageAttachments.some(att => !att.contentId || (!att.attachmentId && !att.base64Data));
+  });
+}
+
 export function useMailState({
   customClassifierRules,
   tabCategories,
@@ -374,8 +386,24 @@ export function useMailState({
 
     setFocusedThreadId(thread.id);
 
-    let msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
+    const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
     setOpenedThreadMessages(msgs);
+
+    if (shouldRefreshInlineCidMetadata(msgs)) {
+      void (async () => {
+        try {
+          const freshMessages = await window.electronAPI.fetchThreadDetail(thread.accountId, thread.id);
+          await window.electronAPI.saveMessages(freshMessages);
+          setOpenedThreadMessages(current => (
+            current.length > 0 && current.every(message => message.threadId === thread.id)
+              ? freshMessages
+              : current
+          ));
+        } catch (err) {
+          console.error('Failed to refresh inline message assets:', err);
+        }
+      })();
+    }
 
     if (thread.isUnread) {
       executeMailAction('markRead', thread.id);
@@ -695,4 +723,3 @@ export function useMailState({
     getThreadCategory
   };
 }
-

@@ -145,13 +145,14 @@ export interface MailActionLog {
   failureMessage?: string | null;
 }
 
-export type AIProviderPreference = 'automatic' | 'openAI' | 'anthropic' | 'gemini' | 'deepSeek' | 'openAICompatible' | 'disabled';
+export type AIProviderPreference = 'automatic' | 'openAI' | 'anthropic' | 'gemini' | 'openRouter' | 'deepSeek' | 'openAICompatible' | 'disabled';
 
 export const AI_SECRET_STORED_PLACEHOLDER = '__DUMKA_SECRET_STORED__';
 export const AI_SECRET_KEYS = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
+  'OPENROUTER_API_KEY',
   'DEEPSEEK_API_KEY',
   'OPENAI_COMPATIBLE_API_KEY'
 ] as const;
@@ -476,4 +477,3 @@ export interface MailTriageQueueReadiness {
   canApplySelected: boolean;
   applyButtonTitle: string;
 }
-

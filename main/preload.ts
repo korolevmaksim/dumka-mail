@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchRawMessage: (email: string, messageId: string) => ipcRenderer.invoke('api:fetchRawMessage', email, messageId),
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => ipcRenderer.invoke('api:modifyLabels', email, threadId, addLabelIds, removeLabelIds, actionId),
   sendDraft: (email: string, draft: any, actionId?: string) => ipcRenderer.invoke('api:sendDraft', email, draft, actionId),
+  fetchAttachmentData: (email: string, messageId: string, attachmentId: string) => ipcRenderer.invoke('api:fetchAttachmentData', email, messageId, attachmentId),
   downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => ipcRenderer.invoke('api:downloadAttachment', email, messageId, attachmentId, filename),
   uploadAttachment: () => ipcRenderer.invoke('api:uploadAttachment'),
 

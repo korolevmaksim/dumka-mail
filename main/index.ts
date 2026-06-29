@@ -3,10 +3,11 @@ import path from 'path';
 import fs from 'fs';
 import { initializeDatabase, getDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
 import { startOAuthFlow, GmailSyncService } from './gmail';
-import { getRefreshToken } from './keychain';
+import { getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { MCPManager } from './mcpManager';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
+import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import type { MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -493,7 +494,17 @@ registerSecureHandler('db:setSetting', (_, key, value) => {
 registerSecureHandler('api:verifyMCPServer', (_, config) => MCPManager.verifyServer(config));
 
 // === Bind IPC API / Service Channels ===
-registerSecureHandler('api:onboardAccount', (_, emailHint) => startOAuthFlow(emailHint));
+registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
+  const profile = await startOAuthFlow(emailHint);
+  const email = normalizeOAuthEmail(profile.email);
+  const existingAccount = AccountsRepo.get(email);
+  const account = buildOnboardedAccount(profile, existingAccount);
+
+  await saveRefreshToken(account.email, profile.refreshToken);
+  AccountsRepo.save(account);
+
+  return account;
+});
 
 registerSecureHandler('api:verifyTokenExists', async (_, email) => {
   const token = await getRefreshToken(email);
@@ -505,6 +516,7 @@ registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => Gmail
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
 registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
 registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
+registerSecureHandler('api:fetchAttachmentData', (_, email, messageId, attachmentId) => GmailSyncService.fetchAttachment(email, messageId, attachmentId));
 registerSecureHandler('api:downloadAttachment', async (_, email, messageId, attachmentId, filename) => {
   if (!mainWindow) return;
   const { filePath } = await dialog.showSaveDialog(mainWindow, {

@@ -91,6 +91,12 @@ describe('resolveInlineCids', () => {
     expect(result).toBe('<img src="data:image/png;base64,QUJD">');
   });
 
+  it('normalizes Gmail base64url data before building data URIs', () => {
+    const html = '<img src="cid:logo">';
+    const result = resolveInlineCids(html, [attachment({ contentId: 'logo', base64Data: 'SGVsbG8td29ybGQ_' })]);
+    expect(result).toBe('<img src="data:image/png;base64,SGVsbG8td29ybGQ/">');
+  });
+
   it('matches single-quoted cid references', () => {
     const html = "<img src='cid:logo'>";
     const result = resolveInlineCids(html, [attachment({ contentId: 'logo' })]);

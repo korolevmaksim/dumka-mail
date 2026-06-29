@@ -16,10 +16,11 @@ export interface GoogleClientConfig {
   }
 }
 
-const SCOPES = [
+export const GOOGLE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile'
-];
+] as const;
 
 export function loadGoogleConfig(): GoogleClientConfig {
   const primaryPath = path.join(process.env.HOME || '', '.config', 'dumka-mail-agy', 'google-oauth-client.json');
@@ -145,6 +146,9 @@ export function startOAuthFlow(emailHint?: string): Promise<{ email: string; ref
               }
 
               const profile = await profileRes.json();
+              if (typeof profile.email !== 'string' || profile.email.trim().length === 0) {
+                throw new Error('Google profile response did not include an email address.');
+              }
 
               res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end('<h1>Dumka Mail Authentication Successful!</h1><p>You can close this tab and return to the app.</p>');
@@ -171,7 +175,7 @@ export function startOAuthFlow(emailHint?: string): Promise<{ email: string; ref
           client_id: config.client_id,
           redirect_uri: redirectUri,
           response_type: 'code',
-          scope: SCOPES.join(' '),
+          scope: GOOGLE_OAUTH_SCOPES.join(' '),
           state,
           code_challenge: codeChallenge,
           code_challenge_method: 'S256',

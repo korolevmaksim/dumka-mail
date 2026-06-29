@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
-import { saveAIConfigAsync } from '../main/aiConfig';
+import { getAIProviderDescriptor, listProviderModels, saveAIConfigAsync } from '../main/aiConfig';
 import { AI_SECRET_STORED_PLACEHOLDER } from '../shared/types';
 
 // State variables for mocked modules
@@ -55,6 +55,7 @@ describe('saveAIConfigAsync self-healing and separation', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('runs key migration and separation scenarios sequentially', async () => {
@@ -95,5 +96,90 @@ describe('saveAIConfigAsync self-healing and separation', () => {
     expect(mockKeychain.has('ai-secret:OPENAI_API_KEY')).toBe(false);
     expect(mockFileContent).toContain('OPENAI_API_KEY=sk-proj-from-keychain');
     expect(mockFileContent).toContain('OPENAI_MODEL=gpt-5');
+  });
+
+  it('stores OpenRouter credentials as a secret while keeping non-secret settings in the env file', async () => {
+    mockUseKeychain = true;
+    mockFileContent = '';
+
+    await saveAIConfigAsync({
+      OPENROUTER_API_KEY: 'sk-or-v1-test',
+      OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
+      OPENROUTER_MODEL: '~openai/gpt-latest',
+      OPENROUTER_REFERER: 'https://dumka.local',
+      OPENROUTER_APP_TITLE: 'Dumka Mail'
+    });
+
+    expect(mockKeychain.get('ai-secret:OPENROUTER_API_KEY')).toBe('sk-or-v1-test');
+    expect(mockFileContent).not.toContain('sk-or-v1-test');
+    expect(mockFileContent).toContain('OPENROUTER_BASE_URL=https://openrouter.ai/api/v1');
+    expect(mockFileContent).toContain('OPENROUTER_MODEL=~openai/gpt-latest');
+    expect(mockFileContent).toContain('OPENROUTER_REFERER=https://dumka.local');
+    expect(mockFileContent).toContain('OPENROUTER_APP_TITLE=Dumka Mail');
+  });
+
+  it('resolves OpenRouter descriptors and lists models with a stored key', async () => {
+    mockUseKeychain = true;
+    mockFileContent = 'OPENROUTER_MODEL=~openai/gpt-latest\n';
+    mockKeychain.set('ai-secret:OPENROUTER_API_KEY', 'sk-or-v1-keychain');
+
+    const descriptor = await getAIProviderDescriptor('openRouter' as any);
+
+    expect(descriptor.preference).toBe('openRouter');
+    expect(descriptor.displayName).toBe('OpenRouter');
+    expect(descriptor.model).toBe('~openai/gpt-latest');
+    expect(descriptor.status).toBe('Configured');
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: [
+        { id: 'openai/gpt-5.2' },
+        { id: 'anthropic/claude-sonnet-4.6' }
+      ]
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await listProviderModels('openRouter', AI_SECRET_STORED_PLACEHOLDER);
+
+    expect(models).toEqual(['anthropic/claude-sonnet-4.6', 'openai/gpt-5.2']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/models',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk-or-v1-keychain'
+        })
+      })
+    );
+  });
+
+  it('returns the effective provider preference for automatic descriptors so runtime calls are executable', async () => {
+    mockUseKeychain = true;
+    mockFileContent = 'ANTHROPIC_MODEL=claude-sonnet-4.6\n';
+    mockKeychain.set('ai-secret:ANTHROPIC_API_KEY', 'sk-ant-keychain');
+
+    const descriptor = await getAIProviderDescriptor('automatic');
+
+    expect(descriptor.preference).toBe('anthropic');
+    expect(descriptor.displayName).toBe('Automatic (Anthropic)');
+    expect(descriptor.model).toBe('claude-sonnet-4.6');
+    expect(descriptor.status).toBe('Configured');
+  });
+
+  it('lists only Gemini models that support generateContent for chat use', async () => {
+    mockUseKeychain = true;
+    mockFileContent = '';
+    mockKeychain.set('ai-secret:GEMINI_API_KEY', 'gemini-keychain');
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      models: [
+        { name: 'models/gemini-3.5-flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+        { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+        { name: 'models/gemini-3-pro-image', supportedGenerationMethods: ['predict'] },
+        { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }
+      ]
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await listProviderModels('gemini', AI_SECRET_STORED_PLACEHOLDER);
+
+    expect(models).toEqual(['gemini-2.5-flash', 'gemini-3.5-flash']);
   });
 });

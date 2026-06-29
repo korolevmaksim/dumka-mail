@@ -90,6 +90,26 @@ function parseHeaderRecipients(headerVal?: string): Recipient[] {
   return results;
 }
 
+function findPartHeader(part: any, name: string): string {
+  const headers = (part?.headers || []) as { name: string; value: string }[];
+  return headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+}
+
+function normalizeContentIdHeader(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const withoutOpen = trimmed.startsWith('<') ? trimmed.slice(1) : trimmed;
+  const withoutClose = withoutOpen.endsWith('>') ? withoutOpen.slice(0, -1) : withoutOpen;
+  const normalized = withoutClose.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function base64UrlToBase64(data: string): string {
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  const remainder = normalized.length % 4;
+  return remainder === 0 ? normalized : `${normalized}${'='.repeat(4 - remainder)}`;
+}
+
 // Maps Gmail API Message object to local MailMessage
 export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
   const headers = (gmailMsg.payload?.headers || []) as { name: string; value: string }[];
@@ -119,19 +139,42 @@ export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
     
     const mimeType = part.mimeType?.toLowerCase();
     const data = part.body?.data;
-    const bodyStr = data ? Buffer.from(data, 'base64url').toString('utf-8') : '';
+    const bodyStr = data && (mimeType === 'text/plain' || mimeType === 'text/html')
+      ? Buffer.from(data, 'base64url').toString('utf-8')
+      : '';
 
     if (mimeType === 'text/plain' && bodyStr) {
       bodyPlain = bodyStr;
     } else if (mimeType === 'text/html' && bodyStr) {
       bodyHtml = bodyStr;
-    } else if (part.filename && part.body?.attachmentId) {
-      attachments.push({
-        id: part.body.attachmentId,
-        filename: part.filename,
-        mimeType: part.mimeType,
-        sizeBytes: part.body.size || 0
-      });
+    } else {
+      const attachmentId = part.body?.attachmentId || null;
+      const contentId = normalizeContentIdHeader(
+        findPartHeader(part, 'content-id') || findPartHeader(part, 'x-attachment-id')
+      );
+      const disposition = findPartHeader(part, 'content-disposition').toLowerCase();
+      const isInline = disposition.includes('inline') || Boolean(contentId);
+      const hasAttachmentPayload = Boolean(attachmentId || (data && mimeType && !mimeType.startsWith('text/')));
+      const shouldCaptureAttachment = hasAttachmentPayload && Boolean(part.filename || contentId);
+
+      if (shouldCaptureAttachment) {
+        const inlineData = !attachmentId && data ? base64UrlToBase64(data) : undefined;
+        const id = attachmentId || part.partId || contentId || `${part.filename || 'attachment'}-${attachments.length + 1}`;
+        const attachment: AttachmentMetadata = {
+          id,
+          filename: part.filename || (isInline ? 'inline' : 'attachment'),
+          mimeType: part.mimeType,
+          sizeBytes: part.body?.size || 0,
+          attachmentId,
+          partId: part.partId || null,
+          contentId,
+          isInline
+        };
+        if (inlineData) {
+          attachment.base64Data = inlineData;
+        }
+        attachments.push(attachment);
+      }
     }
 
     if (part.parts) {

@@ -818,7 +818,7 @@ function AppContent() {
             className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 opacity-80 text-[var(--ai-accent)] hover:text-white" />
-            <span>AI Summarize</span>
+            <span>AI Triage Queue</span>
           </button>
         </div>
       )}

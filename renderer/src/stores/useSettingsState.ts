@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule } from '../../../shared/types';
+import { CONFIGURABLE_AI_PROVIDERS } from '../../../shared/aiProviders';
 import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, SETTINGS_SCHEMA_VERSION, mergeSettings } from './AppStore';
 
 export function useSettingsState() {
@@ -291,8 +292,7 @@ export function useSettingsState() {
         setCustomClassifierRulesState(legacyRules);
 
         const cache: Record<string, string[]> = {};
-        const providers = ['openAI', 'anthropic', 'gemini', 'deepSeek', 'openAICompatible'];
-        for (const p of providers) {
+        for (const p of CONFIGURABLE_AI_PROVIDERS) {
           const val = await window.electronAPI.getSetting(`models_cache:${p}`);
           if (val) {
             try {
@@ -450,7 +450,8 @@ export function useSettingsState() {
 
   const saveAIConfig = async (config: Record<string, string>) => {
     await window.electronAPI.saveAIConfig(config);
-    setCustomEnv(prev => ({ ...prev, ...config }));
+    const nextConfig = await window.electronAPI.loadAIConfig();
+    setCustomEnv(nextConfig);
   };
 
   const verifyConnectionAndFetchModels = async (provider: string, apiKey: string, baseUrl?: string): Promise<string[]> => {

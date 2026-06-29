@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
+import { formatAIUserError } from '../../../shared/aiErrors';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 import { MailTriagePlanner } from '../../../shared/triagePlanner';
@@ -49,9 +50,14 @@ export function useAIState({
   useEffect(() => {
     if (settings?.ai) {
       setAiProviderState(settings.ai.provider);
-      setAiModel(settings.ai.globalDefaultModel);
     }
-  }, [settings?.ai?.provider, settings?.ai?.globalDefaultModel]);
+  }, [settings?.ai?.provider]);
+
+  const setAiProvider = useCallback((pref: AIProviderPreference) => {
+    setAiProviderState(pref);
+    setAiModel('');
+    setAiProviderDesc(null);
+  }, []);
 
   // Check connected account credentials
   useEffect(() => {
@@ -165,7 +171,7 @@ export function useAIState({
       }));
     } catch (e) {
       console.error('AI chat completion failed:', e);
-      emitToast({ type: 'error', message: 'AI request failed. Check your provider keys in Settings → AI.' });
+      emitToast({ type: 'error', message: formatAIUserError(e) });
     } finally {
       setAiPanelLoading(false);
     }
@@ -308,10 +314,14 @@ export function useAIState({
   };
 
   const runAIAction = async (action: AIAction) => {
-    if (!activeAccount) return;
     setAiPanelOpen(true);
     if (action === 'queue') {
       await runAITriagePlan();
+      return;
+    }
+
+    if (!activeAccount) {
+      emitToast({ type: 'warning', message: 'Connect an account before using AI actions.' });
       return;
     }
 
@@ -367,17 +377,26 @@ export function useAIState({
       }));
     } catch (e) {
       console.error('AI action failed:', e);
-      setActiveAIMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', text: 'AI request failed. Check your provider keys in Settings → AI.' }]);
+      setActiveAIMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', text: formatAIUserError(e) }]);
     } finally {
       setAiPanelLoading(false);
     }
   };
 
   const runAITriagePlan = async () => {
-    if (!activeAccount || visibleThreads.length === 0) return;
+    setAiPanelOpen(true);
+    if (!activeAccount) {
+      setTriagePlan(null);
+      emitToast({ type: 'warning', message: 'Connect an account before building a triage queue.' });
+      return;
+    }
+    if (visibleThreads.length === 0) {
+      setTriagePlan(null);
+      emitToast({ type: 'info', message: 'No visible messages to triage in this tab.' });
+      return;
+    }
     
     setAiPanelLoading(true);
-    setAiPanelOpen(true);
 
     const isAutomationSplit = activeSplit === 'automation';
     const intent = isAutomationSplit ? 'automationCleanup' : 'mailboxTriage';
@@ -400,13 +419,14 @@ export function useAIState({
     setSelectedTriageThreadIds(defaultSelected);
     setTriagePlan(plan);
     setAiPanelLoading(false);
+    emitToast({ type: 'success', message: `Triage plan ready for ${plan.items.length} messages.` });
   };
 
   return {
     aiPanelOpen,
     setAiPanelOpen,
     aiProvider,
-    setAiProvider: setAiProviderState,
+    setAiProvider,
     aiProviderDesc,
     aiConversations,
     activeAIConversation,

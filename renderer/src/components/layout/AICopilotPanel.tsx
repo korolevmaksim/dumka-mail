@@ -6,10 +6,68 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import { AI_ACTIONS } from '../../../../shared/types';
+import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider, resolveConfiguredProviderModel } from '../../../../shared/aiProviders';
 import { AITriagePlanCard } from '../AITriagePlanCard';
+import { SearchableSelect } from '../common/SearchableSelect';
 
 const AI_ICON: Record<string, LucideIcon> = {
   ListChecks, Text, PenLine, Wand2, Languages,
+};
+
+const THINKING_CONTROLS: Partial<Record<ConfigurableAIProvider, {
+  envKey: string;
+  linkedEnv?: { key: string; enabledValue: string; disabledValue: string };
+  options: { value: string; label: string }[];
+}>> = {
+  openAI: {
+    envKey: 'OPENAI_REASONING_EFFORT',
+    options: [
+      { value: 'disabled', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+    ],
+  },
+  anthropic: {
+    envKey: 'ANTHROPIC_THINKING_EFFORT',
+    options: [
+      { value: 'disabled', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' },
+    ],
+  },
+  gemini: {
+    envKey: 'GEMINI_THINKING_LEVEL',
+    options: [
+      { value: 'disabled', label: 'Off' },
+      { value: 'LOW', label: 'Low' },
+      { value: 'MEDIUM', label: 'Medium' },
+      { value: 'HIGH', label: 'High' },
+    ],
+  },
+  openRouter: {
+    envKey: 'OPENROUTER_REASONING_EFFORT',
+    options: [
+      { value: 'disabled', label: 'Off' },
+      { value: 'minimal', label: 'Minimal' },
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'XHigh' },
+      { value: 'max', label: 'Max' },
+    ],
+  },
+  deepSeek: {
+    envKey: 'DEEPSEEK_REASONING_EFFORT',
+    linkedEnv: { key: 'DEEPSEEK_THINKING', enabledValue: 'enabled', disabledValue: 'disabled' },
+    options: [
+      { value: 'disabled', label: 'Off' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' },
+    ],
+  },
 };
 
 export function AICopilotPanel() {
@@ -19,6 +77,7 @@ export function AICopilotPanel() {
   const [aiPosition, setAiPosition] = useState({ x: 96, y: 60 });
   const [isAiDragging, setIsAiDragging] = useState(false);
   const aiDragStartRef = useRef({ x: 0, y: 0 });
+  const aiMessagesRef = useRef<HTMLDivElement>(null);
 
   // Handle dragging logic
   useEffect(() => {
@@ -49,36 +108,83 @@ export function AICopilotPanel() {
     };
   }, [isAiDragging]);
 
+  useEffect(() => {
+    if (!store.triagePlan) return;
+    aiMessagesRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [store.triagePlan?.generatedAt]);
+
   const [modelList, setModelList] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const effectiveProvider = store.aiProvider === 'automatic' ? store.aiProviderDesc?.preference : store.aiProvider;
+  const modelProvider = effectiveProvider && isConfigurableAIProvider(effectiveProvider) ? effectiveProvider : null;
+  const thinkingControl = modelProvider ? THINKING_CONTROLS[modelProvider] : null;
+  const configuredModel = modelProvider
+    ? resolveConfiguredProviderModel(modelProvider, store.customEnv)
+    : '';
+
+  const updateThinkingLevel = async (value: string) => {
+    if (!thinkingControl) return;
+    const config: Record<string, string> = { [thinkingControl.envKey]: value };
+    if (thinkingControl.linkedEnv) {
+      config[thinkingControl.linkedEnv.key] = value === 'disabled'
+        ? thinkingControl.linkedEnv.disabledValue
+        : thinkingControl.linkedEnv.enabledValue;
+    }
+    await store.saveAIConfig(config);
+  };
+
+  const updateProvider = (provider: string) => {
+    store.setAiProvider(provider as any);
+    if (isConfigurableAIProvider(provider)) {
+      store.setAiModel(resolveConfiguredProviderModel(provider, store.customEnv));
+    }
+  };
+
+  const updateModel = async (model: string) => {
+    store.setAiModel(model);
+    if (!modelProvider) return;
+    const providerConfig = getAIProviderConfig(modelProvider);
+    await store.saveAIConfig({ [providerConfig.modelEnv]: model });
+  };
+
+  useEffect(() => {
+    if (!modelProvider || !configuredModel) return;
+    store.setAiModel(configuredModel);
+  }, [modelProvider, configuredModel]);
 
   useEffect(() => {
     let active = true;
-    if (store.aiProvider === 'disabled' || store.aiProvider === 'automatic') {
+    if (!modelProvider) {
       setModelList([]);
+      setLoadingModels(false);
+      return;
+    }
+
+    const cachedModels = store.modelsCache[modelProvider] || [];
+    if (cachedModels.length > 0) {
+      setModelList(cachedModels);
+      setLoadingModels(false);
       return;
     }
     
     setLoadingModels(true);
-    store.fetchModelsForProvider(store.aiProvider).then(fetched => {
+    store.fetchModelsForProvider(modelProvider).then(fetched => {
       if (!active) return;
       setLoadingModels(false);
       if (fetched && fetched.length > 0) {
         setModelList(fetched);
       } else {
-        const fallbacks: Record<string, string[]> = {
-          openAI: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano'],
-          anthropic: ['claude-fable-5', 'claude-opus-4.8', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
-          gemini: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
-          deepSeek: ['deepseek-v4-pro', 'deepseek-v4-flash'],
-          openAICompatible: ['local-model']
-        };
-        setModelList(fallbacks[store.aiProvider] || []);
+        setModelList([getAIProviderConfig(modelProvider).defaultModel]);
       }
+    }).catch(err => {
+      if (!active) return;
+      console.error(`Failed to load models for ${modelProvider}:`, err);
+      setLoadingModels(false);
+      setModelList([store.aiModel || getAIProviderConfig(modelProvider).defaultModel]);
     });
 
     return () => { active = false; };
-  }, [store.aiProvider, store.customEnv]);
+  }, [modelProvider, store.customEnv, store.modelsCache, store.aiModel]);
 
   return (
     <div 
@@ -146,49 +252,73 @@ export function AICopilotPanel() {
           <span className="text-[var(--text-secondary)]">Provider:</span>
           <select
             value={store.aiProvider}
-            onChange={(e) => store.setAiProvider(e.target.value as any)}
+            onChange={(e) => updateProvider(e.target.value)}
             className="bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             <option value="automatic">Automatic</option>
             <option value="openAI">OpenAI</option>
             <option value="anthropic">Anthropic</option>
             <option value="gemini">Gemini</option>
+            <option value="openRouter">OpenRouter</option>
             <option value="deepSeek">DeepSeek</option>
             <option value="openAICompatible">Local Compatible</option>
             <option value="disabled">Disabled</option>
           </select>
         </div>
-        {store.aiProvider !== 'disabled' && store.aiProvider !== 'automatic' && (
+        {modelProvider && (
           <div className="flex items-center justify-between mt-1">
             <span className="text-[var(--text-secondary)]">Model:</span>
             {loadingModels ? (
               <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] animate-pulse">Loading…</span>
             ) : (
-              <select
-                value={store.aiModel}
-                onChange={(e) => store.setAiModel(e.target.value)}
-                className="bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] max-w-[160px] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)]"
-              >
-                {modelList.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={store.aiModel || configuredModel}
+                options={modelList}
+                onChange={(model) => void updateModel(model)}
+                placeholder="Search models"
+                emptyLabel="No models found"
+                className="w-[190px]"
+              />
             )}
+          </div>
+        )}
+        {thinkingControl && (
+          <div className="flex items-center justify-between mt-1">
+            <span className="text-[var(--text-secondary)]">Thinking:</span>
+            <select
+              value={store.customEnv[thinkingControl.envKey] || 'disabled'}
+              onChange={(e) => void updateThinkingLevel(e.target.value)}
+              className="bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] max-w-[160px] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)]"
+            >
+              {thinkingControl.options.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
           </div>
         )}
       </div>
 
       {/* AI action buttons (AI-C1) */}
       <div className="grid grid-cols-2 gap-1.5 px-3 py-2.5 border-b border-[var(--border)] bg-[var(--app-bg)]">
-        {AI_ACTIONS.map((a: any) => {
+        {AI_ACTIONS.map((a) => {
           const Icon = AI_ICON[a.icon] || Sparkles;
-          const disabled = (a.requiresThread && !store.openedThread) || store.aiPanelLoading;
+          const queueUnavailable = a.id === 'queue' && (!store.activeAccount || store.visibleThreads.length === 0);
+          const disabled = queueUnavailable || (a.requiresThread && !store.openedThread) || store.aiPanelLoading;
+          const title = a.id === 'queue'
+            ? (!store.activeAccount
+              ? 'Connect an account first'
+              : store.visibleThreads.length === 0
+                ? 'No visible messages to triage in this tab'
+                : `Build a triage plan for ${store.visibleThreads.length} visible messages`)
+            : a.requiresThread && !store.openedThread
+              ? 'Open a thread first'
+              : a.label;
           return (
             <button
               key={a.id}
               disabled={disabled}
               onClick={() => store.runAIAction(a.id)}
-              title={a.requiresThread && !store.openedThread ? 'Open a thread first' : a.label}
+              title={title}
               className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--ai-accent)]/50 hover:bg-[var(--ai-accent)]/8 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
             >
               <Icon className="w-3.5 h-3.5 text-[var(--ai-accent)] shrink-0" />
@@ -199,7 +329,7 @@ export function AICopilotPanel() {
       </div>
 
       {/* Chat Messages container */}
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-[var(--app-bg)]">
+      <div ref={aiMessagesRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-[var(--app-bg)]">
         {/* Triage / Summarize plan badge */}
         {store.triagePlan && (
           <AITriagePlanCard />

@@ -32,7 +32,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         await window.electronAPI.saveReminder(targetEmail, targetThreadId!, tomorrow.toISOString());
       });
     }},
-    { title: 'AI Summarize Thread', shortcut: 'S', action: () => store.runAITriagePlan() },
+    { title: 'AI Triage Queue', shortcut: 'S', action: () => store.runAITriagePlan() },
     { title: 'Compose Message', shortcut: 'C', action: () => {
       const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
       if (!accountId) {
