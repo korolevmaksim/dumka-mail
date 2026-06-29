@@ -12,6 +12,21 @@ export interface Account {
   avatarUrl?: string;
 }
 
+export interface GmailSignatureSyncResult {
+  accountId: AccountID;
+  sourceEmail: string;
+  signatureHtml: string;
+  signaturePlain: string;
+  importedAt: string;
+  found: boolean;
+}
+
+export interface OnboardAccountResult {
+  account: Account;
+  signatureSync?: GmailSignatureSyncResult;
+  signatureSyncError?: string;
+}
+
 export type MailLabel = 'INBOX' | 'UNREAD' | 'SENT' | 'IMPORTANT' | 'CATEGORY_PRIMARY' | 'CATEGORY_UPDATES' | 'CATEGORY_PROMOTIONS' | string;
 
 export interface MailThread {
@@ -333,6 +348,8 @@ export interface InboxSettings {
 
 export interface ComposeSettings {
   defaultSignature: string;
+  defaultSignatureHtml: string;
+  signatureFormat: 'plain' | 'html';
   autoSaveDrafts: boolean;
   spellCheck: boolean;
   autocorrect: boolean;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Account, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
 import { SplitInboxRouter } from '../../../shared/classifier';
@@ -17,6 +17,7 @@ export interface SpeedProof {
 interface UseMailStateProps {
   customClassifierRules: CustomClassifierRule[];
   tabCategories: TabCategory[];
+  applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
 }
 
 function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
@@ -34,6 +35,7 @@ function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
 export function useMailState({
   customClassifierRules,
   tabCategories,
+  applyGmailSignatureSyncResult,
 }: UseMailStateProps) {
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
@@ -262,6 +264,7 @@ export function useMailState({
     setActiveAccountState,
     loadThreadsFromDB,
     setSpeedProof,
+    applyGmailSignatureSyncResult,
   });
 
   // Sync Action Log

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   decodeHtmlEntities,
+  gmailSignatureHtmlToPlainText,
   normalizeWhitespace,
   normalizePreview,
+  sanitizeGmailSignatureHtml,
 } from '../shared/textNormalizer';
 
 describe('decodeHtmlEntities — named entities', () => {
@@ -147,5 +149,29 @@ describe('normalizePreview', () => {
 
   it('returns an empty string for empty input', () => {
     expect(normalizePreview('')).toBe('');
+  });
+});
+
+describe('sanitizeGmailSignatureHtml', () => {
+  it('keeps formatting tags and inline styles', () => {
+    const html = '<div style="color:#444">Best,<br><b>Max</b></div>';
+    expect(sanitizeGmailSignatureHtml(html)).toBe(html);
+  });
+
+  it('removes scriptable content from imported signatures', () => {
+    const html = '<div onclick="steal()">Best</div><script>alert(1)</script><a href="javascript:bad()">x</a>';
+    expect(sanitizeGmailSignatureHtml(html)).toBe('<div>Best</div><a>x</a>');
+  });
+});
+
+describe('gmailSignatureHtmlToPlainText', () => {
+  it('preserves readable line breaks from Gmail signature HTML', () => {
+    const html = '<div>Best regards,<br><b>Max</b></div><div>Founder &amp; CEO</div>';
+    expect(gmailSignatureHtmlToPlainText(html)).toBe('Best regards,\nMax\nFounder & CEO');
+  });
+
+  it('returns an empty string for empty or script-only signatures', () => {
+    expect(gmailSignatureHtmlToPlainText('')).toBe('');
+    expect(gmailSignatureHtmlToPlainText('<script>alert(1)</script>')).toBe('');
   });
 });

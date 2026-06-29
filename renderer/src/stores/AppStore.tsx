@@ -1,5 +1,5 @@
-import React, { createContext, useContext } from 'react';
-import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriagePlanItem, MailTriagePlan, AIAction, MCPServerConfig, MailTriageQueueReadiness } from '../../../shared/types';
+import React, { createContext, useContext, useCallback } from 'react';
+import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriagePlanItem, MailTriagePlan, AIAction, MCPServerConfig, MailTriageQueueReadiness, GmailSignatureSyncResult } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
@@ -23,7 +23,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 4;
+export const SETTINGS_SCHEMA_VERSION = 5;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -67,6 +67,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   compose: {
     defaultSignature: '',
+    defaultSignatureHtml: '',
+    signatureFormat: 'plain',
     autoSaveDrafts: true,
     spellCheck: true,
     autocorrect: true,
@@ -188,7 +190,7 @@ export function mergeSettings(parsed: any): AppSettings {
   });
   merged.ai.providerConfigurations = [...baseMerged, ...parsedProviders.filter((p: any) => !baseIds.has(p.id))];
 
-  if (parsedSchemaVersion < 4) {
+  if (parsedSchemaVersion < 5) {
     merged.notifications.notifyImportantOnly = false;
   }
 
@@ -264,6 +266,7 @@ interface AppStoreContextType {
   triggerBackfillManual: () => Promise<void>;
   isSyncing: boolean;
   triggerSyncManual: () => Promise<void>;
+  syncGmailSignature: (email?: string) => Promise<GmailSignatureSyncResult>;
   aiPanelOpen: boolean;
   setAiPanelOpen: (open: boolean) => void;
   aiProvider: AIProviderPreference;
@@ -316,10 +319,21 @@ const AppStoreContext = createContext<AppStoreContextType | null>(null);
 
 export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const settingsState = useSettingsState();
+
+  const applyGmailSignatureSyncResult = useCallback(async (result: GmailSignatureSyncResult) => {
+    if (!result.found) return;
+
+    await settingsState.updateSettings(s => {
+      s.compose.defaultSignature = result.signaturePlain;
+      s.compose.defaultSignatureHtml = result.signatureHtml;
+      s.compose.signatureFormat = result.signatureHtml.trim() ? 'html' : 'plain';
+    });
+  }, [settingsState.updateSettings]);
   
   const mailState = useMailState({
     customClassifierRules: settingsState.customClassifierRules,
     tabCategories: settingsState.tabCategories,
+    applyGmailSignatureSyncResult,
   });
 
   const draftsState = useDraftsState({
@@ -358,12 +372,27 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return await window.electronAPI.listProviderModels(provider, key, baseUrl);
   };
 
+  const syncGmailSignature = async (email?: string): Promise<GmailSignatureSyncResult> => {
+    const targetEmail = email
+      || (mailState.activeAccount && mailState.activeAccount.id !== 'unified' ? mailState.activeAccount.email : null)
+      || mailState.accounts[0]?.email;
+
+    if (!targetEmail) {
+      throw new Error('Connect a Gmail account before syncing the signature.');
+    }
+
+    const result = await window.electronAPI.syncGmailSignature(targetEmail);
+    await applyGmailSignatureSyncResult(result);
+    return result;
+  };
+
   const storeValue: AppStoreContextType = {
     ...settingsState,
     ...mailState,
     ...draftsState,
     ...aiState,
-    fetchModelsForProvider
+    fetchModelsForProvider,
+    syncGmailSignature
   };
 
   return (

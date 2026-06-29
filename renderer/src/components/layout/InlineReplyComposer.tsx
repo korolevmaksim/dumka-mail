@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import { X, ExternalLink, Calendar, Braces, Paperclip, Trash2 } from 'lucide-react';
-import { compileMarkdownToHtml } from '../../../../shared/markdown';
+import { compileDraftBodyHtml } from '../../../../shared/draftHtml';
 import { expandSnippetAtCursor, renderDefaultSnippet } from '../../../../shared/snippets';
 import { emitToast } from '../../lib/toastBus';
 
@@ -96,7 +96,7 @@ export function InlineReplyComposer() {
           />
         ) : (
           <div className="w-full min-h-[120px] bg-transparent p-4 text-[var(--text-primary)] text-[calc(13px*var(--font-scale))] overflow-y-auto leading-relaxed select-text">
-            <div dangerouslySetInnerHTML={{ __html: compileMarkdownToHtml(composeBody) }} />
+            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose) }} />
           </div>
         )}
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Account, MailThread, MailMessage, Draft, AppSettings } from '../../../shared/types';
 import { startReply as buildReplySeed, startForward as buildForwardSeed } from '../../../shared/compose';
+import { compileDraftBodyHtml } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
 
 interface UseDraftsStateProps {
@@ -180,7 +181,11 @@ export function useDraftsState({
       if (!draft) return;
       try {
         await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (actionId: string) => {
-          const res = await window.electronAPI.sendDraft(draft.accountId, draft, actionId);
+          const draftForSend = {
+            ...draft,
+            bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose)
+          };
+          const res = await window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId);
           if (res && !res.offline) {
             await window.electronAPI.deleteDraft(draft.id);
           }

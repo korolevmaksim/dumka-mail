@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, MCPServerConfig } from '../../shared/types';
+import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, MCPServerConfig, GmailSignatureSyncResult, OnboardAccountResult } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 
 export interface IElectronAPI {
@@ -47,7 +47,7 @@ export interface IElectronAPI {
   searchFTS: (accountId: string, query: string) => Promise<{ threadId: string; messageId: string }[]>;
 
   // OAuth onboarding
-  onboardAccount: (emailHint?: string) => Promise<Account>;
+  onboardAccount: (emailHint?: string) => Promise<OnboardAccountResult>;
   verifyTokenExists: (email: string) => Promise<boolean>;
 
   // Gmail sync & mutations
@@ -55,6 +55,7 @@ export interface IElectronAPI {
   syncIncremental: (email: string, startHistoryId: string) => Promise<{ updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string }>;
   syncBackfillPage: (email: string, pageToken?: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; nextPageToken?: string }>;
   runBackfillPage: (email: string) => Promise<{ threadsIndexed: number; pageThreadsIndexed: number; completed: boolean; busy: boolean }>;
+  syncGmailSignature: (email: string) => Promise<GmailSignatureSyncResult>;
   fetchThreadDetail: (email: string, threadId: string) => Promise<MailMessage[]>;
   fetchRawMessage: (email: string, messageId: string) => Promise<string>;
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => Promise<{ offline: boolean }>;

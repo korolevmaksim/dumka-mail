@@ -139,3 +139,46 @@ export function normalizeWhitespace(s: string): string {
 export function normalizePreview(s: string): string {
   return normalizeWhitespace(decodeHtmlEntities(s));
 }
+
+/**
+ * Keeps Gmail signature HTML formatting while removing active/scriptable content
+ * before the signature is rendered in-app or embedded into outgoing mail.
+ */
+export function sanitizeGmailSignatureHtml(html: string): string {
+  if (!html) return '';
+
+  return html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/\s+(href|src)\s*=\s*"[^"]*(?:javascript|vbscript):[^"]*"/gi, '')
+    .replace(/\s+(href|src)\s*=\s*'[^']*(?:javascript|vbscript):[^']*'/gi, '')
+    .replace(/\s+(href|src)\s*=\s*[^\s>]*(?:javascript|vbscript):[^\s>]*/gi, '')
+    .trim();
+}
+
+/**
+ * Converts Gmail's send-as signature HTML into the plain-text signature format
+ * used by the current composer/snippet pipeline while preserving intentional
+ * line breaks.
+ */
+export function gmailSignatureHtmlToPlainText(html: string): string {
+  if (!html) return '';
+
+  const withLineBreaks = sanitizeGmailSignatureHtml(html)
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(div|p|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '');
+
+  return decodeHtmlEntities(withLineBreaks)
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[ \t\f\v]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}

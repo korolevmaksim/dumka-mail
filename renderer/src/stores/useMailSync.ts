@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult } from '../../../shared/types';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 
@@ -10,6 +10,7 @@ interface UseMailSyncProps {
   setActiveAccountState: (acc: Account | null) => void;
   loadThreadsFromDB: () => Promise<void>;
   setSpeedProof: React.Dispatch<React.SetStateAction<SpeedProof>>;
+  applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
 }
 
 export function useMailSync({
@@ -19,6 +20,7 @@ export function useMailSync({
   setActiveAccountState,
   loadThreadsFromDB,
   setSpeedProof,
+  applyGmailSignatureSyncResult,
 }: UseMailSyncProps) {
   const [syncHealth, setSyncHealth] = useState<'ready' | 'syncing' | 'indexing' | 'paused' | 'failed' | 'reconnect'>('ready');
   const [syncStatusText, setSyncStatusText] = useState<string>('Ready');
@@ -186,9 +188,16 @@ export function useMailSync({
 
   const onboardAccount = async (emailHint: string) => {
     try {
-      const newAcc = await window.electronAPI.onboardAccount(emailHint);
+      const result = await window.electronAPI.onboardAccount(emailHint);
       await loadAccounts();
-      setActiveAccountState(newAcc);
+      setActiveAccountState(result.account);
+
+      if (result.signatureSync?.found) {
+        await applyGmailSignatureSyncResult(result.signatureSync);
+        emitToast({ type: 'success', message: 'Imported Gmail signature.' });
+      } else if (result.signatureSyncError) {
+        console.warn('Gmail signature sync failed during onboarding:', result.signatureSyncError);
+      }
     } catch (e) {
       console.error('Account onboarding failed:', e);
       emitToast({ type: 'error', message: 'Google authentication failed. Please try again.' });

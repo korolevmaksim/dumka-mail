@@ -489,11 +489,20 @@ registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
   const email = normalizeOAuthEmail(profile.email);
   const existingAccount = AccountsRepo.get(email);
   const account = buildOnboardedAccount(profile, existingAccount);
+  let signatureSync;
+  let signatureSyncError;
 
   await saveRefreshToken(account.email, profile.refreshToken);
   AccountsRepo.save(account);
 
-  return account;
+  try {
+    signatureSync = await GmailSyncService.fetchDefaultSignature(account.email);
+  } catch (err: any) {
+    signatureSyncError = err?.message || String(err);
+    console.warn(`Gmail signature import failed for ${account.email}:`, signatureSyncError);
+  }
+
+  return { account, signatureSync, signatureSyncError };
 });
 
 registerSecureHandler('api:verifyTokenExists', async (_, email) => {
@@ -505,6 +514,7 @@ registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(
 registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
 registerSecureHandler('api:runBackfillPage', (_, email) => runBackfillPageForAccount(email));
+registerSecureHandler('api:syncGmailSignature', (_, email) => GmailSyncService.fetchDefaultSignature(email));
 registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
 registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
 registerSecureHandler('api:fetchAttachmentData', (_, email, messageId, attachmentId) => GmailSyncService.fetchAttachment(email, messageId, attachmentId));

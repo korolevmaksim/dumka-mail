@@ -1,7 +1,8 @@
 import crypto from 'crypto';
-import { MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
+import { GmailSignatureSyncResult, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
 import { getRefreshToken } from './keychain';
 import { compileMarkdownToHtml } from '../shared/markdown';
+import { gmailSignatureHtmlToPlainText, sanitizeGmailSignatureHtml } from '../shared/textNormalizer';
 import { loadGoogleConfig, startOAuthFlow, base64urlSafe } from './gmailOAuth';
 
 export { startOAuthFlow };
@@ -108,6 +109,27 @@ function base64UrlToBase64(data: string): string {
   const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
   const remainder = normalized.length % 4;
   return remainder === 0 ? normalized : `${normalized}${'='.repeat(4 - remainder)}`;
+}
+
+interface GmailSendAsAlias {
+  sendAsEmail?: string;
+  isDefault?: boolean;
+  signature?: string;
+}
+
+function selectSignatureAlias(sendAs: GmailSendAsAlias[], accountEmail: string): GmailSendAsAlias | null {
+  const normalizedAccountEmail = accountEmail.trim().toLowerCase();
+  const aliasesWithSignature = sendAs.filter(alias => (alias.signature || '').trim().length > 0);
+
+  return (
+    aliasesWithSignature.find(alias => alias.sendAsEmail?.trim().toLowerCase() === normalizedAccountEmail) ||
+    aliasesWithSignature.find(alias => alias.isDefault) ||
+    aliasesWithSignature[0] ||
+    sendAs.find(alias => alias.sendAsEmail?.trim().toLowerCase() === normalizedAccountEmail) ||
+    sendAs.find(alias => alias.isDefault) ||
+    sendAs[0] ||
+    null
+  );
 }
 
 // Maps Gmail API Message object to local MailMessage
@@ -217,6 +239,31 @@ export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
 }
 
 export const GmailSyncService = {
+  async fetchDefaultSignature(email: string): Promise<GmailSignatureSyncResult> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok) {
+      throw new Error(`Gmail signature fetch error: ${await res.text()}`);
+    }
+
+    const data = await res.json() as { sendAs?: GmailSendAsAlias[] };
+    const alias = selectSignatureAlias(Array.isArray(data.sendAs) ? data.sendAs : [], email);
+    const signatureHtml = sanitizeGmailSignatureHtml(alias?.signature || '');
+    const signaturePlain = gmailSignatureHtmlToPlainText(signatureHtml);
+
+    return {
+      accountId: email,
+      sourceEmail: alias?.sendAsEmail || email,
+      signatureHtml,
+      signaturePlain,
+      importedAt: new Date().toISOString(),
+      found: signatureHtml.length > 0 || signaturePlain.length > 0
+    };
+  },
+
   // Sync Inbox: fetches up to 30 threads matching 'in:inbox'
   async syncInbox(email: string): Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }> {
     const accessToken = await getAccessToken(email);

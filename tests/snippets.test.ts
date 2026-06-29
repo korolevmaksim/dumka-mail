@@ -23,6 +23,8 @@ const snippets: SnippetSettings = {
 
 const compose: ComposeSettings = {
   defaultSignature: '',
+  defaultSignatureHtml: '',
+  signatureFormat: 'plain',
   autoSaveDrafts: true,
   spellCheck: true,
   autocorrect: true,

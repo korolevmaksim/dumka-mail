@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   syncIncremental: (email: string, startHistoryId: string) => ipcRenderer.invoke('api:syncIncremental', email, startHistoryId),
   syncBackfillPage: (email: string, pageToken?: string) => ipcRenderer.invoke('api:syncBackfillPage', email, pageToken),
   runBackfillPage: (email: string) => ipcRenderer.invoke('api:runBackfillPage', email),
+  syncGmailSignature: (email: string) => ipcRenderer.invoke('api:syncGmailSignature', email),
   fetchThreadDetail: (email: string, threadId: string) => ipcRenderer.invoke('api:fetchThreadDetail', email, threadId),
   fetchRawMessage: (email: string, messageId: string) => ipcRenderer.invoke('api:fetchRawMessage', email, messageId),
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => ipcRenderer.invoke('api:modifyLabels', email, threadId, addLabelIds, removeLabelIds, actionId),

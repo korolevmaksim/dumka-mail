@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import { X, Paperclip } from 'lucide-react';
-import { compileMarkdownToHtml } from '../../../../shared/markdown';
+import { compileDraftBodyHtml } from '../../../../shared/draftHtml';
 import { expandSnippetAtCursor } from '../../../../shared/snippets';
 
 export function FloatingComposeDrawer() {
@@ -109,7 +109,7 @@ export function FloatingComposeDrawer() {
           />
         ) : (
           <div className="w-full h-[180px] overflow-y-auto bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
-            <div dangerouslySetInnerHTML={{ __html: compileMarkdownToHtml(composeBody) }} />
+            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose) }} />
           </div>
         )}
 
