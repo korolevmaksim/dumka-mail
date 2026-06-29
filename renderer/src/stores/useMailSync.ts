@@ -39,25 +39,10 @@ export function useMailSync({
     setSyncStatusText('Indexing older mail...');
 
     try {
-      const page = await window.electronAPI.syncBackfillPage(activeAccount.email, syncState?.historyBackfillPageToken || undefined);
-      
-      await window.electronAPI.saveThreads(page.threads);
-      await window.electronAPI.saveMessages(page.messages);
+      const result = await window.electronAPI.runBackfillPage(activeAccount.email);
+      setBackfillProgress(result.completed ? 'All mail indexed' : `${result.threadsIndexed} threads indexed`);
+      if (result.busy) return;
 
-      const nextPagesSynced = (syncState?.historyBackfillPagesSynced || 0) + 1;
-      const nextThreadsSynced = (syncState?.historyBackfillThreadsSynced || 0) + page.threads.length;
-
-      await window.electronAPI.saveSyncState({
-        accountId: activeAccount.email,
-        historyId: syncState?.historyId || null,
-        lastFullSyncAt: syncState?.lastFullSyncAt || null,
-        historyBackfillPageToken: page.nextPageToken || null,
-        historyBackfillCompletedAt: page.nextPageToken ? null : new Date().toISOString(),
-        historyBackfillPagesSynced: nextPagesSynced,
-        historyBackfillThreadsSynced: nextThreadsSynced
-      });
-
-      setBackfillProgress(`${nextThreadsSynced} threads indexed`);
       setSyncHealth('ready');
       setSyncStatusText('Ready');
     } catch (e: any) {

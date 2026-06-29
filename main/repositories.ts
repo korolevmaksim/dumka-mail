@@ -220,6 +220,7 @@ export const MessagesRepo = {
       INSERT INTO mail_search (account_id, thread_id, message_id, subject, sender, snippet, body_plain)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
+    const deleteSearch = db.prepare('DELETE FROM mail_search WHERE account_id = ? AND message_id = ?');
 
     db.transaction(() => {
       for (const m of messages) {
@@ -247,7 +248,7 @@ export const MessagesRepo = {
         );
 
         // Update search FTS index: delete old index entry and insert new
-        db.prepare('DELETE FROM mail_search WHERE account_id = ? AND message_id = ?').run(m.accountId, m.id);
+        deleteSearch.run(m.accountId, m.id);
         insertSearch.run(
           m.accountId,
           m.threadId,
@@ -591,4 +592,3 @@ export const SettingsRepo = {
     `).run(key, value);
   }
 };
-

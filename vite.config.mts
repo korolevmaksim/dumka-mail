@@ -44,6 +44,19 @@ export default defineConfig({
             outDir: 'dist-electron/main'
           }
         }
+      },
+      {
+        entry: 'main/databaseWorker.ts',
+        vite: {
+          build: {
+            sourcemap: true,
+            minify: false,
+            outDir: 'dist-electron/main',
+            rollupOptions: {
+              external: ['better-sqlite3']
+            }
+          }
+        }
       }
     ]),
     renderer()

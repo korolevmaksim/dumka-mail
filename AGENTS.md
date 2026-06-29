@@ -23,7 +23,7 @@ There is **no linter** configured and **no `tsc --watch`** — type errors surfa
 
 Three source roots, enforced by `tsconfig.json` path aliases (`@/*` → `renderer/src/*`, `shared/*` → `shared/*`) and mirrored in `vite.config.mts`:
 
-- **`main/`** — Electron main process (Node, full FS / network / native access). Owns the SQLite database, Gmail HTTP sync, OAuth, the Keychain, AI provider calls, and the background sync worker.
+- **`main/`** — Electron main process (Node, full FS / network / native access). Owns the SQLite database, Gmail HTTP sync, OAuth, the Keychain, AI provider calls, and the background sync worker. Bulk mail persistence runs through a Node worker thread so SQLite FTS indexing does not block the Electron main event loop.
 - **`renderer/`** — React 19 SPA. No Node access; everything privileged goes through `window.electronAPI`.
 - **`shared/`** — pure, dependency-free TypeScript imported by both sides: domain types (`types.ts`), the deterministic mail classifier / split-inbox router (`classifier.ts`), the search-query parser (`search.ts`), and markdown→HTML (`markdown.ts`). Keep this directory free of Electron/Node/React imports — it is the only code that runs in both processes and is what the tests in `tests/` exercise directly.
 
@@ -43,6 +43,8 @@ Channel naming convention: `db:*` channels are thin wrappers over the repositori
 
 - DB lives at `~/Library/Application Support/dumka-mail-agy/database.sqlite`, opened with WAL + `foreign_keys=ON`.
 - Repositories are plain object literals (`AccountsRepo`, `ThreadsRepo`, `MessagesRepo`, `DraftsRepo`, `RemindersRepo`, `SyncStateRepo`, `ActionLogRepo`, `AIConversationsRepo`, `SearchRepo`, `SettingsRepo`) that map snake_case DB rows ↔ camelCase `shared/types.ts` interfaces. Full-text search uses an FTS5 virtual table `mail_search`.
+- Bulk thread/message writes must go through `main/databaseWorkerClient.ts` (`main/databaseWorker.ts` is a separate Vite Electron entry). Do not call `MessagesRepo.save` directly from IPC handlers or sync loops for large batches; it updates the FTS index synchronously and will freeze the app if run on the main event loop.
+- History backfill is owned by `api:runBackfillPage` in `main/index.ts`: it fetches the Gmail page, persists it through the database worker, saves `sync_state`, and returns only progress. The renderer should not shuttle full backfill `MailMessage` pages over IPC.
 - **Migrations are idempotent, not versioned.** `runMigrations` runs on every launch: `CREATE TABLE IF NOT EXISTS` for base schema, plus an `addColumnIfMissing`-style loop (`tablesInfo`) that `ALTER TABLE ADD COLUMN` for newer columns. There is no `user_version` counter. To evolve the schema, add to the `CREATE` block and/or append to the `tablesInfo` array — never assume a migration runs exactly once.
 
 ### Offline-first action model

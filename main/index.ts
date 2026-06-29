@@ -1,13 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog, Notification, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { initializeDatabase, getDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
+import { initializeDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { MCPManager } from './mcpManager';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
+import { databaseWorkerClient } from './databaseWorkerClient';
 import type { MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -378,6 +379,7 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   MCPManager.shutdown();
+  databaseWorkerClient.shutdown();
 });
 
 app.on('window-all-closed', () => {
@@ -386,24 +388,12 @@ app.on('window-all-closed', () => {
   }
 });
 
-function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }) {
-  const newMessages: MailMessage[] = [];
-  if (options?.notifyOfNew) {
-    try {
-      const db = getDatabase();
-      const checkExist = db.prepare('SELECT 1 FROM messages WHERE account_id = ? AND id = ?');
-      for (const message of messages) {
-        const exists = checkExist.get(message.accountId, message.id);
-        if (!exists) {
-          newMessages.push(message);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to check existing messages:', err);
-    }
-  }
+async function saveThreadsToDatabase(threads: MailThread[]) {
+  await databaseWorkerClient.saveThreads(threads);
+}
 
-  MessagesRepo.save(messages);
+async function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }) {
+  const { newMessages } = await databaseWorkerClient.saveMessages(messages, options);
 
   if (options?.notifyOfNew && newMessages.length > 0) {
     notifyOfNewMessages(newMessages);
@@ -442,12 +432,12 @@ registerSecureHandler('db:saveAccount', (_, account) => AccountsRepo.save(accoun
 registerSecureHandler('db:deleteAccount', (_, id) => AccountsRepo.delete(id));
 
 registerSecureHandler('db:listThreads', (_, accountId) => ThreadsRepo.list(accountId));
-registerSecureHandler('db:saveThreads', (_, threads) => ThreadsRepo.save(threads));
+registerSecureHandler('db:saveThreads', (_, threads) => saveThreadsToDatabase(threads));
 registerSecureHandler('db:deleteThread', (_, accountId, threadId) => ThreadsRepo.delete(accountId, threadId));
 
 registerSecureHandler('db:listMessagesForThread', (_, accountId, threadId) => MessagesRepo.listForThread(accountId, threadId));
 registerSecureHandler('db:saveMessages', async (_, messages: MailMessage[], options?: { notifyOfNew?: boolean }) => {
-  saveMessagesToDatabase(messages, options);
+  await saveMessagesToDatabase(messages, options);
 });
 
 registerSecureHandler('api:getPendingOpenThread', () => {
@@ -514,6 +504,7 @@ registerSecureHandler('api:verifyTokenExists', async (_, email) => {
 registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));
 registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
+registerSecureHandler('api:runBackfillPage', (_, email) => runBackfillPageForAccount(email));
 registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
 registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
 registerSecureHandler('api:fetchAttachmentData', (_, email, messageId, attachmentId) => GmailSyncService.fetchAttachment(email, messageId, attachmentId));
@@ -656,6 +647,7 @@ function isNetworkError(err: any): boolean {
 
 let syncWorkerActive = false;
 let mailboxSyncWorkerActive = false;
+const activeBackfillAccounts = new Set<string>();
 
 function startBackgroundSyncWorker() {
   setInterval(async () => {
@@ -747,13 +739,67 @@ function nextSyncState(accountId: string, base: SyncState | null, historyId: str
   };
 }
 
+async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexed: number; pageThreadsIndexed: number; completed: boolean; busy: boolean }> {
+  if (activeBackfillAccounts.has(email)) {
+    const state = SyncStateRepo.get(email);
+    return {
+      threadsIndexed: state?.historyBackfillThreadsSynced || 0,
+      pageThreadsIndexed: 0,
+      completed: Boolean(state?.historyBackfillCompletedAt),
+      busy: true
+    };
+  }
+
+  activeBackfillAccounts.add(email);
+
+  try {
+    const syncState = SyncStateRepo.get(email);
+    if (syncState?.historyBackfillCompletedAt) {
+      return {
+        threadsIndexed: syncState.historyBackfillThreadsSynced,
+        pageThreadsIndexed: 0,
+        completed: true,
+        busy: false
+      };
+    }
+
+    const page = await GmailSyncService.syncBackfillPage(email, syncState?.historyBackfillPageToken || undefined);
+    await saveThreadsToDatabase(page.threads);
+    await saveMessagesToDatabase(page.messages);
+
+    const now = new Date().toISOString();
+    const nextPagesSynced = (syncState?.historyBackfillPagesSynced || 0) + 1;
+    const nextThreadsSynced = (syncState?.historyBackfillThreadsSynced || 0) + page.threads.length;
+
+    SyncStateRepo.save({
+      accountId: email,
+      historyId: syncState?.historyId || null,
+      lastFullSyncAt: syncState?.lastFullSyncAt || null,
+      historyBackfillPageToken: page.nextPageToken || null,
+      lastHistoryBackfillAt: now,
+      historyBackfillCompletedAt: page.nextPageToken ? null : now,
+      historyBackfillPagesSynced: nextPagesSynced,
+      historyBackfillThreadsSynced: nextThreadsSynced
+    });
+
+    return {
+      threadsIndexed: nextThreadsSynced,
+      pageThreadsIndexed: page.threads.length,
+      completed: !page.nextPageToken,
+      busy: false
+    };
+  } finally {
+    activeBackfillAccounts.delete(email);
+  }
+}
+
 async function runMailboxSyncForAccount(email: string) {
   const syncState = SyncStateRepo.get(email);
 
   if (!syncState?.historyId) {
     const fullSync = await GmailSyncService.syncInbox(email);
-    ThreadsRepo.save(fullSync.threads);
-    saveMessagesToDatabase(fullSync.messages);
+    await saveThreadsToDatabase(fullSync.threads);
+    await saveMessagesToDatabase(fullSync.messages);
     SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
     return;
   }
@@ -764,11 +810,11 @@ async function runMailboxSyncForAccount(email: string) {
     for (const threadId of incrementalSync.updatedThreadIds) {
       try {
         const messages = await GmailSyncService.fetchThreadDetail(email, threadId);
-        saveMessagesToDatabase(messages, { notifyOfNew: true });
+        await saveMessagesToDatabase(messages, { notifyOfNew: true });
 
         const thread = buildThreadFromMessages(email, threadId, messages);
         if (thread) {
-          ThreadsRepo.save([thread]);
+          await saveThreadsToDatabase([thread]);
         }
       } catch (err: any) {
         console.warn(`[Mailbox Sync] Failed to fetch thread detail for ${threadId}:`, err);
@@ -786,8 +832,8 @@ async function runMailboxSyncForAccount(email: string) {
   } catch (err: any) {
     if (err.message === 'HISTORY_EXPIRED') {
       const fullSync = await GmailSyncService.syncInbox(email);
-      ThreadsRepo.save(fullSync.threads);
-      saveMessagesToDatabase(fullSync.messages);
+      await saveThreadsToDatabase(fullSync.threads);
+      await saveMessagesToDatabase(fullSync.messages);
       SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
       return;
     }
