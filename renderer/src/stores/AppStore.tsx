@@ -252,6 +252,7 @@ interface AppStoreContextType {
   composeLayout: 'inline' | 'floating';
   setComposeLayout: (layout: 'inline' | 'floating') => void;
   draftsList: Draft[];
+  startNewDraft: (accountId?: string | null) => Draft | null;
   saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
   startReply: (message: MailMessage, replyAll?: boolean) => void;
   startForward: (message: MailMessage) => void;

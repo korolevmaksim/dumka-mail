@@ -85,14 +85,14 @@ export function InlineReplyComposer() {
                 if (result) {
                   e.preventDefault();
                   setComposeBody(result.text);
-                  store.updateDraftBody(result.text);
+                  store.updateDraftBody(result.text, null);
                   requestAnimationFrame(() => { try { ta.selectionStart = ta.selectionEnd = result.selection; } catch { /* noop */ } });
                 }
               }
             }}
             onChange={(e) => {
               setComposeBody(e.target.value);
-              store.updateDraftBody(e.target.value);
+              store.updateDraftBody(e.target.value, null);
             }}
           />
         ) : (
@@ -112,7 +112,7 @@ export function InlineReplyComposer() {
                   ? composeBody.replace(`\n\n${snip}`, '').replace(snip, '') 
                   : (composeBody ? `${composeBody}\n\n${snip}` : snip);
                 setComposeBody(next);
-                store.updateDraftBody(next);
+                store.updateDraftBody(next, null);
               } else {
                 emitToast({ type: 'info', message: 'No signature configured in settings' });
               }
@@ -197,7 +197,7 @@ export function InlineReplyComposer() {
               if (snip) {
                 const next = composeBody ? `${composeBody}\n\n${snip}` : snip;
                 setComposeBody(next);
-                store.updateDraftBody(next);
+                store.updateDraftBody(next, null);
               } else {
                 emitToast({ type: 'info', message: 'No default snippet configured' });
               }

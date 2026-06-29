@@ -1,5 +1,13 @@
 import type { ProfileSettings, SnippetSettings, ComposeSettings } from './types';
-import { getComposeSignatureForAccount } from './draftHtml';
+import {
+  getComposeSignatureForAccount,
+  plainTextToHtmlFragment,
+  renderComposeSignatureHtmlFragment,
+  sanitizeDraftHtmlFragment,
+} from './draftHtml';
+import { renderTokens, renderTokensForHtml } from './templateTokens';
+
+export { renderTokens } from './templateTokens';
 
 /**
  * Snippet rendering + Tab-expansion engine.
@@ -9,38 +17,6 @@ import { getComposeSignatureForAccount } from './draftHtml';
  * `shared/` layer so both the Electron main process and the React renderer can
  * use it. No Node / Electron / DOM / React imports allowed here.
  */
-
-/**
- * Returns the first whitespace-delimited word of a full name, mirroring the
- * Swift `firstName(from:)` helper which splits on whitespace, omits empty
- * subsequences, and falls back to the original string when there is no word.
- */
-function firstName(fullName: string): string {
-  const parts = fullName.split(/\s+/).filter((part) => part.length > 0);
-  return parts.length > 0 ? parts[0] : fullName;
-}
-
-/**
- * Replaces every occurrence of a literal substring. Used instead of
- * `String.replaceAll` to avoid relying on a newer lib target and to keep the
- * substitution literal (no regex special-character surprises).
- */
-function replaceAllLiteral(input: string, search: string, replacement: string): string {
-  return input.split(search).join(replacement);
-}
-
-/**
- * Token substitution: `{full_name}`, `{first_name}`, `{role}`, `{company}`.
- * Applied sequentially in the same order as the Swift `render(_:profile:)`.
- */
-export function renderTokens(template: string, profile: ProfileSettings): string {
-  let result = template;
-  result = replaceAllLiteral(result, '{full_name}', profile.fullName);
-  result = replaceAllLiteral(result, '{first_name}', firstName(profile.fullName));
-  result = replaceAllLiteral(result, '{role}', profile.role);
-  result = replaceAllLiteral(result, '{company}', profile.company);
-  return result;
-}
 
 /**
  * Renders the default snippet body, optionally appending the rendered default
@@ -66,6 +42,34 @@ export function renderDefaultSnippet(
     return body;
   }
   return `${body}\n\n${signature}`;
+}
+
+function snippetBodyToHtml(template: string, profile: ProfileSettings): string {
+  const body = renderTokens(template, profile).trim();
+  if (!body) return '';
+  if (/<[a-z][\s\S]*>/i.test(body)) {
+    return sanitizeDraftHtmlFragment(renderTokensForHtml(template, profile).trim());
+  }
+  return plainTextToHtmlFragment(body);
+}
+
+export function renderDefaultSnippetHtml(
+  snippets: SnippetSettings,
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): string | null {
+  if (!snippets.enabled) return null;
+
+  const bodyHtml = snippetBodyToHtml(snippets.defaultSnippet, profile);
+  if (!bodyHtml) return null;
+
+  if (!snippets.includeSignature) {
+    return bodyHtml;
+  }
+
+  const signatureHtml = renderComposeSignatureHtmlFragment(compose, profile, accountId);
+  return signatureHtml ? `${bodyHtml}<br>${signatureHtml}` : bodyHtml;
 }
 
 export interface SnippetExpansion {

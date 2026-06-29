@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildInitialDraftBodyWithSignature,
   compileDraftBodyHtml,
   htmlFragmentToPlainText,
   plainTextToHtmlFragment,
+  renderComposeSignatureHtmlFragment,
   sanitizeDraftHtmlFragment,
   stripTrailingPlainSignature,
 } from '../shared/draftHtml';
+import type { ProfileSettings } from '../shared/types';
 import type { ComposeSettings } from '../shared/types';
 
 const compose: ComposeSettings = {
@@ -20,6 +23,13 @@ const compose: ComposeSettings = {
   alwaysReplyAll: false,
   sendUndoDelay: 10,
   defaultFontSize: 'normal',
+};
+
+const profile: ProfileSettings = {
+  fullName: 'Max Korolyov',
+  role: 'Engineer',
+  company: 'Example Co',
+  timezone: 'UTC',
 };
 
 describe('stripTrailingPlainSignature', () => {
@@ -108,5 +118,32 @@ describe('rich draft HTML helpers', () => {
     expect(html).toContain('cid:x');
     expect(html).not.toContain('<script>');
     expect(htmlFragmentToPlainText(html)).toBe('Hello\nthere\nChart');
+  });
+
+  it('renders the selected account HTML signature with formatting and images', () => {
+    const html = renderComposeSignatureHtmlFragment({
+      ...compose,
+      signaturesByAccount: {
+        'max@example.com': {
+          signaturePlain: 'Best,\nMax',
+          signatureHtml: '<div style="color:#444">Best,<br><b>Max</b><br><img src="https://example.com/logo.png" alt="Example Co"></div>',
+          signatureFormat: 'html',
+        },
+      },
+    }, profile, 'max@example.com');
+
+    expect(html).toContain('class="gmail_signature"');
+    expect(html).toContain('<b>Max</b>');
+    expect(html).toContain('src="https://example.com/logo.png"');
+    expect(html).toContain('alt="Example Co"');
+  });
+
+  it('builds a new draft body with an editable leading line before the HTML signature', () => {
+    const body = buildInitialDraftBodyWithSignature('', compose, profile);
+
+    expect(body.bodyPlain).toBe('Best regards,\nMax');
+    expect(body.bodyHtml).toContain('<p><br></p>');
+    expect(body.bodyHtml).toContain('<div class="gmail_signature"');
+    expect(body.bodyHtml).toContain('<b>Max</b>');
   });
 });

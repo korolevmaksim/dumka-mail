@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Account, MailThread, MailMessage, Draft, AppSettings } from '../../../shared/types';
 import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
-import { compileDraftBodyHtml, htmlFragmentToPlainText } from '../../../shared/draftHtml';
+import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
 
 interface UseDraftsStateProps {
@@ -56,11 +56,45 @@ export function useDraftsState({
     }
   }, [activeDraft?.id, activeDraft?.threadId]);
 
+  const resolveDraftAccountId = (preferredAccountId?: string | null): string | null => {
+    if (preferredAccountId?.trim()) return preferredAccountId.trim();
+    if (!activeAccount) return null;
+    return activeAccount.id === 'unified'
+      ? accounts[0]?.email || null
+      : activeAccount.email;
+  };
+
+  const startNewDraft = (preferredAccountId?: string | null): Draft | null => {
+    const accountId = resolveDraftAccountId(preferredAccountId);
+    if (!accountId) return null;
+
+    const initialBody = buildInitialDraftBodyWithSignature('', settings.compose, settings.profile, accountId);
+    const draft: Draft = {
+      id: crypto.randomUUID(),
+      accountId,
+      threadId: null,
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: '',
+      bodyPlain: initialBody.bodyPlain,
+      bodyHtml: initialBody.bodyHtml,
+      attachments: [],
+      updatedAt: new Date().toISOString()
+    };
+
+    setActiveDraft(draft);
+    setComposeLayout('floating');
+    return draft;
+  };
+
   const saveDraftLocally = async (body: string, toStr: string, subject: string) => {
     if (!activeAccount) return;
 
     const toRecipients = toStr ? toStr.split(',').map(e => ({ name: '', email: e.trim() })) : [];
     const targetAccountId = openedThread ? openedThread.accountId : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
+    if (!targetAccountId) return;
+    const initialBody = buildInitialDraftBodyWithSignature(body, settings.compose, settings.profile, targetAccountId);
 
     const draft: Draft = {
       id: activeDraft?.id || crypto.randomUUID(),
@@ -70,8 +104,8 @@ export function useDraftsState({
       cc: activeDraft?.cc || [],
       bcc: activeDraft?.bcc || [],
       subject: subject || (openedThread ? `Re: ${openedThread.subject}` : ''),
-      bodyPlain: body,
-      bodyHtml: activeDraft?.bodyHtml || null,
+      bodyPlain: initialBody.bodyPlain,
+      bodyHtml: activeDraft?.bodyHtml || initialBody.bodyHtml,
       attachments: activeDraft?.attachments || [],
       updatedAt: new Date().toISOString()
     };
@@ -88,6 +122,7 @@ export function useDraftsState({
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
     const seed = buildReplySeed(message, selfEmail, replyAll || settings.compose.alwaysReplyAll);
+    const initialBody = buildInitialDraftBodyWithSignature(seed.body, settings.compose, settings.profile, message.accountId);
     const draft: Draft = {
       id: crypto.randomUUID(),
       accountId: message.accountId,
@@ -96,7 +131,8 @@ export function useDraftsState({
       cc: seed.cc,
       bcc: [],
       subject: seed.subject,
-      bodyPlain: seed.body,
+      bodyPlain: initialBody.bodyPlain,
+      bodyHtml: initialBody.bodyHtml,
       attachments: [],
       replyMessageId: seed.replyMessageId || null,
       replyReferences: seed.replyReferences || null,
@@ -110,6 +146,7 @@ export function useDraftsState({
   const startForward = (message: MailMessage) => {
     if (!activeAccount) return;
     const seed = buildForwardSeed(message);
+    const initialBody = buildInitialDraftBodyWithSignature(seed.body, settings.compose, settings.profile, message.accountId);
     const draft: Draft = {
       id: crypto.randomUUID(),
       accountId: message.accountId,
@@ -118,7 +155,8 @@ export function useDraftsState({
       cc: seed.cc,
       bcc: [],
       subject: seed.subject,
-      bodyPlain: seed.body,
+      bodyPlain: initialBody.bodyPlain,
+      bodyHtml: initialBody.bodyHtml,
       attachments: [],
       updatedAt: new Date().toISOString()
     };
@@ -271,6 +309,7 @@ export function useDraftsState({
     pendingSend,
     pendingSendSeconds,
     loadDrafts,
+    startNewDraft,
     saveDraftLocally,
     startReply,
     startForward,

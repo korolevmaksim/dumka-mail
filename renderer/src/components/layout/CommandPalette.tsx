@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { Command, X } from 'lucide-react';
 import { emitToast } from '../../lib/toastBus';
-import { resolveComposeAccountId } from '../../lib/composeAccount';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -34,18 +33,12 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     }},
     { title: 'AI Triage Queue', shortcut: 'S', action: () => store.runAITriagePlan() },
     { title: 'Compose Message', shortcut: 'C', action: () => {
-      const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
-      if (!accountId) {
+      const draft = store.startNewDraft();
+      if (!draft) {
         store.setSettingsOpen(true);
         emitToast({ type: 'warning', message: 'Connect an account before composing.' });
         return;
       }
-      store.setActiveDraft({
-        id: crypto.randomUUID(),
-        accountId,
-        to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
-      });
-      store.setComposeLayout('floating');
     }},
     { title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', action: () => {
       store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);

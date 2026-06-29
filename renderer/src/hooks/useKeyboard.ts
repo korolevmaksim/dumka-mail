@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
 import { deriveShortcuts } from '../../../shared/keyboard';
 import { emitToast } from '../lib/toastBus';
-import { resolveComposeAccountId } from '../lib/composeAccount';
 
 interface KeyboardOptions {
   isComposeActive: boolean;
@@ -252,19 +251,12 @@ export function useKeyboard(options: KeyboardOptions) {
       // C: compose
       if (noModifiers && sc.composeKey && (e.code === 'KeyC' || e.key === 'c')) {
         e.preventDefault();
-        const accountId = resolveComposeAccountId(currentStore.activeAccount, currentStore.accounts);
-        if (!accountId) {
+        const draft = currentStore.startNewDraft();
+        if (!draft) {
           currentStore.setSettingsOpen(true);
           emitToast({ type: 'warning', message: 'Connect an account before composing.' });
           return;
         }
-        currentStore.setActiveDraft({
-          id: crypto.randomUUID(),
-          accountId,
-          to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [],
-          updatedAt: new Date().toISOString()
-        });
-        currentStore.setComposeLayout('floating');
         return;
       }
 

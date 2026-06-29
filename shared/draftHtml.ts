@@ -1,6 +1,7 @@
 import { compileMarkdownToHtml } from './markdown';
-import type { ComposeSettings, ComposeSignatureSettings } from './types';
+import type { ComposeSettings, ComposeSignatureSettings, ProfileSettings } from './types';
 import { decodeHtmlEntities, sanitizeGmailSignatureHtml } from './textNormalizer';
+import { renderTokens, renderTokensForHtml } from './templateTokens';
 
 const DEFAULT_BODY_STYLE = "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1f2937;";
 
@@ -133,6 +134,71 @@ export function getComposeSignatureForAccount(
     signaturePlain: compose.defaultSignature || '',
     signatureHtml: compose.defaultSignatureHtml || '',
     signatureFormat: compose.signatureFormat || (compose.defaultSignatureHtml?.trim() ? 'html' : 'plain'),
+  };
+}
+
+export function renderComposeSignaturePlain(
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): string {
+  const signature = getComposeSignatureForAccount(compose, accountId);
+  const plain = renderTokens(signature.signaturePlain || '', profile).trim();
+  if (plain) return plain;
+
+  const html = renderComposeSignatureHtmlFragment(compose, profile, accountId);
+  return htmlFragmentToPlainText(html);
+}
+
+export function renderComposeSignatureHtmlFragment(
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): string {
+  const signature = getComposeSignatureForAccount(compose, accountId);
+  let signatureContent = '';
+
+  if (signature.signatureFormat === 'html' && signature.signatureHtml.trim()) {
+    signatureContent = sanitizeGmailSignatureHtml(renderTokensForHtml(signature.signatureHtml, profile));
+  }
+
+  if (!signatureContent) {
+    const signaturePlain = renderTokens(signature.signaturePlain || '', profile).trim();
+    signatureContent = signaturePlain ? plainTextToHtmlFragment(signaturePlain) : '';
+  }
+
+  if (!signatureContent.trim()) return '';
+
+  return `<div class="gmail_signature" data-dumka-signature="true">${signatureContent}</div>`;
+}
+
+export function buildInitialDraftBodyWithSignature(
+  bodyPlain: string,
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): { bodyPlain: string; bodyHtml: string | null } {
+  const normalizedBody = bodyPlain.replace(/\r\n?/g, '\n');
+  const signaturePlain = renderComposeSignaturePlain(compose, profile, accountId);
+  const signatureHtml = renderComposeSignatureHtmlFragment(compose, profile, accountId);
+
+  if (!signaturePlain && !signatureHtml) {
+    return {
+      bodyPlain: normalizedBody,
+      bodyHtml: normalizedBody.trim() ? plainTextToHtmlFragment(normalizedBody) : null,
+    };
+  }
+
+  if (!normalizedBody.trim()) {
+    return {
+      bodyPlain: signaturePlain,
+      bodyHtml: signatureHtml ? `<p><br></p>${signatureHtml}` : plainTextToHtmlFragment(signaturePlain),
+    };
+  }
+
+  return {
+    bodyPlain: `${signaturePlain}${normalizedBody.startsWith('\n') ? '' : '\n\n'}${normalizedBody}`,
+    bodyHtml: `${signatureHtml || plainTextToHtmlFragment(signaturePlain)}${plainTextToHtmlFragment(normalizedBody)}`,
   };
 }
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   renderTokens,
   renderDefaultSnippet,
+  renderDefaultSnippetHtml,
   expandSnippetAtCursor,
 } from '../shared/snippets';
 import type { ProfileSettings, SnippetSettings, ComposeSettings } from '../shared/types';
@@ -145,6 +146,29 @@ describe('renderDefaultSnippet', () => {
     expect(
       renderDefaultSnippet({ ...snippets, defaultSnippet: '   ' }, compose, profile),
     ).toBeNull();
+  });
+
+  it('renders rich snippets with the selected account HTML signature', () => {
+    const out = renderDefaultSnippetHtml(
+      snippets,
+      {
+        ...compose,
+        signaturesByAccount: {
+          'work@example.com': {
+            signaturePlain: 'Max @ Work',
+            signatureHtml: '<div style="color:#444"><b>Max</b><br><img src="https://example.com/logo.png" alt="Example Co"></div>',
+            signatureFormat: 'html',
+          },
+        },
+      },
+      profile,
+      'work@example.com',
+    );
+
+    expect(out).toContain('<p>Thanks, Max</p>');
+    expect(out).toContain('<b>Max</b>');
+    expect(out).toContain('src="https://example.com/logo.png"');
+    expect(out).toContain('alt="Example Co"');
   });
 });
 

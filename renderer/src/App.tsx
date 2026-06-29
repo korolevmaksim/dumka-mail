@@ -57,18 +57,12 @@ function AppContent() {
     const unsubscribe = window.electronAPI.onExecuteCommand((cmdId: string) => {
       switch (cmdId) {
         case 'file.newDraft': {
-          const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
-          if (!accountId) {
+          const draft = store.startNewDraft();
+          if (!draft) {
             store.setSettingsOpen(true);
             emitToast({ type: 'warning', message: 'Connect an account before composing.' });
             break;
           }
-          store.setActiveDraft({
-            id: crypto.randomUUID(),
-            accountId,
-            to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
-          });
-          store.setComposeLayout('floating');
           break;
         }
         case 'edit.undo':
@@ -383,18 +377,12 @@ function AppContent() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => {
-                    const accountId = resolveComposeAccountId(store.activeAccount, store.accounts);
-                    if (!accountId) {
+                    const draft = store.startNewDraft();
+                    if (!draft) {
                       store.setSettingsOpen(true);
                       emitToast({ type: 'warning', message: 'Connect an account before composing.' });
                       return;
                     }
-                    store.setActiveDraft({
-                      id: crypto.randomUUID(),
-                      accountId,
-                      to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
-                    });
-                    store.setComposeLayout('floating');
                   }}
                   title="Compose Message (C)"
                   className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-all duration-150 active:scale-90"

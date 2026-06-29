@@ -27,8 +27,14 @@ import {
 import { useAppStore } from '../../stores/AppStore';
 import { emitToast } from '../../lib/toastBus';
 import { formatAIUserError } from '../../../../shared/aiErrors';
-import { plainTextToHtmlFragment, sanitizeDraftHtmlFragment } from '../../../../shared/draftHtml';
-import { renderDefaultSnippet } from '../../../../shared/snippets';
+import {
+  buildInitialDraftBodyWithSignature,
+  htmlFragmentToPlainText,
+  plainTextToHtmlFragment,
+  renderComposeSignaturePlain,
+  sanitizeDraftHtmlFragment,
+} from '../../../../shared/draftHtml';
+import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
 import type { AttachmentMetadata } from '../../../../shared/types';
 import { RecipientField } from '../compose/RecipientField';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
@@ -180,8 +186,11 @@ export function FloatingComposeDrawer() {
   };
 
   const insertDefaultSnippet = () => {
-    const snippet = renderDefaultSnippet(
-      store.settings.snippets,
+    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const snippet = renderDefaultSnippetHtml(
+      alreadyHasSignature
+        ? { ...store.settings.snippets, includeSignature: false }
+        : store.settings.snippets,
       store.settings.compose,
       store.settings.profile,
       activeDraft.accountId,
@@ -190,8 +199,37 @@ export function FloatingComposeDrawer() {
       emitToast({ type: 'info', message: 'No default snippet configured.' });
       return;
     }
-    editorRef.current?.insertText(snippet);
+    editorRef.current?.insertHtml(snippet);
     setTemplatesOpen(false);
+  };
+
+  const updateFromAccount = (accountId: string) => {
+    const previousSignature = renderComposeSignaturePlain(
+      store.settings.compose,
+      store.settings.profile,
+      activeDraft.accountId,
+    ).trim();
+    const currentPlain = activeDraft.bodyPlain.trim();
+    const currentHtmlPlain = htmlFragmentToPlainText(activeDraft.bodyHtml || '').trim();
+    const bodyOnlyContainsPreviousSignature = Boolean(previousSignature)
+      && (currentPlain === previousSignature || currentHtmlPlain === previousSignature);
+
+    if (!bodyOnlyContainsPreviousSignature) {
+      store.updateDraft({ accountId });
+      return;
+    }
+
+    const nextBody = buildInitialDraftBodyWithSignature(
+      '',
+      store.settings.compose,
+      store.settings.profile,
+      accountId,
+    );
+    store.updateDraft({
+      accountId,
+      bodyPlain: nextBody.bodyPlain,
+      bodyHtml: nextBody.bodyHtml,
+    });
   };
 
   const saveCurrentBodyAsSnippet = async () => {
@@ -300,7 +338,7 @@ export function FloatingComposeDrawer() {
           <span className="w-12 shrink-0 text-[var(--text-secondary)] font-medium select-none">From</span>
           <select
             value={activeDraft.accountId}
-            onChange={(event) => store.updateDraft({ accountId: event.target.value })}
+            onChange={(event) => updateFromAccount(event.target.value)}
             className="bg-transparent text-[var(--text-primary)] outline-none"
           >
             {store.accounts.map(account => (
