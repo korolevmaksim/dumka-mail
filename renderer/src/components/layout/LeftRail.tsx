@@ -8,7 +8,6 @@ export function LeftRail() {
   return (
     <div className="flex flex-col items-center justify-between w-[84px] border-r border-[var(--border)] bg-[var(--rail-bg)] py-4 traffic-light-margin shrink-0">
       <div className="flex flex-col gap-3 items-center w-full">
-        <span className="w-7 h-7 rounded-lg bg-[var(--accent)]/15 flex items-center justify-center text-[var(--accent)] text-[calc(14px*var(--font-scale))] font-black select-none shrink-0" title="Dumka Mail — Electron">E</span>
         {store.accounts.length > 0 && (
           <>
             <button

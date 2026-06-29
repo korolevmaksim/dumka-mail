@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
 import { Plus, RefreshCw } from 'lucide-react';
 import { SettingsAccountAvatar } from '../../AccountAvatar';
 import { Toggle } from '../SettingsControls';
 import { emitToast } from '../../../lib/toastBus';
 import { sanitizeGmailSignatureHtml } from '../../../../../shared/textNormalizer';
+import type { ComposeSignatureSettings } from '../../../../../shared/types';
 
 export function AccountsTab() {
   const store = useAppStore();
@@ -258,24 +259,58 @@ export function InboxTab() {
 export function ComposeTab() {
   const store = useAppStore();
   const [signatureSyncing, setSignatureSyncing] = useState(false);
-  const syncAccount = store.activeAccount && store.activeAccount.id !== 'unified'
+  const [selectedSignatureEmail, setSelectedSignatureEmail] = useState('');
+  const accountOptions = store.accounts;
+  const preferredSignatureAccount = store.activeAccount && store.activeAccount.id !== 'unified'
     ? store.activeAccount
     : store.accounts[0] || null;
-  const hasHtmlSignature = Boolean(store.settings.compose.defaultSignatureHtml.trim());
+
+  useEffect(() => {
+    setSelectedSignatureEmail(current => {
+      if (current && accountOptions.some(acc => acc.email === current)) return current;
+      return preferredSignatureAccount?.email || '';
+    });
+  }, [accountOptions, preferredSignatureAccount?.email]);
+
+  const normalizedSignatureEmail = selectedSignatureEmail.trim().toLowerCase();
+  const selectedSignatureAccount = accountOptions.find(acc => acc.email.toLowerCase() === normalizedSignatureEmail) || null;
+  const selectedAccountSignature = normalizedSignatureEmail
+    ? store.settings.compose.signaturesByAccount?.[normalizedSignatureEmail]
+    : undefined;
+  const signaturePlain = selectedAccountSignature?.signaturePlain ?? store.settings.compose.defaultSignature;
+  const signatureHtml = selectedAccountSignature?.signatureHtml ?? store.settings.compose.defaultSignatureHtml;
+  const hasHtmlSignature = Boolean(signatureHtml.trim());
+
+  const updateSelectedSignature = (updater: (entry: ComposeSignatureSettings) => ComposeSignatureSettings) => {
+    if (!normalizedSignatureEmail) return;
+
+    store.updateSettings(s => {
+      const existing = s.compose.signaturesByAccount?.[normalizedSignatureEmail] || {
+        signaturePlain: s.compose.defaultSignature || '',
+        signatureHtml: s.compose.defaultSignatureHtml || '',
+        signatureFormat: s.compose.signatureFormat || (s.compose.defaultSignatureHtml.trim() ? 'html' : 'plain'),
+      };
+
+      s.compose.signaturesByAccount = {
+        ...(s.compose.signaturesByAccount || {}),
+        [normalizedSignatureEmail]: updater(existing),
+      };
+    });
+  };
 
   const handleSyncGmailSignature = async () => {
-    if (!syncAccount) {
+    if (!selectedSignatureAccount) {
       emitToast({ type: 'warning', message: 'Connect a Gmail account before syncing the signature.' });
       return;
     }
 
     setSignatureSyncing(true);
     try {
-      const result = await store.syncGmailSignature(syncAccount.email);
+      const result = await store.syncGmailSignature(selectedSignatureAccount.email);
       if (result.found) {
-        emitToast({ type: 'success', message: 'Gmail signature synced.' });
+        emitToast({ type: 'success', message: `Gmail signature synced for ${selectedSignatureAccount.email}.` });
       } else {
-        emitToast({ type: 'info', message: 'No Gmail signature found for this account.' });
+        emitToast({ type: 'info', message: `No Gmail signature found for ${selectedSignatureAccount.email}.` });
       }
     } catch (err) {
       console.error('Gmail signature sync failed:', err);
@@ -297,36 +332,54 @@ export function ComposeTab() {
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Gmail Signature</span>
             <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
-              {hasHtmlSignature ? `HTML signature from ${syncAccount?.email || 'Gmail'}` : 'Use your Gmail send-as signature'}
+              {selectedSignatureAccount
+                ? (hasHtmlSignature ? `HTML signature for ${selectedSignatureAccount.email}` : `No imported signature for ${selectedSignatureAccount.email}`)
+                : 'Connect a Gmail account first'}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={handleSyncGmailSignature}
-            disabled={signatureSyncing || !syncAccount}
-            className="flex items-center gap-1.5 px-2.5 py-1 border border-[var(--border)] text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
-          >
-            <RefreshCw className={`w-3 h-3 ${signatureSyncing ? 'animate-spin' : ''}`} />
-            {signatureSyncing ? 'Syncing' : 'Sync from Gmail'}
-          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedSignatureEmail}
+              onChange={(e) => setSelectedSignatureEmail(e.target.value)}
+              disabled={accountOptions.length === 0 || signatureSyncing}
+              className="max-w-[220px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer disabled:opacity-50"
+            >
+              {accountOptions.length === 0 ? (
+                <option value="">No accounts</option>
+              ) : accountOptions.map(acc => (
+                <option key={acc.email} value={acc.email}>{acc.email}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleSyncGmailSignature}
+              disabled={signatureSyncing || !selectedSignatureAccount}
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-[var(--border)] text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
+            >
+              <RefreshCw className={`w-3 h-3 ${signatureSyncing ? 'animate-spin' : ''}`} />
+              {signatureSyncing ? 'Syncing' : 'Sync from Gmail'}
+            </button>
+          </div>
         </div>
 
         {hasHtmlSignature && (
           <div className="flex flex-col gap-2">
             <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">HTML Preview:</span>
             <div className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] min-h-[52px] overflow-auto">
-              <div dangerouslySetInnerHTML={{ __html: sanitizeGmailSignatureHtml(store.settings.compose.defaultSignatureHtml) }} />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeGmailSignatureHtml(signatureHtml) }} />
             </div>
             <textarea
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[84px] font-mono leading-normal resize-y"
-              value={store.settings.compose.defaultSignatureHtml}
+              value={signatureHtml}
               onChange={(e) => {
                 const val = e.target.value;
-                store.updateSettings(s => {
-                  s.compose.defaultSignatureHtml = val;
-                  s.compose.signatureFormat = val.trim() ? 'html' : 'plain';
-                });
+                updateSelectedSignature(entry => ({
+                  ...entry,
+                  signatureHtml: val,
+                  signatureFormat: val.trim() ? 'html' : 'plain',
+                }));
               }}
+              disabled={!selectedSignatureAccount}
               placeholder="<div>Best regards,<br>Max</div>"
             />
           </div>
@@ -338,16 +391,16 @@ export function ComposeTab() {
           </span>
           <textarea
             className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[60px] font-mono leading-normal resize-none"
-            value={store.settings.compose.defaultSignature}
+            value={signaturePlain}
             onChange={(e) => {
               const val = e.target.value;
-              store.updateSettings(s => {
-                s.compose.defaultSignature = val;
-                if (!s.compose.defaultSignatureHtml.trim()) {
-                  s.compose.signatureFormat = 'plain';
-                }
-              });
+              updateSelectedSignature(entry => ({
+                ...entry,
+                signaturePlain: val,
+                signatureFormat: entry.signatureHtml.trim() ? 'html' : 'plain',
+              }));
             }}
+            disabled={!selectedSignatureAccount}
             placeholder="e.g. Best regards, Max"
           />
         </div>

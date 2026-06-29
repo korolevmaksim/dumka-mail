@@ -24,6 +24,8 @@ export function FloatingComposeDrawer() {
     return null;
   }
 
+  const activeDraft = store.activeDraft;
+
   return (
     <div className="absolute bottom-10 right-6 w-[540px] bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-xl shadow-2xl flex flex-col z-40 overflow-hidden select-text">
       <div className="flex justify-between items-center bg-[var(--rail-bg)] px-4 py-3 border-b border-[var(--border)] select-none">
@@ -92,7 +94,7 @@ export function FloatingComposeDrawer() {
             onKeyDown={(e) => {
               if (e.key === 'Tab' && !e.shiftKey && store.settings.snippets.enabled && store.settings.snippets.expandWithTab) {
                 const ta = e.currentTarget;
-                const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile);
+                const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile, activeDraft.accountId);
                 if (result) {
                   e.preventDefault();
                   setComposeBody(result.text);
@@ -109,7 +111,7 @@ export function FloatingComposeDrawer() {
           />
         ) : (
           <div className="w-full h-[180px] overflow-y-auto bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
-            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose) }} />
+            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose, activeDraft.accountId) }} />
           </div>
         )}
 

@@ -6,6 +6,7 @@ const compose: ComposeSettings = {
   defaultSignature: 'Best regards,\nMax',
   defaultSignatureHtml: '<div style="color:#444">Best regards,<br><b>Max</b></div>',
   signatureFormat: 'html',
+  signaturesByAccount: {},
   autoSaveDrafts: true,
   spellCheck: true,
   autocorrect: true,
@@ -56,5 +57,28 @@ describe('compileDraftBodyHtml', () => {
 
     expect(html).toContain('Best regards,<br/>Max');
     expect(html).not.toContain('gmail_signature');
+  });
+
+  it('uses the signature stored for the draft account', () => {
+    const html = compileDraftBodyHtml('Hello\n\nRegards,\nAlice', {
+      ...compose,
+      signaturesByAccount: {
+        'alice@example.com': {
+          signaturePlain: 'Regards,\nAlice',
+          signatureHtml: '<div>Regards,<br><i>Alice</i></div>',
+          signatureFormat: 'html',
+          sourceEmail: 'alice@example.com',
+          importedAt: '2026-06-29T10:00:00.000Z',
+        },
+        'bob@example.com': {
+          signaturePlain: 'Cheers,\nBob',
+          signatureHtml: '<div>Cheers,<br><b>Bob</b></div>',
+          signatureFormat: 'html',
+        },
+      },
+    }, 'alice@example.com');
+
+    expect(html).toContain('<div class="gmail_signature"><div>Regards,<br><i>Alice</i></div></div>');
+    expect(html).not.toContain('Bob');
   });
 });

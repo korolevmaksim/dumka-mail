@@ -1,5 +1,5 @@
 import { compileMarkdownToHtml } from './markdown';
-import type { ComposeSettings } from './types';
+import type { ComposeSettings, ComposeSignatureSettings } from './types';
 import { sanitizeGmailSignatureHtml } from './textNormalizer';
 
 const DEFAULT_BODY_STYLE = "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1f2937;";
@@ -44,11 +44,32 @@ function appendSignatureHtml(compiledHtml: string, signatureHtml: string): strin
   return `${compiledHtml}${signatureBlock}`;
 }
 
-export function compileDraftBodyHtml(bodyPlain: string, compose: ComposeSettings): string {
-  const signatureHtml = sanitizeGmailSignatureHtml(compose.defaultSignatureHtml || '');
-  const signaturePlain = compose.defaultSignature || '';
+export function getComposeSignatureForAccount(
+  compose: ComposeSettings,
+  accountId?: string | null,
+): ComposeSignatureSettings {
+  const normalizedAccountId = accountId?.trim().toLowerCase() || '';
+  const accountSignature = normalizedAccountId
+    ? compose.signaturesByAccount?.[normalizedAccountId]
+    : undefined;
 
-  if (compose.signatureFormat !== 'html' || !signatureHtml || !signaturePlain.trim()) {
+  if (accountSignature) {
+    return accountSignature;
+  }
+
+  return {
+    signaturePlain: compose.defaultSignature || '',
+    signatureHtml: compose.defaultSignatureHtml || '',
+    signatureFormat: compose.signatureFormat || (compose.defaultSignatureHtml?.trim() ? 'html' : 'plain'),
+  };
+}
+
+export function compileDraftBodyHtml(bodyPlain: string, compose: ComposeSettings, accountId?: string | null): string {
+  const signature = getComposeSignatureForAccount(compose, accountId);
+  const signatureHtml = sanitizeGmailSignatureHtml(signature.signatureHtml || '');
+  const signaturePlain = signature.signaturePlain || '';
+
+  if (signature.signatureFormat !== 'html' || !signatureHtml || !signaturePlain.trim()) {
     return compileMarkdownToHtml(bodyPlain);
   }
 

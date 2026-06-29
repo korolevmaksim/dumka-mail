@@ -36,7 +36,8 @@ export function InlineReplyComposer() {
     return null;
   }
 
-  const toEmails = store.activeDraft.to.map(r => r.email).join(', ');
+  const activeDraft = store.activeDraft;
+  const toEmails = activeDraft.to.map(r => r.email).join(', ');
 
   return (
     <div className="bg-[var(--raised-surface)] border border-[var(--border)] rounded-[8px] shadow-[0_4px_12px_rgba(0,0,0,0.05)] overflow-hidden mt-6 flex flex-col transition-all duration-200 shrink-0">
@@ -80,7 +81,7 @@ export function InlineReplyComposer() {
             onKeyDown={(e) => {
               if (e.key === 'Tab' && !e.shiftKey && store.settings.snippets.enabled && store.settings.snippets.expandWithTab) {
                 const ta = e.currentTarget;
-                const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile);
+                const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile, activeDraft.accountId);
                 if (result) {
                   e.preventDefault();
                   setComposeBody(result.text);
@@ -96,7 +97,7 @@ export function InlineReplyComposer() {
           />
         ) : (
           <div className="w-full min-h-[120px] bg-transparent p-4 text-[var(--text-primary)] text-[calc(13px*var(--font-scale))] overflow-y-auto leading-relaxed select-text">
-            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose) }} />
+            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose, activeDraft.accountId) }} />
           </div>
         )}
 
@@ -104,7 +105,7 @@ export function InlineReplyComposer() {
         <div className="px-4 pb-3 text-left">
           <button
             onClick={() => {
-              const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile);
+              const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile, activeDraft.accountId);
               if (snip) {
                 const hasSnip = composeBody.includes(snip);
                 const next = hasSnip 
@@ -192,7 +193,7 @@ export function InlineReplyComposer() {
           </button>
           <button
             onClick={() => {
-              const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile);
+              const snip = renderDefaultSnippet(store.settings.snippets, store.settings.compose, store.settings.profile, activeDraft.accountId);
               if (snip) {
                 const next = composeBody ? `${composeBody}\n\n${snip}` : snip;
                 setComposeBody(next);

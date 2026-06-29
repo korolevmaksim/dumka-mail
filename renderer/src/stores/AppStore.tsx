@@ -23,7 +23,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 5;
+export const SETTINGS_SCHEMA_VERSION = 6;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -69,6 +69,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultSignature: '',
     defaultSignatureHtml: '',
     signatureFormat: 'plain',
+    signaturesByAccount: {},
     autoSaveDrafts: true,
     spellCheck: true,
     autocorrect: true,
@@ -190,7 +191,7 @@ export function mergeSettings(parsed: any): AppSettings {
   });
   merged.ai.providerConfigurations = [...baseMerged, ...parsedProviders.filter((p: any) => !baseIds.has(p.id))];
 
-  if (parsedSchemaVersion < 5) {
+  if (parsedSchemaVersion < 6) {
     merged.notifications.notifyImportantOnly = false;
   }
 
@@ -321,12 +322,20 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const settingsState = useSettingsState();
 
   const applyGmailSignatureSyncResult = useCallback(async (result: GmailSignatureSyncResult) => {
-    if (!result.found) return;
-
     await settingsState.updateSettings(s => {
-      s.compose.defaultSignature = result.signaturePlain;
-      s.compose.defaultSignatureHtml = result.signatureHtml;
-      s.compose.signatureFormat = result.signatureHtml.trim() ? 'html' : 'plain';
+      const accountId = result.accountId.trim().toLowerCase();
+      if (!accountId) return;
+
+      s.compose.signaturesByAccount = {
+        ...(s.compose.signaturesByAccount || {}),
+        [accountId]: {
+          signaturePlain: result.signaturePlain,
+          signatureHtml: result.signatureHtml,
+          signatureFormat: result.signatureHtml.trim() ? 'html' : 'plain',
+          sourceEmail: result.sourceEmail,
+          importedAt: result.importedAt,
+        }
+      };
     });
   }, [settingsState.updateSettings]);
   

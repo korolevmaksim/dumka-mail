@@ -192,9 +192,11 @@ export function useMailSync({
       await loadAccounts();
       setActiveAccountState(result.account);
 
-      if (result.signatureSync?.found) {
+      if (result.signatureSync) {
         await applyGmailSignatureSyncResult(result.signatureSync);
-        emitToast({ type: 'success', message: 'Imported Gmail signature.' });
+        if (result.signatureSync.found) {
+          emitToast({ type: 'success', message: `Imported Gmail signature for ${result.account.email}.` });
+        }
       } else if (result.signatureSyncError) {
         console.warn('Gmail signature sync failed during onboarding:', result.signatureSyncError);
       }

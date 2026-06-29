@@ -27,6 +27,14 @@ export interface OnboardAccountResult {
   signatureSyncError?: string;
 }
 
+export interface ComposeSignatureSettings {
+  signaturePlain: string;
+  signatureHtml: string;
+  signatureFormat: 'plain' | 'html';
+  sourceEmail?: string;
+  importedAt?: string;
+}
+
 export type MailLabel = 'INBOX' | 'UNREAD' | 'SENT' | 'IMPORTANT' | 'CATEGORY_PRIMARY' | 'CATEGORY_UPDATES' | 'CATEGORY_PROMOTIONS' | string;
 
 export interface MailThread {
@@ -350,6 +358,7 @@ export interface ComposeSettings {
   defaultSignature: string;
   defaultSignatureHtml: string;
   signatureFormat: 'plain' | 'html';
+  signaturesByAccount: Record<AccountID, ComposeSignatureSettings>;
   autoSaveDrafts: boolean;
   spellCheck: boolean;
   autocorrect: boolean;

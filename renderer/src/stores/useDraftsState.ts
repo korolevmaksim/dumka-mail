@@ -183,7 +183,7 @@ export function useDraftsState({
         await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (actionId: string) => {
           const draftForSend = {
             ...draft,
-            bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose)
+            bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose, draft.accountId)
           };
           const res = await window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId);
           if (res && !res.offline) {

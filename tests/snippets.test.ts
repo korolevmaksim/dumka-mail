@@ -25,6 +25,7 @@ const compose: ComposeSettings = {
   defaultSignature: '',
   defaultSignatureHtml: '',
   signatureFormat: 'plain',
+  signaturesByAccount: {},
   autoSaveDrafts: true,
   spellCheck: true,
   autocorrect: true,
@@ -86,6 +87,31 @@ describe('renderDefaultSnippet', () => {
       profile,
     );
     expect(out).toBe('Thanks, Max\n\nMax @ Dumka');
+  });
+
+  it('uses the signature saved for the draft account', () => {
+    const out = renderDefaultSnippet(
+      snippets,
+      {
+        ...compose,
+        signaturesByAccount: {
+          'work@example.com': {
+            signaturePlain: '{first_name} @ Work',
+            signatureHtml: '<div>Max @ Work</div>',
+            signatureFormat: 'html',
+          },
+          'personal@example.com': {
+            signaturePlain: 'Personal Max',
+            signatureHtml: '',
+            signatureFormat: 'plain',
+          },
+        },
+      },
+      profile,
+      'work@example.com',
+    );
+
+    expect(out).toBe('Thanks, Max\n\nMax @ Work');
   });
 
   it('omits the signature when it renders empty even if includeSignature is on', () => {

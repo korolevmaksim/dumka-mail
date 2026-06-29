@@ -1,4 +1,5 @@
 import type { ProfileSettings, SnippetSettings, ComposeSettings } from './types';
+import { getComposeSignatureForAccount } from './draftHtml';
 
 /**
  * Snippet rendering + Tab-expansion engine.
@@ -52,13 +53,15 @@ export function renderDefaultSnippet(
   snippets: SnippetSettings,
   compose: ComposeSettings,
   profile: ProfileSettings,
+  accountId?: string | null,
 ): string | null {
   if (!snippets.enabled) return null;
 
   const body = renderTokens(snippets.defaultSnippet, profile).trim();
   if (body === '') return null;
 
-  const signature = renderTokens(compose.defaultSignature, profile).trim();
+  const accountSignature = getComposeSignatureForAccount(compose, accountId);
+  const signature = renderTokens(accountSignature.signaturePlain, profile).trim();
   if (!snippets.includeSignature || signature === '') {
     return body;
   }
@@ -95,11 +98,12 @@ export function expandSnippetAtCursor(
   snippets: SnippetSettings,
   compose: ComposeSettings,
   profile: ProfileSettings,
+  accountId?: string | null,
 ): SnippetExpansion | null {
   if (!snippets.enabled || !snippets.expandWithTab) return null;
   if (cursor < 0 || cursor > body.length) return null;
 
-  const replacement = renderDefaultSnippet(snippets, compose, profile);
+  const replacement = renderDefaultSnippet(snippets, compose, profile, accountId);
   if (replacement === null) return null;
 
   // currentLineContext: prefix = line start .. cursor, suffix = cursor .. line end.
