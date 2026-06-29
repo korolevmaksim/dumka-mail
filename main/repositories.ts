@@ -441,6 +441,7 @@ export const DraftsRepo = {
       bcc: JSON.parse(r.bcc_json),
       subject: r.subject,
       bodyPlain: r.body_plain_text,
+      bodyHtml: r.body_html,
       attachments: JSON.parse(r.attachments_json),
       replyMessageId: r.reply_message_id,
       replyReferences: r.reply_references,
@@ -461,6 +462,7 @@ export const DraftsRepo = {
       bcc: JSON.parse(row.bcc_json),
       subject: row.subject,
       bodyPlain: row.body_plain_text,
+      bodyHtml: row.body_html,
       attachments: JSON.parse(row.attachments_json),
       replyMessageId: row.reply_message_id,
       replyReferences: row.reply_references,
@@ -473,8 +475,8 @@ export const DraftsRepo = {
     db.prepare(`
       INSERT INTO drafts (
         id, account_id, thread_id, to_json, cc_json, bcc_json, subject, body_plain_text,
-        attachments_json, reply_message_id, reply_references, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        body_html, attachments_json, reply_message_id, reply_references, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         thread_id=excluded.thread_id,
         to_json=excluded.to_json,
@@ -482,6 +484,7 @@ export const DraftsRepo = {
         bcc_json=excluded.bcc_json,
         subject=excluded.subject,
         body_plain_text=excluded.body_plain_text,
+        body_html=excluded.body_html,
         attachments_json=excluded.attachments_json,
         reply_message_id=excluded.reply_message_id,
         reply_references=excluded.reply_references,
@@ -495,6 +498,7 @@ export const DraftsRepo = {
       JSON.stringify(draft.bcc),
       draft.subject,
       draft.bodyPlain,
+      draft.bodyHtml || null,
       JSON.stringify(draft.attachments),
       draft.replyMessageId || null,
       draft.replyReferences || null,

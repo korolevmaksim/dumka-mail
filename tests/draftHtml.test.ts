@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { compileDraftBodyHtml, stripTrailingPlainSignature } from '../shared/draftHtml';
+import {
+  compileDraftBodyHtml,
+  htmlFragmentToPlainText,
+  plainTextToHtmlFragment,
+  sanitizeDraftHtmlFragment,
+  stripTrailingPlainSignature,
+} from '../shared/draftHtml';
 import type { ComposeSettings } from '../shared/types';
 
 const compose: ComposeSettings = {
@@ -33,6 +39,14 @@ describe('stripTrailingPlainSignature', () => {
 });
 
 describe('compileDraftBodyHtml', () => {
+  it('uses sanitized rich HTML when a draft stores a rich body fragment', () => {
+    const html = compileDraftBodyHtml('Hello', compose, 'me@example.com', '<p onclick="x()">Hello <strong>Max</strong></p><script>alert(1)</script>');
+
+    expect(html).toContain('<strong>Max</strong>');
+    expect(html).not.toContain('onclick');
+    expect(html).not.toContain('<script>');
+  });
+
   it('replaces the plain-text trailing signature with the imported Gmail HTML signature', () => {
     const html = compileDraftBodyHtml('Hello\n\nBest regards,\nMax', compose);
 
@@ -80,5 +94,19 @@ describe('compileDraftBodyHtml', () => {
 
     expect(html).toContain('<div class="gmail_signature"><div>Regards,<br><i>Alice</i></div></div>');
     expect(html).not.toContain('Bob');
+  });
+});
+
+describe('rich draft HTML helpers', () => {
+  it('converts plain text into paragraph HTML', () => {
+    expect(plainTextToHtmlFragment('Hello\nthere\n\nNext')).toBe('<p>Hello<br>there</p><p>Next</p>');
+  });
+
+  it('sanitizes active HTML and converts fragments to plain text', () => {
+    const html = sanitizeDraftHtmlFragment('<p>Hello<br>there</p><img src="cid:x" alt="Chart"><script>bad()</script>');
+
+    expect(html).toContain('cid:x');
+    expect(html).not.toContain('<script>');
+    expect(htmlFragmentToPlainText(html)).toBe('Hello\nthere\nChart');
   });
 });

@@ -32,7 +32,7 @@ export function InlineReplyComposer() {
     }
   }, [store.activeDraft]);
 
-  if (!store.activeDraft || store.activeDraft.threadId !== store.openedThread?.id) {
+  if (!store.activeDraft || store.activeDraft.threadId !== store.openedThread?.id || store.composeLayout !== 'inline') {
     return null;
   }
 
@@ -59,7 +59,7 @@ export function InlineReplyComposer() {
           </button>
           <button
             onClick={() => {
-              store.setActiveDraft({ ...store.activeDraft!, threadId: null });
+              store.setComposeLayout('floating');
             }}
             title="Popout draft to compose window"
             className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
@@ -97,7 +97,7 @@ export function InlineReplyComposer() {
           />
         ) : (
           <div className="w-full min-h-[120px] bg-transparent p-4 text-[var(--text-primary)] text-[calc(13px*var(--font-scale))] overflow-y-auto leading-relaxed select-text">
-            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose, activeDraft.accountId) }} />
+            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose, activeDraft.accountId, activeDraft.bodyHtml) }} />
           </div>
         )}
 

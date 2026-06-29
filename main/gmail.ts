@@ -529,8 +529,13 @@ export const GmailSyncService = {
     
     // MIME Construction
     const alternativeBoundary = `----=_Part_Alt_${crypto.randomBytes(8).toString('hex')}`;
+    const relatedBoundary = `----=_Part_Related_${crypto.randomBytes(8).toString('hex')}`;
     const mixedBoundary = `----=_Part_Mixed_${crypto.randomBytes(8).toString('hex')}`;
-    const hasAttachments = draft.attachments && draft.attachments.length > 0;
+    const attachments = draft.attachments || [];
+    const inlineAttachments = attachments.filter(att => att.isInline);
+    const fileAttachments = attachments.filter(att => !att.isInline);
+    const hasInlineAttachments = inlineAttachments.length > 0;
+    const hasFileAttachments = fileAttachments.length > 0;
 
     const headers: string[] = [];
     headers.push(`From: ${email}`);
@@ -544,8 +549,10 @@ export const GmailSyncService = {
     headers.push(`Subject: ${draft.subject}`);
     headers.push('MIME-Version: 1.0');
     
-    if (hasAttachments) {
+    if (hasFileAttachments) {
       headers.push(`Content-Type: multipart/mixed; boundary="${mixedBoundary}"`);
+    } else if (hasInlineAttachments) {
+      headers.push(`Content-Type: multipart/related; boundary="${relatedBoundary}"`);
     } else {
       headers.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`);
     }
@@ -562,41 +569,69 @@ export const GmailSyncService = {
     }
 
     const bodyParts: string[] = [];
+    const bodyHtml = draft.bodyHtml || compileMarkdownToHtml(draft.bodyPlain);
 
-    if (hasAttachments) {
+    const pushAlternativeBody = () => {
+      // text/plain part
+      bodyParts.push(`--${alternativeBoundary}`);
+      bodyParts.push('Content-Type: text/plain; charset=UTF-8');
+      bodyParts.push('Content-Transfer-Encoding: 7bit\r\n');
+      bodyParts.push(draft.bodyPlain);
+
+      // text/html part
+      bodyParts.push(`\r\n--${alternativeBoundary}`);
+      bodyParts.push('Content-Type: text/html; charset=UTF-8');
+      bodyParts.push('Content-Transfer-Encoding: 7bit\r\n');
+      bodyParts.push(bodyHtml);
+
+      bodyParts.push(`\r\n--${alternativeBoundary}--`);
+    };
+
+    const appendAttachmentPart = (att: AttachmentMetadata, disposition: 'attachment' | 'inline') => {
+      if (!att.base64Data) return;
+      let cleanBase64 = att.base64Data;
+      const dataUrlPrefixIdx = cleanBase64.indexOf(';base64,');
+      if (dataUrlPrefixIdx !== -1) {
+        cleanBase64 = cleanBase64.substring(dataUrlPrefixIdx + 8);
+      }
+
+      const safeFilename = att.filename.replace(/[\r\n"]/g, '_');
+      bodyParts.push(`\r\n--${disposition === 'inline' ? relatedBoundary : mixedBoundary}`);
+      bodyParts.push(`Content-Type: ${att.mimeType}; name="${safeFilename}"`);
+      bodyParts.push(`Content-Disposition: ${disposition}; filename="${safeFilename}"`);
+      if (disposition === 'inline') {
+        const contentId = (att.contentId || `${att.id}@dumka-mail`).replace(/[\r\n<>]/g, '');
+        bodyParts.push(`Content-ID: <${contentId}>`);
+      }
+      bodyParts.push('Content-Transfer-Encoding: base64\r\n');
+      bodyParts.push(cleanBase64);
+    };
+
+    if (hasFileAttachments) {
       bodyParts.push(`\r\n--${mixedBoundary}`);
-      bodyParts.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"\r\n`);
+      if (hasInlineAttachments) {
+        bodyParts.push(`Content-Type: multipart/related; boundary="${relatedBoundary}"\r\n`);
+      } else {
+        bodyParts.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"\r\n`);
+      }
     }
 
-    // text/plain part
-    bodyParts.push(`--${alternativeBoundary}`);
-    bodyParts.push('Content-Type: text/plain; charset=UTF-8');
-    bodyParts.push('Content-Transfer-Encoding: 7bit\r\n');
-    bodyParts.push(draft.bodyPlain);
+    if (hasInlineAttachments) {
+      bodyParts.push(`\r\n--${relatedBoundary}`);
+      bodyParts.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"\r\n`);
+      pushAlternativeBody();
 
-    // text/html part
-    const bodyHtml = draft.bodyHtml || compileMarkdownToHtml(draft.bodyPlain);
-    bodyParts.push(`\r\n--${alternativeBoundary}`);
-    bodyParts.push('Content-Type: text/html; charset=UTF-8');
-    bodyParts.push('Content-Transfer-Encoding: 7bit\r\n');
-    bodyParts.push(bodyHtml);
+      for (const att of inlineAttachments) {
+        appendAttachmentPart(att, 'inline');
+      }
+      bodyParts.push(`\r\n--${relatedBoundary}--`);
+    } else {
+      pushAlternativeBody();
+    }
 
-    bodyParts.push(`\r\n--${alternativeBoundary}--`);
-
-    if (hasAttachments) {
-      for (const att of draft.attachments || []) {
-        if (!att.base64Data) continue;
-        let cleanBase64 = att.base64Data;
-        const dataUrlPrefixIdx = cleanBase64.indexOf(';base64,');
-        if (dataUrlPrefixIdx !== -1) {
-          cleanBase64 = cleanBase64.substring(dataUrlPrefixIdx + 8);
-        }
-
-        bodyParts.push(`\r\n--${mixedBoundary}`);
-        bodyParts.push(`Content-Type: ${att.mimeType}; name="${att.filename}"`);
-        bodyParts.push(`Content-Disposition: attachment; filename="${att.filename}"`);
-        bodyParts.push('Content-Transfer-Encoding: base64\r\n');
-        bodyParts.push(cleanBase64);
+    if (hasFileAttachments) {
+      for (const att of fileAttachments) {
+        appendAttachmentPart(att, 'attachment');
       }
       bodyParts.push(`\r\n--${mixedBoundary}--`);
     }

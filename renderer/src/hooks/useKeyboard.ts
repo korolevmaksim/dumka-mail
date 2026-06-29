@@ -264,6 +264,7 @@ export function useKeyboard(options: KeyboardOptions) {
           to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [],
           updatedAt: new Date().toISOString()
         });
+        currentStore.setComposeLayout('floating');
         return;
       }
 

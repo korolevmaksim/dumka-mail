@@ -1,8 +1,80 @@
 import { compileMarkdownToHtml } from './markdown';
 import type { ComposeSettings, ComposeSignatureSettings } from './types';
-import { sanitizeGmailSignatureHtml } from './textNormalizer';
+import { decodeHtmlEntities, sanitizeGmailSignatureHtml } from './textNormalizer';
 
 const DEFAULT_BODY_STYLE = "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1f2937;";
+
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function plainTextToHtmlFragment(text: string): string {
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const blocks = normalized.split(/\n{2,}/);
+  return blocks
+    .map((block) => {
+      const escaped = block
+        .split('\n')
+        .map((line) => escapeHtml(line))
+        .join('<br>');
+      return escaped.trim() ? `<p>${escaped}</p>` : '';
+    })
+    .filter(Boolean)
+    .join('');
+}
+
+export function sanitizeDraftHtmlFragment(html: string): string {
+  if (!html) return '';
+
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const fragment = bodyMatch ? bodyMatch[1] : html;
+
+  return fragment
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<!doctype[^>]*>/gi, '')
+    .replace(/<\/?(html|head|body|meta|link|base)[^>]*>/gi, '')
+    .replace(/<(script|style|iframe|object|embed|form|input|button|textarea|select)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<\/?(script|style|iframe|object|embed|form|input|button|textarea|select)\b[^>]*>/gi, '')
+    .replace(/\s+contenteditable\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+contenteditable\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+contenteditable\s*=\s*[^\s>]+/gi, '')
+    .replace(/\s+spellcheck\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+spellcheck\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+spellcheck\s*=\s*[^\s>]+/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/\s+(href|src)\s*=\s*"[^"]*(?:javascript|vbscript):[^"]*"/gi, '')
+    .replace(/\s+(href|src)\s*=\s*'[^']*(?:javascript|vbscript):[^']*'/gi, '')
+    .replace(/\s+(href|src)\s*=\s*[^\s>]*(?:javascript|vbscript):[^\s>]*/gi, '')
+    .trim();
+}
+
+export function htmlFragmentToPlainText(html: string): string {
+  if (!html) return '';
+
+  const withBreaks = sanitizeDraftHtmlFragment(html)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '- ')
+    .replace(/<img\b[^>]*alt\s*=\s*"([^"]*)"[^>]*>/gi, ' $1 ')
+    .replace(/<img\b[^>]*alt\s*=\s*'([^']*)'[^>]*>/gi, ' $1 ')
+    .replace(/<img\b[^>]*>/gi, ' [image] ')
+    .replace(/<[^>]+>/g, '');
+
+  return decodeHtmlEntities(withBreaks)
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t\f\v]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 export function stripTrailingPlainSignature(
   bodyPlain: string,
@@ -26,7 +98,7 @@ export function stripTrailingPlainSignature(
   };
 }
 
-function wrapHtmlBody(innerHtml: string): string {
+export function wrapHtmlBody(innerHtml: string): string {
   return `<html><body><div style="${DEFAULT_BODY_STYLE}">${innerHtml}</div></body></html>`;
 }
 
@@ -64,7 +136,16 @@ export function getComposeSignatureForAccount(
   };
 }
 
-export function compileDraftBodyHtml(bodyPlain: string, compose: ComposeSettings, accountId?: string | null): string {
+export function compileDraftBodyHtml(
+  bodyPlain: string,
+  compose: ComposeSettings,
+  accountId?: string | null,
+  bodyHtml?: string | null,
+): string {
+  if (bodyHtml?.trim()) {
+    return wrapHtmlBody(sanitizeDraftHtmlFragment(bodyHtml));
+  }
+
   const signature = getComposeSignatureForAccount(compose, accountId);
   const signatureHtml = sanitizeGmailSignatureHtml(signature.signatureHtml || '');
   const signaturePlain = signature.signaturePlain || '';

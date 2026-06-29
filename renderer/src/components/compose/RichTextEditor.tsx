@@ -1,0 +1,140 @@
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  escapeHtml,
+  htmlFragmentToPlainText,
+  plainTextToHtmlFragment,
+  sanitizeDraftHtmlFragment,
+} from '../../../../shared/draftHtml';
+
+export interface RichTextEditorHandle {
+  focus: () => void;
+  execute: (command: string, value?: string) => void;
+  insertHtml: (html: string) => void;
+  insertText: (text: string) => void;
+  replaceHtml: (html: string) => void;
+  getSelectedText: () => string;
+}
+
+interface RichTextEditorProps {
+  draftId: string;
+  bodyPlain: string;
+  bodyHtml?: string | null;
+  placeholder: string;
+  spellCheck?: boolean;
+  onChange: (bodyPlain: string, bodyHtml: string) => void;
+  onImageFile?: (file: File) => Promise<string | null>;
+}
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/');
+}
+
+function htmlForInsertedText(text: string): string {
+  return plainTextToHtmlFragment(text) || `<p>${escapeHtml(text)}</p>`;
+}
+
+export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(function RichTextEditor({
+  draftId,
+  bodyPlain,
+  bodyHtml,
+  placeholder,
+  spellCheck = true,
+  onChange,
+  onImageFile,
+}, ref) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const lastDraftIdRef = useRef<string | null>(null);
+  const [isEmpty, setIsEmpty] = useState(true);
+
+  const emitChange = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const sanitized = sanitizeDraftHtmlFragment(editor.innerHTML);
+    const plain = htmlFragmentToPlainText(sanitized);
+    setIsEmpty(plain.trim().length === 0);
+    onChange(plain, sanitized);
+  };
+
+  const insertHtml = (html: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    document.execCommand('insertHTML', false, html);
+    emitChange();
+  };
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (lastDraftIdRef.current === draftId) return;
+
+    const initialHtml = bodyHtml?.trim()
+      ? sanitizeDraftHtmlFragment(bodyHtml)
+      : plainTextToHtmlFragment(bodyPlain);
+    editor.innerHTML = initialHtml;
+    setIsEmpty(htmlFragmentToPlainText(initialHtml).length === 0);
+    lastDraftIdRef.current = draftId;
+  }, [bodyHtml, bodyPlain, draftId]);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => editorRef.current?.focus(),
+    execute: (command: string, value?: string) => {
+      editorRef.current?.focus();
+      document.execCommand(command, false, value);
+      emitChange();
+    },
+    insertHtml,
+    insertText: (text: string) => insertHtml(htmlForInsertedText(text)),
+    replaceHtml: (html: string) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.innerHTML = sanitizeDraftHtmlFragment(html);
+      emitChange();
+      editor.focus();
+    },
+    getSelectedText: () => window.getSelection()?.toString() || '',
+  }));
+
+  const handleImageFiles = async (files: FileList | File[]) => {
+    if (!onImageFile) return false;
+    const imageFiles = Array.from(files).filter(isImageFile);
+    if (imageFiles.length === 0) return false;
+
+    for (const file of imageFiles) {
+      const html = await onImageFile(file);
+      if (html) insertHtml(html);
+    }
+    return true;
+  };
+
+  return (
+    <div className="relative flex min-h-0 flex-1">
+      {isEmpty && (
+        <div className="pointer-events-none absolute left-5 top-4 text-[calc(13px*var(--font-scale))] text-[var(--text-tertiary)]">
+          {placeholder}
+        </div>
+      )}
+      <div
+        ref={editorRef}
+        contentEditable
+        spellCheck={spellCheck}
+        role="textbox"
+        aria-multiline="true"
+        onInput={emitChange}
+        onPaste={(event) => {
+          if (!event.clipboardData?.files.length) return;
+          const hasImage = Array.from(event.clipboardData.files).some(isImageFile);
+          if (!hasImage) return;
+          event.preventDefault();
+          void handleImageFiles(event.clipboardData.files);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer?.files.length) return;
+          event.preventDefault();
+          void handleImageFiles(event.dataTransfer.files);
+        }}
+        className="rich-compose-editor min-h-[300px] flex-1 overflow-y-auto px-5 py-4 text-[calc(13px*var(--font-scale))] leading-relaxed text-[var(--text-primary)] outline-none"
+      />
+    </div>
+  );
+});

@@ -422,11 +422,11 @@ export function useMailState({
   ) => {
     if (!activeAccount) return;
 
-    const targetThreadId = threadId || openedThread?.id || focusedThreadId;
-    if (!targetThreadId) return;
+    const targetThreadId = threadId || openedThread?.id || focusedThreadId || null;
+    if (!targetThreadId && kind !== 'send') return;
 
     const actionId = crypto.randomUUID();
-    const thread = threads.find(t => t.id === targetThreadId);
+    const thread = targetThreadId ? threads.find(t => t.id === targetThreadId) : null;
     const targetAccountId = thread ? thread.accountId : activeAccount.email;
     
     const log: MailActionLog = {
@@ -442,7 +442,7 @@ export function useMailState({
     setActionLog(prev => [log, ...prev]);
 
     // OPTIMISTIC UI STATE TRANSITIONS
-    const currentIdx = visibleThreads.findIndex(t => t.id === targetThreadId);
+    const currentIdx = targetThreadId ? visibleThreads.findIndex(t => t.id === targetThreadId) : -1;
     let nextThread: MailThread | null = null;
     if (currentIdx !== -1) {
       if (currentIdx + 1 < visibleThreads.length) {
@@ -491,14 +491,16 @@ export function useMailState({
         if (customAction) {
           res = await customAction(actionId);
         } else {
-          if (kind === 'markDone') {
+          if (!targetThreadId && kind !== 'send') return;
+
+          if (kind === 'markDone' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId);
-          } else if (kind === 'restoreInbox') {
+          } else if (kind === 'restoreInbox' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], [], actionId);
             loadThreadsFromDB();
-          } else if (kind === 'markRead') {
+          } else if (kind === 'markRead' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
-          } else if (kind === 'markUnread') {
+          } else if (kind === 'markUnread' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
           }
         }

@@ -82,6 +82,7 @@ export function runMigrations(db: Database.Database) {
         bcc_json TEXT NOT NULL,
         subject TEXT NOT NULL,
         body_plain_text TEXT NOT NULL,
+        body_html TEXT,
         attachments_json TEXT NOT NULL DEFAULT '[]',
         reply_message_id TEXT,
         reply_references TEXT,
@@ -167,6 +168,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'sync_state', column: 'history_backfill_pages_synced', definition: 'history_backfill_pages_synced INTEGER NOT NULL DEFAULT 0' },
     { table: 'sync_state', column: 'history_backfill_threads_synced', definition: 'history_backfill_threads_synced INTEGER NOT NULL DEFAULT 0' },
     { table: 'drafts', column: 'attachments_json', definition: 'attachments_json TEXT NOT NULL DEFAULT \'[]\'' },
+    { table: 'drafts', column: 'body_html', definition: 'body_html TEXT' },
     { table: 'drafts', column: 'reply_message_id', definition: 'reply_message_id TEXT' },
     { table: 'drafts', column: 'reply_references', definition: 'reply_references TEXT' }
   ];

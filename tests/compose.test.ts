@@ -196,16 +196,23 @@ describe('validateDraft', () => {
     expect(validateDraft(ok)).toEqual({ valid: true, errors: [] });
   });
 
-  it('requires at least one recipient', () => {
+  it('requires at least one recipient across to, cc, and bcc', () => {
     const res = validateDraft({ ...ok, to: [] });
     expect(res.valid).toBe(false);
     expect(res.errors).toContain('Add at least one recipient');
+
+    expect(validateDraft({ ...ok, to: [], cc: [r('cc@example.com')] }).valid).toBe(true);
+    expect(validateDraft({ ...ok, to: [], bcc: [r('bcc@example.com')] }).valid).toBe(true);
   });
 
   it('rejects an invalid recipient email', () => {
     const res = validateDraft({ ...ok, to: [r('not-an-email')] });
     expect(res.valid).toBe(false);
     expect(res.errors).toContain('Invalid recipient: not-an-email');
+
+    const ccRes = validateDraft({ ...ok, cc: [r('bad-cc')] });
+    expect(ccRes.valid).toBe(false);
+    expect(ccRes.errors).toContain('Invalid recipient: bad-cc');
   });
 
   it('requires a non-empty subject', () => {

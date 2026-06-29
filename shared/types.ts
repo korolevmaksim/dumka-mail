@@ -104,6 +104,7 @@ export interface Draft {
   bcc: Recipient[];
   subject: string;
   bodyPlain: string;
+  bodyHtml?: string | null;
   attachments: AttachmentMetadata[];
   replyMessageId?: string | null;
   replyReferences?: string | null;

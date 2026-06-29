@@ -231,3 +231,33 @@ body {
 .fade-in-up {
   animation: fadeInUp 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+.rich-compose-editor p {
+  margin: 0 0 0.85em;
+}
+
+.rich-compose-editor ul,
+.rich-compose-editor ol {
+  margin: 0 0 0.85em 1.35em;
+  padding-left: 1em;
+}
+
+.rich-compose-editor blockquote {
+  margin: 0 0 0.85em 0.8ex;
+  border-left: 2px solid var(--border);
+  padding-left: 1ex;
+  color: var(--text-secondary);
+}
+
+.rich-compose-editor a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.rich-compose-editor img {
+  display: block;
+  max-width: min(620px, 100%);
+  height: auto;
+  margin: 0.5em 0 0.85em;
+  border-radius: 6px;
+}

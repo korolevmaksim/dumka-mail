@@ -250,6 +250,8 @@ export function startForward(message: MailMessage): DraftSeed {
  */
 export function validateDraft(input: {
   to: Recipient[]
+  cc?: Recipient[]
+  bcc?: Recipient[]
   subject: string
   body: string
   attachmentBytes?: number
@@ -259,7 +261,10 @@ export function validateDraft(input: {
     if (!errors.includes(message)) errors.push(message)
   }
 
-  const recipients = input.to ?? []
+  const to = input.to ?? []
+  const cc = input.cc ?? []
+  const bcc = input.bcc ?? []
+  const recipients = [...to, ...cc, ...bcc]
   if (recipients.length === 0) {
     push(MSG_MISSING_RECIPIENT)
   }

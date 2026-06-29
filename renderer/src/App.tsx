@@ -68,6 +68,7 @@ function AppContent() {
             accountId,
             to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
           });
+          store.setComposeLayout('floating');
           break;
         }
         case 'edit.undo':
@@ -393,6 +394,7 @@ function AppContent() {
                       accountId,
                       to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
                     });
+                    store.setComposeLayout('floating');
                   }}
                   title="Compose Message (C)"
                   className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-all duration-150 active:scale-90"

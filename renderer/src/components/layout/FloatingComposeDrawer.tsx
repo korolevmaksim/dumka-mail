@@ -1,163 +1,488 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Braces,
+  Eraser,
+  Image,
+  Italic,
+  Link,
+  List,
+  ListOrdered,
+  Maximize2,
+  Minimize2,
+  Paperclip,
+  Palette,
+  Save,
+  Send,
+  Sparkles,
+  Strikethrough,
+  Trash2,
+  Underline,
+  X,
+} from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
-import { X, Paperclip } from 'lucide-react';
-import { compileDraftBodyHtml } from '../../../../shared/draftHtml';
-import { expandSnippetAtCursor } from '../../../../shared/snippets';
+import { emitToast } from '../../lib/toastBus';
+import { formatAIUserError } from '../../../../shared/aiErrors';
+import { plainTextToHtmlFragment, sanitizeDraftHtmlFragment } from '../../../../shared/draftHtml';
+import { renderDefaultSnippet } from '../../../../shared/snippets';
+import type { AttachmentMetadata } from '../../../../shared/types';
+import { RecipientField } from '../compose/RecipientField';
+import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
+
+type ComposeCommand =
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikeThrough'
+  | 'insertUnorderedList'
+  | 'insertOrderedList'
+  | 'justifyLeft'
+  | 'justifyCenter'
+  | 'justifyRight'
+  | 'removeFormat';
+
+const IMAGE_MAX_WIDTH = 620;
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const marker = ';base64,';
+      const markerIndex = result.indexOf(marker);
+      resolve(markerIndex >= 0 ? result.slice(markerIndex + marker.length) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function inlineImageHtml(attachment: AttachmentMetadata): string {
+  const cid = attachment.contentId || `${attachment.id}@dumka-mail`;
+  const alt = attachment.filename.replace(/[<>"']/g, '');
+  return `<p><img src="cid:${cid}" alt="${alt}" style="max-width:${IMAGE_MAX_WIDTH}px; width:100%; height:auto; border-radius:6px;" /></p>`;
+}
+
+function textOrHtmlToFragment(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  if (/<[a-z][\s\S]*>/i.test(trimmed)) {
+    return sanitizeDraftHtmlFragment(trimmed);
+  }
+  return plainTextToHtmlFragment(trimmed);
+}
+
+interface ToolbarButtonProps {
+  title: string;
+  onClick: () => void;
+  children: ReactNode;
+}
+
+function ToolbarButton({ title, onClick, children }: ToolbarButtonProps) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+    >
+      {children}
+    </button>
+  );
+}
 
 export function FloatingComposeDrawer() {
   const store = useAppStore();
-  const [composeBody, setComposeBody] = useState('');
-  const [composeTo, setComposeTo] = useState('');
-  const [composeSubject, setComposeSubject] = useState('');
-  const [editorTab, setEditorTab] = useState<'write' | 'preview'>('write');
-
-  // Sync draft local state to fields when activeDraft changes
-  useEffect(() => {
-    if (store.activeDraft && !store.activeDraft.threadId) {
-      setComposeBody(store.activeDraft.bodyPlain);
-      setComposeTo(store.activeDraft.to.map(r => r.email).join(', '));
-      setComposeSubject(store.activeDraft.subject || '');
-    }
-  }, [store.activeDraft]);
-
-  if (!store.activeDraft || store.activeDraft.threadId) {
-    return null;
-  }
+  const editorRef = useRef<RichTextEditorHandle>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
 
   const activeDraft = store.activeDraft;
 
+  useEffect(() => {
+    if (!activeDraft) return;
+    setShowCc(activeDraft.cc.length > 0);
+    setShowBcc(activeDraft.bcc.length > 0);
+    setTemplatesOpen(false);
+    setAiOpen(false);
+    setAiInstruction('');
+  }, [activeDraft?.id]);
+
+  if (!activeDraft || store.composeLayout !== 'floating') {
+    return null;
+  }
+
+  const isReply = Boolean(activeDraft.threadId);
+  const canSwitchAccount = store.accounts.length > 1 && !isReply;
+
+  const updateRecipients = (field: 'to' | 'cc' | 'bcc', recipients: typeof activeDraft.to) => {
+    store.updateDraft({ [field]: recipients });
+  };
+
+  const execute = (command: ComposeCommand) => {
+    editorRef.current?.execute(command);
+  };
+
+  const insertLink = () => {
+    const selected = editorRef.current?.getSelectedText() || '';
+    const url = window.prompt('Link URL');
+    if (!url) return;
+    if (!selected) {
+      editorRef.current?.insertHtml(`<a href="${url}" target="_blank" style="color:#5383E6;text-decoration:underline;">${url}</a>`);
+      return;
+    }
+    editorRef.current?.execute('createLink', url);
+  };
+
+  const addInlineImageAttachment = (attachment: AttachmentMetadata) => {
+    const inlineAttachment: AttachmentMetadata = {
+      ...attachment,
+      isInline: true,
+      contentId: attachment.contentId || `${attachment.id}@dumka-mail`,
+    };
+    store.updateDraft({
+      attachments: [...(store.activeDraft?.attachments || []), inlineAttachment],
+    });
+    return inlineAttachment;
+  };
+
+  const insertInlineImageFromDialog = async () => {
+    const attachment = await window.electronAPI.uploadAttachment();
+    if (!attachment) return;
+    if (!attachment.mimeType.startsWith('image/')) {
+      emitToast({ type: 'warning', message: 'Choose an image file for inline insertion.' });
+      return;
+    }
+    const inlineAttachment = addInlineImageAttachment(attachment);
+    editorRef.current?.insertHtml(inlineImageHtml(inlineAttachment));
+  };
+
+  const insertInlineImageFromFile = async (file: File): Promise<string | null> => {
+    if (!file.type.startsWith('image/')) return null;
+    const base64Data = await fileToBase64(file);
+    const attachment = addInlineImageAttachment({
+      id: crypto.randomUUID(),
+      filename: file.name || 'inline-image',
+      mimeType: file.type || 'image/png',
+      sizeBytes: file.size,
+      base64Data,
+    });
+    return inlineImageHtml(attachment);
+  };
+
+  const insertDefaultSnippet = () => {
+    const snippet = renderDefaultSnippet(
+      store.settings.snippets,
+      store.settings.compose,
+      store.settings.profile,
+      activeDraft.accountId,
+    );
+    if (!snippet) {
+      emitToast({ type: 'info', message: 'No default snippet configured.' });
+      return;
+    }
+    editorRef.current?.insertText(snippet);
+    setTemplatesOpen(false);
+  };
+
+  const saveCurrentBodyAsSnippet = async () => {
+    const body = (store.activeDraft?.bodyPlain || '').trim();
+    if (!body) {
+      emitToast({ type: 'warning', message: 'Write a body before saving a snippet.' });
+      return;
+    }
+    await store.updateSettings(s => {
+      s.snippets.enabled = true;
+      s.snippets.defaultSnippet = body;
+      if (!s.snippets.defaultSnippetTrigger.trim()) {
+        s.snippets.defaultSnippetTrigger = ';snippet';
+      }
+    });
+    setTemplatesOpen(false);
+    emitToast({ type: 'success', message: 'Saved as the default snippet.' });
+  };
+
+  const runAICompose = async (mode: 'draft' | 'improve') => {
+    const selectedText = editorRef.current?.getSelectedText() || '';
+    const body = store.activeDraft?.bodyPlain || '';
+    const prompt = aiInstruction.trim();
+    if (mode === 'draft' && !prompt) {
+      emitToast({ type: 'warning', message: 'Describe what the email should say.' });
+      return;
+    }
+    if (mode === 'improve' && !selectedText && !body.trim()) {
+      emitToast({ type: 'warning', message: 'Select text or write a draft first.' });
+      return;
+    }
+
+    setAiBusy(true);
+    try {
+      const context = [
+        `Subject: ${activeDraft.subject || '(none)'}`,
+        `To: ${activeDraft.to.map(r => r.email).join(', ') || '(none)'}`,
+        `Cc: ${activeDraft.cc.map(r => r.email).join(', ') || '(none)'}`,
+        `Current body:\n${body || '(empty)'}`,
+      ].join('\n');
+      const instruction = mode === 'draft'
+        ? `Write a polished email body from these instructions: ${prompt}. Return only a conservative HTML body fragment with paragraphs, lists, links, and emphasis when useful.`
+        : `Rewrite ${selectedText ? 'the selected text' : 'the current draft'} to be clearer, concise, and professional. ${prompt ? `Additional instruction: ${prompt}.` : ''} Return only a conservative HTML body fragment. Text to improve:\n${selectedText || body}`;
+
+      const response = await window.electronAPI.completeAI({
+        action: 'compose',
+        context,
+        conversationHistory: [],
+        userInstruction: instruction,
+      }, store.aiProvider, store.aiModel || undefined);
+
+      const fragment = textOrHtmlToFragment(response.text);
+      if (!fragment) return;
+      if (mode === 'draft') {
+        editorRef.current?.replaceHtml(fragment);
+      } else {
+        editorRef.current?.insertHtml(fragment);
+      }
+      setAiInstruction('');
+      setAiOpen(false);
+      emitToast({ type: 'success', message: mode === 'draft' ? 'AI draft inserted.' : 'AI rewrite inserted.' });
+    } catch (error) {
+      emitToast({ type: 'error', message: formatAIUserError(error) });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const containerClass = expanded
+    ? 'fixed left-20 right-6 top-12 bottom-10'
+    : 'fixed bottom-10 right-6 h-[min(78vh,760px)] w-[min(880px,calc(100vw-96px))] min-h-[520px] min-w-[640px] resize';
+
   return (
-    <div className="absolute bottom-10 right-6 w-[540px] bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-xl shadow-2xl flex flex-col z-40 overflow-hidden select-text">
-      <div className="flex justify-between items-center bg-[var(--rail-bg)] px-4 py-3 border-b border-[var(--border)] select-none">
-        <span className="font-semibold text-[calc(13px*var(--font-scale))] text-[var(--text-primary)]">New Message</span>
-        <button 
-          onClick={() => store.setActiveDraft(null)} 
-          className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-        >
-          <X className="w-4 h-4" />
-        </button>
+    <div className={`${containerClass} z-40 flex flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl select-text`}>
+      <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--rail-bg)] px-4 py-3 select-none">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="font-semibold text-[calc(13px*var(--font-scale))] text-[var(--text-primary)]">
+            {isReply ? 'Reply' : 'New Message'}
+          </span>
+          <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
+            {activeDraft.accountId}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setExpanded(value => !value)}
+            title={expanded ? 'Exit expanded compose' : 'Expand compose'}
+            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+          >
+            {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => store.setActiveDraft(null)}
+            title="Close composer"
+            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
-      
-      <div className="flex flex-col p-4 gap-3">
-        {/* To field */}
-        <div className="flex items-center border-b border-[var(--border)] pb-2 gap-2 text-[calc(12px*var(--font-scale))]">
-          <span className="text-[var(--text-secondary)] font-medium w-16 select-none">To:</span>
-          <input
-            type="text"
-            placeholder="recipients@email.com (comma separated)"
-            value={composeTo}
-            onChange={(e) => {
-              setComposeTo(e.target.value);
-              store.saveDraftLocally(composeBody, e.target.value, composeSubject);
-            }}
-            className="flex-1 bg-transparent border-none outline-none text-[var(--text-primary)] font-sans"
+
+      {canSwitchAccount && (
+        <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[calc(12px*var(--font-scale))]">
+          <span className="w-12 shrink-0 text-[var(--text-secondary)] font-medium select-none">From</span>
+          <select
+            value={activeDraft.accountId}
+            onChange={(event) => store.updateDraft({ accountId: event.target.value })}
+            className="bg-transparent text-[var(--text-primary)] outline-none"
+          >
+            {store.accounts.map(account => (
+              <option key={account.email} value={account.email}>{account.displayName || account.email}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="flex items-start border-b border-[var(--border)] pr-4">
+        <div className="flex-1">
+          <RecipientField
+            label="To"
+            recipients={activeDraft.to}
+            placeholder="Add recipients"
+            autoFocus
+            onChange={(recipients) => updateRecipients('to', recipients)}
           />
         </div>
-        
-        {/* Subject field */}
-        <div className="flex items-center border-b border-[var(--border)] pb-2 gap-2 text-[calc(12px*var(--font-scale))]">
-          <span className="text-[var(--text-secondary)] font-medium w-16 select-none">Subject:</span>
-          <input
-            type="text"
-            placeholder="Subject"
-            value={composeSubject}
-            onChange={(e) => {
-              setComposeSubject(e.target.value);
-              store.saveDraftLocally(composeBody, composeTo, e.target.value);
-            }}
-            className="flex-1 bg-transparent border-none outline-none text-[var(--text-primary)] font-sans"
-          />
+        <div className="flex shrink-0 gap-2 pt-3 text-[calc(11px*var(--font-scale))] font-medium select-none">
+          {!showCc && (
+            <button type="button" onClick={() => setShowCc(true)} className="text-[var(--text-secondary)] hover:text-[var(--accent)]">
+              Cc
+            </button>
+          )}
+          {!showBcc && (
+            <button type="button" onClick={() => setShowBcc(true)} className="text-[var(--text-secondary)] hover:text-[var(--accent)]">
+              Bcc
+            </button>
+          )}
         </div>
+      </div>
+      {showCc && (
+        <RecipientField
+          label="Cc"
+          recipients={activeDraft.cc}
+          placeholder="Add carbon copy recipients"
+          onChange={(recipients) => updateRecipients('cc', recipients)}
+        />
+      )}
+      {showBcc && (
+        <RecipientField
+          label="Bcc"
+          recipients={activeDraft.bcc}
+          placeholder="Add blind carbon copy recipients"
+          onChange={(recipients) => updateRecipients('bcc', recipients)}
+        />
+      )}
 
-        {/* Markdown Tabs (Write / Preview) */}
-        <div className="flex border-b border-[var(--border)] text-[calc(11px*var(--font-scale))] gap-2 select-none">
-          <button
-            onClick={() => setEditorTab('write')}
-            className={`pb-1 border-b-2 px-1 cursor-pointer transition-colors ${editorTab === 'write' ? 'border-[var(--accent)] text-[var(--accent)] font-semibold' : 'border-transparent text-[var(--text-secondary)]'}`}
-          >
-            Write (Markdown)
-          </button>
-          <button
-            onClick={() => setEditorTab('preview')}
-            className={`pb-1 border-b-2 px-1 cursor-pointer transition-colors ${editorTab === 'preview' ? 'border-[var(--accent)] text-[var(--accent)] font-semibold' : 'border-transparent text-[var(--text-secondary)]'}`}
-          >
-            Preview
-          </button>
+      <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[calc(12px*var(--font-scale))]">
+        <span className="w-16 shrink-0 text-[var(--text-secondary)] font-medium select-none">Subject</span>
+        <input
+          type="text"
+          value={activeDraft.subject}
+          onChange={(event) => store.updateDraft({ subject: event.target.value })}
+          placeholder="Subject"
+          className="flex-1 bg-transparent text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
+        />
+      </div>
+
+      <RichTextEditor
+        ref={editorRef}
+        draftId={activeDraft.id}
+        bodyPlain={activeDraft.bodyPlain}
+        bodyHtml={activeDraft.bodyHtml}
+        placeholder="Write your email. Use the toolbar, paste an image, or ask AI to draft."
+        spellCheck={store.settings.compose.spellCheck}
+        onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
+        onImageFile={insertInlineImageFromFile}
+      />
+
+      {activeDraft.attachments.length > 0 && (
+        <div className="border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-2 select-none">
+          <div className="flex flex-wrap gap-1.5">
+            {activeDraft.attachments.map(att => (
+              <div key={att.id} className="inline-flex max-w-[260px] items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--raised-surface)] px-2.5 py-1 text-[calc(11px*var(--font-scale))]">
+                <span className="truncate text-[var(--text-primary)]">{att.isInline ? 'Inline: ' : ''}{att.filename}</span>
+                <button
+                  type="button"
+                  onClick={() => store.removeAttachmentFromDraft(att.id)}
+                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                  title={`Remove ${att.filename}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
+      )}
 
-        {/* Content area */}
-        {editorTab === 'write' ? (
+      {aiOpen && (
+        <div className="border-t border-[var(--border)] bg-[var(--raised-surface)] px-4 py-3">
           <textarea
-            rows={10}
-            placeholder="Write your email in Markdown — press Tab to expand a snippet…"
-            value={composeBody}
-            onKeyDown={(e) => {
-              if (e.key === 'Tab' && !e.shiftKey && store.settings.snippets.enabled && store.settings.snippets.expandWithTab) {
-                const ta = e.currentTarget;
-                const result = expandSnippetAtCursor(composeBody, ta.selectionStart ?? composeBody.length, store.settings.snippets, store.settings.compose, store.settings.profile, activeDraft.accountId);
-                if (result) {
-                  e.preventDefault();
-                  setComposeBody(result.text);
-                  store.saveDraftLocally(result.text, composeTo, composeSubject);
-                  requestAnimationFrame(() => { try { ta.selectionStart = ta.selectionEnd = result.selection; } catch { /* noop */ } });
-                }
-              }
-            }}
-            onChange={(e) => {
-              setComposeBody(e.target.value);
-              store.saveDraftLocally(e.target.value, composeTo, composeSubject);
-            }}
-            className="w-full bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 outline-none focus:outline focus:outline-2 focus:outline-[var(--accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] resize-none font-sans"
+            value={aiInstruction}
+            onChange={(event) => setAiInstruction(event.target.value)}
+            placeholder="Tell AI what to write or how to improve the selected text."
+            rows={2}
+            className="w-full resize-none rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:outline focus:outline-2 focus:outline-[var(--accent)]"
           />
-        ) : (
-          <div className="w-full h-[180px] overflow-y-auto bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
-            <div dangerouslySetInnerHTML={{ __html: compileDraftBodyHtml(composeBody, store.settings.compose, activeDraft.accountId) }} />
+          <div className="mt-2 flex justify-end gap-2 select-none">
+            <button
+              type="button"
+              disabled={aiBusy}
+              onClick={() => void runAICompose('improve')}
+              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] disabled:opacity-50"
+            >
+              Improve selection
+            </button>
+            <button
+              type="button"
+              disabled={aiBusy}
+              onClick={() => void runAICompose('draft')}
+              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white disabled:opacity-50"
+            >
+              {aiBusy ? 'Writing…' : 'Generate draft'}
+            </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Attachments Section */}
-        {store.activeDraft.attachments && store.activeDraft.attachments.length > 0 && (
-          <div className="flex flex-col gap-1 border-t border-[var(--border)] pt-2.5">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)] select-none">Attachments:</span>
-            <div className="flex flex-wrap gap-1.5">
-              {store.activeDraft.attachments.map(att => (
-                <div key={att.id} className="flex items-center gap-1.5 px-2 py-0.5 bg-[var(--app-bg)] border border-[var(--border)] rounded">
-                  <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[140px] truncate">{att.filename}</span>
-                  <button
-                    onClick={() => store.removeAttachmentFromDraft(att.id)}
-                    className="text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Footer buttons */}
-        <div className="flex justify-between items-center mt-2.5 select-none">
+      <div className="flex items-center justify-between border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 select-none">
+        <div className="flex items-center gap-1">
           <button
-            onClick={() => store.addAttachmentToDraft()}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded text-[calc(11px*var(--font-scale))] cursor-pointer"
+            type="button"
+            onClick={() => void store.sendDraftWithUndo()}
+            className="mr-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-4 py-2 text-[calc(12px*var(--font-scale))] font-semibold text-white hover:opacity-95"
           >
-            <Paperclip className="w-3.5 h-3.5" /> Attach File
+            <Send className="h-3.5 w-3.5" />
+            Send
           </button>
+          <ToolbarButton title="Bold" onClick={() => execute('bold')}><Bold className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Italic" onClick={() => execute('italic')}><Italic className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Underline" onClick={() => execute('underline')}><Underline className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Strikethrough" onClick={() => execute('strikeThrough')}><Strikethrough className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Bullet list" onClick={() => execute('insertUnorderedList')}><List className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Numbered list" onClick={() => execute('insertOrderedList')}><ListOrdered className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Link" onClick={insertLink}><Link className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Align left" onClick={() => execute('justifyLeft')}><AlignLeft className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Align center" onClick={() => execute('justifyCenter')}><AlignCenter className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Align right" onClick={() => execute('justifyRight')}><AlignRight className="h-4 w-4" /></ToolbarButton>
+          <label
+            title="Text color"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+          >
+            <Palette className="h-4 w-4" />
+            <input
+              type="color"
+              className="sr-only"
+              onChange={(event) => editorRef.current?.execute('foreColor', event.target.value)}
+            />
+          </label>
+          <ToolbarButton title="Clear formatting" onClick={() => execute('removeFormat')}><Eraser className="h-4 w-4" /></ToolbarButton>
+        </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => store.setActiveDraft(null)}
-              className="px-3 py-1.5 border border-[var(--border)] text-[var(--text-secondary)] rounded font-medium cursor-pointer hover:text-[var(--text-primary)] text-[calc(11px*var(--font-scale))]"
-            >
-              Discard
-            </button>
-            <button
-              onClick={() => store.sendDraftWithUndo()}
-              className="px-4 py-1.5 bg-[var(--accent)] text-white rounded font-medium cursor-pointer hover:bg-[var(--accent)]/95 text-[calc(11px*var(--font-scale))]"
-            >
-              Send Message
-            </button>
-          </div>
+        <div className="relative flex items-center gap-1">
+          <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Insert inline image" onClick={() => void insertInlineImageFromDialog()}><Image className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="AI compose" onClick={() => setAiOpen(value => !value)}><Sparkles className="h-4 w-4 text-[var(--ai-accent)]" /></ToolbarButton>
+          <ToolbarButton title="Templates and snippets" onClick={() => setTemplatesOpen(value => !value)}><Braces className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-4 w-4" /></ToolbarButton>
+
+          {templatesOpen && (
+            <div className="absolute bottom-10 right-8 z-50 w-[230px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
+              <button
+                type="button"
+                onClick={insertDefaultSnippet}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              >
+                <Braces className="h-3.5 w-3.5" />
+                Insert default snippet
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveCurrentBodyAsSnippet()}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              >
+                <Save className="h-3.5 w-3.5" />
+                Save body as snippet
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

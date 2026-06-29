@@ -249,11 +249,14 @@ interface AppStoreContextType {
   clearThreadReminder: (thread: MailThread) => Promise<void>;
   activeDraft: Draft | null;
   setActiveDraft: (d: Draft | null) => void;
+  composeLayout: 'inline' | 'floating';
+  setComposeLayout: (layout: 'inline' | 'floating') => void;
   draftsList: Draft[];
   saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
   startReply: (message: MailMessage, replyAll?: boolean) => void;
   startForward: (message: MailMessage) => void;
-  updateDraftBody: (body: string) => void;
+  updateDraft: (patch: Partial<Draft>) => void;
+  updateDraftBody: (body: string, bodyHtml?: string | null) => void;
   sendDraftWithUndo: () => Promise<void>;
   pendingSend: boolean;
   pendingSendSeconds: number;

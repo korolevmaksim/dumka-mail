@@ -45,6 +45,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         accountId,
         to: [], cc: [], bcc: [], subject: '', bodyPlain: '', attachments: [], updatedAt: new Date().toISOString()
       });
+      store.setComposeLayout('floating');
     }},
     { title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', action: () => {
       store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
