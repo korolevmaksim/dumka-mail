@@ -1,9 +1,31 @@
 {
   "name": "dumka-mail-agy",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Cross-platform agentic mail client based on Electron, React 19, and Tailwind CSS 4",
+  "license": "MIT",
+  "author": "Maksim Korolyov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/korolevmaksim/dumka-mail-agy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/korolevmaksim/dumka-mail-agy/issues"
+  },
+  "homepage": "https://github.com/korolevmaksim/dumka-mail-agy#readme",
+  "keywords": [
+    "electron",
+    "gmail",
+    "mail",
+    "local-first",
+    "sqlite",
+    "ai"
+  ],
   "main": "dist-electron/main/index.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -54,7 +76,7 @@
     "@types/react-dom": "^19.0.10",
     "@vitejs/plugin-react": "^6.0.3",
     "electron": "^42.5.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "lucide-react": "^1.21.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

@@ -13,8 +13,8 @@ import type { ProfileSettings } from '../shared/types';
 import type { ComposeSettings } from '../shared/types';
 
 const compose: ComposeSettings = {
-  defaultSignature: 'Best regards,\nMax',
-  defaultSignatureHtml: '<div style="color:#444">Best regards,<br><b>Max</b></div>',
+  defaultSignature: 'Best regards,\nAlex',
+  defaultSignatureHtml: '<div style="color:#444">Best regards,<br><b>Alex</b></div>',
   signatureFormat: 'html',
   signaturesByAccount: {},
   autoSaveDrafts: true,
@@ -27,7 +27,7 @@ const compose: ComposeSettings = {
 };
 
 const profile: ProfileSettings = {
-  fullName: 'Max Korolyov',
+  fullName: 'Alex Example',
   role: 'Engineer',
   company: 'Example Co',
   timezone: 'UTC',
@@ -35,15 +35,15 @@ const profile: ProfileSettings = {
 
 describe('stripTrailingPlainSignature', () => {
   it('removes only a line-delimited trailing signature', () => {
-    expect(stripTrailingPlainSignature('Hello\n\nBest regards,\nMax', 'Best regards,\nMax')).toEqual({
+    expect(stripTrailingPlainSignature('Hello\n\nBest regards,\nAlex', 'Best regards,\nAlex')).toEqual({
       bodyPlain: 'Hello',
       stripped: true,
     });
   });
 
   it('does not remove matching text embedded in the sentence body', () => {
-    expect(stripTrailingPlainSignature('Hello Best regards,\nMax', 'Best regards,\nMax')).toEqual({
-      bodyPlain: 'Hello Best regards,\nMax',
+    expect(stripTrailingPlainSignature('Hello Best regards,\nAlex', 'Best regards,\nAlex')).toEqual({
+      bodyPlain: 'Hello Best regards,\nAlex',
       stripped: false,
     });
   });
@@ -51,19 +51,19 @@ describe('stripTrailingPlainSignature', () => {
 
 describe('compileDraftBodyHtml', () => {
   it('uses sanitized rich HTML when a draft stores a rich body fragment', () => {
-    const html = compileDraftBodyHtml('Hello', compose, 'me@example.com', '<p onclick="x()">Hello <strong>Max</strong></p><script>alert(1)</script>');
+    const html = compileDraftBodyHtml('Hello', compose, 'me@example.com', '<p onclick="x()">Hello <strong>Alex</strong></p><script>alert(1)</script>');
 
-    expect(html).toContain('<strong>Max</strong>');
+    expect(html).toContain('<strong>Alex</strong>');
     expect(html).not.toContain('onclick');
     expect(html).not.toContain('<script>');
   });
 
   it('replaces the plain-text trailing signature with the imported Gmail HTML signature', () => {
-    const html = compileDraftBodyHtml('Hello\n\nBest regards,\nMax', compose);
+    const html = compileDraftBodyHtml('Hello\n\nBest regards,\nAlex', compose);
 
     expect(html).toContain('Hello');
-    expect(html).toContain('<div class="gmail_signature"><div style="color:#444">Best regards,<br><b>Max</b></div></div>');
-    expect(html).not.toContain('Best regards,<br/>Max');
+    expect(html).toContain('<div class="gmail_signature"><div style="color:#444">Best regards,<br><b>Alex</b></div></div>');
+    expect(html).not.toContain('Best regards,<br/>Alex');
   });
 
   it('does not append the HTML signature when the plain signature was not inserted', () => {
@@ -74,13 +74,13 @@ describe('compileDraftBodyHtml', () => {
   });
 
   it('falls back to normal markdown HTML for plain signatures', () => {
-    const html = compileDraftBodyHtml('Hello\n\nBest regards,\nMax', {
+    const html = compileDraftBodyHtml('Hello\n\nBest regards,\nAlex', {
       ...compose,
       defaultSignatureHtml: '',
       signatureFormat: 'plain',
     });
 
-    expect(html).toContain('Best regards,<br/>Max');
+    expect(html).toContain('Best regards,<br/>Alex');
     expect(html).not.toContain('gmail_signature');
   });
 
@@ -125,27 +125,27 @@ describe('rich draft HTML helpers', () => {
     const html = renderComposeSignatureHtmlFragment({
       ...compose,
       signaturesByAccount: {
-        'max@example.com': {
-          signaturePlain: 'Best,\nMax',
-          signatureHtml: '<div style="color:#444">Best,<br><b>Max</b><br><img src="https://example.com/logo.png" alt="Example Co"></div>',
+        'alex@example.com': {
+          signaturePlain: 'Best,\nAlex',
+          signatureHtml: '<div style="color:#444">Best,<br><b>Alex</b><br><img src="https://assets.example.com/logo.png" alt="Example Co"></div>',
           signatureFormat: 'html',
         },
       },
-    }, profile, 'max@example.com');
+    }, profile, 'alex@example.com');
 
     expect(html).toContain('class="gmail_signature"');
-    expect(html).toContain('<b>Max</b>');
-    expect(html).toContain('src="https://example.com/logo.png"');
+    expect(html).toContain('<b>Alex</b>');
+    expect(html).toContain('src="https://assets.example.com/logo.png"');
     expect(html).toContain('alt="Example Co"');
   });
 
   it('builds a new draft body with an editable leading line before the HTML signature', () => {
     const body = buildInitialDraftBodyWithSignature('', compose, profile);
 
-    expect(body.bodyPlain).toBe('Best regards,\nMax');
+    expect(body.bodyPlain).toBe('Best regards,\nAlex');
     expect(body.bodyHtml).toContain('<p><br></p>');
     expect(body.bodyHtml).toContain('<div class="gmail_signature"');
-    expect(body.bodyHtml).toContain('<b>Max</b>');
+    expect(body.bodyHtml).toContain('<b>Alex</b>');
   });
 
   it('replaces the managed signature when the compose account changes', () => {
@@ -153,13 +153,13 @@ describe('rich draft HTML helpers', () => {
       ...compose,
       signaturesByAccount: {
         'personal@example.com': {
-          signaturePlain: 'Personal Max',
-          signatureHtml: '<div><b>Personal Max</b><br><img src="https://personal.example/logo.png" alt="Personal"></div>',
+          signaturePlain: 'Personal Alex',
+          signatureHtml: '<div><b>Personal Alex</b><br><img src="https://personal.example/logo.png" alt="Personal"></div>',
           signatureFormat: 'html',
         },
         'work@example.com': {
-          signaturePlain: 'Work Max',
-          signatureHtml: '<div><b>Work Max</b><br><img src="https://example.com/logo.png" alt="Example Co"></div>',
+          signaturePlain: 'Work Alex',
+          signatureHtml: '<div><b>Work Alex</b><br><img src="https://assets.example.com/logo.png" alt="Example Co"></div>',
           signatureFormat: 'html',
         },
       },
@@ -168,9 +168,9 @@ describe('rich draft HTML helpers', () => {
     const updated = replaceComposeSignatureForAccount(initial.bodyHtml, settings, profile, 'work@example.com');
 
     expect(updated).toContain('data-dumka-signature-account="work@example.com"');
-    expect(updated).toContain('<b>Work Max</b>');
-    expect(updated).toContain('src="https://example.com/logo.png"');
-    expect(updated).not.toContain('Personal Max');
+    expect(updated).toContain('<b>Work Alex</b>');
+    expect(updated).toContain('src="https://assets.example.com/logo.png"');
+    expect(updated).not.toContain('Personal Alex');
     expect(updated).not.toContain('personal.example');
   });
 
@@ -179,13 +179,13 @@ describe('rich draft HTML helpers', () => {
       ...compose,
       signaturesByAccount: {
         'personal@example.com': {
-          signaturePlain: 'Personal Max',
-          signatureHtml: '<div><b>Personal Max</b></div>',
+          signaturePlain: 'Personal Alex',
+          signatureHtml: '<div><b>Personal Alex</b></div>',
           signatureFormat: 'html',
         },
         'work@example.com': {
-          signaturePlain: 'Work Max',
-          signatureHtml: '<div><b>Work Max</b></div>',
+          signaturePlain: 'Work Alex',
+          signatureHtml: '<div><b>Work Alex</b></div>',
           signatureFormat: 'html',
         },
       },
@@ -194,7 +194,7 @@ describe('rich draft HTML helpers', () => {
     const updated = replaceComposeSignatureForAccount(`<p>Hello client</p>${personalSignature}`, settings, profile, 'work@example.com');
 
     expect(updated).toContain('<p>Hello client</p>');
-    expect(updated).toContain('<b>Work Max</b>');
-    expect(updated).not.toContain('Personal Max');
+    expect(updated).toContain('<b>Work Alex</b>');
+    expect(updated).not.toContain('Personal Alex');
   });
 });

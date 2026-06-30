@@ -17,7 +17,7 @@ npx vitest run tests/search.test.ts          # run a single test file
 npx vitest run -t "parses from operator"     # run tests matching a name
 ```
 
-There is **no linter** configured and **no `tsc --watch`** — type errors surface only via `npm run build` (or the editor). Run `npm run build` to typecheck before claiming a change compiles; `tsc` here is `noEmit`, so the build's emit comes entirely from Vite. There is no packaging/distribution step (no electron-builder) in `package.json`.
+There is **no linter** configured and **no `tsc --watch`** — type errors surface only via `npm run build` (or the editor). Run `npm run build` to typecheck before claiming a change compiles; `tsc` here is `noEmit`, so the build's emit comes entirely from Vite. Local macOS packaging uses `electron-builder` through `npm run package:mac` / `npm run dist:mac`.
 
 ## Architecture
 

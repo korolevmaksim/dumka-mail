@@ -16,7 +16,7 @@ function gmailMessage(parts: any[]) {
       headers: [
         { name: 'Subject', value: 'Inline offer' },
         { name: 'From', value: 'Sender <sender@example.com>' },
-        { name: 'To', value: 'Max <max@example.com>' },
+        { name: 'To', value: 'Alex <alex@example.com>' },
         { name: 'Message-ID', value: '<msg-1@example.com>' },
       ],
       parts,
@@ -42,7 +42,7 @@ describe('mapMessage', () => {
         ],
         body: { attachmentId: 'ATTACHMENT_ID', size: 2048 },
       },
-    ]), 'max@example.com');
+    ]), 'alex@example.com');
 
     expect(message.bodyHtml).toBe('<img src="cid:hero">');
     expect(message.attachments).toHaveLength(1);
@@ -74,7 +74,7 @@ describe('mapMessage', () => {
         ],
         body: { data: Buffer.from('image-bytes').toString('base64url'), size: 11 },
       },
-    ]), 'max@example.com');
+    ]), 'alex@example.com');
 
     expect(message.attachments[0]).toMatchObject({
       id: '2',

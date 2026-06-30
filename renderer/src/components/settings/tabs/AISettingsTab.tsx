@@ -290,7 +290,7 @@ export function AISettingsTab() {
           </div>
           <input
             type="text"
-            placeholder="e.g. gpt-4o-mini, gemini-2.5-flash"
+            placeholder="e.g. gpt-5.4-mini, gemini-3.5-flash"
             className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.ai.globalDefaultModel}
             onChange={(e) => {

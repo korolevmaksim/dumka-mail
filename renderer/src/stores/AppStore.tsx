@@ -28,7 +28,7 @@ export const SETTINGS_SCHEMA_VERSION = 6;
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
   profile: {
-    fullName: 'Max Korolyov',
+    fullName: '',
     role: '',
     company: '',
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
@@ -91,7 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     expandWithTab: true,
     includeSignature: true,
     defaultSnippetTrigger: ';thanks',
-    defaultSnippet: 'Thanks, Max'
+    defaultSnippet: 'Thanks'
   },
   notifications: {
     desktopNotifications: true,
@@ -110,12 +110,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
       orderText: 'openai, anthropic, gemini, openrouter, deepseek'
     },
     providerConfigurations: [
-      { id: 'openAI', provider: 'openAI', displayName: 'OpenAI', defaultModel: 'gpt-4o-mini', modelSelectionMode: 'catalog', baseURL: '', isEnabled: true, canRemove: false },
-      { id: 'anthropic', provider: 'anthropic', displayName: 'Anthropic', defaultModel: 'claude-3-5-sonnet-latest', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
+      { id: 'openAI', provider: 'openAI', displayName: 'OpenAI', defaultModel: getAIProviderConfig('openAI').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('openAI').defaultBaseUrl, isEnabled: true, canRemove: false },
+      { id: 'anthropic', provider: 'anthropic', displayName: 'Anthropic', defaultModel: getAIProviderConfig('anthropic').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('anthropic').defaultBaseUrl, isEnabled: false, canRemove: false },
       { id: 'gemini', provider: 'gemini', displayName: 'Gemini', defaultModel: 'gemini-3.5-flash', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
       { id: 'openRouter', provider: 'openRouter', displayName: 'OpenRouter', defaultModel: '~openai/gpt-latest', modelSelectionMode: 'catalog', baseURL: 'https://openrouter.ai/api/v1', isEnabled: false, canRemove: false },
-      { id: 'deepSeek', provider: 'deepSeek', displayName: 'DeepSeek', defaultModel: 'deepseek-chat', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
-      { id: 'openAICompatible', provider: 'openAICompatible', displayName: 'Local Model', defaultModel: 'local-mail-model', modelSelectionMode: 'custom', baseURL: 'http://localhost:11434/v1', isEnabled: false, canRemove: false }
+      { id: 'deepSeek', provider: 'deepSeek', displayName: 'DeepSeek', defaultModel: getAIProviderConfig('deepSeek').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('deepSeek').defaultBaseUrl, isEnabled: false, canRemove: false },
+      { id: 'openAICompatible', provider: 'openAICompatible', displayName: 'Local Model', defaultModel: getAIProviderConfig('openAICompatible').defaultModel, modelSelectionMode: 'custom', baseURL: 'http://localhost:11434/v1', isEnabled: false, canRemove: false }
     ],
     replyTone: 'direct',
     allowMailBodyContext: true,

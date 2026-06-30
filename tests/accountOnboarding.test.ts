@@ -18,24 +18,24 @@ describe('OAuth account onboarding', () => {
 
   it('normalizes the OAuth email and preserves existing local account fields on reconnect', () => {
     const existing: Account = {
-      id: 'max@example.com',
-      email: 'max@example.com',
-      displayName: 'Max',
+      id: 'alex@example.com',
+      email: 'alex@example.com',
+      displayName: 'Alex',
       colorHex: '#3b82f6',
       createdAt: '2026-06-01T09:00:00.000Z',
       avatarUrl: 'https://example.com/old.png'
     };
 
     const account = buildOnboardedAccount({
-      email: ' Max@Example.COM ',
-      displayName: 'Maksim Korolyov',
+      email: ' Alex@Example.COM ',
+      displayName: 'Alex Example',
       avatarUrl: 'https://example.com/new.png'
     }, existing, new Date('2026-06-29T10:00:00.000Z'));
 
     expect(account).toEqual({
-      id: 'max@example.com',
-      email: 'max@example.com',
-      displayName: 'Maksim Korolyov',
+      id: 'alex@example.com',
+      email: 'alex@example.com',
+      displayName: 'Alex Example',
       colorHex: '#3b82f6',
       createdAt: '2026-06-01T09:00:00.000Z',
       avatarUrl: 'https://example.com/new.png'

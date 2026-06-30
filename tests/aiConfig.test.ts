@@ -61,32 +61,32 @@ describe('saveAIConfigAsync self-healing and separation', () => {
   it('runs key migration and separation scenarios sequentially', async () => {
     // Scenario 1: preserves existing file credentials when saving only settings (e.g. models or thinking)
     mockUseKeychain = false; // keys are saved in env file
-    mockFileContent = 'OPENAI_API_KEY=sk-proj-actualkey123\nOPENAI_MODEL=gpt-4o-mini\n';
+    mockFileContent = 'OPENAI_API_KEY=fixture-openai-key\nOPENAI_MODEL=gpt-5.4-mini\n';
 
     await saveAIConfigAsync({ OPENAI_REASONING_EFFORT: 'high' });
 
-    expect(mockFileContent).toContain('OPENAI_API_KEY=sk-proj-actualkey123');
+    expect(mockFileContent).toContain('OPENAI_API_KEY=fixture-openai-key');
     expect(mockFileContent).toContain('OPENAI_REASONING_EFFORT=high');
 
     // Scenario 2: migrates key from file to keychain when useKeychain is true and placeholder is sent
     mockKeychain.clear();
     mockUseKeychain = true;
-    mockFileContent = 'OPENAI_API_KEY=sk-proj-from-file\nOPENAI_MODEL=gpt-4\n';
+    mockFileContent = 'OPENAI_API_KEY=fixture-openai-file-key\nOPENAI_MODEL=gpt-5.4-mini\n';
 
     await saveAIConfigAsync({
       OPENAI_API_KEY: AI_SECRET_STORED_PLACEHOLDER,
       OPENAI_MODEL: 'gpt-5'
     });
 
-    expect(mockKeychain.get('ai-secret:OPENAI_API_KEY')).toBe('sk-proj-from-file');
+    expect(mockKeychain.get('ai-secret:OPENAI_API_KEY')).toBe('fixture-openai-file-key');
     expect(mockFileContent).not.toContain('OPENAI_API_KEY');
     expect(mockFileContent).toContain('OPENAI_MODEL=gpt-5');
 
     // Scenario 3: migrates key from keychain back to file when useKeychain is false and placeholder is sent
     mockKeychain.clear();
     mockUseKeychain = false;
-    mockKeychain.set('ai-secret:OPENAI_API_KEY', 'sk-proj-from-keychain');
-    mockFileContent = 'OPENAI_MODEL=gpt-4\n';
+    mockKeychain.set('ai-secret:OPENAI_API_KEY', 'fixture-openai-keychain-key');
+    mockFileContent = 'OPENAI_MODEL=gpt-5.4-mini\n';
 
     await saveAIConfigAsync({
       OPENAI_API_KEY: AI_SECRET_STORED_PLACEHOLDER,
@@ -94,7 +94,7 @@ describe('saveAIConfigAsync self-healing and separation', () => {
     });
 
     expect(mockKeychain.has('ai-secret:OPENAI_API_KEY')).toBe(false);
-    expect(mockFileContent).toContain('OPENAI_API_KEY=sk-proj-from-keychain');
+    expect(mockFileContent).toContain('OPENAI_API_KEY=fixture-openai-keychain-key');
     expect(mockFileContent).toContain('OPENAI_MODEL=gpt-5');
   });
 
@@ -103,25 +103,25 @@ describe('saveAIConfigAsync self-healing and separation', () => {
     mockFileContent = '';
 
     await saveAIConfigAsync({
-      OPENROUTER_API_KEY: 'sk-or-v1-test',
+      OPENROUTER_API_KEY: 'fixture-openrouter-key',
       OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
       OPENROUTER_MODEL: '~openai/gpt-latest',
-      OPENROUTER_REFERER: 'https://dumka.local',
+      OPENROUTER_REFERER: 'https://example.com',
       OPENROUTER_APP_TITLE: 'Dumka Mail'
     });
 
-    expect(mockKeychain.get('ai-secret:OPENROUTER_API_KEY')).toBe('sk-or-v1-test');
-    expect(mockFileContent).not.toContain('sk-or-v1-test');
+    expect(mockKeychain.get('ai-secret:OPENROUTER_API_KEY')).toBe('fixture-openrouter-key');
+    expect(mockFileContent).not.toContain('fixture-openrouter-key');
     expect(mockFileContent).toContain('OPENROUTER_BASE_URL=https://openrouter.ai/api/v1');
     expect(mockFileContent).toContain('OPENROUTER_MODEL=~openai/gpt-latest');
-    expect(mockFileContent).toContain('OPENROUTER_REFERER=https://dumka.local');
+    expect(mockFileContent).toContain('OPENROUTER_REFERER=https://example.com');
     expect(mockFileContent).toContain('OPENROUTER_APP_TITLE=Dumka Mail');
   });
 
   it('resolves OpenRouter descriptors and lists models with a stored key', async () => {
     mockUseKeychain = true;
     mockFileContent = 'OPENROUTER_MODEL=~openai/gpt-latest\n';
-    mockKeychain.set('ai-secret:OPENROUTER_API_KEY', 'sk-or-v1-keychain');
+    mockKeychain.set('ai-secret:OPENROUTER_API_KEY', 'fixture-openrouter-keychain-key');
 
     const descriptor = await getAIProviderDescriptor('openRouter' as any);
 
@@ -145,7 +145,7 @@ describe('saveAIConfigAsync self-healing and separation', () => {
       'https://openrouter.ai/api/v1/models',
       expect.objectContaining({
         headers: expect.objectContaining({
-          Authorization: 'Bearer sk-or-v1-keychain'
+          Authorization: 'Bearer fixture-openrouter-keychain-key'
         })
       })
     );
@@ -154,7 +154,7 @@ describe('saveAIConfigAsync self-healing and separation', () => {
   it('returns the effective provider preference for automatic descriptors so runtime calls are executable', async () => {
     mockUseKeychain = true;
     mockFileContent = 'ANTHROPIC_MODEL=claude-sonnet-4.6\n';
-    mockKeychain.set('ai-secret:ANTHROPIC_API_KEY', 'sk-ant-keychain');
+    mockKeychain.set('ai-secret:ANTHROPIC_API_KEY', 'fixture-anthropic-keychain-key');
 
     const descriptor = await getAIProviderDescriptor('automatic');
 

@@ -10,7 +10,7 @@ let mockDescriptor = {
 };
 
 let mockAIConfig: Record<string, string> = {
-  ANTHROPIC_API_KEY: 'sk-ant-test',
+  ANTHROPIC_API_KEY: 'fixture-anthropic-key',
   ANTHROPIC_MODEL: 'claude-sonnet-4-6',
   ANTHROPIC_THINKING_EFFORT: 'high',
 };
@@ -47,7 +47,7 @@ describe('completeAI Anthropic payload', () => {
       capabilities: { canTriage: true, canSummarize: true, canDraft: true },
     };
     mockAIConfig = {
-      ANTHROPIC_API_KEY: 'sk-ant-test',
+      ANTHROPIC_API_KEY: 'fixture-anthropic-key',
       ANTHROPIC_MODEL: 'claude-sonnet-4-6',
       ANTHROPIC_THINKING_EFFORT: 'high',
     };
@@ -130,7 +130,7 @@ describe('completeAI OpenRouter payload', () => {
       capabilities: { canTriage: true, canSummarize: true, canDraft: true },
     };
     mockAIConfig = {
-      OPENROUTER_API_KEY: 'sk-or-test',
+      OPENROUTER_API_KEY: 'fixture-openrouter-key',
       OPENROUTER_MODEL: 'openai/gpt-5',
       OPENROUTER_REASONING_EFFORT: 'high',
     };

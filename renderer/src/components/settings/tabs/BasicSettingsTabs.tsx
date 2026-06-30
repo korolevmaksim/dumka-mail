@@ -380,7 +380,7 @@ export function ComposeTab() {
                 }));
               }}
               disabled={!selectedSignatureAccount}
-              placeholder="<div>Best regards,<br>Max</div>"
+              placeholder="<div>Best regards,<br>Alex</div>"
             />
           </div>
         )}
@@ -401,7 +401,7 @@ export function ComposeTab() {
               }));
             }}
             disabled={!selectedSignatureAccount}
-            placeholder="e.g. Best regards, Max"
+            placeholder="e.g. Best regards, Alex"
           />
         </div>
 

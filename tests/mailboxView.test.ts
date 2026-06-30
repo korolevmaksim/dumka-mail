@@ -4,7 +4,7 @@ import type { MailThread } from '../shared/types';
 
 const baseThread: MailThread = {
   id: 'thread-1',
-  accountId: 'max@example.com',
+  accountId: 'alex@example.com',
   subject: 'Subject',
   snippet: 'Snippet',
   lastMessageAt: '2026-06-30T10:00:00.000Z',

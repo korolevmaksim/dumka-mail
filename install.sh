@@ -34,7 +34,7 @@ npm run package:mac
 
 echo "=== Step 3: Finding built app bundle ==="
 # Find the built Dumka Mail.app under release/
-APP_PATH=$(find release -name "${APP_NAME}.app" -type d -maxdepth 3 | head -n 1)
+APP_PATH=$(find release -type d -name "${APP_NAME}.app" -print -quit)
 
 if [ -z "$APP_PATH" ]; then
     echo "Error: Built app bundle not found in release/"

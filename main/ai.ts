@@ -21,7 +21,7 @@ function buildPrompt(request: AIRequest): string {
     ? request.conversationHistory.map(m => `${m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : 'System'}: ${m.text}`).join('\n')
     : 'No previous AI chat turns.';
 
-  return `You are helping Max handle email inside a macOS mail client.
+  return `You are helping the user handle email inside a macOS mail client.
 Use the selected mail or draft context together with the conversation history to answer follow-up questions.
 Action: ${request.action}
 

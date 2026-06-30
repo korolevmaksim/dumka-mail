@@ -9,7 +9,7 @@ describe('compileMarkdownToHtml', () => {
   });
 
   it('compiles single-level blockquote', () => {
-    const md = 'On Sun, Jun 28, 2026, Maksim wrote:\n> Line 1\n> Line 2';
+    const md = 'On Sun, Jun 28, 2026, Alex wrote:\n> Line 1\n> Line 2';
     const html = compileMarkdownToHtml(md);
     
     // Check Gmail blockquote class and styling

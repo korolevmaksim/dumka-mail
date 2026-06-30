@@ -154,7 +154,7 @@ describe('normalizePreview', () => {
 
 describe('sanitizeGmailSignatureHtml', () => {
   it('keeps formatting tags and inline styles', () => {
-    const html = '<div style="color:#444">Best,<br><b>Max</b></div>';
+    const html = '<div style="color:#444">Best,<br><b>Alex</b></div>';
     expect(sanitizeGmailSignatureHtml(html)).toBe(html);
   });
 
@@ -166,8 +166,8 @@ describe('sanitizeGmailSignatureHtml', () => {
 
 describe('gmailSignatureHtmlToPlainText', () => {
   it('preserves readable line breaks from Gmail signature HTML', () => {
-    const html = '<div>Best regards,<br><b>Max</b></div><div>Founder &amp; CEO</div>';
-    expect(gmailSignatureHtmlToPlainText(html)).toBe('Best regards,\nMax\nFounder & CEO');
+    const html = '<div>Best regards,<br><b>Alex</b></div><div>Founder &amp; CEO</div>';
+    expect(gmailSignatureHtmlToPlainText(html)).toBe('Best regards,\nAlex\nFounder & CEO');
   });
 
   it('returns an empty string for empty or script-only signatures', () => {

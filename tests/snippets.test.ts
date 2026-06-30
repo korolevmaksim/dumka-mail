@@ -8,9 +8,9 @@ import {
 import type { ProfileSettings, SnippetSettings, ComposeSettings } from '../shared/types';
 
 const profile: ProfileSettings = {
-  fullName: 'Max Korolyov',
+  fullName: 'Alex Example',
   role: 'Engineer',
-  company: 'Dumka',
+  company: 'Example Co',
   timezone: 'UTC',
 };
 
@@ -19,7 +19,7 @@ const snippets: SnippetSettings = {
   expandWithTab: true,
   includeSignature: true,
   defaultSnippetTrigger: ';thanks',
-  defaultSnippet: 'Thanks, Max',
+  defaultSnippet: 'Thanks, Alex',
 };
 
 const compose: ComposeSettings = {
@@ -42,7 +42,7 @@ describe('renderTokens', () => {
       '{full_name} / {first_name} / {role} / {company}',
       profile,
     );
-    expect(out).toBe('Max Korolyov / Max / Engineer / Dumka');
+    expect(out).toBe('Alex Example / Alex / Engineer / Example Co');
   });
 
   it('derives first_name as the first whitespace word', () => {
@@ -58,7 +58,7 @@ describe('renderTokens', () => {
   });
 
   it('replaces multiple occurrences of the same token', () => {
-    expect(renderTokens('{company}-{company}', profile)).toBe('Dumka-Dumka');
+    expect(renderTokens('{company}-{company}', profile)).toBe('Example Co-Example Co');
   });
 
   it('leaves text without tokens unchanged', () => {
@@ -75,10 +75,10 @@ describe('renderDefaultSnippet', () => {
   it('returns the body without signature when includeSignature is off', () => {
     const out = renderDefaultSnippet(
       { ...snippets, includeSignature: false },
-      { ...compose, defaultSignature: 'Best,\nMax' },
+      { ...compose, defaultSignature: 'Best,\nAlex' },
       profile,
     );
-    expect(out).toBe('Thanks, Max');
+    expect(out).toBe('Thanks, Alex');
   });
 
   it('appends the rendered signature with a blank-line separator', () => {
@@ -87,7 +87,7 @@ describe('renderDefaultSnippet', () => {
       { ...compose, defaultSignature: '{first_name} @ {company}' },
       profile,
     );
-    expect(out).toBe('Thanks, Max\n\nMax @ Dumka');
+    expect(out).toBe('Thanks, Alex\n\nAlex @ Example Co');
   });
 
   it('uses the signature saved for the draft account', () => {
@@ -98,11 +98,11 @@ describe('renderDefaultSnippet', () => {
         signaturesByAccount: {
           'work@example.com': {
             signaturePlain: '{first_name} @ Work',
-            signatureHtml: '<div>Max @ Work</div>',
+            signatureHtml: '<div>Alex @ Work</div>',
             signatureFormat: 'html',
           },
           'personal@example.com': {
-            signaturePlain: 'Personal Max',
+            signaturePlain: 'Personal Alex',
             signatureHtml: '',
             signatureFormat: 'plain',
           },
@@ -112,12 +112,12 @@ describe('renderDefaultSnippet', () => {
       'work@example.com',
     );
 
-    expect(out).toBe('Thanks, Max\n\nMax @ Work');
+    expect(out).toBe('Thanks, Alex\n\nAlex @ Work');
   });
 
   it('omits the signature when it renders empty even if includeSignature is on', () => {
     const out = renderDefaultSnippet(snippets, { ...compose, defaultSignature: '   ' }, profile);
-    expect(out).toBe('Thanks, Max');
+    expect(out).toBe('Thanks, Alex');
   });
 
   it('renders tokens inside the snippet body', () => {
@@ -126,7 +126,7 @@ describe('renderDefaultSnippet', () => {
       compose,
       profile,
     );
-    expect(out).toBe('Hi from Max');
+    expect(out).toBe('Hi from Alex');
   });
 
   it('trims surrounding whitespace from the rendered body', () => {
@@ -155,8 +155,8 @@ describe('renderDefaultSnippet', () => {
         ...compose,
         signaturesByAccount: {
           'work@example.com': {
-            signaturePlain: 'Max @ Work',
-            signatureHtml: '<div style="color:#444"><b>Max</b><br><img src="https://example.com/logo.png" alt="Example Co"></div>',
+            signaturePlain: 'Alex @ Work',
+            signatureHtml: '<div style="color:#444"><b>Alex</b><br><img src="https://assets.example.com/logo.png" alt="Example Co"></div>',
             signatureFormat: 'html',
           },
         },
@@ -165,9 +165,9 @@ describe('renderDefaultSnippet', () => {
       'work@example.com',
     );
 
-    expect(out).toContain('<p>Thanks, Max</p>');
-    expect(out).toContain('<b>Max</b>');
-    expect(out).toContain('src="https://example.com/logo.png"');
+    expect(out).toContain('<p>Thanks, Alex</p>');
+    expect(out).toContain('<b>Alex</b>');
+    expect(out).toContain('src="https://assets.example.com/logo.png"');
     expect(out).toContain('alt="Example Co"');
   });
 });
@@ -177,8 +177,8 @@ describe('expandSnippetAtCursor', () => {
     const body = ';thanks';
     const edit = expandSnippetAtCursor(body, body.length, snippets, compose, profile);
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('Thanks, Max');
-    expect(edit!.selection).toBe('Thanks, Max'.length);
+    expect(edit!.text).toBe('Thanks, Alex');
+    expect(edit!.selection).toBe('Thanks, Alex'.length);
   });
 
   it('expands a trigger on its own line within a larger body, keeping other lines', () => {
@@ -186,8 +186,8 @@ describe('expandSnippetAtCursor', () => {
     const cursor = body.length;
     const edit = expandSnippetAtCursor(body, cursor, snippets, compose, profile);
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('Hello\nThanks, Max');
-    expect(edit!.selection).toBe('Hello\n'.length + 'Thanks, Max'.length);
+    expect(edit!.text).toBe('Hello\nThanks, Alex');
+    expect(edit!.selection).toBe('Hello\n'.length + 'Thanks, Alex'.length);
   });
 
   it('does not expand a trigger when the line suffix is non-blank', () => {
@@ -206,16 +206,16 @@ describe('expandSnippetAtCursor', () => {
   it('replaces the whole body on a blank empty body (Rule 2, empty)', () => {
     const edit = expandSnippetAtCursor('', 0, snippets, compose, profile);
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('Thanks, Max');
-    expect(edit!.selection).toBe('Thanks, Max'.length);
+    expect(edit!.text).toBe('Thanks, Alex');
+    expect(edit!.selection).toBe('Thanks, Alex'.length);
   });
 
   it('replaces the whole body when it is only whitespace', () => {
     const body = '   ';
     const edit = expandSnippetAtCursor(body, body.length, snippets, compose, profile);
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('Thanks, Max');
-    expect(edit!.selection).toBe('Thanks, Max'.length);
+    expect(edit!.text).toBe('Thanks, Alex');
+    expect(edit!.selection).toBe('Thanks, Alex'.length);
   });
 
   it('replaces only the blank current line mid-body (Rule 2, non-empty body)', () => {
@@ -223,8 +223,8 @@ describe('expandSnippetAtCursor', () => {
     const cursor = 'First line\n'.length; // start of the blank middle line
     const edit = expandSnippetAtCursor(body, cursor, snippets, compose, profile);
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('First line\nThanks, Max\nSecond line');
-    expect(edit!.selection).toBe('First line\n'.length + 'Thanks, Max'.length);
+    expect(edit!.text).toBe('First line\nThanks, Alex\nSecond line');
+    expect(edit!.selection).toBe('First line\n'.length + 'Thanks, Alex'.length);
   });
 
   it('returns null when the current line has non-blank text and is not the trigger', () => {
@@ -241,8 +241,8 @@ describe('expandSnippetAtCursor', () => {
       profile,
     );
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('Thanks, Max\n\nSent from Dumka');
-    expect(edit!.selection).toBe('Thanks, Max\n\nSent from Dumka'.length);
+    expect(edit!.text).toBe('Thanks, Alex\n\nSent from Dumka');
+    expect(edit!.selection).toBe('Thanks, Alex\n\nSent from Dumka'.length);
   });
 
   it('returns null when snippets are disabled', () => {
@@ -283,6 +283,6 @@ describe('expandSnippetAtCursor', () => {
       profile,
     );
     expect(edit).not.toBeNull();
-    expect(edit!.text).toBe('Thanks, Max');
+    expect(edit!.text).toBe('Thanks, Alex');
   });
 });

@@ -6,3 +6,33 @@ release
 .env
 .env.*
 *.log
+
+# Local runtime state
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+database.sqlite*
+
+# Local credentials and provider configs
+google-oauth-client.json
+openai.env
+*.pem
+*.p12
+*.key
+*.mobileprovision
+
+# Test and coverage artifacts
+coverage
+.vitest
+playwright-report
+test-results
+screenshots
+
+# Temporary exports and local backups
+tmp
+temp
+*.bak
+*.backup
+*.orig

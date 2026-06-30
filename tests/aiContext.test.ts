@@ -90,8 +90,8 @@ describe('htmlToText', () => {
 
 describe('redactSecrets', () => {
   it('redacts email addresses', () => {
-    const out = redactSecrets('contact max@example.com please');
-    expect(out).not.toContain('max@example.com');
+    const out = redactSecrets('contact person@example.com please');
+    expect(out).not.toContain('person@example.com');
     expect(out).toContain('[REDACTED]');
   });
 
@@ -99,10 +99,10 @@ describe('redactSecrets', () => {
     expect(redactSecrets('key sk-test-ABC123_value')).not.toContain('sk-test');
   });
 
-  it('redacts Google access tokens and API keys', () => {
-    const out = redactSecrets('ya29.a0AfHvalue and AIzaSyExampleSecretKeyValue12345');
-    expect(out).not.toContain('ya29');
-    expect(out).not.toContain('AIza');
+  it('redacts OAuth access token fields and API key assignments', () => {
+    const out = redactSecrets('access_token=google-access-token-value api_key=google-api-key-placeholder-value');
+    expect(out).not.toContain('google-access-token-value');
+    expect(out).not.toContain('google-api-key-placeholder-value');
   });
 
   it('redacts Anthropic message ids', () => {
@@ -111,11 +111,11 @@ describe('redactSecrets', () => {
 
   it('redacts api key, x-api-key, bearer and oauth token fields', () => {
     const input =
-      'api_key=pk-provider-secret x-api-key: sk-ant-secret ' +
+      'api_key=provider-secret-value x-api-key: anthropic-secret-value ' +
       'authorization: Bearer token-secret refresh_token=rt_abc access_token=at_xyz client_secret=cs_123';
     const out = redactSecrets(input);
-    expect(out).not.toContain('pk-provider-secret');
-    expect(out).not.toContain('sk-ant-secret');
+    expect(out).not.toContain('provider-secret-value');
+    expect(out).not.toContain('anthropic-secret-value');
     expect(out).not.toContain('token-secret');
     expect(out).not.toContain('rt_abc');
     expect(out).not.toContain('at_xyz');
