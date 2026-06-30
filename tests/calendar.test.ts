@@ -31,6 +31,7 @@ describe('parseIcsInvite', () => {
       location: 'Google Meet',
       startAt: '2026-07-01T12:00:00.000Z',
       endAt: '2026-07-01T12:30:00.000Z',
+      isAllDay: false,
       organizerEmail: 'alex@example.com',
       sequence: 2,
     });
@@ -73,5 +74,49 @@ describe('parseIcsInvite', () => {
 
     expect(calendarInvitesFromMessage(msg)).toHaveLength(1);
     expect(calendarInvitesFromMessage(msg)[0].uid).toBe('meeting-123@example.com');
+  });
+
+  it('converts TZID date-times and keeps recurrence rules for Google Calendar', () => {
+    const invite = parseIcsInvite([
+      'BEGIN:VCALENDAR',
+      'METHOD:REQUEST',
+      'BEGIN:VEVENT',
+      'UID:timezone-meeting@example.com',
+      'SUMMARY:New York Standup',
+      'DTSTART;TZID=America/New_York:20260701T090000',
+      'DTEND;TZID=America/New_York:20260701T100000',
+      'RRULE:FREQ=WEEKLY;COUNT=3',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n'));
+
+    expect(invite).toMatchObject({
+      uid: 'timezone-meeting@example.com',
+      startAt: '2026-07-01T13:00:00.000Z',
+      endAt: '2026-07-01T14:00:00.000Z',
+      isAllDay: false,
+      timeZone: 'America/New_York',
+      recurrenceRules: ['RRULE:FREQ=WEEKLY;COUNT=3'],
+    });
+  });
+
+  it('parses all-day events with DURATION when DTEND is omitted', () => {
+    const invite = parseIcsInvite([
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'UID:offsite@example.com',
+      'SUMMARY:Company Offsite',
+      'DTSTART;VALUE=DATE:20260704',
+      'DURATION:P2D',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n'));
+
+    expect(invite).toMatchObject({
+      uid: 'offsite@example.com',
+      isAllDay: true,
+      startDate: '2026-07-04',
+      endDate: '2026-07-06',
+    });
   });
 });

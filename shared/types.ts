@@ -149,8 +149,13 @@ export interface CalendarInvite {
   location?: string | null;
   startAt: string;
   endAt: string;
+  isAllDay: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+  timeZone?: string | null;
   organizerEmail?: string | null;
   attendees: CalendarAttendee[];
+  recurrenceRules?: string[];
   sequence?: number | null;
 }
 

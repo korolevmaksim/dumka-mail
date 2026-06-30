@@ -54,6 +54,46 @@ function mapCalendarEvent(raw: any, accountId: string, calendarId = 'primary'): 
   };
 }
 
+function inviteDateBoundary(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function inviteEventTime(invite: CalendarInvite): { start: Record<string, string>; end: Record<string, string> } {
+  if (invite.isAllDay) {
+    return {
+      start: { date: invite.startDate || inviteDateBoundary(invite.startAt) },
+      end: { date: invite.endDate || inviteDateBoundary(invite.endAt) },
+    };
+  }
+  if (invite.timeZone) {
+    return {
+      start: { dateTime: invite.startAt, timeZone: invite.timeZone },
+      end: { dateTime: invite.endAt, timeZone: invite.timeZone },
+    };
+  }
+  return {
+    start: { dateTime: invite.startAt },
+    end: { dateTime: invite.endAt },
+  };
+}
+
+function inviteInsertBody(invite: CalendarInvite, attendees: any[]) {
+  const time = inviteEventTime(invite);
+  return {
+    summary: invite.summary || '(No title)',
+    description: invite.description || undefined,
+    location: invite.location || undefined,
+    start: time.start,
+    end: time.end,
+    attendees,
+    recurrence: invite.recurrenceRules && invite.recurrenceRules.length > 0 ? invite.recurrenceRules : undefined,
+    extendedProperties: {
+      private: { dumkaImportedInviteUid: invite.uid }
+    }
+  };
+}
+
 function nextRoundedStart(durationMinutes: number): { start: Date; end: Date } {
   const start = new Date();
   start.setMinutes(start.getMinutes() < 30 ? 30 : 60, 0, 0);
@@ -172,20 +212,10 @@ export const GoogleWorkspaceService = {
       return mapCalendarEvent(await patchRes.json(), email);
     }
 
-    const insertBody = {
-      summary: invite.summary || '(No title)',
-      description: invite.description || undefined,
-      location: invite.location || undefined,
-      start: { dateTime: invite.startAt },
-      end: { dateTime: invite.endAt },
-      attendees: [
-        ...invite.attendees.map(attendee => ({ ...attendee })),
-        { email, responseStatus }
-      ],
-      extendedProperties: {
-        private: { dumkaImportedInviteUid: invite.uid }
-      }
-    };
+    const insertBody = inviteInsertBody(invite, [
+      ...invite.attendees.map(attendee => ({ ...attendee })),
+      { email, responseStatus }
+    ]);
     const insertRes = await fetchWithTimeout('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none', {
       method: 'POST',
       headers: {
@@ -227,17 +257,7 @@ export const GoogleWorkspaceService = {
     const importedEvent = (imported.items || [])[0];
     if (importedEvent?.id) return mapCalendarEvent(importedEvent, email);
 
-    const insertBody = {
-      summary: invite.summary || '(No title)',
-      description: invite.description || undefined,
-      location: invite.location || undefined,
-      start: { dateTime: invite.startAt },
-      end: { dateTime: invite.endAt },
-      attendees: invite.attendees.map(attendee => ({ ...attendee })),
-      extendedProperties: {
-        private: { dumkaImportedInviteUid: invite.uid }
-      }
-    };
+    const insertBody = inviteInsertBody(invite, invite.attendees.map(attendee => ({ ...attendee })));
     const insertRes = await fetchWithTimeout('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none', {
       method: 'POST',
       headers: {
