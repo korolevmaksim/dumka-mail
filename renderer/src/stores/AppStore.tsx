@@ -109,6 +109,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   calendar: {
     showAgendaInRightPanel: true,
     defaultMeetingDurationMinutes: 30,
+    availabilityLookaheadDays: 5,
+    availabilityStartTime: '09:00',
+    availabilityEndTime: '17:00',
+    availabilitySlotStepMinutes: 30,
     calendlyUrl: '',
     calComUrl: '',
     defaultConferenceProvider: 'googleMeet'
@@ -242,6 +246,11 @@ interface SpeedProof {
   detailCacheCoverage: string;
 }
 
+interface CalendarEventRange {
+  startAt: string;
+  endAt: string;
+}
+
 interface AppStoreContextType {
   theme: 'light' | 'dark' | 'system';
   setTheme: (t: 'light' | 'dark' | 'system') => void;
@@ -296,8 +305,9 @@ interface AppStoreContextType {
   updateContactLocal: (contactId: string, patch: Partial<ContactCard>, email?: string) => Promise<void>;
   saveContactGroup: (name: string, email?: string) => Promise<void>;
   deleteContactGroup: (groupId: string, email?: string) => Promise<void>;
-  syncCalendarAgenda: (email?: string) => Promise<void>;
+  syncCalendarAgenda: (email?: string, range?: CalendarEventRange) => Promise<CalendarEvent[]>;
   respondToCalendarInvite: (invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, email?: string) => Promise<void>;
+  addCalendarEvent: (invite: CalendarInvite, email?: string) => Promise<void>;
   createGoogleMeetDraftEvent: () => Promise<CalendarEvent | null>;
   actionLog: MailActionLog[];
   executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: (actionId: string) => Promise<any>, payloadJson?: string | null) => Promise<void>;
@@ -440,12 +450,29 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return mailState.accounts[0]?.email || '';
   }, [mailState.activeAccount, mailState.accounts]);
 
-  const agendaRange = useCallback(() => {
+  const agendaRange = useCallback((): CalendarEventRange => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     const end = new Date(start);
-    end.setDate(end.getDate() + 7);
+    end.setDate(end.getDate() + 42);
     return { startAt: start.toISOString(), endAt: end.toISOString() };
+  }, []);
+
+  const replaceCalendarRange = useCallback((
+    current: CalendarEvent[],
+    next: CalendarEvent[],
+    accountId: string,
+    range: CalendarEventRange,
+  ): CalendarEvent[] => {
+    const startMs = new Date(range.startAt).getTime();
+    const endMs = new Date(range.endAt).getTime();
+    const outsideRange = current.filter(event => {
+      if (event.accountId !== accountId) return true;
+      const eventStart = new Date(event.startAt).getTime();
+      return !Number.isFinite(eventStart) || eventStart < startMs || eventStart >= endMs;
+    });
+    return [...outsideRange, ...next]
+      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   }, []);
 
   const loadWorkspaceCache = useCallback(async (email?: string) => {
@@ -562,15 +589,16 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setContactGroups(await window.electronAPI.listContactGroups(targetEmail));
   }, [primaryWorkspaceEmail]);
 
-  const syncCalendarAgenda = useCallback(async (email?: string) => {
+  const syncCalendarAgenda = useCallback(async (email?: string, range?: CalendarEventRange) => {
     const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) return;
-    const { startAt, endAt } = agendaRange();
+    if (!targetEmail) return [];
+    const { startAt, endAt } = range || agendaRange();
     const events = await window.electronAPI.syncCalendarEvents(targetEmail, startAt, endAt);
-    setCalendarEvents(events);
+    setCalendarEvents(current => replaceCalendarRange(current, events, targetEmail, { startAt, endAt }));
     const status = await window.electronAPI.getGoogleIntegrationStatus(targetEmail);
     setGoogleIntegrationStatus(status);
-  }, [agendaRange, primaryWorkspaceEmail]);
+    return events;
+  }, [agendaRange, primaryWorkspaceEmail, replaceCalendarRange]);
 
   const authorizeGoogleIntegration = useCallback(async (integration: 'calendar' | 'contacts', email?: string) => {
     const targetEmail = email || primaryWorkspaceEmail;
@@ -591,6 +619,15 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!targetEmail) throw new Error('Connect a Gmail account before responding to invitations.');
     const actionId = crypto.randomUUID();
     await window.electronAPI.respondToCalendarInvite(targetEmail, invite, responseStatus, actionId);
+    await syncCalendarAgenda(targetEmail);
+    await mailState.loadActionLog();
+  }, [mailState.loadActionLog, primaryWorkspaceEmail, syncCalendarAgenda]);
+
+  const addCalendarEvent = useCallback(async (invite: CalendarInvite, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) throw new Error('Connect a Gmail account before adding calendar events.');
+    const actionId = crypto.randomUUID();
+    await window.electronAPI.addCalendarEvent(targetEmail, invite, actionId);
     await syncCalendarAgenda(targetEmail);
     await mailState.loadActionLog();
   }, [mailState.loadActionLog, primaryWorkspaceEmail, syncCalendarAgenda]);
@@ -666,6 +703,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     deleteContactGroup,
     syncCalendarAgenda,
     respondToCalendarInvite,
+    addCalendarEvent,
     createGoogleMeetDraftEvent,
     fetchModelsForProvider,
     syncGmailSignature

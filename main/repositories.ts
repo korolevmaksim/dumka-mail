@@ -13,6 +13,7 @@ import {
   MailLabelDefinition,
   MailMessage,
   MailThread,
+  Recipient,
   SyncState,
   AIConversation,
   AIChatMessage,
@@ -24,6 +25,22 @@ const MAX_EMAIL_SUGGESTION_LIMIT = 5000;
 function sanitizeSuggestionLimit(limit?: number): number {
   if (typeof limit !== 'number' || !Number.isFinite(limit)) return DEFAULT_EMAIL_SUGGESTION_LIMIT;
   return Math.min(MAX_EMAIL_SUGGESTION_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+function parseStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function suggestionMember(row: { display_name?: string | null; email?: string | null }): Recipient | null {
+  const email = (row.email || '').trim();
+  if (!isValidEmail(email)) return null;
+  return { name: (row.display_name || '').trim(), email };
 }
 
 // === Accounts Repository ===
@@ -415,9 +432,10 @@ export const EmailSuggestionsRepo = {
     const db = getDatabase();
     const normalizedAccountId = accountId?.trim();
     const scopedWhere = normalizedAccountId ? 'WHERE m.account_id = @accountId' : '';
+    const contactsWhere = normalizedAccountId ? 'WHERE account_id = @accountId' : '';
     const safeLimit = sanitizeSuggestionLimit(limit);
     const sqlLimit = Math.min(MAX_EMAIL_SUGGESTION_LIMIT * 2, safeLimit * 3);
-    const rows = db.prepare(`
+    const historyRows = db.prepare(`
       WITH contact_rows(name, email, received_at) AS (
         SELECT m.sender_name, m.sender_email, m.received_at
         FROM messages AS m
@@ -478,15 +496,95 @@ export const EmailSuggestionsRepo = {
       last_message_at: string | null;
     }[];
 
-    return rows
+    const contactRows = db.prepare(`
+      SELECT display_name, email, updated_at
+      FROM contacts
+      ${contactsWhere}
+      ORDER BY display_name COLLATE NOCASE ASC, email COLLATE NOCASE ASC
+      LIMIT @limit
+    `).all({ accountId: normalizedAccountId, limit: sqlLimit }) as {
+      display_name: string | null;
+      email: string | null;
+      updated_at: string | null;
+    }[];
+
+    const groupRows = db.prepare(`
+      SELECT id, account_id, name, member_count, updated_at
+      FROM contact_groups
+      ${contactsWhere}
+      ORDER BY name COLLATE NOCASE ASC
+      LIMIT @limit
+    `).all({ accountId: normalizedAccountId, limit: sqlLimit }) as {
+      id: string;
+      account_id: string;
+      name: string;
+      member_count: number;
+      updated_at: string | null;
+    }[];
+
+    const groupedContactRows = db.prepare(`
+      SELECT account_id, display_name, email, group_ids_json
+      FROM contacts
+      ${contactsWhere}
+      ORDER BY display_name COLLATE NOCASE ASC, email COLLATE NOCASE ASC
+      LIMIT @limit
+    `).all({ accountId: normalizedAccountId, limit: MAX_EMAIL_SUGGESTION_LIMIT }) as {
+      account_id: string;
+      display_name: string | null;
+      email: string | null;
+      group_ids_json: string | null;
+    }[];
+
+    const membersByGroupId = new Map<string, Recipient[]>();
+    for (const row of groupedContactRows) {
+      const member = suggestionMember(row);
+      if (!member) continue;
+      for (const groupId of parseStringArray(row.group_ids_json)) {
+        const key = `${row.account_id}:${groupId}`;
+        const members = membersByGroupId.get(key) || [];
+        members.push(member);
+        membersByGroupId.set(key, members);
+      }
+    }
+
+    const groupSuggestions: EmailAddressSuggestion[] = groupRows
+      .flatMap((group): EmailAddressSuggestion[] => {
+        const members = membersByGroupId.get(`${group.account_id}:${group.id}`) || [];
+        if (members.length === 0) return [];
+        return [{
+          name: group.name,
+          email: `group:${group.id}`,
+          sourceCount: members.length,
+          lastMessageAt: group.updated_at,
+          kind: 'group' as const,
+          groupId: group.id,
+          members,
+          subtitle: `${members.length} contacts`
+        }];
+      });
+
+    const contactSuggestions: EmailAddressSuggestion[] = contactRows
+      .map(row => ({
+        name: (row.display_name || '').trim(),
+        email: (row.email || '').trim(),
+        sourceCount: 1,
+        lastMessageAt: row.updated_at,
+        kind: 'contact' as const,
+        subtitle: 'Google Contacts'
+      }))
+      .filter(suggestion => isValidEmail(suggestion.email));
+
+    const historySuggestions: EmailAddressSuggestion[] = historyRows
       .map(row => ({
         name: (row.name || '').trim(),
         email: (row.email || '').trim(),
         sourceCount: row.source_count,
-        lastMessageAt: row.last_message_at
+        lastMessageAt: row.last_message_at,
+        kind: 'address' as const
       }))
-      .filter(suggestion => isValidEmail(suggestion.email))
-      .slice(0, safeLimit);
+      .filter(suggestion => isValidEmail(suggestion.email));
+
+    return [...groupSuggestions, ...contactSuggestions, ...historySuggestions].slice(0, safeLimit);
   }
 };
 
@@ -616,7 +714,19 @@ export const ContactGroupsRepo = {
 
   delete(accountId: string, id: string) {
     const db = getDatabase();
-    db.prepare('DELETE FROM contact_groups WHERE account_id = ? AND id = ?').run(accountId, id);
+    const contacts = db.prepare('SELECT id, group_ids_json FROM contacts WHERE account_id = ?').all(accountId) as any[];
+    const updateContact = db.prepare('UPDATE contacts SET group_ids_json = ?, updated_at = ? WHERE account_id = ? AND id = ?');
+    db.transaction(() => {
+      db.prepare('DELETE FROM contact_groups WHERE account_id = ? AND id = ?').run(accountId, id);
+      const now = new Date().toISOString();
+      for (const contact of contacts) {
+        const groupIds = parseStringArray(contact.group_ids_json);
+        const nextGroupIds = groupIds.filter(groupId => groupId !== id);
+        if (nextGroupIds.length !== groupIds.length) {
+          updateContact.run(JSON.stringify(nextGroupIds), now, accountId, contact.id);
+        }
+      }
+    })();
   }
 };
 

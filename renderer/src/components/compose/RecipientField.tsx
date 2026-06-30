@@ -80,7 +80,10 @@ export function RecipientField({
   };
 
   const commitSuggestion = (suggestion: EmailAddressSuggestion) => {
-    onChange(mergeRecipients(recipients, [{ name: suggestion.name, email: suggestion.email }]));
+    const additions = suggestion.kind === 'group' && suggestion.members?.length
+      ? suggestion.members
+      : [{ name: suggestion.name, email: suggestion.email }];
+    onChange(mergeRecipients(recipients, additions));
     setInputValue('');
     setSuggestionsOpen(false);
   };
@@ -171,13 +174,19 @@ export function RecipientField({
               {visibleSuggestions.map((suggestion, index) => {
                 const isHighlighted = index === highlightedIndex;
                 const primaryLabel = suggestion.name || suggestion.email;
+                const isGroup = suggestion.kind === 'group';
+                const subtitle = isGroup
+                  ? suggestion.subtitle || `${suggestion.members?.length || suggestion.sourceCount} contacts`
+                  : suggestion.name
+                    ? suggestion.email
+                    : suggestion.subtitle;
                 return (
                   <button
-                    key={suggestion.email}
+                    key={isGroup ? `group:${suggestion.groupId || suggestion.name}` : suggestion.email}
                     type="button"
                     role="option"
                     aria-selected={isHighlighted}
-                    title={suggestion.name ? `${suggestion.name} <${suggestion.email}>` : suggestion.email}
+                    title={isGroup ? `Add ${primaryLabel}` : suggestion.name ? `${suggestion.name} <${suggestion.email}>` : suggestion.email}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onMouseDown={(event) => {
                       event.preventDefault();
@@ -189,12 +198,12 @@ export function RecipientField({
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-[var(--text-primary)]">{primaryLabel}</span>
-                      {suggestion.name && (
-                        <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{suggestion.email}</span>
+                      {subtitle && (
+                        <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{subtitle}</span>
                       )}
                     </span>
                     <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-                      {suggestion.sourceCount}
+                      {isGroup ? 'Group' : suggestion.kind === 'contact' ? 'Contact' : suggestion.sourceCount}
                     </span>
                   </button>
                 );

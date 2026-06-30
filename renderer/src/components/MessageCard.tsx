@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { AttachmentMetadata, MailMessage } from '../../../shared/types';
 import type { CalendarInvite } from '../../../shared/types';
-import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, CalendarCheck, CalendarX, CalendarClock, MapPin, Users } from 'lucide-react';
+import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, CalendarCheck, CalendarX, CalendarClock, CalendarPlus, MapPin, Users } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
 import { hasRemoteImages, SafeHtmlRenderer } from './SafeHtmlRenderer';
 import { resolveInlineCids } from '../../../shared/messageBody';
 import { calendarInvitesFromMessage } from '../../../shared/calendar';
 import { useAppStore } from '../stores/AppStore';
+import { emitToast } from '../lib/toastBus';
 
 export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
   const store = useAppStore();
@@ -216,7 +217,14 @@ function CalendarInviteCard({
 }) {
   const start = new Date(invite.startAt);
   const end = new Date(invite.endAt);
+  const [isAdding, setIsAdding] = useState(false);
+  const matchingCalendarEvent = store.calendarEvents.find(event => {
+    const sameUid = event.iCalUID && event.iCalUID === invite.uid;
+    const sameTimeAndTitle = event.summary === invite.summary && event.startAt === invite.startAt && event.endAt === invite.endAt;
+    return sameUid || sameTimeAndTitle;
+  });
   const conflict = store.calendarEvents.find(event => {
+    if (matchingCalendarEvent && event.id === matchingCalendarEvent.id) return false;
     const eventStart = new Date(event.startAt).getTime();
     const eventEnd = new Date(event.endAt).getTime();
     return eventEnd > start.getTime() && eventStart < end.getTime();
@@ -225,6 +233,19 @@ function CalendarInviteCard({
 
   const respond = async (responseStatus: 'accepted' | 'declined' | 'tentative') => {
     await store.respondToCalendarInvite(invite, responseStatus, accountId);
+  };
+
+  const addToCalendar = async () => {
+    setIsAdding(true);
+    try {
+      await store.addCalendarEvent(invite, accountId);
+      emitToast({ type: 'success', message: 'Event added to calendar.' });
+    } catch (error) {
+      console.error('Calendar event add failed:', error);
+      emitToast({ type: 'error', message: 'Could not add event to calendar.' });
+    } finally {
+      setIsAdding(false);
+    }
   };
 
   return (
@@ -257,6 +278,11 @@ function CalendarInviteCard({
               Conflicts with {conflict.summary}
             </div>
           )}
+          {matchingCalendarEvent && (
+            <div className="mt-2 text-[calc(10px*var(--font-scale))] font-medium text-[var(--success)]">
+              Already on calendar
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {!canRespond ? (
@@ -269,6 +295,17 @@ function CalendarInviteCard({
             </button>
           ) : (
             <>
+              {!matchingCalendarEvent && (
+                <button
+                  type="button"
+                  title="Add to Calendar"
+                  disabled={isAdding}
+                  onClick={() => void addToCalendar()}
+                  className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent)] disabled:opacity-50"
+                >
+                  <CalendarPlus className="h-4 w-4" />
+                </button>
+              )}
               <button
                 type="button"
                 title="Accept"

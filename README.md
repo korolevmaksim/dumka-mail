@@ -14,9 +14,10 @@ This project is early alpha software. It is useful for local development and exp
 - Gmail OAuth onboarding with macOS Keychain token storage.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
 - Split inbox categories, saved views, reminders, and action history.
-- Offline-first mailbox mutations with background reconciliation, including archive, trash, spam, ignore, and labels.
+- Offline-first mailbox mutations with background reconciliation, including archive, trash, spam, ignore, and nested Gmail labels.
+- Address book sync with local contact notes, display-name edits, mailing groups, and compose autocomplete.
 - Compose, reply, forward, signatures, snippets, attachments, and sent mail sync.
-- Right-panel agenda, calendar invite cards, RSVP actions, and scheduling-link insertion.
+- Right-panel mini-calendar and agenda, local availability suggestions, calendar invite cards, add-to-calendar/RSVP actions, and scheduling-link insertion.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
 - Secure Electron defaults: context isolation, sandboxed renderer, disabled Node integration, and typed preload IPC.
 

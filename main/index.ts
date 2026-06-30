@@ -618,6 +618,24 @@ registerSecureHandler('api:respondToCalendarInvite', async (_, email, invite: Ca
   return event;
 });
 
+registerSecureHandler('api:addCalendarEvent', async (_, email, invite: CalendarInvite, actionId?: string) => {
+  const event = await GoogleWorkspaceService.addInviteToCalendar(email, invite);
+  CalendarEventsRepo.saveMany([event]);
+  if (actionId) {
+    const now = new Date().toISOString();
+    ActionLogRepo.save({
+      id: actionId,
+      accountId: email,
+      kind: 'addCalendarEvent',
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      payloadJson: JSON.stringify({ uid: invite.uid, eventId: event.id })
+    });
+  }
+  return event;
+});
+
 registerSecureHandler('api:createGoogleMeetDraftEvent', async (_, email, input) => {
   const event = await GoogleWorkspaceService.createGoogleMeetDraftEvent(email, input);
   CalendarEventsRepo.saveMany([event]);

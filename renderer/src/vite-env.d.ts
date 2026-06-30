@@ -104,6 +104,7 @@ export interface IElectronAPI {
   syncContacts: (email: string) => Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }>;
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
   respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => Promise<CalendarEvent>;
+  addCalendarEvent: (email: string, invite: CalendarInvite, actionId?: string) => Promise<CalendarEvent>;
   createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => Promise<CalendarEvent>;
 
   // AI

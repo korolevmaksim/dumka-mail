@@ -131,9 +131,36 @@ function suggestionMatchScore(suggestion: EmailAddressSuggestion, query: string)
   const name = suggestion.name.trim().toLowerCase()
   if (email.startsWith(query)) return 0
   if (name.startsWith(query)) return 1
+  if (suggestion.kind === 'group') {
+    const memberMatch = (suggestion.members ?? []).some(member => {
+      const memberEmail = member.email.trim().toLowerCase()
+      const memberName = member.name.trim().toLowerCase()
+      return memberEmail.includes(query) || memberName.includes(query)
+    })
+    if (memberMatch) return 2
+  }
   if (email.includes(query)) return 2
   if (name.includes(query)) return 3
   return null
+}
+
+function suggestionKindPriority(suggestion: EmailAddressSuggestion): number {
+  if (suggestion.kind === 'group') return 2
+  if (suggestion.kind === 'contact') return 1
+  return 0
+}
+
+function sanitizeSuggestionMembers(members: Recipient[] | undefined, excluded: Set<string>): Recipient[] {
+  const seen = new Set(excluded)
+  const out: Recipient[] = []
+  for (const member of members ?? []) {
+    const email = member.email.trim()
+    const key = normalizedEmailKey(email)
+    if (!key || seen.has(key) || !isValidEmail(email)) continue
+    seen.add(key)
+    out.push({ name: member.name.trim(), email })
+  }
+  return out
 }
 
 export function filterEmailSuggestions(
@@ -158,9 +185,18 @@ export function filterEmailSuggestions(
   const seen = new Set<string>()
   const matches: { suggestion: EmailAddressSuggestion; score: number; index: number }[] = []
   suggestions.forEach((suggestion, index) => {
+    const kind = suggestion.kind ?? 'address'
     const email = suggestion.email.trim()
-    const key = normalizedEmailKey(email)
-    if (!key || seen.has(key) || excluded.has(key) || !isValidEmail(email)) return
+    const members = kind === 'group' ? sanitizeSuggestionMembers(suggestion.members, excluded) : undefined
+    const key = kind === 'group'
+      ? `group:${(suggestion.groupId || suggestion.name || email).trim().toLowerCase()}`
+      : normalizedEmailKey(email)
+    if (!key || seen.has(key)) return
+    if (kind === 'group') {
+      if (!members || members.length === 0) return
+    } else if (excluded.has(key) || !isValidEmail(email)) {
+      return
+    }
     const score = suggestionMatchScore(suggestion, query)
     if (score === null) return
     seen.add(key)
@@ -170,6 +206,10 @@ export function filterEmailSuggestions(
         email,
         sourceCount: Math.max(1, Math.floor(suggestion.sourceCount || 1)),
         lastMessageAt: suggestion.lastMessageAt ?? null,
+        kind,
+        groupId: suggestion.groupId,
+        members,
+        subtitle: suggestion.subtitle,
       },
       score,
       index,
@@ -179,6 +219,8 @@ export function filterEmailSuggestions(
   return matches
     .sort((a, b) => {
       if (a.score !== b.score) return a.score - b.score
+      const kindDelta = suggestionKindPriority(b.suggestion) - suggestionKindPriority(a.suggestion)
+      if (kindDelta !== 0) return kindDelta
       if (a.suggestion.sourceCount !== b.suggestion.sourceCount) {
         return b.suggestion.sourceCount - a.suggestion.sourceCount
       }

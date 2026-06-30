@@ -57,9 +57,15 @@ export interface Recipient {
   email: string;
 }
 
+export type EmailAddressSuggestionKind = 'address' | 'contact' | 'group';
+
 export interface EmailAddressSuggestion extends Recipient {
   sourceCount: number;
   lastMessageAt?: string | null;
+  kind?: EmailAddressSuggestionKind;
+  groupId?: string;
+  members?: Recipient[];
+  subtitle?: string;
 }
 
 export type MailLabelType = 'system' | 'user';
@@ -483,6 +489,10 @@ export interface ComposeSettings {
 export interface CalendarSettings {
   showAgendaInRightPanel: boolean;
   defaultMeetingDurationMinutes: number;
+  availabilityLookaheadDays: number;
+  availabilityStartTime: string;
+  availabilityEndTime: string;
+  availabilitySlotStepMinutes: number;
   calendlyUrl: string;
   calComUrl: string;
   defaultConferenceProvider: 'googleMeet' | 'calendly' | 'calCom' | 'none';

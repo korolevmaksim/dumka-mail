@@ -23,8 +23,8 @@ The app talks directly to Gmail and to the AI provider selected by the user. If 
 
 Initial account onboarding requests Gmail modify access plus Google profile/email scopes. Calendar and Contacts are incremental opt-ins:
 
-- Calendar uses `https://www.googleapis.com/auth/calendar.events` for agenda sync, invite RSVP, and Google Meet event creation.
-- Contacts uses `https://www.googleapis.com/auth/contacts.readonly` for address-book sync. Local contact notes and groups are stored in SQLite.
+- Calendar uses `https://www.googleapis.com/auth/calendar.events` for agenda sync, invite RSVP, and Google Meet event creation. Availability suggestions are calculated locally from cached calendar events.
+- Contacts uses `https://www.googleapis.com/auth/contacts.readonly` for address-book sync. Local contact display-name edits, notes, and groups are stored in SQLite and are not written back to Google.
 
 ## Remote images
 

@@ -39,6 +39,7 @@ import {
 } from '../../../../shared/draftHtml';
 import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
 import type { AttachmentMetadata, EmailAddressSuggestion } from '../../../../shared/types';
+import { availabilitySlotsHtml, findAvailabilitySlots } from '../../../../shared/calendarAvailability';
 import { RecipientField } from '../compose/RecipientField';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
 
@@ -255,6 +256,26 @@ export function FloatingComposeDrawer() {
     } catch (error) {
       console.error('Scheduling link insert failed:', error);
       emitToast({ type: 'error', message: 'Could not insert scheduling link.' });
+    }
+  };
+
+  const insertAvailability = async () => {
+    try {
+      if (!store.googleIntegrationStatus?.calendarEnabled) {
+        await store.authorizeGoogleIntegration('calendar', activeDraft.accountId);
+      }
+      const events = await store.syncCalendarAgenda(activeDraft.accountId);
+      const slots = findAvailabilitySlots(events, store.settings.calendar, new Date(), 3);
+      if (slots.length === 0) {
+        emitToast({ type: 'warning', message: 'No availability found in your configured window.' });
+        return;
+      }
+      editorRef.current?.insertHtml(availabilitySlotsHtml(slots));
+      setSchedulingOpen(false);
+      emitToast({ type: 'success', message: 'Availability inserted.' });
+    } catch (error) {
+      console.error('Availability insert failed:', error);
+      emitToast({ type: 'error', message: 'Could not insert availability.' });
     }
   };
 
@@ -576,6 +597,14 @@ export function FloatingComposeDrawer() {
               >
                 <CalendarPlus className="h-3.5 w-3.5" />
                 Create Google Meet link
+              </button>
+              <button
+                type="button"
+                onClick={() => void insertAvailability()}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              >
+                <CalendarPlus className="h-3.5 w-3.5" />
+                Insert availability
               </button>
               <button
                 type="button"

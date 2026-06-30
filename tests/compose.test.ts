@@ -128,6 +128,48 @@ describe('filterEmailSuggestions', () => {
       'beta-team@example.com',
     ]);
   });
+
+  it('keeps mailing-list groups and sanitizes expanded members', () => {
+    const suggestions: EmailAddressSuggestion[] = [
+      {
+        name: 'Backend Team',
+        email: 'group:backend',
+        sourceCount: 3,
+        kind: 'group',
+        groupId: 'backend',
+        members: [
+          r('alice@example.com', 'Alice'),
+          r('bob@example.com', 'Bob'),
+          r('invalid-localhost', 'Broken'),
+        ],
+      },
+    ];
+
+    const result = filterEmailSuggestions(suggestions, 'backend', {
+      existingRecipients: [r('alice@example.com')],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe('group');
+    expect(result[0].members).toEqual([r('bob@example.com', 'Bob')]);
+  });
+
+  it('ranks contact and group suggestions ahead of message-history suggestions on equal matches', () => {
+    const result = filterEmailSuggestions([
+      suggestion('archive@example.com', 'Team Archive', 100),
+      { ...suggestion('lead@example.com', 'Team Lead', 1), kind: 'contact' },
+      {
+        name: 'Team Group',
+        email: 'group:team',
+        sourceCount: 2,
+        kind: 'group',
+        groupId: 'team',
+        members: [r('one@example.com'), r('two@example.com')],
+      },
+    ], 'team');
+
+    expect(result.map(item => item.kind ?? 'address')).toEqual(['group', 'contact', 'address']);
+  });
 });
 
 describe('startReply', () => {

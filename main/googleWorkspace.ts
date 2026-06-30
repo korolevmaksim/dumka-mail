@@ -198,6 +198,58 @@ export const GoogleWorkspaceService = {
     return mapCalendarEvent(await insertRes.json(), email);
   },
 
+  async addInviteToCalendar(email: string, invite: CalendarInvite): Promise<CalendarEvent> {
+    const accessToken = await getAccessToken(email);
+    const findParams = new URLSearchParams({
+      iCalUID: invite.uid,
+      singleEvents: 'true',
+      maxResults: '10'
+    });
+    const findRes = await fetchWithTimeout(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${findParams.toString()}`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!findRes.ok) throw googleApiError('Calendar invite lookup error', await findRes.text());
+    const found = await findRes.json() as { items?: any[] };
+    const existing = (found.items || [])[0];
+    if (existing?.id) return mapCalendarEvent(existing, email);
+
+    const importedParams = new URLSearchParams({
+      privateExtendedProperty: `dumkaImportedInviteUid=${invite.uid}`,
+      singleEvents: 'true',
+      maxResults: '10'
+    });
+    const importedRes = await fetchWithTimeout(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${importedParams.toString()}`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!importedRes.ok) throw googleApiError('Calendar imported invite lookup error', await importedRes.text());
+    const imported = await importedRes.json() as { items?: any[] };
+    const importedEvent = (imported.items || [])[0];
+    if (importedEvent?.id) return mapCalendarEvent(importedEvent, email);
+
+    const insertBody = {
+      summary: invite.summary || '(No title)',
+      description: invite.description || undefined,
+      location: invite.location || undefined,
+      start: { dateTime: invite.startAt },
+      end: { dateTime: invite.endAt },
+      attendees: invite.attendees.map(attendee => ({ ...attendee })),
+      extendedProperties: {
+        private: { dumkaImportedInviteUid: invite.uid }
+      }
+    };
+    const insertRes = await fetchWithTimeout('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(insertBody)
+    });
+    if (!insertRes.ok) throw googleApiError('Calendar event add error', await insertRes.text());
+    return mapCalendarEvent(await insertRes.json(), email);
+  },
+
   async listContacts(email: string): Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }> {
     const accessToken = await getAccessToken(email);
     const contacts: ContactCard[] = [];

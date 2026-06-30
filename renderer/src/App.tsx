@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAppStore, AppStoreProvider } from './stores/AppStore';
 import { useKeyboard } from './hooks/useKeyboard';
 import {
@@ -22,6 +22,7 @@ import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer
 import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
+import { buildLabelTree, flattenLabelTree } from '../../shared/labels';
 
 const getMaxWidthStyle = (option?: string) => {
   switch (option) {
@@ -49,6 +50,10 @@ function AppContent() {
     y: number;
     thread: any;
   } | null>(null);
+  const userLabelNodes = useMemo(
+    () => flattenLabelTree(buildLabelTree(store.labelDefinitions.filter(label => label.type !== 'system'))),
+    [store.labelDefinitions],
+  );
 
   // Set platform attribute for cross-platform layout padding overrides (macOS vs Windows/Linux titlebars)
   useEffect(() => {
@@ -736,7 +741,7 @@ function AppContent() {
                                   className="absolute right-0 top-8 z-30 w-[230px] max-h-[280px] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl"
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  {store.labelDefinitions.filter(label => label.type !== 'system').length === 0 ? (
+                                  {userLabelNodes.length === 0 ? (
                                     <button
                                       type="button"
                                       onClick={() => void store.syncLabels()}
@@ -745,19 +750,31 @@ function AppContent() {
                                       <Tags className="h-3.5 w-3.5" />
                                       Sync Gmail labels
                                     </button>
-                                  ) : store.labelDefinitions.filter(label => label.type !== 'system').map(label => (
-                                    <button
-                                      key={label.id}
-                                      type="button"
-                                      onClick={() => {
-                                        void store.moveThreadToLabel(label.id, store.openedThread?.id, true);
-                                        setLabelMenuOpen(false);
-                                      }}
-                                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-                                    >
-                                      <FolderInput className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                                      <span className="truncate">{label.name}</span>
-                                    </button>
+                                  ) : userLabelNodes.map(node => (
+                                    node.label ? (
+                                      <button
+                                        key={node.fullName}
+                                        type="button"
+                                        onClick={() => {
+                                          void store.moveThreadToLabel(node.label!.id, store.openedThread?.id, true);
+                                          setLabelMenuOpen(false);
+                                        }}
+                                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+                                        style={{ paddingLeft: `${10 + node.depth * 14}px` }}
+                                      >
+                                        <FolderInput className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
+                                        <span className="truncate">{node.segment}</span>
+                                      </button>
+                                    ) : (
+                                      <div
+                                        key={node.fullName}
+                                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]"
+                                        style={{ paddingLeft: `${10 + node.depth * 14}px` }}
+                                      >
+                                        <FolderInput className="h-3.5 w-3.5 text-[var(--text-tertiary)]" />
+                                        <span className="truncate">{node.segment}</span>
+                                      </div>
+                                    )
                                   ))}
                                 </div>
                               )}

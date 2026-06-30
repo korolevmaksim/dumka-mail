@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   syncContacts: (email: string) => ipcRenderer.invoke('api:syncContacts', email),
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => ipcRenderer.invoke('api:syncCalendarEvents', email, startAt, endAt),
   respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => ipcRenderer.invoke('api:respondToCalendarInvite', email, invite, responseStatus, actionId),
+  addCalendarEvent: (email: string, invite: CalendarInvite, actionId?: string) => ipcRenderer.invoke('api:addCalendarEvent', email, invite, actionId),
   createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => ipcRenderer.invoke('api:createGoogleMeetDraftEvent', email, input),
 
   // AI

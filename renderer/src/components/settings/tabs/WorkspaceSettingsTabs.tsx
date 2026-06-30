@@ -1,7 +1,15 @@
 import { useMemo, useState } from 'react';
-import { CalendarDays, FolderPlus, Pencil, RefreshCw, Trash2, Users, UserPlus } from 'lucide-react';
+import { CalendarDays, ChevronRight, Folder, FolderPlus, Pencil, RefreshCw, Trash2, Users, UserPlus } from 'lucide-react';
 import { useAppStore } from '../../../stores/AppStore';
 import { emitToast } from '../../../lib/toastBus';
+import {
+  buildLabelTree,
+  composeNestedLabelName,
+  flattenLabelTree,
+  isDescendantLabel,
+  labelLeafName,
+  labelParentName,
+} from '../../../../../shared/labels';
 
 function activeEmailLabel(email?: string): string {
   return email || 'No account selected';
@@ -10,18 +18,29 @@ function activeEmailLabel(email?: string): string {
 export function LabelsTab() {
   const store = useAppStore();
   const [newLabelName, setNewLabelName] = useState('');
+  const [newParentName, setNewParentName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [editingParentName, setEditingParentName] = useState('');
   const userLabels = store.labelDefinitions.filter(label => label.type !== 'system');
   const systemLabels = store.labelDefinitions.filter(label => label.type === 'system');
+  const labelTree = useMemo(() => buildLabelTree(userLabels), [userLabels]);
+  const flattenedLabels = useMemo(() => flattenLabelTree(labelTree), [labelTree]);
   const activeEmail = store.activeAccount && store.activeAccount.id !== 'unified'
     ? store.activeAccount.email
     : store.accounts[0]?.email;
+  const parentOptions = useMemo(() => {
+    const editingLabel = editingId ? userLabels.find(label => label.id === editingId) : null;
+    return flattenedLabels
+      .filter(node => !editingLabel || (node.label?.id !== editingId && !isDescendantLabel(node.fullName, editingLabel.name)))
+      .map(node => node.fullName);
+  }, [editingId, flattenedLabels, userLabels]);
 
   const create = async () => {
-    if (!newLabelName.trim()) return;
+    const labelName = composeNestedLabelName(newParentName, newLabelName);
+    if (!labelName) return;
     try {
-      await store.createLabel(newLabelName);
+      await store.createLabel(labelName);
       setNewLabelName('');
       emitToast({ type: 'success', message: 'Label created.' });
     } catch (err) {
@@ -31,11 +50,13 @@ export function LabelsTab() {
   };
 
   const saveEdit = async () => {
-    if (!editingId || !editingName.trim()) return;
+    const labelName = composeNestedLabelName(editingParentName, editingName);
+    if (!editingId || !labelName) return;
     try {
-      await store.updateLabel(editingId, { name: editingName.trim() });
+      await store.updateLabel(editingId, { name: labelName });
       setEditingId(null);
       setEditingName('');
+      setEditingParentName('');
       emitToast({ type: 'success', message: 'Label renamed.' });
     } catch (err) {
       console.error('Label rename failed:', err);
@@ -67,13 +88,24 @@ export function LabelsTab() {
         </div>
 
         <div className="flex gap-2">
+          <select
+            value={newParentName}
+            onChange={(event) => setNewParentName(event.target.value)}
+            title="Parent folder"
+            className="max-w-[190px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+          >
+            <option value="">Top level</option>
+            {parentOptions.map(parent => (
+              <option key={parent} value={parent}>{parent}</option>
+            ))}
+          </select>
           <input
             value={newLabelName}
             onChange={(event) => setNewLabelName(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') void create();
             }}
-            placeholder="e.g. Clients/Acme"
+            placeholder={newParentName ? 'Child folder' : 'e.g. Clients or Clients/Acme'}
             className="flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
           />
           <button
@@ -89,54 +121,83 @@ export function LabelsTab() {
         <div className="flex flex-col gap-1.5">
           {userLabels.length === 0 ? (
             <span className="text-[calc(11px*var(--font-scale))] italic text-[var(--text-secondary)]">No custom labels cached yet.</span>
-          ) : userLabels.map(label => (
-            <div key={label.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2">
-              {editingId === label.id ? (
-                <input
-                  autoFocus
-                  value={editingName}
-                  onChange={(event) => setEditingName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void saveEdit();
-                    if (event.key === 'Escape') setEditingId(null);
-                  }}
-                  className="min-w-0 flex-1 bg-transparent text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
-                />
-              ) : (
-                <span className="min-w-0 truncate text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{label.name}</span>
-              )}
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  title={editingId === label.id ? 'Save label name' : 'Rename label'}
-                  onClick={() => {
-                    if (editingId === label.id) void saveEdit();
-                    else {
-                      setEditingId(label.id);
-                      setEditingName(label.name);
-                    }
-                  }}
-                  className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  title="Delete label"
-                  onClick={() => {
-                    emitToast({
-                      type: 'warning',
-                      message: `Delete ${label.name}?`,
-                      actionLabel: 'Delete',
-                      onAction: () => void store.deleteLabel(label.id),
-                      duration: 6000,
-                    });
-                  }}
-                  className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+          ) : flattenedLabels.map(node => (
+            <div
+              key={node.fullName}
+              className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2"
+              style={{ paddingLeft: `${12 + node.depth * 18}px` }}
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {node.depth > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />}
+                <Folder className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)]" />
+                {editingId === node.label?.id ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <select
+                      value={editingParentName}
+                      onChange={(event) => setEditingParentName(event.target.value)}
+                      className="max-w-[150px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                    >
+                      <option value="">Top level</option>
+                      {parentOptions.map(parent => (
+                        <option key={parent} value={parent}>{parent}</option>
+                      ))}
+                    </select>
+                    <input
+                      autoFocus
+                      value={editingName}
+                      onChange={(event) => setEditingName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void saveEdit();
+                        if (event.key === 'Escape') setEditingId(null);
+                      }}
+                      className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                    />
+                  </div>
+                ) : (
+                  <span className={`min-w-0 truncate text-[calc(11px*var(--font-scale))] ${node.label ? 'font-medium text-[var(--text-primary)]' : 'font-semibold text-[var(--text-secondary)]'}`}>
+                    {node.segment}
+                  </span>
+                )}
               </div>
+              {node.label ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    title={editingId === node.label.id ? 'Save label name' : 'Rename label'}
+                    onClick={() => {
+                      if (!node.label) return;
+                      if (editingId === node.label.id) void saveEdit();
+                      else {
+                        setEditingId(node.label.id);
+                        setEditingName(labelLeafName(node.label.name));
+                        setEditingParentName(labelParentName(node.label.name));
+                      }
+                    }}
+                    className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Delete label"
+                    onClick={() => {
+                      if (!node.label) return;
+                      emitToast({
+                        type: 'warning',
+                        message: `Delete ${node.label.name}?`,
+                        actionLabel: 'Delete',
+                        onAction: () => void store.deleteLabel(node.label!.id),
+                        duration: 6000,
+                      });
+                    }}
+                    className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <span className="rounded bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">folder</span>
+              )}
             </div>
           ))}
         </div>
@@ -177,6 +238,22 @@ export function ContactsTab() {
       contact.notes || ''
     ].join(' ').toLowerCase().includes(needle)).slice(0, 200);
   }, [query, store.contacts]);
+  const groupMembershipCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const contact of store.contacts) {
+      for (const groupId of contact.groupIds) {
+        counts.set(groupId, (counts.get(groupId) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [store.contacts]);
+  const toggleContactGroup = (contactId: string, currentGroupIds: string[], groupId: string) => {
+    const exists = currentGroupIds.includes(groupId);
+    const nextGroupIds = exists
+      ? currentGroupIds.filter(id => id !== groupId)
+      : [...currentGroupIds, groupId];
+    void store.updateContactLocal(contactId, { groupIds: nextGroupIds });
+  };
 
   return (
     <div className="flex max-w-[760px] flex-col gap-4 select-text">
@@ -235,10 +312,18 @@ export function ContactsTab() {
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{contact.displayName}</div>
+                  <input
+                    value={contact.displayName}
+                    onChange={(event) => void store.updateContactLocal(contact.id, { displayName: event.target.value })}
+                    aria-label={`Display name for ${contact.email}`}
+                    className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] outline-none hover:border-[var(--border)] focus:border-[var(--accent)] focus:bg-[var(--app-bg)]"
+                  />
                   <div className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{contact.email}</div>
                   {contact.organizations.length > 0 && (
                     <div className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{contact.organizations[0]}</div>
+                  )}
+                  {contact.phoneNumbers.length > 0 && (
+                    <div className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{contact.phoneNumbers[0]}</div>
                   )}
                   <input
                     value={contact.notes || ''}
@@ -246,6 +331,28 @@ export function ContactsTab() {
                     placeholder="Local note"
                     className="mt-1 w-full rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                   />
+                  {store.contactGroups.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {store.contactGroups.slice(0, 8).map(group => {
+                        const selected = contact.groupIds.includes(group.id);
+                        return (
+                          <button
+                            key={group.id}
+                            type="button"
+                            title={`${selected ? 'Remove from' : 'Add to'} ${group.name}`}
+                            onClick={() => toggleContactGroup(contact.id, contact.groupIds, group.id)}
+                            className={`max-w-[150px] truncate rounded border px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] ${
+                              selected
+                                ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                                : 'border-[var(--border)] bg-[var(--raised-surface)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
+                            }`}
+                          >
+                            {group.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -281,7 +388,10 @@ export function ContactsTab() {
             <div className="flex flex-col gap-1">
               {store.contactGroups.map(group => (
                 <div key={group.id} className="flex items-center justify-between rounded bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))]">
-                  <span className="truncate text-[var(--text-primary)]">{group.name}</span>
+                  <span className="truncate text-[var(--text-primary)]" title={group.name}>
+                    {group.name}
+                    <span className="ml-1 text-[var(--text-tertiary)]">{groupMembershipCounts.get(group.id) ?? group.memberCount}</span>
+                  </span>
                   <button
                     type="button"
                     title="Delete group"
@@ -400,6 +510,62 @@ export function CalendarSettingsTab() {
               <option value="calCom">Cal.com</option>
               <option value="none">None</option>
             </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Lookahead</span>
+            <input
+              type="number"
+              min={1}
+              max={14}
+              value={store.settings.calendar.availabilityLookaheadDays}
+              onChange={(event) => {
+                const value = Math.max(1, Math.min(14, Number(event.target.value) || 5));
+                store.updateSettings(s => { s.calendar.availabilityLookaheadDays = value; });
+              }}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Start</span>
+            <input
+              type="time"
+              value={store.settings.calendar.availabilityStartTime}
+              onChange={(event) => {
+                const value = event.target.value || '09:00';
+                store.updateSettings(s => { s.calendar.availabilityStartTime = value; });
+              }}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">End</span>
+            <input
+              type="time"
+              value={store.settings.calendar.availabilityEndTime}
+              onChange={(event) => {
+                const value = event.target.value || '17:00';
+                store.updateSettings(s => { s.calendar.availabilityEndTime = value; });
+              }}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Step</span>
+            <input
+              type="number"
+              min={15}
+              max={120}
+              step={15}
+              value={store.settings.calendar.availabilitySlotStepMinutes}
+              onChange={(event) => {
+                const value = Math.max(15, Math.min(120, Number(event.target.value) || 30));
+                store.updateSettings(s => { s.calendar.availabilitySlotStepMinutes = value; });
+              }}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
           </label>
         </div>
       </div>

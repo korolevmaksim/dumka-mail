@@ -1,14 +1,8 @@
-// Pure, dependency-free label helpers ported from the Swift original.
-//
-// Sources:
-//   - Models/MailLabel.swift   (displayName, threadRowLabelIDs, visibleLabelIDs)
-//   - UI/Inbox/ThreadRow.swift  (LabelPill.color, primary row label rendering)
-//
-// This file runs in BOTH the Electron main process and the React renderer, so it
-// must stay free of electron/node/react/DOM imports. Only standard JS/TS and
-// relative `shared/` imports are allowed.
+// Pure, dependency-free label helpers shared by the Electron main process and
+// the React renderer. Keep this file free of Electron, Node, React, and DOM
+// imports.
 
-import type { MailThread } from './types';
+import type { MailLabelDefinition, MailThread } from './types';
 
 /** Default pill color, mirrors `Palette.accent` (`--accent` in renderer/src/index.css). */
 const ACCENT_HEX = '#668FEA';
@@ -17,13 +11,56 @@ const ACCENT_HEX = '#668FEA';
  * Labels that are pure system noise and never worth showing as a row pill.
  *
  * Swift `MailLabel.hiddenRowLabels` hides INBOX + UNREAD; the Electron port also
- * drops SENT (it carries no triage signal in the inbox list).
+ * drops SENT because it carries no triage signal in the inbox list.
  */
 const HIDDEN_ROW_LABELS: ReadonlySet<string> = new Set(['INBOX', 'UNREAD', 'SENT']);
 
+export interface LabelTreeNode {
+  segment: string;
+  fullName: string;
+  depth: number;
+  label?: MailLabelDefinition;
+  children: LabelTreeNode[];
+}
+
+function normalizeSegment(value: string): string {
+  return value.trim().replace(/^\/+|\/+$/g, '');
+}
+
+export function labelSegments(name: string): string[] {
+  return name
+    .split('/')
+    .map(normalizeSegment)
+    .filter(Boolean);
+}
+
+export function labelLeafName(name: string): string {
+  const segments = labelSegments(name);
+  return segments[segments.length - 1] || name.trim();
+}
+
+export function labelParentName(name: string): string {
+  const segments = labelSegments(name);
+  return segments.length > 1 ? segments.slice(0, -1).join('/') : '';
+}
+
+export function composeNestedLabelName(parentName: string, leafName: string): string {
+  const leafSegments = labelSegments(leafName);
+  if (leafSegments.length > 1) return leafSegments.join('/');
+  const leaf = leafSegments[0] || '';
+  const parent = labelSegments(parentName).join('/');
+  return [parent, leaf].filter(Boolean).join('/');
+}
+
+export function isDescendantLabel(candidateName: string, parentName: string): boolean {
+  const candidate = labelSegments(candidateName).join('/');
+  const parent = labelSegments(parentName).join('/');
+  return Boolean(parent) && candidate.startsWith(`${parent}/`);
+}
+
 /**
  * Human-readable name for a Gmail label id.
- * Direct port of `MailLabel.displayName(for:)`.
+ * Custom nested Gmail labels use only their leaf segment in tight row pills.
  */
 export function labelDisplayName(labelId: string): string {
   switch (labelId.toUpperCase()) {
@@ -50,27 +87,25 @@ export function labelDisplayName(labelId: string): string {
           .replace(/_/g, ' ')
           .toLowerCase();
       }
-      return labelId.replace(/_/g, ' ').toLowerCase();
+      return labelLeafName(labelId).replace(/_/g, ' ').toLowerCase();
     }
   }
 }
 
 /**
- * Stable pill background color (hex) for a label id.
- * Direct port of `LabelPill.color` — matches by case-insensitive substring.
+ * Stable pill background color (hex) for a label id. Matches by
+ * case-insensitive substring to preserve the Swift original's behavior.
  */
 export function pillColorHex(labelId: string): string {
   const id = labelId.toUpperCase();
-  if (id.includes('PROMOTION')) return '#DB8059'; // rgb(0.86, 0.50, 0.35)
-  if (id.includes('UPDATE')) return '#BD8C2E'; // rgb(0.74, 0.55, 0.18)
-  if (id.includes('IMPORTANT')) return '#AD63CC'; // rgb(0.68, 0.39, 0.80)
+  if (id.includes('PROMOTION')) return '#DB8059';
+  if (id.includes('UPDATE')) return '#BD8C2E';
+  if (id.includes('IMPORTANT')) return '#AD63CC';
   return ACCENT_HEX;
 }
 
 /**
  * Display priority for a normalized (uppercased) label id. Lower sorts first.
- * Colored / triage-meaningful labels rank above plain categories; CATEGORY_PRIMARY
- * (the "no real category" bucket) ranks last.
  */
 function labelPriority(normalized: string): number {
   if (normalized === 'CATEGORY_PRIMARY') return 100;
@@ -80,14 +115,12 @@ function labelPriority(normalized: string): number {
   if (normalized.includes('SOCIAL')) return 3;
   if (normalized.includes('FORUM')) return 4;
   if (normalized.startsWith('CATEGORY_')) return 5;
-  return 6; // custom / user-defined labels
+  return 6;
 }
 
 /**
- * Display-worthy labels for a thread row: drops system noise (INBOX/UNREAD/SENT),
- * dedupes case-insensitively (first occurrence wins, original casing preserved),
- * and orders by display priority. Ports `MailLabel.visibleLabelIDs`, adding a
- * deterministic priority sort so the most meaningful label leads.
+ * Display-worthy labels for a thread row: drops system noise, dedupes
+ * case-insensitively, and orders by display priority.
  */
 export function threadRowLabelIds(labelIds: string[]): string[] {
   const seen = new Set<string>();
@@ -101,8 +134,6 @@ export function threadRowLabelIds(labelIds: string[]): string[] {
     visible.push(id);
   }
 
-  // Stable sort by priority (Array.prototype.sort is stable on Node >= 11),
-  // preserving original order for equal-priority labels.
   return visible
     .map((id, index) => ({ id, index, priority: labelPriority(id.toUpperCase()) }))
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
@@ -115,10 +146,6 @@ export interface RowLabel {
   color: string;
 }
 
-/**
- * Single best label to render in a thread row (or null when none qualify).
- * Mirrors Swift `MailLabel.threadRowLabelIDs(...).prefix(1)` feeding `LabelPill`.
- */
 export function primaryRowLabel(thread: MailThread): RowLabel | null {
   const [id] = threadRowLabelIds(thread.labelIds);
   if (id === undefined) return null;
@@ -127,4 +154,47 @@ export function primaryRowLabel(thread: MailThread): RowLabel | null {
     name: labelDisplayName(id),
     color: pillColorHex(id),
   };
+}
+
+function sortNodes(nodes: LabelTreeNode[]): LabelTreeNode[] {
+  return nodes
+    .sort((a, b) => a.segment.localeCompare(b.segment, undefined, { sensitivity: 'base' }))
+    .map(node => ({ ...node, children: sortNodes(node.children) }));
+}
+
+export function buildLabelTree(labels: MailLabelDefinition[]): LabelTreeNode[] {
+  const roots: LabelTreeNode[] = [];
+  const byFullName = new Map<string, LabelTreeNode>();
+
+  for (const label of labels) {
+    const segments = labelSegments(label.name);
+    if (segments.length === 0) continue;
+    let siblings = roots;
+    let fullName = '';
+
+    segments.forEach((segment, index) => {
+      fullName = fullName ? `${fullName}/${segment}` : segment;
+      let node = byFullName.get(fullName);
+      if (!node) {
+        node = { segment, fullName, depth: index, children: [] };
+        byFullName.set(fullName, node);
+        siblings.push(node);
+      }
+      if (index === segments.length - 1) {
+        node.label = label;
+      }
+      siblings = node.children;
+    });
+  }
+
+  return sortNodes(roots);
+}
+
+export function flattenLabelTree(nodes: LabelTreeNode[]): LabelTreeNode[] {
+  const result: LabelTreeNode[] = [];
+  for (const node of nodes) {
+    result.push(node);
+    result.push(...flattenLabelTree(node.children));
+  }
+  return result;
 }
