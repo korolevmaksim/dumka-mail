@@ -209,6 +209,28 @@ export function useKeyboard(options: KeyboardOptions) {
         return;
       }
 
+      // Backspace/Delete: move to trash.
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        const target = currentStore.openedThread || focusedThread;
+        if (target) currentStore.executeMailAction('moveToTrash', target.id);
+        return;
+      }
+
+      // !: move to spam, M: ignore thread.
+      if (noModifiers && e.key === '!') {
+        e.preventDefault();
+        const target = currentStore.openedThread || focusedThread;
+        if (target) currentStore.executeMailAction('reportSpam', target.id);
+        return;
+      }
+      if (noModifiers && (e.code === 'KeyM' || e.key === 'm')) {
+        e.preventDefault();
+        const target = currentStore.openedThread || focusedThread;
+        if (target) currentStore.muteThread(target.id);
+        return;
+      }
+
       // R: reply / A: reply-all / F: forward (KC-C2) — operate on the open thread.
       if (noModifiers && (e.code === 'KeyR' || e.key === 'r')) {
         e.preventDefault();

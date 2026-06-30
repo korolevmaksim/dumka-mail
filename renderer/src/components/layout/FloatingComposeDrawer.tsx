@@ -6,10 +6,12 @@ import {
   AlignRight,
   Bold,
   Braces,
+  CalendarPlus,
   Eraser,
   Image,
   Italic,
   Link,
+  Link2,
   List,
   ListOrdered,
   Maximize2,
@@ -109,6 +111,7 @@ export function FloatingComposeDrawer() {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [schedulingOpen, setSchedulingOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInstruction, setAiInstruction] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
@@ -224,6 +227,35 @@ export function FloatingComposeDrawer() {
     }
     editorRef.current?.insertHtml(snippet);
     setTemplatesOpen(false);
+  };
+
+  const insertSchedulingLink = async (provider: 'calendly' | 'calCom' | 'googleMeet') => {
+    try {
+      if (provider === 'googleMeet') {
+        if (!store.googleIntegrationStatus?.calendarEnabled) {
+          await store.authorizeGoogleIntegration('calendar', activeDraft.accountId);
+        }
+        const event = await store.createGoogleMeetDraftEvent();
+        const link = event?.conferenceUrl || event?.htmlLink;
+        if (link) {
+          editorRef.current?.insertHtml(`<p>Google Meet: <a href="${link}" target="_blank">${link}</a></p>`);
+          emitToast({ type: 'success', message: 'Google Meet link inserted.' });
+        }
+      } else {
+        const link = provider === 'calendly'
+          ? store.settings.calendar.calendlyUrl.trim()
+          : store.settings.calendar.calComUrl.trim();
+        if (!link) {
+          emitToast({ type: 'warning', message: provider === 'calendly' ? 'Add a Calendly URL in Calendar settings.' : 'Add a Cal.com URL in Calendar settings.' });
+          return;
+        }
+        editorRef.current?.insertHtml(`<p>Book a time: <a href="${link}" target="_blank">${link}</a></p>`);
+      }
+      setSchedulingOpen(false);
+    } catch (error) {
+      console.error('Scheduling link insert failed:', error);
+      emitToast({ type: 'error', message: 'Could not insert scheduling link.' });
+    }
   };
 
   const updateFromAccount = (accountId: string) => {
@@ -531,8 +563,38 @@ export function FloatingComposeDrawer() {
           <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Insert inline image" onClick={() => void insertInlineImageFromDialog()}><Image className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="AI compose" onClick={() => setAiOpen(value => !value)}><Sparkles className="h-4 w-4 text-[var(--ai-accent)]" /></ToolbarButton>
+          <ToolbarButton title="Scheduling links" onClick={() => setSchedulingOpen(value => !value)}><CalendarPlus className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Templates and snippets" onClick={() => setTemplatesOpen(value => !value)}><Braces className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-4 w-4" /></ToolbarButton>
+
+          {schedulingOpen && (
+            <div className="absolute bottom-10 right-16 z-50 w-[250px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
+              <button
+                type="button"
+                onClick={() => void insertSchedulingLink('googleMeet')}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              >
+                <CalendarPlus className="h-3.5 w-3.5" />
+                Create Google Meet link
+              </button>
+              <button
+                type="button"
+                onClick={() => void insertSchedulingLink('calendly')}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                Insert Calendly link
+              </button>
+              <button
+                type="button"
+                onClick={() => void insertSchedulingLink('calCom')}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                Insert Cal.com link
+              </button>
+            </div>
+          )}
 
           {templatesOpen && (
             <div className="absolute bottom-10 right-8 z-50 w-[230px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">

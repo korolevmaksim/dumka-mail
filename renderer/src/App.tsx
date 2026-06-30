@@ -4,7 +4,7 @@ import { useKeyboard } from './hooks/useKeyboard';
 import {
   Inbox, Clock, CheckCircle, X, ArrowLeft,
   Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles, Send,
-  ChevronUp, ChevronDown, MailOpen
+  ChevronUp, ChevronDown, MailOpen, Trash2, OctagonAlert, BellOff, Tags, FolderInput
 } from 'lucide-react';
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
@@ -43,6 +43,7 @@ function AppContent() {
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [labelMenuOpen, setLabelMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -254,6 +255,13 @@ function AppContent() {
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [snoozeOpen]);
+
+  useEffect(() => {
+    if (!labelMenuOpen) return;
+    const close = () => setLabelMenuOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [labelMenuOpen]);
 
   useEffect(() => {
     const handleGlobalClick = () => {
@@ -539,6 +547,22 @@ function AppContent() {
                               <CheckCircle className="w-3.5 h-3.5" />
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => store.executeBatchMailAction('reportSpam', Array.from(store.selectedThreadIds))}
+                            title="Move to Spam"
+                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--warning)] cursor-pointer transition-colors"
+                          >
+                            <OctagonAlert className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => store.executeBatchMailAction('moveToTrash', Array.from(store.selectedThreadIds))}
+                            title="Move to Trash"
+                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                           <div className="w-px h-3.5 bg-[var(--border)] mx-1" />
                           <button
                             type="button"
@@ -696,6 +720,69 @@ function AppContent() {
                                 <CheckCircle className="w-4 h-4 text-[var(--success)]" />
                               </button>
                             )}
+                            <div className="relative">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLabelMenuOpen(value => !value);
+                                }}
+                                title="Move or apply label"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                              >
+                                <Tags className="w-4 h-4" />
+                              </button>
+                              {labelMenuOpen && (
+                                <div
+                                  className="absolute right-0 top-8 z-30 w-[230px] max-h-[280px] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {store.labelDefinitions.filter(label => label.type !== 'system').length === 0 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void store.syncLabels()}
+                                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+                                    >
+                                      <Tags className="h-3.5 w-3.5" />
+                                      Sync Gmail labels
+                                    </button>
+                                  ) : store.labelDefinitions.filter(label => label.type !== 'system').map(label => (
+                                    <button
+                                      key={label.id}
+                                      type="button"
+                                      onClick={() => {
+                                        void store.moveThreadToLabel(label.id, store.openedThread?.id, true);
+                                        setLabelMenuOpen(false);
+                                      }}
+                                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+                                    >
+                                      <FolderInput className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
+                                      <span className="truncate">{label.name}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => store.muteThread(store.openedThread!.id)}
+                              title="Ignore / Mute Thread"
+                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                            >
+                              <BellOff className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => store.executeMailAction('reportSpam', store.openedThread!.id)}
+                              title="Move to Spam"
+                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--warning)]"
+                            >
+                              <OctagonAlert className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => store.executeMailAction('moveToTrash', store.openedThread!.id)}
+                              title="Move to Trash"
+                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--danger)]"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => store.openThread(null)}
                               className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -832,6 +919,39 @@ function AppContent() {
               <span>Archive / Done</span>
             </button>
           )}
+
+          <button
+            onClick={() => {
+              store.muteThread(contextMenu.thread.id);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+          >
+            <BellOff className="w-3.5 h-3.5 opacity-80" />
+            <span>Ignore Thread</span>
+          </button>
+
+          <button
+            onClick={() => {
+              store.executeMailAction('reportSpam', contextMenu.thread.id);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+          >
+            <OctagonAlert className="w-3.5 h-3.5 opacity-80" />
+            <span>Move to Spam</span>
+          </button>
+
+          <button
+            onClick={() => {
+              store.executeMailAction('moveToTrash', contextMenu.thread.id);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5 opacity-80" />
+            <span>Move to Trash</span>
+          </button>
           
           <button
             onClick={() => {

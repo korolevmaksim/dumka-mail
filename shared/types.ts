@@ -62,6 +62,92 @@ export interface EmailAddressSuggestion extends Recipient {
   lastMessageAt?: string | null;
 }
 
+export type MailLabelType = 'system' | 'user';
+
+export interface MailLabelDefinition {
+  id: string;
+  accountId: AccountID;
+  name: string;
+  type: MailLabelType;
+  colorHex?: string | null;
+  textColorHex?: string | null;
+  messageListVisibility?: 'show' | 'hide' | null;
+  labelListVisibility?: 'labelShow' | 'labelShowIfUnread' | 'labelHide' | null;
+}
+
+export interface GoogleIntegrationStatus {
+  accountId: AccountID;
+  gmailEnabled: boolean;
+  calendarEnabled: boolean;
+  contactsEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface ContactCard {
+  id: string;
+  accountId: AccountID;
+  resourceName?: string | null;
+  etag?: string | null;
+  displayName: string;
+  email: string;
+  photoUrl?: string | null;
+  phoneNumbers: string[];
+  organizations: string[];
+  notes?: string | null;
+  groupIds: string[];
+  updatedAt: string;
+}
+
+export interface ContactGroup {
+  id: string;
+  accountId: AccountID;
+  name: string;
+  memberCount: number;
+  updatedAt: string;
+}
+
+export type CalendarAttendeeResponse = 'needsAction' | 'accepted' | 'declined' | 'tentative';
+
+export interface CalendarAttendee {
+  email: string;
+  displayName?: string | null;
+  responseStatus?: CalendarAttendeeResponse | null;
+  optional?: boolean | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  accountId: AccountID;
+  calendarId: string;
+  iCalUID?: string | null;
+  summary: string;
+  description?: string | null;
+  location?: string | null;
+  startAt: string;
+  endAt: string;
+  isAllDay: boolean;
+  status?: string | null;
+  htmlLink?: string | null;
+  conferenceUrl?: string | null;
+  organizerEmail?: string | null;
+  attendees: CalendarAttendee[];
+  sourceMessageId?: MessageID | null;
+  updatedAt: string;
+}
+
+export interface CalendarInvite {
+  uid: string;
+  method?: string | null;
+  summary: string;
+  description?: string | null;
+  location?: string | null;
+  startAt: string;
+  endAt: string;
+  organizerEmail?: string | null;
+  attendees: CalendarAttendee[];
+  sequence?: number | null;
+}
+
 export interface AttachmentMetadata {
   id: string;
   filename: string;
@@ -133,11 +219,20 @@ export type ActionKind =
   | 'restoreInbox'
   | 'markRead'
   | 'markUnread'
+  | 'moveToTrash'
+  | 'restoreFromTrash'
+  | 'reportSpam'
+  | 'muteThread'
+  | 'applyLabel'
+  | 'removeLabel'
+  | 'moveToLabel'
   | 'autoMarkRead'
   | 'send'
   | 'sendDraft'
   | 'setReminder'
   | 'clearReminder'
+  | 'calendarRSVP'
+  | 'addCalendarEvent'
   | 'applyAIDraftPreview'
   | 'insertSnippet';
 export type ActionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'pending_sync';
@@ -154,11 +249,20 @@ export const ACTION_KIND_META: Record<ActionKind, ActionKindMeta> = {
   restoreInbox: { title: 'Moved to Inbox', icon: 'Inbox' },
   markRead: { title: 'Marked read', icon: 'MailOpen' },
   markUnread: { title: 'Marked unread', icon: 'Mail' },
+  moveToTrash: { title: 'Moved to Trash', icon: 'Trash2' },
+  restoreFromTrash: { title: 'Restored from Trash', icon: 'ArchiveRestore' },
+  reportSpam: { title: 'Moved to Spam', icon: 'OctagonAlert' },
+  muteThread: { title: 'Ignored thread', icon: 'BellOff' },
+  applyLabel: { title: 'Label applied', icon: 'Tag' },
+  removeLabel: { title: 'Label removed', icon: 'Tag' },
+  moveToLabel: { title: 'Moved to label', icon: 'FolderInput' },
   autoMarkRead: { title: 'Snoozed', icon: 'Clock' },
   send: { title: 'Sent message', icon: 'Send' },
   sendDraft: { title: 'Sent message', icon: 'Send' },
   setReminder: { title: 'Reminder set', icon: 'Clock' },
   clearReminder: { title: 'Reminder cleared', icon: 'BellOff' },
+  calendarRSVP: { title: 'RSVP sent', icon: 'CalendarCheck' },
+  addCalendarEvent: { title: 'Calendar event added', icon: 'CalendarPlus' },
   applyAIDraftPreview: { title: 'Applied AI draft', icon: 'Sparkles' },
   insertSnippet: { title: 'Inserted snippet', icon: 'Braces' },
 };
@@ -173,6 +277,7 @@ export interface MailActionLog {
   createdAt: string;
   completedAt?: string | null;
   failureMessage?: string | null;
+  payloadJson?: string | null;
 }
 
 export type AIProviderPreference = 'automatic' | 'openAI' | 'anthropic' | 'gemini' | 'openRouter' | 'deepSeek' | 'openAICompatible' | 'disabled';
@@ -375,6 +480,14 @@ export interface ComposeSettings {
   defaultFontSize: 'compact' | 'normal' | 'large';
 }
 
+export interface CalendarSettings {
+  showAgendaInRightPanel: boolean;
+  defaultMeetingDurationMinutes: number;
+  calendlyUrl: string;
+  calComUrl: string;
+  defaultConferenceProvider: 'googleMeet' | 'calendly' | 'calCom' | 'none';
+}
+
 export interface ShortcutSettings {
   mode: 'superhuman' | 'gmail' | 'appleMail';
   singleKeyShortcuts: boolean;
@@ -481,6 +594,7 @@ export interface AppSettings {
   general: GeneralSettings;
   inbox: InboxSettings;
   compose: ComposeSettings;
+  calendar: CalendarSettings;
   shortcuts: ShortcutSettings;
   snippets: SnippetSettings;
   notifications: MailNotificationSettings;

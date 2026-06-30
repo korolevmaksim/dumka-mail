@@ -22,6 +22,18 @@ export const GOOGLE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.profile'
 ] as const;
 
+export const GOOGLE_CALENDAR_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events'
+] as const;
+
+export const GOOGLE_CONTACTS_SCOPES = [
+  'https://www.googleapis.com/auth/contacts.readonly'
+] as const;
+
+export type GoogleOAuthScope = typeof GOOGLE_OAUTH_SCOPES[number]
+  | typeof GOOGLE_CALENDAR_SCOPES[number]
+  | typeof GOOGLE_CONTACTS_SCOPES[number];
+
 export function loadGoogleConfig(): GoogleClientConfig {
   const primaryPath = path.join(process.env.HOME || '', '.config', 'dumka-mail-agy', 'google-oauth-client.json');
   const fallbackPath = path.join(process.env.HOME || '', '.config', 'personal-mail-client', 'google-oauth-client.json');
@@ -51,7 +63,10 @@ function generateCodeChallenge(verifier: string): string {
   return base64urlSafe(hash);
 }
 
-export function startOAuthFlow(emailHint?: string): Promise<{ email: string; refreshToken: string; displayName?: string; avatarUrl?: string }> {
+export function startOAuthFlow(
+  emailHint?: string,
+  scopes: readonly string[] = GOOGLE_OAUTH_SCOPES
+): Promise<{ email: string; refreshToken?: string; displayName?: string; avatarUrl?: string }> {
   return new Promise((resolve, reject) => {
     const server = http.createServer();
     
@@ -60,7 +75,7 @@ export function startOAuthFlow(emailHint?: string): Promise<{ email: string; ref
       reject(new Error('OAuth flow timed out after 5 minutes.'));
     }, 5 * 60 * 1000);
 
-    const cleanResolve = (val: { email: string; refreshToken: string; displayName?: string; avatarUrl?: string }) => {
+    const cleanResolve = (val: { email: string; refreshToken?: string; displayName?: string; avatarUrl?: string }) => {
       clearTimeout(timeoutId);
       resolve(val);
     };
@@ -132,7 +147,7 @@ export function startOAuthFlow(emailHint?: string): Promise<{ email: string; ref
               const accessToken = tokens.access_token;
               const refreshToken = tokens.refresh_token;
 
-              if (!refreshToken) {
+              if (!refreshToken && scopes.every(scope => GOOGLE_OAUTH_SCOPES.includes(scope as any))) {
                 throw new Error('No refresh token returned. Revoke permissions first.');
               }
 
@@ -172,17 +187,18 @@ export function startOAuthFlow(emailHint?: string): Promise<{ email: string; ref
 
         // Open user browser
         const authUrl = `${config.auth_uri}?` + new URLSearchParams({
-          client_id: config.client_id,
-          redirect_uri: redirectUri,
-          response_type: 'code',
-          scope: GOOGLE_OAUTH_SCOPES.join(' '),
-          state,
-          code_challenge: codeChallenge,
-          code_challenge_method: 'S256',
-          access_type: 'offline',
-          prompt: 'consent',
-          login_hint: emailHint || ''
-        }).toString();
+                  client_id: config.client_id,
+                  redirect_uri: redirectUri,
+                  response_type: 'code',
+          scope: scopes.join(' '),
+                  state,
+                  code_challenge: codeChallenge,
+                  code_challenge_method: 'S256',
+                  access_type: 'offline',
+                  prompt: 'consent',
+                  include_granted_scopes: 'true',
+                  login_hint: emailHint || ''
+                }).toString();
 
         shell.openExternal(authUrl);
       });

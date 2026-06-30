@@ -20,6 +20,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     { title: 'Mark Done (Archive)', shortcut: 'E', action: () => store.executeMailAction('markDone') },
     { title: 'Mark Read', shortcut: 'R', action: () => store.executeMailAction('markRead') },
     { title: 'Mark Unread', shortcut: 'Shift+R', action: () => store.executeMailAction('markUnread') },
+    { title: 'Move to Trash', shortcut: '#', action: () => store.executeMailAction('moveToTrash') },
+    { title: 'Move to Spam', shortcut: '!', action: () => store.executeMailAction('reportSpam') },
+    { title: 'Ignore Thread', shortcut: 'M', action: () => store.muteThread() },
     { title: 'Set Reminder', shortcut: 'H', action: () => {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);

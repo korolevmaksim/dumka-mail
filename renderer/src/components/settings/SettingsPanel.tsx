@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import {
-  Key, User, Settings, Inbox, ListPlus, SquarePen, Keyboard, FileText, Bell, Sparkles, Cpu, Shield, Palette, Info
+  Key, User, Settings, Inbox, ListPlus, SquarePen, Keyboard, FileText, Bell, Sparkles, Cpu, Shield, Palette, Info, Tags, Users, CalendarDays
 } from 'lucide-react';
 import { MCPAndSearchSettingsPanel } from './MCPAndSearchSettingsPanel';
 import { AccountsTab, ProfileTab, GeneralTab, InboxTab, ComposeTab, ShortcutsTab, SnippetsTab, NotificationsTab, PrivacyTab } from './tabs/BasicSettingsTabs';
@@ -9,10 +9,11 @@ import { AboutTab } from './tabs/AboutTab';
 import { AppearanceSettingsTab } from './tabs/AppearanceSettingsTab';
 import { ClassificationSettingsTab } from './tabs/ClassificationSettingsTab';
 import { AISettingsTab } from './tabs/AISettingsTab';
+import { CalendarSettingsTab, ContactsTab, LabelsTab } from './tabs/WorkspaceSettingsTabs';
 
 export function SettingsPanel() {
   const store = useAppStore();
-  const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'mcp' | 'privacy' | 'appearance' | 'about'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'labels' | 'contacts' | 'calendar' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'mcp' | 'privacy' | 'appearance' | 'about'>('accounts');
   
   const tabsList = [
     { id: 'accounts', name: 'Accounts', icon: Key },
@@ -20,6 +21,9 @@ export function SettingsPanel() {
     { id: 'general', name: 'General', icon: Settings },
     { id: 'inbox', name: 'Inbox', icon: Inbox },
     { id: 'classification', name: 'Classification', icon: ListPlus },
+    { id: 'labels', name: 'Labels', icon: Tags },
+    { id: 'contacts', name: 'Contacts', icon: Users },
+    { id: 'calendar', name: 'Calendar', icon: CalendarDays },
     { id: 'compose', name: 'Compose', icon: SquarePen },
     { id: 'shortcuts', name: 'Shortcuts', icon: Keyboard },
     { id: 'snippets', name: 'Snippets', icon: FileText },
@@ -72,6 +76,9 @@ export function SettingsPanel() {
         {activeTab === 'general' && <GeneralTab />}
         {activeTab === 'inbox' && <InboxTab />}
         {activeTab === 'classification' && <ClassificationSettingsTab />}
+        {activeTab === 'labels' && <LabelsTab />}
+        {activeTab === 'contacts' && <ContactsTab />}
+        {activeTab === 'calendar' && <CalendarSettingsTab />}
         {activeTab === 'compose' && <ComposeTab />}
         {activeTab === 'shortcuts' && <ShortcutsTab />}
         {activeTab === 'snippets' && <SnippetsTab />}

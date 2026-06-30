@@ -185,7 +185,27 @@ export function InlineReplyComposer() {
             ai
           </button>
           <button
-            onClick={() => emitToast({ type: 'info', message: 'Scheduling settings opened' })}
+            onClick={async () => {
+              try {
+                const provider = store.settings.calendar.defaultConferenceProvider;
+                if (provider === 'calendly' && store.settings.calendar.calendlyUrl.trim()) {
+                  const next = composeBody ? `${composeBody}\n\nBook a time: ${store.settings.calendar.calendlyUrl.trim()}` : `Book a time: ${store.settings.calendar.calendlyUrl.trim()}`;
+                  setComposeBody(next);
+                  store.updateDraftBody(next, null);
+                  return;
+                }
+                if (provider === 'calCom' && store.settings.calendar.calComUrl.trim()) {
+                  const next = composeBody ? `${composeBody}\n\nBook a time: ${store.settings.calendar.calComUrl.trim()}` : `Book a time: ${store.settings.calendar.calComUrl.trim()}`;
+                  setComposeBody(next);
+                  store.updateDraftBody(next, null);
+                  return;
+                }
+                await store.createGoogleMeetDraftEvent();
+              } catch (err) {
+                console.error('Scheduling link insert failed:', err);
+                emitToast({ type: 'error', message: 'Could not insert scheduling link' });
+              }
+            }}
             title="Schedule"
             className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
           >

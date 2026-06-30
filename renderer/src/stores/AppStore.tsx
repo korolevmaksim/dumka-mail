@@ -1,5 +1,33 @@
-import React, { createContext, useContext, useCallback } from 'react';
-import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriagePlanItem, MailTriagePlan, AIAction, MCPServerConfig, MailTriageQueueReadiness, GmailSignatureSyncResult, MailboxView } from '../../../shared/types';
+import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Account,
+  CalendarAttendeeResponse,
+  CalendarEvent,
+  CalendarInvite,
+  ContactCard,
+  ContactGroup,
+  MailLabelDefinition,
+  GoogleIntegrationStatus,
+  MailThread,
+  MailMessage,
+  Draft,
+  MailActionLog,
+  AIConversation,
+  AIChatMessage,
+  AIProviderPreference,
+  AIProviderDescriptor,
+  CustomClassifierRule,
+  TabCategory,
+  AppSettings,
+  MailTriageActionPreview,
+  MailTriagePlanItem,
+  MailTriagePlan,
+  AIAction,
+  MCPServerConfig,
+  MailTriageQueueReadiness,
+  GmailSignatureSyncResult,
+  MailboxView
+} from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
@@ -77,6 +105,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
     alwaysReplyAll: false,
     sendUndoDelay: 10,
     defaultFontSize: 'normal'
+  },
+  calendar: {
+    showAgendaInRightPanel: true,
+    defaultMeetingDurationMinutes: 30,
+    calendlyUrl: '',
+    calComUrl: '',
+    defaultConferenceProvider: 'googleMeet'
   },
   shortcuts: {
     mode: 'superhuman',
@@ -245,8 +280,27 @@ interface AppStoreContextType {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   searchCoverage: string;
+  googleIntegrationStatus: GoogleIntegrationStatus | null;
+  labelDefinitions: MailLabelDefinition[];
+  contacts: ContactCard[];
+  contactGroups: ContactGroup[];
+  calendarEvents: CalendarEvent[];
+  authorizeGoogleIntegration: (integration: 'calendar' | 'contacts', email?: string) => Promise<void>;
+  syncLabels: (email?: string) => Promise<void>;
+  createLabel: (name: string, email?: string) => Promise<void>;
+  updateLabel: (labelId: string, patch: Partial<MailLabelDefinition>, email?: string) => Promise<void>;
+  deleteLabel: (labelId: string, email?: string) => Promise<void>;
+  moveThreadToLabel: (labelId: string, threadId?: string | null, move?: boolean) => Promise<void>;
+  muteThread: (threadId?: string | null) => Promise<void>;
+  syncContacts: (email?: string) => Promise<void>;
+  updateContactLocal: (contactId: string, patch: Partial<ContactCard>, email?: string) => Promise<void>;
+  saveContactGroup: (name: string, email?: string) => Promise<void>;
+  deleteContactGroup: (groupId: string, email?: string) => Promise<void>;
+  syncCalendarAgenda: (email?: string) => Promise<void>;
+  respondToCalendarInvite: (invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, email?: string) => Promise<void>;
+  createGoogleMeetDraftEvent: () => Promise<CalendarEvent | null>;
   actionLog: MailActionLog[];
-  executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: () => Promise<any>) => Promise<void>;
+  executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: (actionId: string) => Promise<any>, payloadJson?: string | null) => Promise<void>;
   undoLastAction: () => Promise<void>;
   snoozeThread: (thread: MailThread, date: Date) => Promise<void>;
   clearThreadReminder: (thread: MailThread) => Promise<void>;
@@ -311,7 +365,7 @@ interface AppStoreContextType {
   toggleThreadSelection: (threadId: string) => void;
   selectAllThreads: () => void;
   clearThreadSelection: () => void;
-  executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone', threadIds: string[]) => Promise<void>;
+  executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'reportSpam', threadIds: string[]) => Promise<void>;
   selectedTriageThreadIds: Set<string>;
   toggleTriagePlanItemSelection: (threadId: string) => void;
 
@@ -375,6 +429,193 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setSpeedProof: mailState.setSpeedProof
   });
 
+  const [googleIntegrationStatus, setGoogleIntegrationStatus] = useState<GoogleIntegrationStatus | null>(null);
+  const [labelDefinitions, setLabelDefinitions] = useState<MailLabelDefinition[]>([]);
+  const [contacts, setContacts] = useState<ContactCard[]>([]);
+  const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+
+  const primaryWorkspaceEmail = useMemo(() => {
+    if (mailState.activeAccount && mailState.activeAccount.id !== 'unified') return mailState.activeAccount.email;
+    return mailState.accounts[0]?.email || '';
+  }, [mailState.activeAccount, mailState.accounts]);
+
+  const agendaRange = useCallback(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return { startAt: start.toISOString(), endAt: end.toISOString() };
+  }, []);
+
+  const loadWorkspaceCache = useCallback(async (email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) {
+      setGoogleIntegrationStatus(null);
+      setLabelDefinitions([]);
+      setContacts([]);
+      setContactGroups([]);
+      setCalendarEvents([]);
+      return;
+    }
+
+    const { startAt, endAt } = agendaRange();
+    const [status, labels, contactList, groups, events] = await Promise.all([
+      window.electronAPI.getGoogleIntegrationStatus(targetEmail),
+      window.electronAPI.listLabels(targetEmail),
+      window.electronAPI.listContacts(targetEmail),
+      window.electronAPI.listContactGroups(targetEmail),
+      window.electronAPI.listCalendarEvents(targetEmail, startAt, endAt),
+    ]);
+    setGoogleIntegrationStatus(status);
+    setLabelDefinitions(labels);
+    setContacts(contactList);
+    setContactGroups(groups);
+    setCalendarEvents(events);
+  }, [agendaRange, primaryWorkspaceEmail]);
+
+  useEffect(() => {
+    void loadWorkspaceCache();
+  }, [loadWorkspaceCache]);
+
+  const syncLabels = useCallback(async (email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) return;
+    const labels = await window.electronAPI.syncLabels(targetEmail);
+    setLabelDefinitions(labels);
+  }, [primaryWorkspaceEmail]);
+
+  const createLabel = useCallback(async (name: string, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    const trimmedName = name.trim();
+    if (!targetEmail || !trimmedName) return;
+    await window.electronAPI.createLabel(targetEmail, trimmedName);
+    await syncLabels(targetEmail);
+  }, [primaryWorkspaceEmail, syncLabels]);
+
+  const updateLabel = useCallback(async (labelId: string, patch: Partial<MailLabelDefinition>, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail || !labelId) return;
+    await window.electronAPI.updateLabel(targetEmail, labelId, patch);
+    await syncLabels(targetEmail);
+  }, [primaryWorkspaceEmail, syncLabels]);
+
+  const deleteLabel = useCallback(async (labelId: string, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail || !labelId) return;
+    await window.electronAPI.deleteLabel(targetEmail, labelId);
+    await syncLabels(targetEmail);
+  }, [primaryWorkspaceEmail, syncLabels]);
+
+  const moveThreadToLabel = useCallback(async (labelId: string, threadId?: string | null, move = true) => {
+    if (!labelId) return;
+    await mailState.executeMailAction(move ? 'moveToLabel' : 'applyLabel', threadId, null, undefined, JSON.stringify({ labelId }));
+    await loadWorkspaceCache();
+  }, [loadWorkspaceCache, mailState.executeMailAction]);
+
+  const muteThread = useCallback(async (threadId?: string | null) => {
+    const targetEmail = primaryWorkspaceEmail;
+    if (!targetEmail) return;
+    let mutedLabel = labelDefinitions.find(label => label.accountId === targetEmail && label.name.toLowerCase() === 'dumka/muted');
+    if (!mutedLabel) {
+      mutedLabel = await window.electronAPI.createLabel(targetEmail, 'Dumka/Muted');
+      await syncLabels(targetEmail);
+    }
+    await mailState.executeMailAction('muteThread', threadId, null, undefined, JSON.stringify({ labelId: mutedLabel.id, labelName: mutedLabel.name }));
+  }, [labelDefinitions, mailState.executeMailAction, primaryWorkspaceEmail, syncLabels]);
+
+  const syncContacts = useCallback(async (email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) return;
+    const result = await window.electronAPI.syncContacts(targetEmail);
+    setContacts(result.contacts);
+    setContactGroups(result.groups);
+    const status = await window.electronAPI.getGoogleIntegrationStatus(targetEmail);
+    setGoogleIntegrationStatus(status);
+  }, [primaryWorkspaceEmail]);
+
+  const updateContactLocal = useCallback(async (contactId: string, patch: Partial<ContactCard>, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) return;
+    await window.electronAPI.updateContactLocal(targetEmail, contactId, patch);
+    setContacts(await window.electronAPI.listContacts(targetEmail));
+  }, [primaryWorkspaceEmail]);
+
+  const saveContactGroup = useCallback(async (name: string, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    const trimmed = name.trim();
+    if (!targetEmail || !trimmed) return;
+    await window.electronAPI.saveContactGroup({
+      id: crypto.randomUUID(),
+      accountId: targetEmail,
+      name: trimmed,
+      memberCount: 0,
+      updatedAt: new Date().toISOString()
+    });
+    setContactGroups(await window.electronAPI.listContactGroups(targetEmail));
+  }, [primaryWorkspaceEmail]);
+
+  const deleteContactGroup = useCallback(async (groupId: string, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail || !groupId) return;
+    await window.electronAPI.deleteContactGroup(targetEmail, groupId);
+    setContactGroups(await window.electronAPI.listContactGroups(targetEmail));
+  }, [primaryWorkspaceEmail]);
+
+  const syncCalendarAgenda = useCallback(async (email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) return;
+    const { startAt, endAt } = agendaRange();
+    const events = await window.electronAPI.syncCalendarEvents(targetEmail, startAt, endAt);
+    setCalendarEvents(events);
+    const status = await window.electronAPI.getGoogleIntegrationStatus(targetEmail);
+    setGoogleIntegrationStatus(status);
+  }, [agendaRange, primaryWorkspaceEmail]);
+
+  const authorizeGoogleIntegration = useCallback(async (integration: 'calendar' | 'contacts', email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) {
+      throw new Error('Connect a Gmail account before enabling Google integrations.');
+    }
+    const status = await window.electronAPI.authorizeGoogleIntegration(targetEmail, integration);
+    setGoogleIntegrationStatus(status);
+    if (integration === 'calendar') {
+      await syncCalendarAgenda(targetEmail);
+    } else {
+      await syncContacts(targetEmail);
+    }
+  }, [primaryWorkspaceEmail, syncCalendarAgenda, syncContacts]);
+
+  const respondToCalendarInvite = useCallback(async (invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) throw new Error('Connect a Gmail account before responding to invitations.');
+    const actionId = crypto.randomUUID();
+    await window.electronAPI.respondToCalendarInvite(targetEmail, invite, responseStatus, actionId);
+    await syncCalendarAgenda(targetEmail);
+    await mailState.loadActionLog();
+  }, [mailState.loadActionLog, primaryWorkspaceEmail, syncCalendarAgenda]);
+
+  const createGoogleMeetDraftEvent = useCallback(async (): Promise<CalendarEvent | null> => {
+    const draft = draftsState.activeDraft;
+    if (!draft) return null;
+    const targetEmail = draft.accountId;
+    const attendees = [...draft.to, ...draft.cc].map(recipient => recipient.email).filter(Boolean);
+    const event = await window.electronAPI.createGoogleMeetDraftEvent(targetEmail, {
+      summary: draft.subject || 'Meeting',
+      attendees,
+      durationMinutes: settingsState.settings.calendar.defaultMeetingDurationMinutes
+    });
+    const link = event.conferenceUrl || event.htmlLink;
+    if (link) {
+      const plain = `${draft.bodyPlain.trimEnd()}\n\nGoogle Meet: ${link}`.trimStart();
+      const htmlLink = `<p>Google Meet: <a href="${link}" target="_blank">${link}</a></p>`;
+      const html = draft.bodyHtml ? `${draft.bodyHtml}${htmlLink}` : null;
+      draftsState.updateDraftBody(plain, html);
+    }
+    await syncCalendarAgenda(targetEmail);
+    return event;
+  }, [draftsState.activeDraft, draftsState.updateDraftBody, settingsState.settings.calendar.defaultMeetingDurationMinutes, syncCalendarAgenda]);
+
   const fetchModelsForProvider = async (provider: string) => {
     let key = '';
     let baseUrl = '';
@@ -407,6 +648,25 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...mailState,
     ...draftsState,
     ...aiState,
+    googleIntegrationStatus,
+    labelDefinitions,
+    contacts,
+    contactGroups,
+    calendarEvents,
+    authorizeGoogleIntegration,
+    syncLabels,
+    createLabel,
+    updateLabel,
+    deleteLabel,
+    moveThreadToLabel,
+    muteThread,
+    syncContacts,
+    updateContactLocal,
+    saveContactGroup,
+    deleteContactGroup,
+    syncCalendarAgenda,
+    respondToCalendarInvite,
+    createGoogleMeetDraftEvent,
     fetchModelsForProvider,
     syncGmailSignature
   };

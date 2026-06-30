@@ -17,7 +17,14 @@ Runtime credentials are not stored in the repository.
 
 ## Network requests
 
-The app talks directly to Gmail and to the AI provider selected by the user. Mail content is only sent to an AI provider when the user enables AI features and allows the relevant context to be included.
+The app talks directly to Gmail and to the AI provider selected by the user. If the user enables Calendar or Contacts in settings, the app also talks directly to Google Calendar and Google People APIs for the selected account. Mail content is only sent to an AI provider when the user enables AI features and allows the relevant context to be included.
+
+## Google scopes
+
+Initial account onboarding requests Gmail modify access plus Google profile/email scopes. Calendar and Contacts are incremental opt-ins:
+
+- Calendar uses `https://www.googleapis.com/auth/calendar.events` for agenda sync, invite RSVP, and Google Meet event creation.
+- Contacts uses `https://www.googleapis.com/auth/contacts.readonly` for address-book sync. Local contact notes and groups are stored in SQLite.
 
 ## Remote images
 

@@ -1,15 +1,35 @@
 import { app, BrowserWindow, ipcMain, dialog, Notification, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { initializeDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, EmailSuggestionsRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
+import {
+  initializeDatabase,
+  AccountIntegrationsRepo,
+  AccountsRepo,
+  CalendarEventsRepo,
+  ContactGroupsRepo,
+  ContactsRepo,
+  DraftsRepo,
+  EmailSuggestionsRepo,
+  LabelsRepo,
+  MessagesRepo,
+  RemindersRepo,
+  SearchRepo,
+  SettingsRepo,
+  SyncStateRepo,
+  ActionLogRepo,
+  AIConversationsRepo,
+  ThreadsRepo,
+} from './database';
 import { startOAuthFlow, GmailSyncService } from './gmail';
+import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
+import { GoogleWorkspaceService } from './googleWorkspace';
 import { getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { MCPManager } from './mcpManager';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
-import type { MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
+import type { CalendarAttendeeResponse, CalendarInvite, MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenThread: { accountId: string; threadId: string } | null = null;
@@ -493,8 +513,12 @@ registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
   let signatureSync;
   let signatureSyncError;
 
+  if (!profile.refreshToken) {
+    throw new Error('No refresh token returned. Revoke permissions first.');
+  }
   await saveRefreshToken(account.email, profile.refreshToken);
   AccountsRepo.save(account);
+  AccountIntegrationsRepo.patch(account.email, { gmailEnabled: true });
 
   try {
     signatureSync = await GmailSyncService.fetchDefaultSignature(account.email);
@@ -509,6 +533,95 @@ registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
 registerSecureHandler('api:verifyTokenExists', async (_, email) => {
   const token = await getRefreshToken(email);
   return token !== null;
+});
+
+registerSecureHandler('db:getGoogleIntegrationStatus', (_, accountId) => AccountIntegrationsRepo.get(accountId));
+registerSecureHandler('db:listLabels', (_, accountId) => LabelsRepo.list(accountId));
+registerSecureHandler('db:listContacts', (_, accountId, query) => ContactsRepo.list(accountId, query));
+registerSecureHandler('db:updateContactLocal', (_, accountId, contactId, patch) => ContactsRepo.updateLocal(accountId, contactId, patch));
+registerSecureHandler('db:listContactGroups', (_, accountId) => ContactGroupsRepo.list(accountId));
+registerSecureHandler('db:saveContactGroup', (_, group) => ContactGroupsRepo.save(group));
+registerSecureHandler('db:deleteContactGroup', (_, accountId, groupId) => ContactGroupsRepo.delete(accountId, groupId));
+registerSecureHandler('db:listCalendarEvents', (_, accountId, startAt, endAt) => CalendarEventsRepo.listBetween(accountId, startAt, endAt));
+
+registerSecureHandler('api:authorizeGoogleIntegration', async (_, email, integration: 'calendar' | 'contacts') => {
+  const baseScopes = Array.from(GOOGLE_OAUTH_SCOPES);
+  const extraScopes = integration === 'calendar' ? Array.from(GOOGLE_CALENDAR_SCOPES) : Array.from(GOOGLE_CONTACTS_SCOPES);
+  const profile = await startOAuthFlow(email, [...baseScopes, ...extraScopes]);
+  const authorizedEmail = normalizeOAuthEmail(profile.email);
+  const expectedEmail = normalizeOAuthEmail(email);
+  if (authorizedEmail !== expectedEmail) {
+    throw new Error(`Google authorized ${authorizedEmail}, but ${expectedEmail} is selected in Dumka Mail.`);
+  }
+  if (profile.refreshToken) {
+    await saveRefreshToken(expectedEmail, profile.refreshToken);
+  }
+  AccountIntegrationsRepo.patch(expectedEmail, integration === 'calendar'
+    ? { calendarEnabled: true }
+    : { contactsEnabled: true });
+  return AccountIntegrationsRepo.get(expectedEmail);
+});
+
+registerSecureHandler('api:syncLabels', async (_, email) => {
+  const labels = await GmailSyncService.listLabels(email);
+  LabelsRepo.saveMany(labels);
+  return labels;
+});
+
+registerSecureHandler('api:createLabel', async (_, email, name) => {
+  const label = await GmailSyncService.createLabel(email, name);
+  LabelsRepo.saveMany([label]);
+  return label;
+});
+
+registerSecureHandler('api:updateLabel', async (_, email, labelId, patch) => {
+  const label = await GmailSyncService.updateLabel(email, labelId, patch);
+  LabelsRepo.saveMany([label]);
+  return label;
+});
+
+registerSecureHandler('api:deleteLabel', async (_, email, labelId) => {
+  await GmailSyncService.deleteLabel(email, labelId);
+  LabelsRepo.delete(email, labelId);
+});
+
+registerSecureHandler('api:syncContacts', async (_, email) => {
+  const result = await GoogleWorkspaceService.listContacts(email);
+  ContactsRepo.saveMany(result.contacts);
+  for (const group of result.groups) ContactGroupsRepo.save(group);
+  AccountIntegrationsRepo.patch(email, { contactsEnabled: true });
+  return result;
+});
+
+registerSecureHandler('api:syncCalendarEvents', async (_, email, startAt, endAt) => {
+  const events = await GoogleWorkspaceService.listPrimaryCalendarEvents(email, startAt, endAt);
+  CalendarEventsRepo.saveMany(events);
+  AccountIntegrationsRepo.patch(email, { calendarEnabled: true });
+  return events;
+});
+
+registerSecureHandler('api:respondToCalendarInvite', async (_, email, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => {
+  const event = await GoogleWorkspaceService.respondToInvite(email, invite, responseStatus);
+  CalendarEventsRepo.saveMany([event]);
+  if (actionId) {
+    const now = new Date().toISOString();
+    ActionLogRepo.save({
+      id: actionId,
+      accountId: email,
+      kind: 'calendarRSVP',
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      payloadJson: JSON.stringify({ uid: invite.uid, responseStatus })
+    });
+  }
+  return event;
+});
+
+registerSecureHandler('api:createGoogleMeetDraftEvent', async (_, email, input) => {
+  const event = await GoogleWorkspaceService.createGoogleMeetDraftEvent(email, input);
+  CalendarEventsRepo.saveMany([event]);
+  return event;
 });
 
 registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));
@@ -556,13 +669,40 @@ registerSecureHandler('api:uploadAttachment', async () => {
     base64Data
   };
 });
-registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string) => {
+function inferLabelActionKind(addLabelIds: string[], removeLabelIds: string[]): any {
+  if (addLabelIds.includes('TRASH')) return 'moveToTrash';
+  if (removeLabelIds.includes('TRASH')) return 'restoreFromTrash';
+  if (addLabelIds.includes('SPAM')) return 'reportSpam';
+  if (addLabelIds.includes('UNREAD')) return 'markUnread';
+  if (removeLabelIds.includes('UNREAD')) return 'markRead';
+  if (addLabelIds.includes('INBOX')) return 'restoreInbox';
+  if (removeLabelIds.includes('INBOX')) return 'markDone';
+  if (addLabelIds.length > 0 && removeLabelIds.includes('INBOX')) return 'moveToLabel';
+  if (addLabelIds.length > 0) return 'applyLabel';
+  if (removeLabelIds.length > 0) return 'removeLabel';
+  return 'applyLabel';
+}
+
+async function runRemoteLabelAction(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], kind?: string) {
+  if (kind === 'moveToTrash') {
+    await GmailSyncService.trashThread(email, threadId);
+    return;
+  }
+  if (kind === 'restoreFromTrash') {
+    await GmailSyncService.untrashThread(email, threadId);
+    return;
+  }
+  await GmailSyncService.modifyLabels(email, threadId, addLabelIds, removeLabelIds);
+}
+
+registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string, actionKind?: string, payloadJson?: string) => {
   // 1. Optimistically write to local SQLite database first for instant persistence
   ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
+  const resolvedKind = actionKind || inferLabelActionKind(addLabelIds, removeLabelIds);
   
   try {
     // 2. Perform the actual remote Gmail API sync
-    await GmailSyncService.modifyLabels(email, threadId, addLabelIds, removeLabelIds);
+    await runRemoteLabelAction(email, threadId, addLabelIds, removeLabelIds, resolvedKind);
     return { offline: false };
   } catch (err: any) {
     if (isNetworkError(err)) {
@@ -571,15 +711,17 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         const log = ActionLogRepo.list(email).find(l => l.id === actionId);
         if (log) {
           log.status = 'pending_sync';
+          log.payloadJson = payloadJson || log.payloadJson || null;
           ActionLogRepo.save(log);
         } else {
           ActionLogRepo.save({
             id: actionId,
             accountId: email,
             threadId,
-            kind: addLabelIds.includes('INBOX') ? 'restoreInbox' : (removeLabelIds.includes('INBOX') ? 'markDone' : (addLabelIds.includes('UNREAD') ? 'markUnread' : 'markRead')),
+            kind: resolvedKind,
             status: 'pending_sync',
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            payloadJson
           });
         }
       }
@@ -680,6 +822,7 @@ function startBackgroundSyncWorker() {
         ActionLogRepo.save(action);
 
         try {
+          const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
           if (action.kind === 'markDone') {
             await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [], ['INBOX']);
           } else if (action.kind === 'restoreInbox') {
@@ -688,6 +831,23 @@ function startBackgroundSyncWorker() {
             await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [], ['UNREAD']);
           } else if (action.kind === 'markUnread') {
             await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['UNREAD'], []);
+          } else if (action.kind === 'moveToTrash') {
+            await GmailSyncService.trashThread(action.accountId, action.threadId!);
+          } else if (action.kind === 'restoreFromTrash') {
+            await GmailSyncService.untrashThread(action.accountId, action.threadId!);
+          } else if (action.kind === 'reportSpam') {
+            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['SPAM'], ['INBOX']);
+          } else if (action.kind === 'muteThread') {
+            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
+            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, labelId ? [labelId] : [], ['INBOX']);
+          } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel') {
+            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
+            if (labelId) {
+              await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [labelId], action.kind === 'moveToLabel' ? ['INBOX'] : []);
+            }
+          } else if (action.kind === 'removeLabel') {
+            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
+            if (labelId) await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [], [labelId]);
           } else if (action.kind === 'send') {
             if (action.draftId) {
               const draft = DraftsRepo.get(action.draftId);
@@ -725,6 +885,23 @@ function startBackgroundSyncWorker() {
                 ThreadsRepo.updateLabels(action.accountId, action.threadId, ['UNREAD'], []);
               } else if (action.kind === 'markUnread') {
                 ThreadsRepo.updateLabels(action.accountId, action.threadId, [], ['UNREAD']);
+              } else if (action.kind === 'moveToTrash') {
+                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], ['TRASH']);
+              } else if (action.kind === 'restoreFromTrash') {
+                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX']);
+              } else if (action.kind === 'reportSpam') {
+                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM']);
+              } else if (action.kind === 'muteThread') {
+                const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof payload.labelId === 'string' ? [payload.labelId] : []);
+              } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel' || action.kind === 'removeLabel') {
+                const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+                const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
+                if (labelId && action.kind === 'removeLabel') {
+                  ThreadsRepo.updateLabels(action.accountId, action.threadId, [labelId], []);
+                } else if (labelId) {
+                  ThreadsRepo.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
+                }
               }
             }
           }

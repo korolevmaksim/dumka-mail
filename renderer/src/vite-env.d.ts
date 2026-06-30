@@ -1,5 +1,28 @@
 /// <reference types="vite/client" />
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, MCPServerConfig, GmailSignatureSyncResult, OnboardAccountResult, AttachmentMetadata, EmailAddressSuggestion } from '../../shared/types';
+import {
+  Account,
+  AttachmentMetadata,
+  CalendarAttendeeResponse,
+  CalendarEvent,
+  CalendarInvite,
+  ContactCard,
+  ContactGroup,
+  Draft,
+  EmailAddressSuggestion,
+  GmailSignatureSyncResult,
+  GoogleIntegrationStatus,
+  MailActionLog,
+  MailLabelDefinition,
+  MailMessage,
+  MailThread,
+  OnboardAccountResult,
+  SyncState,
+  AIConversation,
+  AIChatMessage,
+  AIProviderPreference,
+  AIProviderDescriptor,
+  MCPServerConfig
+} from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 
 export interface IElectronAPI {
@@ -18,6 +41,14 @@ export interface IElectronAPI {
   listMessagesForThread: (accountId: string, threadId: string) => Promise<MailMessage[]>;
   saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => Promise<void>;
   listEmailSuggestions: (accountId?: string, limit?: number) => Promise<EmailAddressSuggestion[]>;
+  getGoogleIntegrationStatus: (accountId: string) => Promise<GoogleIntegrationStatus>;
+  listLabels: (accountId: string) => Promise<MailLabelDefinition[]>;
+  listContacts: (accountId: string, query?: string) => Promise<ContactCard[]>;
+  updateContactLocal: (accountId: string, contactId: string, patch: Partial<ContactCard>) => Promise<void>;
+  listContactGroups: (accountId: string) => Promise<ContactGroup[]>;
+  saveContactGroup: (group: ContactGroup) => Promise<void>;
+  deleteContactGroup: (accountId: string, groupId: string) => Promise<void>;
+  listCalendarEvents: (accountId: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
 
   // Drafts
   listDrafts: (accountId: string) => Promise<Draft[]>;
@@ -50,6 +81,7 @@ export interface IElectronAPI {
   // OAuth onboarding
   onboardAccount: (emailHint?: string) => Promise<OnboardAccountResult>;
   verifyTokenExists: (email: string) => Promise<boolean>;
+  authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => Promise<GoogleIntegrationStatus>;
 
   // Gmail sync & mutations
   syncInbox: (email: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;
@@ -58,13 +90,21 @@ export interface IElectronAPI {
   syncBackfillPage: (email: string, pageToken?: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; nextPageToken?: string }>;
   runBackfillPage: (email: string) => Promise<{ threadsIndexed: number; pageThreadsIndexed: number; completed: boolean; busy: boolean }>;
   syncGmailSignature: (email: string) => Promise<GmailSignatureSyncResult>;
+  syncLabels: (email: string) => Promise<MailLabelDefinition[]>;
+  createLabel: (email: string, name: string) => Promise<MailLabelDefinition>;
+  updateLabel: (email: string, labelId: string, patch: Partial<MailLabelDefinition>) => Promise<MailLabelDefinition>;
+  deleteLabel: (email: string, labelId: string) => Promise<void>;
   fetchThreadDetail: (email: string, threadId: string) => Promise<MailMessage[]>;
   fetchRawMessage: (email: string, messageId: string) => Promise<string>;
-  modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => Promise<{ offline: boolean }>;
+  modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string, actionKind?: MailActionLog['kind'], payloadJson?: string) => Promise<{ offline: boolean }>;
   sendDraft: (email: string, draft: any, actionId?: string) => Promise<{ offline: boolean; threadId?: string }>;
   fetchAttachmentData: (email: string, messageId: string, attachmentId: string) => Promise<string>;
   downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => Promise<void>;
   uploadAttachment: () => Promise<AttachmentMetadata | null>;
+  syncContacts: (email: string) => Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }>;
+  syncCalendarEvents: (email: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
+  respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => Promise<CalendarEvent>;
+  createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => Promise<CalendarEvent>;
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;

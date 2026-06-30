@@ -1,7 +1,22 @@
 import crypto from 'crypto';
 import { getDatabase } from './database';
 import { isValidEmail } from '../shared/compose';
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, EmailAddressSuggestion } from '../shared/types';
+import {
+  Account,
+  CalendarEvent,
+  ContactCard,
+  ContactGroup,
+  Draft,
+  EmailAddressSuggestion,
+  GoogleIntegrationStatus,
+  MailActionLog,
+  MailLabelDefinition,
+  MailMessage,
+  MailThread,
+  SyncState,
+  AIConversation,
+  AIChatMessage,
+} from '../shared/types';
 
 const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
 const MAX_EMAIL_SUGGESTION_LIMIT = 5000;
@@ -63,6 +78,11 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
       db.prepare('DELETE FROM threads WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM messages WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM labels WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM account_integrations WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM contacts WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM contact_groups WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM calendar_events WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM drafts WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
@@ -70,6 +90,112 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM mail_action_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_search WHERE account_id = ?').run(id);
     })();
+  }
+};
+
+// === Account Integrations Repository ===
+export const AccountIntegrationsRepo = {
+  get(accountId: string): GoogleIntegrationStatus {
+    const db = getDatabase();
+    const row = db.prepare('SELECT * FROM account_integrations WHERE account_id = ?').get(accountId) as any;
+    if (!row) {
+      return {
+        accountId,
+        gmailEnabled: true,
+        calendarEnabled: false,
+        contactsEnabled: false,
+        updatedAt: new Date().toISOString()
+      };
+    }
+    return {
+      accountId: row.account_id,
+      gmailEnabled: row.gmail_enabled === 1,
+      calendarEnabled: row.calendar_enabled === 1,
+      contactsEnabled: row.contacts_enabled === 1,
+      updatedAt: row.updated_at
+    };
+  },
+
+  save(status: GoogleIntegrationStatus) {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO account_integrations (account_id, gmail_enabled, calendar_enabled, contacts_enabled, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(account_id) DO UPDATE SET
+        gmail_enabled=excluded.gmail_enabled,
+        calendar_enabled=excluded.calendar_enabled,
+        contacts_enabled=excluded.contacts_enabled,
+        updated_at=excluded.updated_at
+    `).run(
+      status.accountId,
+      status.gmailEnabled ? 1 : 0,
+      status.calendarEnabled ? 1 : 0,
+      status.contactsEnabled ? 1 : 0,
+      status.updatedAt
+    );
+  },
+
+  patch(accountId: string, patch: Partial<Omit<GoogleIntegrationStatus, 'accountId' | 'updatedAt'>>) {
+    const current = this.get(accountId);
+    this.save({
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
+  }
+};
+
+// === Labels Repository ===
+export const LabelsRepo = {
+  list(accountId: string): MailLabelDefinition[] {
+    const db = getDatabase();
+    const rows = db.prepare('SELECT * FROM labels WHERE account_id = ? ORDER BY type ASC, name COLLATE NOCASE ASC').all(accountId) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      accountId: row.account_id,
+      name: row.name,
+      type: row.type === 'system' ? 'system' : 'user',
+      colorHex: row.color_hex,
+      textColorHex: row.text_color_hex,
+      messageListVisibility: row.message_list_visibility,
+      labelListVisibility: row.label_list_visibility
+    }));
+  },
+
+  saveMany(labels: MailLabelDefinition[]) {
+    const db = getDatabase();
+    const insert = db.prepare(`
+      INSERT INTO labels (
+        id, account_id, name, type, color_hex, text_color_hex, message_list_visibility, label_list_visibility
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, id) DO UPDATE SET
+        name=excluded.name,
+        type=excluded.type,
+        color_hex=excluded.color_hex,
+        text_color_hex=excluded.text_color_hex,
+        message_list_visibility=excluded.message_list_visibility,
+        label_list_visibility=excluded.label_list_visibility
+    `);
+
+    db.transaction(() => {
+      for (const label of labels) {
+        insert.run(
+          label.id,
+          label.accountId,
+          label.name,
+          label.type,
+          label.colorHex || null,
+          label.textColorHex || null,
+          label.messageListVisibility || null,
+          label.labelListVisibility || null
+        );
+      }
+    })();
+  },
+
+  delete(accountId: string, id: string) {
+    const db = getDatabase();
+    db.prepare('DELETE FROM labels WHERE account_id = ? AND id = ?').run(accountId, id);
   }
 };
 
@@ -158,6 +284,17 @@ export const ThreadsRepo = {
         labels = labels.filter(l => !removeLabelIds.includes(l));
         db.prepare('UPDATE threads SET label_ids_json = ? WHERE account_id = ? AND id = ?')
           .run(JSON.stringify(labels), accountId, threadId);
+      }
+
+      const messageRows = db.prepare('SELECT id, label_ids_json FROM messages WHERE account_id = ? AND thread_id = ?').all(accountId, threadId) as any[];
+      const updateMessage = db.prepare('UPDATE messages SET label_ids_json = ?, is_unread = ? WHERE account_id = ? AND id = ?');
+      for (const messageRow of messageRows) {
+        let labels: string[] = JSON.parse(messageRow.label_ids_json);
+        for (const label of addLabelIds) {
+          if (!labels.includes(label)) labels.push(label);
+        }
+        labels = labels.filter(label => !removeLabelIds.includes(label));
+        updateMessage.run(JSON.stringify(labels), labels.includes('UNREAD') ? 1 : 0, accountId, messageRow.id);
       }
     })();
   }
@@ -353,6 +490,218 @@ export const EmailSuggestionsRepo = {
   }
 };
 
+// === Contacts Repository ===
+export const ContactsRepo = {
+  list(accountId: string, query?: string): ContactCard[] {
+    const db = getDatabase();
+    const trimmedQuery = (query || '').trim().toLowerCase();
+    const rows = db.prepare(`
+      SELECT * FROM contacts
+      WHERE account_id = ?
+      ORDER BY display_name COLLATE NOCASE ASC, email COLLATE NOCASE ASC
+      LIMIT 2000
+    `).all(accountId) as any[];
+
+    const contacts = rows.map(row => ({
+      id: row.id,
+      accountId: row.account_id,
+      resourceName: row.resource_name,
+      etag: row.etag,
+      displayName: row.display_name,
+      email: row.email,
+      photoUrl: row.photo_url,
+      phoneNumbers: JSON.parse(row.phone_numbers_json),
+      organizations: JSON.parse(row.organizations_json),
+      notes: row.notes,
+      groupIds: JSON.parse(row.group_ids_json),
+      updatedAt: row.updated_at
+    }));
+
+    if (!trimmedQuery) return contacts;
+    return contacts.filter(contact => {
+      const haystack = [
+        contact.displayName,
+        contact.email,
+        contact.phoneNumbers.join(' '),
+        contact.organizations.join(' '),
+        contact.notes || ''
+      ].join(' ').toLowerCase();
+      return haystack.includes(trimmedQuery);
+    });
+  },
+
+  saveMany(contacts: ContactCard[]) {
+    const db = getDatabase();
+    const insert = db.prepare(`
+      INSERT INTO contacts (
+        id, account_id, resource_name, etag, display_name, email, photo_url,
+        phone_numbers_json, organizations_json, notes, group_ids_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, id) DO UPDATE SET
+        resource_name=excluded.resource_name,
+        etag=excluded.etag,
+        display_name=excluded.display_name,
+        email=excluded.email,
+        photo_url=excluded.photo_url,
+        phone_numbers_json=excluded.phone_numbers_json,
+        organizations_json=excluded.organizations_json,
+        updated_at=excluded.updated_at
+    `);
+
+    db.transaction(() => {
+      for (const contact of contacts) {
+        const existing = db.prepare('SELECT notes, group_ids_json FROM contacts WHERE account_id = ? AND id = ?')
+          .get(contact.accountId, contact.id) as any;
+        insert.run(
+          contact.id,
+          contact.accountId,
+          contact.resourceName || null,
+          contact.etag || null,
+          contact.displayName,
+          contact.email,
+          contact.photoUrl || null,
+          JSON.stringify(contact.phoneNumbers),
+          JSON.stringify(contact.organizations),
+          existing?.notes ?? contact.notes ?? null,
+          existing?.group_ids_json ?? JSON.stringify(contact.groupIds),
+          contact.updatedAt
+        );
+      }
+    })();
+  },
+
+  updateLocal(accountId: string, id: string, patch: Pick<Partial<ContactCard>, 'notes' | 'groupIds' | 'displayName'>) {
+    const db = getDatabase();
+    const row = db.prepare('SELECT * FROM contacts WHERE account_id = ? AND id = ?').get(accountId, id) as any;
+    if (!row) return;
+    db.prepare(`
+      UPDATE contacts
+      SET display_name = ?, notes = ?, group_ids_json = ?, updated_at = ?
+      WHERE account_id = ? AND id = ?
+    `).run(
+      patch.displayName ?? row.display_name,
+      patch.notes ?? row.notes,
+      patch.groupIds ? JSON.stringify(patch.groupIds) : row.group_ids_json,
+      new Date().toISOString(),
+      accountId,
+      id
+    );
+  }
+};
+
+export const ContactGroupsRepo = {
+  list(accountId: string): ContactGroup[] {
+    const db = getDatabase();
+    const rows = db.prepare('SELECT * FROM contact_groups WHERE account_id = ? ORDER BY name COLLATE NOCASE ASC').all(accountId) as any[];
+    return rows.map(row => ({
+      id: row.id,
+      accountId: row.account_id,
+      name: row.name,
+      memberCount: row.member_count,
+      updatedAt: row.updated_at
+    }));
+  },
+
+  save(group: ContactGroup) {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO contact_groups (id, account_id, name, member_count, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, id) DO UPDATE SET
+        name=excluded.name,
+        member_count=excluded.member_count,
+        updated_at=excluded.updated_at
+    `).run(group.id, group.accountId, group.name, group.memberCount, group.updatedAt);
+  },
+
+  delete(accountId: string, id: string) {
+    const db = getDatabase();
+    db.prepare('DELETE FROM contact_groups WHERE account_id = ? AND id = ?').run(accountId, id);
+  }
+};
+
+// === Calendar Events Repository ===
+export const CalendarEventsRepo = {
+  listBetween(accountId: string, startAt: string, endAt: string): CalendarEvent[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM calendar_events
+      WHERE account_id = ? AND end_at >= ? AND start_at <= ?
+      ORDER BY start_at ASC, end_at ASC
+    `).all(accountId, startAt, endAt) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      accountId: row.account_id,
+      calendarId: row.calendar_id,
+      iCalUID: row.ical_uid,
+      summary: row.summary,
+      description: row.description,
+      location: row.location,
+      startAt: row.start_at,
+      endAt: row.end_at,
+      isAllDay: row.is_all_day === 1,
+      status: row.status,
+      htmlLink: row.html_link,
+      conferenceUrl: row.conference_url,
+      organizerEmail: row.organizer_email,
+      attendees: JSON.parse(row.attendees_json),
+      sourceMessageId: row.source_message_id,
+      updatedAt: row.updated_at
+    }));
+  },
+
+  saveMany(events: CalendarEvent[]) {
+    const db = getDatabase();
+    const insert = db.prepare(`
+      INSERT INTO calendar_events (
+        id, account_id, calendar_id, ical_uid, summary, description, location,
+        start_at, end_at, is_all_day, status, html_link, conference_url,
+        organizer_email, attendees_json, source_message_id, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, calendar_id, id) DO UPDATE SET
+        ical_uid=excluded.ical_uid,
+        summary=excluded.summary,
+        description=excluded.description,
+        location=excluded.location,
+        start_at=excluded.start_at,
+        end_at=excluded.end_at,
+        is_all_day=excluded.is_all_day,
+        status=excluded.status,
+        html_link=excluded.html_link,
+        conference_url=excluded.conference_url,
+        organizer_email=excluded.organizer_email,
+        attendees_json=excluded.attendees_json,
+        source_message_id=excluded.source_message_id,
+        updated_at=excluded.updated_at
+    `);
+
+    db.transaction(() => {
+      for (const event of events) {
+        insert.run(
+          event.id,
+          event.accountId,
+          event.calendarId,
+          event.iCalUID || null,
+          event.summary,
+          event.description || null,
+          event.location || null,
+          event.startAt,
+          event.endAt,
+          event.isAllDay ? 1 : 0,
+          event.status || null,
+          event.htmlLink || null,
+          event.conferenceUrl || null,
+          event.organizerEmail || null,
+          JSON.stringify(event.attendees),
+          event.sourceMessageId || null,
+          event.updatedAt
+        );
+      }
+    })();
+  }
+};
+
 // === Search Repository ===
 export const SearchRepo = {
   search(accountId: string, ftsQuery: string): { threadId: string; messageId: string }[] {
@@ -468,7 +817,8 @@ export const ActionLogRepo = {
       status: r.status,
       createdAt: r.created_at,
       completedAt: r.completed_at,
-      failureMessage: r.failure_message
+      failureMessage: r.failure_message,
+      payloadJson: r.payload_json
     }));
   },
 
@@ -489,7 +839,8 @@ export const ActionLogRepo = {
       status: r.status,
       createdAt: r.created_at,
       completedAt: r.completed_at,
-      failureMessage: r.failure_message
+      failureMessage: r.failure_message,
+      payloadJson: r.payload_json
     }));
   },
 
@@ -497,12 +848,13 @@ export const ActionLogRepo = {
     const db = getDatabase();
     db.prepare(`
       INSERT INTO mail_action_log (
-        id, account_id, thread_id, draft_id, kind, status, created_at, completed_at, failure_message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, account_id, thread_id, draft_id, kind, status, created_at, completed_at, failure_message, payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status,
         completed_at=excluded.completed_at,
-        failure_message=excluded.failure_message
+        failure_message=excluded.failure_message,
+        payload_json=excluded.payload_json
     `).run(
       log.id,
       log.accountId,
@@ -512,7 +864,8 @@ export const ActionLogRepo = {
       log.status,
       log.createdAt,
       log.completedAt || null,
-      log.failureMessage || null
+      log.failureMessage || null,
+      log.payloadJson || null
     );
   }
 };

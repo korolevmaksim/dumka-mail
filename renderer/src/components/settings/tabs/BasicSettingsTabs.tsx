@@ -35,6 +35,20 @@ export function AccountsTab() {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
+                    onClick={() => void store.authorizeGoogleIntegration('calendar', acc.email)}
+                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer"
+                  >
+                    Enable Calendar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void store.authorizeGoogleIntegration('contacts', acc.email)}
+                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer"
+                  >
+                    Enable Contacts
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => store.onboardAccount(acc.email)}
                     className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer"
                   >

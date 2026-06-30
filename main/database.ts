@@ -41,7 +41,12 @@ export function getDatabase(): Database.Database {
 // Re-export all repository implementations
 export {
   AccountsRepo,
+  AccountIntegrationsRepo,
+  CalendarEventsRepo,
+  ContactGroupsRepo,
+  ContactsRepo,
   ThreadsRepo,
+  LabelsRepo,
   MessagesRepo,
   EmailSuggestionsRepo,
   SearchRepo,

@@ -1,5 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference } from '../shared/types';
+import {
+  Account,
+  CalendarAttendeeResponse,
+  CalendarInvite,
+  ContactCard,
+  ContactGroup,
+  MailLabelDefinition,
+  MailThread,
+  MailMessage,
+  Draft,
+  SyncState,
+  MailActionLog,
+  AIConversation,
+  AIChatMessage,
+  AIProviderPreference
+} from '../shared/types';
 import { AIRequest } from './ai';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -18,6 +33,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listMessagesForThread: (accountId: string, threadId: string) => ipcRenderer.invoke('db:listMessagesForThread', accountId, threadId),
   saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => ipcRenderer.invoke('db:saveMessages', messages, options),
   listEmailSuggestions: (accountId?: string, limit?: number) => ipcRenderer.invoke('db:listEmailSuggestions', accountId, limit),
+
+  // Labels, contacts, and calendar cache
+  getGoogleIntegrationStatus: (accountId: string) => ipcRenderer.invoke('db:getGoogleIntegrationStatus', accountId),
+  listLabels: (accountId: string) => ipcRenderer.invoke('db:listLabels', accountId),
+  listContacts: (accountId: string, query?: string) => ipcRenderer.invoke('db:listContacts', accountId, query),
+  updateContactLocal: (accountId: string, contactId: string, patch: Partial<ContactCard>) => ipcRenderer.invoke('db:updateContactLocal', accountId, contactId, patch),
+  listContactGroups: (accountId: string) => ipcRenderer.invoke('db:listContactGroups', accountId),
+  saveContactGroup: (group: ContactGroup) => ipcRenderer.invoke('db:saveContactGroup', group),
+  deleteContactGroup: (accountId: string, groupId: string) => ipcRenderer.invoke('db:deleteContactGroup', accountId, groupId),
+  listCalendarEvents: (accountId: string, startAt: string, endAt: string) => ipcRenderer.invoke('db:listCalendarEvents', accountId, startAt, endAt),
 
   // Drafts
   listDrafts: (accountId: string) => ipcRenderer.invoke('db:listDrafts', accountId),
@@ -50,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // OAuth onboarding
   onboardAccount: (emailHint?: string) => ipcRenderer.invoke('api:onboardAccount', emailHint),
   verifyTokenExists: (email: string) => ipcRenderer.invoke('api:verifyTokenExists', email),
+  authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => ipcRenderer.invoke('api:authorizeGoogleIntegration', email, integration),
 
   // Gmail sync & mutations
   syncInbox: (email: string) => ipcRenderer.invoke('api:syncInbox', email),
@@ -60,11 +86,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   syncGmailSignature: (email: string) => ipcRenderer.invoke('api:syncGmailSignature', email),
   fetchThreadDetail: (email: string, threadId: string) => ipcRenderer.invoke('api:fetchThreadDetail', email, threadId),
   fetchRawMessage: (email: string, messageId: string) => ipcRenderer.invoke('api:fetchRawMessage', email, messageId),
-  modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string) => ipcRenderer.invoke('api:modifyLabels', email, threadId, addLabelIds, removeLabelIds, actionId),
+  syncLabels: (email: string) => ipcRenderer.invoke('api:syncLabels', email),
+  createLabel: (email: string, name: string) => ipcRenderer.invoke('api:createLabel', email, name),
+  updateLabel: (email: string, labelId: string, patch: Partial<MailLabelDefinition>) => ipcRenderer.invoke('api:updateLabel', email, labelId, patch),
+  deleteLabel: (email: string, labelId: string) => ipcRenderer.invoke('api:deleteLabel', email, labelId),
+  modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string, actionKind?: string, payloadJson?: string) => ipcRenderer.invoke('api:modifyLabels', email, threadId, addLabelIds, removeLabelIds, actionId, actionKind, payloadJson),
   sendDraft: (email: string, draft: any, actionId?: string) => ipcRenderer.invoke('api:sendDraft', email, draft, actionId),
   fetchAttachmentData: (email: string, messageId: string, attachmentId: string) => ipcRenderer.invoke('api:fetchAttachmentData', email, messageId, attachmentId),
   downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => ipcRenderer.invoke('api:downloadAttachment', email, messageId, attachmentId, filename),
   uploadAttachment: () => ipcRenderer.invoke('api:uploadAttachment'),
+  syncContacts: (email: string) => ipcRenderer.invoke('api:syncContacts', email),
+  syncCalendarEvents: (email: string, startAt: string, endAt: string) => ipcRenderer.invoke('api:syncCalendarEvents', email, startAt, endAt),
+  respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => ipcRenderer.invoke('api:respondToCalendarInvite', email, invite, responseStatus, actionId),
+  createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => ipcRenderer.invoke('api:createGoogleMeetDraftEvent', email, input),
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:getAIProviderDescriptor', preference, overrideModel),

@@ -31,8 +31,66 @@ export function runMigrations(db: Database.Database) {
         id TEXT NOT NULL,
         account_id TEXT NOT NULL,
         name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'user',
         color_hex TEXT,
+        text_color_hex TEXT,
+        message_list_visibility TEXT,
+        label_list_visibility TEXT,
         PRIMARY KEY (account_id, id)
+    );
+
+    CREATE TABLE IF NOT EXISTS account_integrations (
+        account_id TEXT PRIMARY KEY,
+        gmail_enabled INTEGER NOT NULL DEFAULT 1,
+        calendar_enabled INTEGER NOT NULL DEFAULT 0,
+        contacts_enabled INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS contacts (
+        id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        resource_name TEXT,
+        etag TEXT,
+        display_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        photo_url TEXT,
+        phone_numbers_json TEXT NOT NULL DEFAULT '[]',
+        organizations_json TEXT NOT NULL DEFAULT '[]',
+        notes TEXT,
+        group_ids_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, id)
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_groups (
+        id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        member_count INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, id)
+    );
+
+    CREATE TABLE IF NOT EXISTS calendar_events (
+        id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        calendar_id TEXT NOT NULL,
+        ical_uid TEXT,
+        summary TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        start_at TEXT NOT NULL,
+        end_at TEXT NOT NULL,
+        is_all_day INTEGER NOT NULL DEFAULT 0,
+        status TEXT,
+        html_link TEXT,
+        conference_url TEXT,
+        organizer_email TEXT,
+        attendees_json TEXT NOT NULL DEFAULT '[]',
+        source_message_id TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, calendar_id, id)
     );
 
     CREATE TABLE IF NOT EXISTS threads (
@@ -149,12 +207,18 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_account_id ON mail_action_log(account_id);
     CREATE INDEX IF NOT EXISTS idx_threads_account_last_message_at ON threads(account_id, last_message_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_account_thread_received_at ON messages(account_id, thread_id, received_at);
+    CREATE INDEX IF NOT EXISTS idx_contacts_account_email ON contacts(account_id, email);
+    CREATE INDEX IF NOT EXISTS idx_calendar_events_account_start ON calendar_events(account_id, start_at);
     CREATE VIRTUAL TABLE IF NOT EXISTS mail_search USING fts5(account_id, thread_id, message_id, subject, sender, snippet, body_plain);
   `);
 
   // Ensure newer columns are present (equivalent to addColumnIfMissing in Swift)
   const tablesInfo = [
     { table: 'accounts', column: 'avatar_url', definition: 'avatar_url TEXT' },
+    { table: 'labels', column: 'type', definition: 'type TEXT NOT NULL DEFAULT \'user\'' },
+    { table: 'labels', column: 'text_color_hex', definition: 'text_color_hex TEXT' },
+    { table: 'labels', column: 'message_list_visibility', definition: 'message_list_visibility TEXT' },
+    { table: 'labels', column: 'label_list_visibility', definition: 'label_list_visibility TEXT' },
     { table: 'messages', column: 'attachments_json', definition: 'attachments_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'to_recipients_json', definition: 'to_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'cc_recipients_json', definition: 'cc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
@@ -170,7 +234,11 @@ export function runMigrations(db: Database.Database) {
     { table: 'drafts', column: 'attachments_json', definition: 'attachments_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'drafts', column: 'body_html', definition: 'body_html TEXT' },
     { table: 'drafts', column: 'reply_message_id', definition: 'reply_message_id TEXT' },
-    { table: 'drafts', column: 'reply_references', definition: 'reply_references TEXT' }
+    { table: 'drafts', column: 'reply_references', definition: 'reply_references TEXT' },
+    { table: 'mail_action_log', column: 'payload_json', definition: 'payload_json TEXT' },
+    { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
+    { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },
+    { table: 'calendar_events', column: 'source_message_id', definition: 'source_message_id TEXT' }
   ];
 
   for (const { table, column, definition } of tablesInfo) {

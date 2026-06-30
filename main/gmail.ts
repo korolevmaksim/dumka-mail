@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { GmailSignatureSyncResult, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
+import { GmailSignatureSyncResult, MailLabelDefinition, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
 import { getRefreshToken } from './keychain';
 import { compileMarkdownToHtml } from '../shared/markdown';
 import { gmailSignatureHtmlToPlainText, sanitizeGmailSignatureHtml } from '../shared/textNormalizer';
@@ -8,7 +8,7 @@ import { loadGoogleConfig, startOAuthFlow, base64urlSafe } from './gmailOAuth';
 export { startOAuthFlow };
 
 // Helper: Fetch with Timeout to prevent hung requests
-async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 15000): Promise<Response> {
+export async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 15000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -132,6 +132,19 @@ function selectSignatureAlias(sendAs: GmailSendAsAlias[], accountEmail: string):
   );
 }
 
+function mapGmailLabel(raw: any, accountId: string): MailLabelDefinition {
+  return {
+    id: String(raw.id || raw.name || ''),
+    accountId,
+    name: String(raw.name || raw.id || ''),
+    type: raw.type === 'system' ? 'system' : 'user',
+    colorHex: raw.color?.backgroundColor || null,
+    textColorHex: raw.color?.textColor || null,
+    messageListVisibility: raw.messageListVisibility || null,
+    labelListVisibility: raw.labelListVisibility || null
+  };
+}
+
 // Maps Gmail API Message object to local MailMessage
 export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
   const headers = (gmailMsg.payload?.headers || []) as { name: string; value: string }[];
@@ -176,15 +189,16 @@ export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
       );
       const disposition = findPartHeader(part, 'content-disposition').toLowerCase();
       const isInline = disposition.includes('inline') || Boolean(contentId);
-      const hasAttachmentPayload = Boolean(attachmentId || (data && mimeType && !mimeType.startsWith('text/')));
-      const shouldCaptureAttachment = hasAttachmentPayload && Boolean(part.filename || contentId);
+      const isCalendarPart = mimeType === 'text/calendar' || part.filename?.toLowerCase().endsWith('.ics');
+      const hasAttachmentPayload = Boolean(attachmentId || isCalendarPart || (data && mimeType && !mimeType.startsWith('text/')));
+      const shouldCaptureAttachment = hasAttachmentPayload && Boolean(part.filename || contentId || isCalendarPart);
 
       if (shouldCaptureAttachment) {
         const inlineData = !attachmentId && data ? base64UrlToBase64(data) : undefined;
-        const id = attachmentId || part.partId || contentId || `${part.filename || 'attachment'}-${attachments.length + 1}`;
+        const id = attachmentId || part.partId || contentId || `${part.filename || (isCalendarPart ? 'invite.ics' : 'attachment')}-${attachments.length + 1}`;
         const attachment: AttachmentMetadata = {
           id,
-          filename: part.filename || (isInline ? 'inline' : 'attachment'),
+          filename: part.filename || (isCalendarPart ? 'invite.ics' : (isInline ? 'inline' : 'attachment')),
           mimeType: part.mimeType,
           sizeBytes: part.body?.size || 0,
           attachmentId,
@@ -316,6 +330,81 @@ async function syncThreadsForQuery(
 }
 
 export const GmailSyncService = {
+  async listLabels(email: string): Promise<MailLabelDefinition[]> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/labels', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok) {
+      throw new Error(`Gmail labels fetch error: ${await res.text()}`);
+    }
+
+    const data = await res.json() as { labels?: any[] };
+    return (data.labels || []).map(label => mapGmailLabel(label, email)).filter(label => label.id && label.name);
+  },
+
+  async createLabel(email: string, name: string): Promise<MailLabelDefinition> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/labels', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name,
+        labelListVisibility: 'labelShow',
+        messageListVisibility: 'show'
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error(`Gmail label create error: ${await res.text()}`);
+    }
+
+    return mapGmailLabel(await res.json(), email);
+  },
+
+  async updateLabel(email: string, labelId: string, patch: { name?: string; colorHex?: string | null; textColorHex?: string | null }): Promise<MailLabelDefinition> {
+    const accessToken = await getAccessToken(email);
+    const body: any = {};
+    if (patch.name !== undefined) body.name = patch.name;
+    if (patch.colorHex || patch.textColorHex) {
+      body.color = {
+        backgroundColor: patch.colorHex || '#eeeeee',
+        textColor: patch.textColorHex || '#000000'
+      };
+    }
+
+    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/labels/${encodeURIComponent(labelId)}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      throw new Error(`Gmail label update error: ${await res.text()}`);
+    }
+
+    return mapGmailLabel(await res.json(), email);
+  },
+
+  async deleteLabel(email: string, labelId: string): Promise<void> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/labels/${encodeURIComponent(labelId)}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`Gmail label delete error: ${await res.text()}`);
+    }
+  },
+
   async fetchDefaultSignature(email: string): Promise<GmailSignatureSyncResult> {
     const accessToken = await getAccessToken(email);
     const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs', {
@@ -534,6 +623,30 @@ export const GmailSyncService = {
 
     if (!res.ok) {
       throw new Error(`Label modification failed for thread ${threadId}: ${await res.text()}`);
+    }
+  },
+
+  async trashThread(email: string, threadId: string): Promise<void> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/trash`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok) {
+      throw new Error(`Trash failed for thread ${threadId}: ${await res.text()}`);
+    }
+  },
+
+  async untrashThread(email: string, threadId: string): Promise<void> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/untrash`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok) {
+      throw new Error(`Untrash failed for thread ${threadId}: ${await res.text()}`);
     }
   },
 

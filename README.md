@@ -12,9 +12,11 @@ This project is early alpha software. It is useful for local development and exp
 
 - Local SQLite mail cache with full-text search.
 - Gmail OAuth onboarding with macOS Keychain token storage.
+- Optional incremental Google Calendar and Google Contacts authorization from settings.
 - Split inbox categories, saved views, reminders, and action history.
-- Offline-first mailbox mutations with background reconciliation.
+- Offline-first mailbox mutations with background reconciliation, including archive, trash, spam, ignore, and labels.
 - Compose, reply, forward, signatures, snippets, attachments, and sent mail sync.
+- Right-panel agenda, calendar invite cards, RSVP actions, and scheduling-link insertion.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
 - Secure Electron defaults: context isolation, sandboxed renderer, disabled Node integration, and typed preload IPC.
 
@@ -23,7 +25,7 @@ This project is early alpha software. It is useful for local development and exp
 - macOS for the current desktop build and Keychain integration.
 - Node.js 22 or newer.
 - npm 10 or newer.
-- A Google OAuth desktop client JSON file with Gmail API access.
+- A Google OAuth desktop client JSON file with Gmail API access. Calendar and Contacts scopes are requested later from Settings only when those integrations are enabled.
 
 ## Setup
 

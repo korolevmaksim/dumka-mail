@@ -2,6 +2,7 @@ import { useAppStore } from '../../stores/AppStore';
 import { ThreadContextPanel } from '../ThreadContextPanel';
 import { ActivityTimeline } from '../ActivityTimeline';
 import { RefreshCw, RotateCcw } from 'lucide-react';
+import { CalendarAgendaPanel } from '../CalendarAgendaPanel';
 
 export function RightContextPanel() {
   const store = useAppStore();
@@ -18,6 +19,8 @@ export function RightContextPanel() {
           <ThreadContextPanel thread={store.openedThread} />
         </div>
       )}
+
+      {store.settings.calendar.showAgendaInRightPanel && <CalendarAgendaPanel />}
 
       {/* Health Verdict Panel */}
       <div className="flex flex-col gap-2">

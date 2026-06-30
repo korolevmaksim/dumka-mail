@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { buildOnboardedAccount } from '../main/accountOnboarding';
-import { GOOGLE_OAUTH_SCOPES } from '../main/gmailOAuth';
+import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from '../main/gmailOAuth';
 import { Account } from '../shared/types';
 
 describe('OAuth account onboarding', () => {
   it('requests the Google email scope needed to identify the onboarded account', () => {
     expect(GOOGLE_OAUTH_SCOPES).toContain('https://www.googleapis.com/auth/userinfo.email');
+  });
+
+  it('keeps Calendar and Contacts scopes separate for incremental authorization', () => {
+    expect(GOOGLE_OAUTH_SCOPES).not.toContain('https://www.googleapis.com/auth/calendar.events');
+    expect(GOOGLE_OAUTH_SCOPES).not.toContain('https://www.googleapis.com/auth/contacts.readonly');
+    expect(GOOGLE_CALENDAR_SCOPES).toEqual(['https://www.googleapis.com/auth/calendar.events']);
+    expect(GOOGLE_CONTACTS_SCOPES).toEqual(['https://www.googleapis.com/auth/contacts.readonly']);
   });
 
   it('rejects OAuth profiles that do not include an email address', () => {
