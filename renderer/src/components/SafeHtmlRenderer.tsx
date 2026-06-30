@@ -36,8 +36,8 @@ function preprocessHtml(html: string): string {
 /** True when the HTML references remote (http/https) image resources. */
 export function hasRemoteImages(html: string): boolean {
   if (!html) return false;
-  return /<img[^>]+src\s*=\s*["']?\s*https?:/i.test(html) ||
-    /background(-image)?\s*:\s*url\(\s*["']?\s*https?:/i.test(html);
+  return /<(?:img|source)\b[^>]+\b(?:src|srcset)\s*=\s*(?:"[^"]*(?:https?:)?\/\/|'[^']*(?:https?:)?\/\/|[^\s>]*(?:https?:)?\/\/)/i.test(html) ||
+    /url\(\s*["']?\s*(?:https?:)?\/\//i.test(html);
 }
 
 // Hardened HTML renderer (TD-C2/C3): strict CSP blocks all scripts and gates

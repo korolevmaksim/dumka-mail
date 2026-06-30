@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Notification, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { initializeDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
+import { initializeDatabase, AccountsRepo, ThreadsRepo, MessagesRepo, EmailSuggestionsRepo, DraftsRepo, RemindersRepo, SyncStateRepo, ActionLogRepo, AIConversationsRepo, SearchRepo, SettingsRepo } from './database';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
@@ -439,6 +439,7 @@ registerSecureHandler('db:listMessagesForThread', (_, accountId, threadId) => Me
 registerSecureHandler('db:saveMessages', async (_, messages: MailMessage[], options?: { notifyOfNew?: boolean }) => {
   await saveMessagesToDatabase(messages, options);
 });
+registerSecureHandler('db:listEmailSuggestions', (_, accountId?: string, limit?: number) => EmailSuggestionsRepo.list(accountId, limit));
 
 registerSecureHandler('api:getPendingOpenThread', () => {
   const pending = pendingOpenThread;

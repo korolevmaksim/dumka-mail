@@ -21,6 +21,7 @@ import { InlineReplyComposer } from './components/layout/InlineReplyComposer';
 import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer';
 import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
+import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 
 const getMaxWidthStyle = (option?: string) => {
   switch (option) {
@@ -35,6 +36,9 @@ const getMaxWidthStyle = (option?: string) => {
 
 function AppContent() {
   const store = useAppStore();
+  const threadHeaderIdentity = store.openedThread
+    ? resolveThreadHeaderIdentity(store.openedThread, store.openedThreadMessages)
+    : null;
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -589,10 +593,10 @@ function AppContent() {
                             </h1>
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
-                                {store.openedThread.senderNames.join(', ')}
+                                {threadHeaderIdentity?.senderNames.join(', ') || store.openedThread.senderEmail}
                               </span>
                               <span className="text-[var(--text-secondary)] text-[calc(11px*var(--font-scale))]">
-                                &lt;{store.openedThread.senderEmail}&gt;
+                                &lt;{threadHeaderIdentity?.senderEmail || store.openedThread.senderEmail}&gt;
                               </span>
                             </div>
                           </div>

@@ -43,6 +43,7 @@ export {
   AccountsRepo,
   ThreadsRepo,
   MessagesRepo,
+  EmailSuggestionsRepo,
   SearchRepo,
   RemindersRepo,
   SyncStateRepo,

@@ -36,7 +36,7 @@ import {
   sanitizeDraftHtmlFragment,
 } from '../../../../shared/draftHtml';
 import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
-import type { AttachmentMetadata } from '../../../../shared/types';
+import type { AttachmentMetadata, EmailAddressSuggestion } from '../../../../shared/types';
 import { RecipientField } from '../compose/RecipientField';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
 
@@ -112,6 +112,7 @@ export function FloatingComposeDrawer() {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInstruction, setAiInstruction] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  const [emailSuggestions, setEmailSuggestions] = useState<EmailAddressSuggestion[]>([]);
 
   const activeDraft = store.activeDraft;
 
@@ -123,6 +124,27 @@ export function FloatingComposeDrawer() {
     setAiOpen(false);
     setAiInstruction('');
   }, [activeDraft?.id]);
+
+  useEffect(() => {
+    if (!activeDraft) {
+      setEmailSuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+    window.electronAPI.listEmailSuggestions(activeDraft.accountId).then((suggestions) => {
+      if (!cancelled) setEmailSuggestions(suggestions);
+    }).catch((error) => {
+      if (!cancelled) {
+        console.error('Failed to load email suggestions:', error);
+        setEmailSuggestions([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDraft?.accountId]);
 
   if (!activeDraft || store.composeLayout !== 'floating') {
     return null;
@@ -360,6 +382,8 @@ export function FloatingComposeDrawer() {
             recipients={activeDraft.to}
             placeholder="Add recipients"
             autoFocus
+            suggestions={emailSuggestions}
+            excludedEmails={[activeDraft.accountId]}
             onChange={(recipients) => updateRecipients('to', recipients)}
           />
         </div>
@@ -381,6 +405,8 @@ export function FloatingComposeDrawer() {
           label="Cc"
           recipients={activeDraft.cc}
           placeholder="Add carbon copy recipients"
+          suggestions={emailSuggestions}
+          excludedEmails={[activeDraft.accountId]}
           onChange={(recipients) => updateRecipients('cc', recipients)}
         />
       )}
@@ -389,6 +415,8 @@ export function FloatingComposeDrawer() {
           label="Bcc"
           recipients={activeDraft.bcc}
           placeholder="Add blind carbon copy recipients"
+          suggestions={emailSuggestions}
+          excludedEmails={[activeDraft.accountId]}
           onChange={(recipients) => updateRecipients('bcc', recipients)}
         />
       )}

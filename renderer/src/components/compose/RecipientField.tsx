@@ -1,12 +1,15 @@
+import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Recipient } from '../../../../shared/types';
-import { isValidEmail } from '../../../../shared/compose';
+import type { EmailAddressSuggestion, Recipient } from '../../../../shared/types';
+import { filterEmailSuggestions, isValidEmail } from '../../../../shared/compose';
 
 interface RecipientFieldProps {
   label: string;
   recipients: Recipient[];
   placeholder?: string;
   autoFocus?: boolean;
+  suggestions?: EmailAddressSuggestion[];
+  excludedEmails?: string[];
   onChange: (recipients: Recipient[]) => void;
 }
 
@@ -41,13 +44,45 @@ export function RecipientField({
   recipients,
   placeholder,
   autoFocus,
+  suggestions = [],
+  excludedEmails = [],
   onChange,
 }: RecipientFieldProps) {
-  const commitInput = (input: HTMLInputElement) => {
-    const additions = parseRecipientInput(input.value);
+  const [inputValue, setInputValue] = useState('');
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const filteredSuggestions = useMemo(
+    () => filterEmailSuggestions(suggestions, inputValue, {
+      existingRecipients: recipients,
+      excludedEmails,
+      limit: 8,
+    }),
+    [excludedEmails, inputValue, recipients, suggestions],
+  );
+  const visibleSuggestions = suggestionsOpen ? filteredSuggestions : [];
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [inputValue, suggestions]);
+
+  useEffect(() => {
+    if (highlightedIndex >= visibleSuggestions.length) {
+      setHighlightedIndex(Math.max(0, visibleSuggestions.length - 1));
+    }
+  }, [highlightedIndex, visibleSuggestions.length]);
+
+  const commitInput = () => {
+    const additions = parseRecipientInput(inputValue);
     if (additions.length === 0) return;
     onChange(mergeRecipients(recipients, additions));
-    input.value = '';
+    setInputValue('');
+    setSuggestionsOpen(false);
+  };
+
+  const commitSuggestion = (suggestion: EmailAddressSuggestion) => {
+    onChange(mergeRecipients(recipients, [{ name: suggestion.name, email: suggestion.email }]));
+    setInputValue('');
+    setSuggestionsOpen(false);
   };
 
   return (
@@ -78,23 +113,95 @@ export function RecipientField({
             </span>
           );
         })}
-        <input
-          autoFocus={autoFocus}
-          placeholder={recipients.length === 0 ? placeholder : ''}
-          onBlur={(event) => commitInput(event.currentTarget)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ',' || event.key === ';' || event.key === 'Tab') {
-              const hasValue = event.currentTarget.value.trim().length > 0;
-              if (hasValue) {
+        <div className="relative min-w-[220px] flex-1">
+          <input
+            autoFocus={autoFocus}
+            value={inputValue}
+            placeholder={recipients.length === 0 ? placeholder : ''}
+            onFocus={() => setSuggestionsOpen(true)}
+            onBlur={() => {
+              commitInput();
+              setSuggestionsOpen(false);
+            }}
+            onChange={(event) => {
+              setInputValue(event.currentTarget.value);
+              setSuggestionsOpen(true);
+            }}
+            onKeyDown={(event) => {
+              if (visibleSuggestions.length > 0 && event.key === 'ArrowDown') {
                 event.preventDefault();
-                commitInput(event.currentTarget);
+                setHighlightedIndex(index => Math.min(index + 1, visibleSuggestions.length - 1));
+                return;
               }
-            } else if (event.key === 'Backspace' && event.currentTarget.value === '' && recipients.length > 0) {
-              onChange(recipients.slice(0, -1));
-            }
-          }}
-          className="min-w-[220px] flex-1 bg-transparent py-1 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
-        />
+              if (visibleSuggestions.length > 0 && event.key === 'ArrowUp') {
+                event.preventDefault();
+                setHighlightedIndex(index => Math.max(index - 1, 0));
+                return;
+              }
+              if (event.key === 'Escape' && visibleSuggestions.length > 0) {
+                event.preventDefault();
+                setSuggestionsOpen(false);
+                return;
+              }
+              if (event.key === 'Enter' || event.key === 'Tab') {
+                const highlighted = visibleSuggestions[highlightedIndex];
+                if (highlighted) {
+                  event.preventDefault();
+                  commitSuggestion(highlighted);
+                  return;
+                }
+              }
+              if (event.key === 'Enter' || event.key === ',' || event.key === ';' || event.key === 'Tab') {
+                const hasValue = inputValue.trim().length > 0;
+                if (hasValue) {
+                  event.preventDefault();
+                  commitInput();
+                }
+              } else if (event.key === 'Backspace' && inputValue === '' && recipients.length > 0) {
+                onChange(recipients.slice(0, -1));
+              }
+            }}
+            className="w-full bg-transparent py-1 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
+          />
+          {visibleSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] py-1 shadow-xl"
+            >
+              {visibleSuggestions.map((suggestion, index) => {
+                const isHighlighted = index === highlightedIndex;
+                const primaryLabel = suggestion.name || suggestion.email;
+                return (
+                  <button
+                    key={suggestion.email}
+                    type="button"
+                    role="option"
+                    aria-selected={isHighlighted}
+                    title={suggestion.name ? `${suggestion.name} <${suggestion.email}>` : suggestion.email}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      commitSuggestion(suggestion);
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[calc(12px*var(--font-scale))] ${
+                      isHighlighted ? 'bg-[var(--hover-row)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-[var(--text-primary)]">{primaryLabel}</span>
+                      {suggestion.name && (
+                        <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{suggestion.email}</span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
+                      {suggestion.sourceCount}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

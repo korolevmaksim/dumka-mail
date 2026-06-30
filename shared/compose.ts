@@ -6,7 +6,7 @@
 // the Electron main process and the React renderer, so it must stay pure
 // (standard JS/TS + Intl + relative `shared/` imports only).
 
-import type { MailMessage, Recipient } from './types'
+import type { EmailAddressSuggestion, MailMessage, Recipient } from './types'
 
 /** A pre-filled draft skeleton produced by reply/forward actions. */
 export interface DraftSeed {
@@ -24,6 +24,12 @@ export interface DraftSeed {
 export interface ValidationResult {
   valid: boolean
   errors: string[]
+}
+
+export interface EmailSuggestionFilterOptions {
+  existingRecipients?: Recipient[]
+  excludedEmails?: string[]
+  limit?: number
 }
 
 /** Maximum total attachment size, mirroring `DraftValidator.maxTotalAttachmentBytes`. */
@@ -103,6 +109,85 @@ function uniqueRecipients(list: Recipient[], excluding: Set<string>): Recipient[
     out.push({ name: (r.name ?? '').trim(), email })
   }
   return out
+}
+
+function normalizedEmailKey(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+function currentRecipientToken(input: string): string {
+  const parts = input.split(/[,\s;]+/)
+  return (parts[parts.length - 1] ?? '').trim().toLowerCase()
+}
+
+function suggestionTimeValue(value?: string | null): number {
+  if (!value) return 0
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : 0
+}
+
+function suggestionMatchScore(suggestion: EmailAddressSuggestion, query: string): number | null {
+  const email = suggestion.email.trim().toLowerCase()
+  const name = suggestion.name.trim().toLowerCase()
+  if (email.startsWith(query)) return 0
+  if (name.startsWith(query)) return 1
+  if (email.includes(query)) return 2
+  if (name.includes(query)) return 3
+  return null
+}
+
+export function filterEmailSuggestions(
+  suggestions: EmailAddressSuggestion[],
+  input: string,
+  options: EmailSuggestionFilterOptions = {},
+): EmailAddressSuggestion[] {
+  const query = currentRecipientToken(input)
+  if (!query) return []
+
+  const limit = Math.max(1, Math.floor(options.limit ?? 8))
+  const excluded = new Set<string>()
+  for (const recipient of options.existingRecipients ?? []) {
+    const key = normalizedEmailKey(recipient.email ?? '')
+    if (key) excluded.add(key)
+  }
+  for (const email of options.excludedEmails ?? []) {
+    const key = normalizedEmailKey(email)
+    if (key) excluded.add(key)
+  }
+
+  const seen = new Set<string>()
+  const matches: { suggestion: EmailAddressSuggestion; score: number; index: number }[] = []
+  suggestions.forEach((suggestion, index) => {
+    const email = suggestion.email.trim()
+    const key = normalizedEmailKey(email)
+    if (!key || seen.has(key) || excluded.has(key) || !isValidEmail(email)) return
+    const score = suggestionMatchScore(suggestion, query)
+    if (score === null) return
+    seen.add(key)
+    matches.push({
+      suggestion: {
+        name: suggestion.name.trim(),
+        email,
+        sourceCount: Math.max(1, Math.floor(suggestion.sourceCount || 1)),
+        lastMessageAt: suggestion.lastMessageAt ?? null,
+      },
+      score,
+      index,
+    })
+  })
+
+  return matches
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score
+      if (a.suggestion.sourceCount !== b.suggestion.sourceCount) {
+        return b.suggestion.sourceCount - a.suggestion.sourceCount
+      }
+      const timeDelta = suggestionTimeValue(b.suggestion.lastMessageAt) - suggestionTimeValue(a.suggestion.lastMessageAt)
+      if (timeDelta !== 0) return timeDelta
+      return a.index - b.index
+    })
+    .slice(0, limit)
+    .map(item => item.suggestion)
 }
 
 function senderRecipient(message: MailMessage): Recipient {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
@@ -32,6 +32,10 @@ function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
   });
 }
 
+function threadStateKey(thread: Pick<MailThread, 'accountId' | 'id'> | null): string | null {
+  return thread ? `${thread.accountId}:${thread.id}` : null;
+}
+
 export function useMailState({
   customClassifierRules,
   tabCategories,
@@ -47,6 +51,7 @@ export function useMailState({
   const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
   const [openedThread, setOpenedThread] = useState<MailThread | null>(null);
   const [openedThreadMessages, setOpenedThreadMessages] = useState<MailMessage[]>([]);
+  const openedThreadKeyRef = useRef<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchCoverage] = useState<string>('Local Cache');
@@ -61,6 +66,18 @@ export function useMailState({
 
 
 
+
+  useEffect(() => {
+    openedThreadKeyRef.current = threadStateKey(openedThread);
+  }, [openedThread]);
+
+  useEffect(() => {
+    setOpenedThread(current => {
+      if (!current) return current;
+      const latestThread = threads.find(t => t.id === current.id && t.accountId === current.accountId);
+      return latestThread || current;
+    });
+  }, [threads]);
 
   const setActiveSplit = (split: SplitInboxKind) => {
     setActiveSplitState(split);
@@ -381,6 +398,9 @@ export function useMailState({
 
   // Open Thread Detail
   const openThread = async (thread: MailThread | null) => {
+    const previousThreadKey = openedThreadKeyRef.current;
+    const nextThreadKey = threadStateKey(thread);
+    openedThreadKeyRef.current = nextThreadKey;
     setOpenedThread(thread);
     if (!thread || !activeAccount) {
       setOpenedThreadMessages([]);
@@ -388,8 +408,12 @@ export function useMailState({
     }
 
     setFocusedThreadId(thread.id);
+    if (previousThreadKey !== nextThreadKey) {
+      setOpenedThreadMessages([]);
+    }
 
     const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
+    if (openedThreadKeyRef.current !== nextThreadKey) return;
     setOpenedThreadMessages(msgs);
 
     if (shouldRefreshInlineCidMetadata(msgs)) {
@@ -397,18 +421,16 @@ export function useMailState({
         try {
           const freshMessages = await window.electronAPI.fetchThreadDetail(thread.accountId, thread.id);
           await window.electronAPI.saveMessages(freshMessages);
-          setOpenedThreadMessages(current => (
-            current.length > 0 && current.every(message => message.threadId === thread.id)
-              ? freshMessages
-              : current
-          ));
+          if (openedThreadKeyRef.current === nextThreadKey) {
+            setOpenedThreadMessages(freshMessages);
+          }
         } catch (err) {
           console.error('Failed to refresh inline message assets:', err);
         }
       })();
     }
 
-    if (thread.isUnread) {
+    if (thread.isUnread && openedThreadKeyRef.current === nextThreadKey) {
       executeMailAction('markRead', thread.id);
     }
   };

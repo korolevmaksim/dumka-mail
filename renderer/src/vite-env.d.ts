@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, MCPServerConfig, GmailSignatureSyncResult, OnboardAccountResult, AttachmentMetadata } from '../../shared/types';
+import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, MCPServerConfig, GmailSignatureSyncResult, OnboardAccountResult, AttachmentMetadata, EmailAddressSuggestion } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 
 export interface IElectronAPI {
@@ -17,6 +17,7 @@ export interface IElectronAPI {
   // Messages
   listMessagesForThread: (accountId: string, threadId: string) => Promise<MailMessage[]>;
   saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => Promise<void>;
+  listEmailSuggestions: (accountId?: string, limit?: number) => Promise<EmailAddressSuggestion[]>;
 
   // Drafts
   listDrafts: (accountId: string) => Promise<Draft[]>;

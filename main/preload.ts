@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Messages
   listMessagesForThread: (accountId: string, threadId: string) => ipcRenderer.invoke('db:listMessagesForThread', accountId, threadId),
   saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => ipcRenderer.invoke('db:saveMessages', messages, options),
+  listEmailSuggestions: (accountId?: string, limit?: number) => ipcRenderer.invoke('db:listEmailSuggestions', accountId, limit),
 
   // Drafts
   listDrafts: (accountId: string) => ipcRenderer.invoke('db:listDrafts', accountId),

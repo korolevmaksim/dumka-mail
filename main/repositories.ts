@@ -1,6 +1,15 @@
 import crypto from 'crypto';
 import { getDatabase } from './database';
-import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage } from '../shared/types';
+import { isValidEmail } from '../shared/compose';
+import { Account, MailThread, MailMessage, Draft, SyncState, MailActionLog, AIConversation, AIChatMessage, EmailAddressSuggestion } from '../shared/types';
+
+const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
+const MAX_EMAIL_SUGGESTION_LIMIT = 5000;
+
+function sanitizeSuggestionLimit(limit?: number): number {
+  if (typeof limit !== 'number' || !Number.isFinite(limit)) return DEFAULT_EMAIL_SUGGESTION_LIMIT;
+  return Math.min(MAX_EMAIL_SUGGESTION_LIMIT, Math.max(1, Math.floor(limit)));
+}
 
 // === Accounts Repository ===
 export const AccountsRepo = {
@@ -260,6 +269,87 @@ export const MessagesRepo = {
         );
       }
     })();
+  }
+};
+
+// === Email Suggestions Repository ===
+export const EmailSuggestionsRepo = {
+  list(accountId?: string, limit?: number): EmailAddressSuggestion[] {
+    const db = getDatabase();
+    const normalizedAccountId = accountId?.trim();
+    const scopedWhere = normalizedAccountId ? 'WHERE m.account_id = @accountId' : '';
+    const safeLimit = sanitizeSuggestionLimit(limit);
+    const sqlLimit = Math.min(MAX_EMAIL_SUGGESTION_LIMIT * 2, safeLimit * 3);
+    const rows = db.prepare(`
+      WITH contact_rows(name, email, received_at) AS (
+        SELECT m.sender_name, m.sender_email, m.received_at
+        FROM messages AS m
+        ${scopedWhere}
+
+        UNION ALL
+
+        SELECT json_extract(recipient.value, '$.name'), json_extract(recipient.value, '$.email'), m.received_at
+        FROM messages AS m,
+          json_each(CASE WHEN json_valid(m.to_recipients_json) THEN m.to_recipients_json ELSE '[]' END) AS recipient
+        ${scopedWhere}
+
+        UNION ALL
+
+        SELECT json_extract(recipient.value, '$.name'), json_extract(recipient.value, '$.email'), m.received_at
+        FROM messages AS m,
+          json_each(CASE WHEN json_valid(m.cc_recipients_json) THEN m.cc_recipients_json ELSE '[]' END) AS recipient
+        ${scopedWhere}
+
+        UNION ALL
+
+        SELECT json_extract(recipient.value, '$.name'), json_extract(recipient.value, '$.email'), m.received_at
+        FROM messages AS m,
+          json_each(CASE WHEN json_valid(m.bcc_recipients_json) THEN m.bcc_recipients_json ELSE '[]' END) AS recipient
+        ${scopedWhere}
+      ),
+      normalized AS (
+        SELECT
+          lower(trim(email)) AS key,
+          trim(email) AS email,
+          trim(coalesce(name, '')) AS name,
+          received_at
+        FROM contact_rows
+        WHERE email IS NOT NULL AND trim(email) <> ''
+      ),
+      ranked AS (
+        SELECT
+          key,
+          email,
+          name,
+          COUNT(*) OVER (PARTITION BY key) AS source_count,
+          MAX(received_at) OVER (PARTITION BY key) AS last_message_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY key
+            ORDER BY CASE WHEN name <> '' THEN 0 ELSE 1 END, received_at DESC, email COLLATE NOCASE ASC
+          ) AS rank
+        FROM normalized
+      )
+      SELECT name, email, source_count, last_message_at
+      FROM ranked
+      WHERE rank = 1
+      ORDER BY last_message_at DESC, source_count DESC, email COLLATE NOCASE ASC
+      LIMIT @limit
+    `).all({ accountId: normalizedAccountId, limit: sqlLimit }) as {
+      name: string | null;
+      email: string | null;
+      source_count: number;
+      last_message_at: string | null;
+    }[];
+
+    return rows
+      .map(row => ({
+        name: (row.name || '').trim(),
+        email: (row.email || '').trim(),
+        sourceCount: row.source_count,
+        lastMessageAt: row.last_message_at
+      }))
+      .filter(suggestion => isValidEmail(suggestion.email))
+      .slice(0, safeLimit);
   }
 };
 

@@ -56,6 +56,11 @@ export interface Recipient {
   email: string;
 }
 
+export interface EmailAddressSuggestion extends Recipient {
+  sourceCount: number;
+  lastMessageAt?: string | null;
+}
+
 export interface AttachmentMetadata {
   id: string;
   filename: string;

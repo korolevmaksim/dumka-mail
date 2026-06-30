@@ -2,14 +2,21 @@ import { describe, it, expect } from 'vitest';
 import {
   startReply,
   startForward,
+  filterEmailSuggestions,
   isValidEmail,
   validateDraft,
   formatMessageHeaderDate,
   MAX_TOTAL_ATTACHMENT_BYTES,
 } from '../shared/compose';
-import { MailMessage, Recipient } from '../shared/types';
+import { EmailAddressSuggestion, MailMessage, Recipient } from '../shared/types';
 
 const r = (email: string, name = ''): Recipient => ({ name, email });
+const suggestion = (
+  email: string,
+  name = '',
+  sourceCount = 1,
+  lastMessageAt = '2026-06-26T15:04:00.000Z',
+): EmailAddressSuggestion => ({ name, email, sourceCount, lastMessageAt });
 
 function makeMessage(overrides: Partial<MailMessage> = {}): MailMessage {
   return {
@@ -79,6 +86,47 @@ describe('formatMessageHeaderDate', () => {
 
   it('falls back to the raw value on unparseable input', () => {
     expect(formatMessageHeaderDate('not-a-date')).toBe('not-a-date');
+  });
+});
+
+describe('filterEmailSuggestions', () => {
+  it('matches email and display name case-insensitively', () => {
+    const suggestions = [
+      suggestion('ops@example.com', 'Ops Team', 2),
+      suggestion('alice@example.com', 'Alice Sender', 1),
+    ];
+
+    expect(filterEmailSuggestions(suggestions, 'ali').map(item => item.email)).toEqual(['alice@example.com']);
+    expect(filterEmailSuggestions(suggestions, 'TEAM').map(item => item.email)).toEqual(['ops@example.com']);
+  });
+
+  it('excludes already selected recipients and the active sending account', () => {
+    const suggestions = [
+      suggestion('me@example.com', 'Me', 10),
+      suggestion('bob@example.com', 'Bob', 5),
+      suggestion('carol@example.com', 'Carol', 3),
+    ];
+
+    const result = filterEmailSuggestions(suggestions, 'example', {
+      existingRecipients: [r('bob@example.com')],
+      excludedEmails: ['me@example.com'],
+    });
+
+    expect(result.map(item => item.email)).toEqual(['carol@example.com']);
+  });
+
+  it('ranks prefix matches before substring matches, then by frequency', () => {
+    const suggestions = [
+      suggestion('team-alpha@example.com', 'Alpha', 1),
+      suggestion('beta-team@example.com', 'Beta', 20),
+      suggestion('team-ops@example.com', 'Ops', 7),
+    ];
+
+    expect(filterEmailSuggestions(suggestions, 'team').map(item => item.email)).toEqual([
+      'team-ops@example.com',
+      'team-alpha@example.com',
+      'beta-team@example.com',
+    ]);
   });
 });
 
