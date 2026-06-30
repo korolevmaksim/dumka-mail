@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useCallback } from 'react';
-import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriagePlanItem, MailTriagePlan, AIAction, MCPServerConfig, MailTriageQueueReadiness, GmailSignatureSyncResult } from '../../../shared/types';
+import { Account, MailThread, MailMessage, Draft, MailActionLog, AIConversation, AIChatMessage, AIProviderPreference, AIProviderDescriptor, CustomClassifierRule, TabCategory, AppSettings, MailTriageActionPreview, MailTriagePlanItem, MailTriagePlan, AIAction, MCPServerConfig, MailTriageQueueReadiness, GmailSignatureSyncResult, MailboxView } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
@@ -222,6 +222,9 @@ interface AppStoreContextType {
   openedThread: MailThread | null;
   openedThreadMessages: MailMessage[];
   openThread: (thread: MailThread | null) => Promise<void>;
+  mailboxView: MailboxView;
+  setMailboxView: (view: MailboxView) => void;
+  mailboxCounts: Record<MailboxView, number>;
   activeSplit: SplitInboxKind;
   setActiveSplit: (s: SplitInboxKind) => void;
   splitCounts: Record<string, number>;

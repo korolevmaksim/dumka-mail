@@ -512,6 +512,7 @@ registerSecureHandler('api:verifyTokenExists', async (_, email) => {
 });
 
 registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));
+registerSecureHandler('api:syncSent', (_, email) => GmailSyncService.syncSent(email));
 registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
 registerSecureHandler('api:runBackfillPage', (_, email) => runBackfillPageForAccount(email));

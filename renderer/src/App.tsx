@@ -3,7 +3,7 @@ import { useAppStore, AppStoreProvider } from './stores/AppStore';
 import { useKeyboard } from './hooks/useKeyboard';
 import {
   Inbox, Clock, CheckCircle, X, ArrowLeft,
-  Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles,
+  Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles, Send,
   ChevronUp, ChevronDown, MailOpen
 } from 'lucide-react';
 import { ThreadRow } from './components/ThreadRow';
@@ -311,6 +311,15 @@ function AppContent() {
     }
   });
 
+  const activeCategoryTabs = store.tabCategories.filter(c => {
+    if (!c.active) return false;
+    if (c.isSystem) return true;
+    if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
+    return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
+  });
+  const emptyMailboxIcon = store.mailboxView === 'sent' ? Send : Inbox;
+  const EmptyMailboxIcon = emptyMailboxIcon;
+
   return (
     <div className="flex flex-col h-screen w-full overflow-hidden select-none text-[calc(12px*var(--font-scale))] leading-tight">
       {/* Main columns container */}
@@ -330,52 +339,93 @@ function AppContent() {
 
             {/* SPLIT TABS BAR */}
             <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
-              <div className="flex gap-1 h-full items-end">
-                {store.tabCategories.filter(c => {
-                  if (!c.active) return false;
-                  if (c.isSystem) return true;
-                  if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
-                  return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
-                }).map((category, i) => {
-                  const count = store.splitCounts[category.id] || 0;
-                  return (
-                    <button
-                      key={category.id}
-                      draggable
-                      onDragStart={(e) => handleDragStartTab(e, category.id)}
-                      onDragOver={handleDragOverTab}
-                      onDragEnter={(e) => handleDragEnterTab(e, category.id)}
-                      onDragEnd={handleDragEndTab}
-                      onDrop={(e) => handleDropTab(e, category.id)}
-                      onClick={() => {
-                        store.setActiveSplit(category.id);
-                        store.setSettingsOpen(false);
-                      }}
-                      className={`px-3 pb-2 pt-1 border-b-2 text-tab transition-all cursor-grab flex items-center gap-1.5 ${
-                        store.activeSplit === category.id 
-                          ? 'border-[var(--accent)] text-[var(--accent)] font-semibold' 
-                          : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                      } ${
-                        draggedTabId === category.id ? 'opacity-40 scale-95' : ''
-                      } ${
-                        dragOverTabId === category.id && draggedTabId !== category.id 
-                          ? 'bg-[var(--accent)]/10 border-b-[var(--accent)] border-dashed' 
-                          : ''
-                      }`}
-                    >
-                      {category.colorHex && (
-                        <span className="w-1.5 h-1.5 rounded-full inline-block shrink-0" style={{ backgroundColor: category.colorHex }} />
-                      )}
-                      <span>{category.displayName}</span>
-                      {count > 0 && (
-                        <span className="bg-[var(--border)] px-1 rounded-full text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-normal">
-                          {count}
-                        </span>
-                      )}
-                      <span className="text-[calc(8px*var(--font-scale))] opacity-40 font-normal">({i + 1})</span>
-                    </button>
-                  );
-                })}
+              <div className="flex min-w-0 h-full items-end gap-2">
+                <div className="flex gap-1 h-full items-end shrink-0">
+                  {[
+                    { id: 'inbox' as const, label: 'Inbox', icon: Inbox, count: store.mailboxCounts.inbox },
+                    { id: 'sent' as const, label: 'Sent', icon: Send, count: store.mailboxCounts.sent },
+                  ].map((mailbox) => {
+                    const Icon = mailbox.icon;
+                    const isActive = store.mailboxView === mailbox.id;
+                    return (
+                      <button
+                        key={mailbox.id}
+                        type="button"
+                        onClick={() => {
+                          store.setMailboxView(mailbox.id);
+                          store.setSettingsOpen(false);
+                        }}
+                        title={mailbox.label}
+                        className={`px-2.5 pb-2 pt-1 border-b-2 text-tab transition-colors cursor-pointer flex items-center gap-1.5 ${
+                          isActive
+                            ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
+                            : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{mailbox.label}</span>
+                        {mailbox.count > 0 && (
+                          <span className="bg-[var(--border)] px-1 rounded-full text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-normal">
+                            {mailbox.count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="w-px h-4 mb-2 bg-[var(--border)] shrink-0" />
+
+                {store.mailboxView === 'inbox' ? (
+                  <div className="flex gap-1 h-full items-end min-w-0 overflow-x-auto">
+                    {activeCategoryTabs.map((category, i) => {
+                      const count = store.splitCounts[category.id] || 0;
+                      return (
+                        <button
+                          key={category.id}
+                          draggable
+                          onDragStart={(e) => handleDragStartTab(e, category.id)}
+                          onDragOver={handleDragOverTab}
+                          onDragEnter={(e) => handleDragEnterTab(e, category.id)}
+                          onDragEnd={handleDragEndTab}
+                          onDrop={(e) => handleDropTab(e, category.id)}
+                          onClick={() => {
+                            store.setActiveSplit(category.id);
+                            store.setSettingsOpen(false);
+                          }}
+                          className={`px-3 pb-2 pt-1 border-b-2 text-tab transition-all cursor-grab flex items-center gap-1.5 ${
+                            store.activeSplit === category.id
+                              ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
+                              : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                          } ${
+                            draggedTabId === category.id ? 'opacity-40 scale-95' : ''
+                          } ${
+                            dragOverTabId === category.id && draggedTabId !== category.id
+                              ? 'bg-[var(--accent)]/10 border-b-[var(--accent)] border-dashed'
+                              : ''
+                          }`}
+                        >
+                          {category.colorHex && (
+                            <span className="w-1.5 h-1.5 rounded-full inline-block shrink-0" style={{ backgroundColor: category.colorHex }} />
+                          )}
+                          <span>{category.displayName}</span>
+                          {count > 0 && (
+                            <span className="bg-[var(--border)] px-1 rounded-full text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-normal">
+                              {count}
+                            </span>
+                          )}
+                          <span className="text-[calc(8px*var(--font-scale))] opacity-40 font-normal">({i + 1})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex h-full items-end min-w-0">
+                    <div className="pb-2 pt-1 text-tab text-[var(--text-secondary)] truncate">
+                      Recent sent conversations
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="flex items-center gap-1">
@@ -423,9 +473,15 @@ function AppContent() {
                     <div className="flex-1 overflow-y-auto flex flex-col">
                       {store.visibleThreads.length === 0 ? (
                         <div className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
-                          <Inbox className="w-10 h-10 mb-2 opacity-30" />
-                          <p className="font-semibold">Clear inbox split</p>
-                          <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">Jump to other splits or press C to compose.</p>
+                          <EmptyMailboxIcon className="w-10 h-10 mb-2 opacity-30" />
+                          <p className="font-semibold">
+                            {store.mailboxView === 'sent' ? 'No sent conversations' : 'Clear inbox split'}
+                          </p>
+                          <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">
+                            {store.mailboxView === 'sent'
+                              ? 'Recent sent mail appears here after sync.'
+                              : 'Jump to other splits or press C to compose.'}
+                          </p>
                         </div>
                       ) : (
                         store.visibleThreads.map((thread) => (
@@ -473,14 +529,16 @@ function AppContent() {
                           >
                             <Mail className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => store.executeBatchMailAction('markDone', Array.from(store.selectedThreadIds))}
-                            title="Archive / Done"
-                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
-                          >
-                            <CheckCircle className="w-3.5 h-3.5" />
-                          </button>
+                          {store.mailboxView === 'inbox' && (
+                            <button
+                              type="button"
+                              onClick={() => store.executeBatchMailAction('markDone', Array.from(store.selectedThreadIds))}
+                              title="Archive / Done"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <div className="w-px h-3.5 bg-[var(--border)] mx-1" />
                           <button
                             type="button"
@@ -629,13 +687,15 @@ function AppContent() {
                                 />
                               )}
                             </div>
-                            <button
-                              onClick={() => store.executeMailAction('markDone', store.openedThread!.id)}
-                              title="Archive Thread (E)"
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                            >
-                              <CheckCircle className="w-4 h-4 text-[var(--success)]" />
-                            </button>
+                            {store.mailboxView === 'inbox' && (
+                              <button
+                                onClick={() => store.executeMailAction('markDone', store.openedThread!.id)}
+                                title="Archive Thread (E)"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                              >
+                                <CheckCircle className="w-4 h-4 text-[var(--success)]" />
+                              </button>
+                            )}
                             <button
                               onClick={() => store.openThread(null)}
                               className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -760,16 +820,18 @@ function AppContent() {
             <span>Mark {contextMenu.thread.isUnread ? 'Read' : 'Unread'}</span>
           </button>
           
-          <button
-            onClick={() => {
-              store.executeMailAction('markDone', contextMenu.thread.id);
-              setContextMenu(null);
-            }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
-          >
-            <CheckCircle className="w-3.5 h-3.5 opacity-80" />
-            <span>Archive / Done</span>
-          </button>
+          {store.mailboxView === 'inbox' && (
+            <button
+              onClick={() => {
+                store.executeMailAction('markDone', contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <CheckCircle className="w-3.5 h-3.5 opacity-80" />
+              <span>Archive / Done</span>
+            </button>
+          )}
           
           <button
             onClick={() => {

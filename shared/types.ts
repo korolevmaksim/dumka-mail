@@ -36,6 +36,7 @@ export interface ComposeSignatureSettings {
 }
 
 export type MailLabel = 'INBOX' | 'UNREAD' | 'SENT' | 'IMPORTANT' | 'CATEGORY_PRIMARY' | 'CATEGORY_UPDATES' | 'CATEGORY_PROMOTIONS' | string;
+export type MailboxView = 'inbox' | 'sent';
 
 export interface MailThread {
   id: ThreadID;

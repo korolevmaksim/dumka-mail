@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Gmail sync & mutations
   syncInbox: (email: string) => ipcRenderer.invoke('api:syncInbox', email),
+  syncSent: (email: string) => ipcRenderer.invoke('api:syncSent', email),
   syncIncremental: (email: string, startHistoryId: string) => ipcRenderer.invoke('api:syncIncremental', email, startHistoryId),
   syncBackfillPage: (email: string, pageToken?: string) => ipcRenderer.invoke('api:syncBackfillPage', email, pageToken),
   runBackfillPage: (email: string) => ipcRenderer.invoke('api:runBackfillPage', email),

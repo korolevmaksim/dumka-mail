@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory, MailboxView } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
 import { SplitInboxRouter } from '../../../shared/classifier';
+import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
 
@@ -13,6 +14,8 @@ export interface SpeedProof {
   aiMs?: number;
   detailCacheCoverage: string;
 }
+
+const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
 
 interface UseMailStateProps {
   customClassifierRules: CustomClassifierRule[];
@@ -43,6 +46,8 @@ export function useMailState({
 }: UseMailStateProps) {
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
+  const [mailboxView, setMailboxViewState] = useState<MailboxView>('inbox');
+  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, sent: 0 });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccount, setActiveAccountState] = useState<Account | null>(null);
   
@@ -63,6 +68,7 @@ export function useMailState({
   });
 
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
+  const sentSyncAtRef = useRef<Map<string, number>>(new Map());
 
 
 
@@ -80,12 +86,21 @@ export function useMailState({
   }, [threads]);
 
   const setActiveSplit = (split: SplitInboxKind) => {
+    setMailboxViewState('inbox');
     setActiveSplitState(split);
     setOpenedThread(null);
     setOpenedThreadMessages([]);
     setFocusedThreadId(null);
     setSelectedThreadIds(new Set());
   };
+
+  const setMailboxView = useCallback((view: MailboxView) => {
+    setMailboxViewState(view);
+    setOpenedThread(null);
+    setOpenedThreadMessages([]);
+    setFocusedThreadId(null);
+    setSelectedThreadIds(new Set());
+  }, []);
 
 
   const getThreadCategory = useCallback((t: MailThread): string => {
@@ -175,6 +190,7 @@ export function useMailState({
       if (!acc) return;
 
       setActiveAccount(acc);
+      setMailboxViewState('inbox');
 
       const threadsList = await window.electronAPI.listThreads(accountId);
       const thread = threadsList.find(t => t.id === threadId);
@@ -284,6 +300,52 @@ export function useMailState({
     applyGmailSignatureSyncResult,
   });
 
+  useEffect(() => {
+    if (mailboxView !== 'sent' || !activeAccount) return;
+
+    const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
+    const targetEmails = targetAccounts.map(account => account.email).filter(Boolean).sort();
+    if (targetEmails.length === 0) return;
+
+    const syncKey = targetEmails.join('|');
+    const lastSyncAt = sentSyncAtRef.current.get(syncKey);
+    if (lastSyncAt && Date.now() - lastSyncAt < SENT_SYNC_MIN_INTERVAL_MS) return;
+    sentSyncAtRef.current.set(syncKey, Date.now());
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        setSyncHealth('syncing');
+        setSyncStatusText('Syncing sent mail...');
+
+        await Promise.all(targetAccounts.map(async account => {
+          const result = await window.electronAPI.syncSent(account.email);
+          await window.electronAPI.saveThreads(result.threads);
+          await window.electronAPI.saveMessages(result.messages);
+        }));
+
+        await loadThreadsFromDB();
+        sentSyncAtRef.current.set(syncKey, Date.now());
+        if (cancelled) return;
+        setSyncHealth('ready');
+        setSyncStatusText('Ready');
+      } catch (err) {
+        sentSyncAtRef.current.delete(syncKey);
+        console.error('Sent mailbox sync failed:', err);
+        if (!cancelled) {
+          setSyncHealth('failed');
+          setSyncStatusText('Sent sync failed');
+          emitToast({ type: 'warning', message: 'Could not refresh Sent mail.' });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mailboxView, activeAccount, accounts, loadThreadsFromDB, setSyncHealth, setSyncStatusText]);
+
   // Sync Action Log
   const loadActionLog = useCallback(async () => {
     if (!activeAccount) return;
@@ -315,6 +377,7 @@ export function useMailState({
     const filterThreads = async () => {
       if (!activeAccount) return;
       let filtered = threads;
+      const now = new Date();
 
       if (searchQuery.trim()) {
         const parsed = parseSearchQuery(searchQuery);
@@ -338,6 +401,10 @@ export function useMailState({
         const matchThreadIds = new Set(ftsMatches.map(m => m.threadId));
         filtered = threads.filter(t => matchThreadIds.has(t.id));
 
+        if (mailboxView === 'sent') {
+          filtered = filtered.filter(t => isThreadInMailbox(t, 'sent', now));
+        }
+
         if (parsed.from) {
           filtered = filtered.filter(t => t.senderEmail.includes(parsed.from!) || t.senderNames.some(n => n.toLowerCase().includes(parsed.from!)));
         }
@@ -350,14 +417,11 @@ export function useMailState({
         if (parsed.isUnread !== undefined) {
           filtered = filtered.filter(t => t.isUnread === parsed.isUnread);
         }
+      } else if (mailboxView === 'sent') {
+        filtered = threads.filter(t => isThreadInMailbox(t, 'sent', now));
       } else {
         filtered = threads.filter(t => {
-          const inInbox = t.labelIds.some(l => l.toUpperCase() === 'INBOX');
-          if (!inInbox) return false;
-
-          if (t.reminderAt && new Date(t.reminderAt) > new Date()) {
-            return false;
-          }
+          if (!isThreadInMailbox(t, 'inbox', now)) return false;
           return getThreadCategory(t) === activeSplit;
         });
       }
@@ -371,20 +435,24 @@ export function useMailState({
     };
 
     filterThreads();
-  }, [threads, searchQuery, activeSplit, activeAccount, accounts, getThreadCategory]);
+  }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory]);
 
   // Recalculate Split Tabs counters
   useEffect(() => {
     const counts: Record<string, number> = {};
+    const nextMailboxCounts: Record<MailboxView, number> = { inbox: 0, sent: 0 };
+    const now = new Date();
     for (const c of tabCategories) {
       counts[c.id] = 0;
     }
 
     for (const t of threads) {
-      const inInbox = t.labelIds.some(l => l.toUpperCase() === 'INBOX');
-      if (!inInbox) continue;
+      if (isThreadInMailbox(t, 'sent', now)) {
+        nextMailboxCounts.sent++;
+      }
 
-      if (t.reminderAt && new Date(t.reminderAt) > new Date()) continue;
+      if (!isThreadInMailbox(t, 'inbox', now)) continue;
+      nextMailboxCounts.inbox++;
       const split = getThreadCategory(t);
       if (counts[split] !== undefined) {
         counts[split]++;
@@ -394,6 +462,7 @@ export function useMailState({
     }
 
     setSplitCounts(counts);
+    setMailboxCounts(nextMailboxCounts);
   }, [threads, getThreadCategory, tabCategories]);
 
   // Open Thread Detail
@@ -475,13 +544,17 @@ export function useMailState({
     }
 
     if (kind === 'markDone') {
-      setThreads(prev => prev.filter(t => t.id !== targetThreadId));
-      if (openedThread?.id === targetThreadId) {
+      setThreads(prev => prev.map(t => (
+        t.id === targetThreadId && t.accountId === targetAccountId
+          ? { ...t, labelIds: t.labelIds.filter(label => label.toUpperCase() !== 'INBOX') }
+          : t
+      )));
+      if (mailboxView === 'inbox' && openedThread?.id === targetThreadId) {
         openThread(nextThread);
       }
-      if (nextThread) {
+      if (mailboxView === 'inbox' && nextThread) {
         setFocusedThreadId(nextThread.id);
-      } else {
+      } else if (mailboxView === 'inbox') {
         setFocusedThreadId(null);
       }
     } else if (kind === 'autoMarkRead') {
@@ -631,8 +704,12 @@ export function useMailState({
 
     // OPTIMISTIC UI STATE TRANSITIONS
     if (kind === 'markDone') {
-      setThreads(prev => prev.filter(t => !threadIds.includes(t.id)));
-      if (openedThread && threadIds.includes(openedThread.id)) {
+      setThreads(prev => prev.map(t => (
+        threadIds.includes(t.id)
+          ? { ...t, labelIds: t.labelIds.filter(label => label.toUpperCase() !== 'INBOX') }
+          : t
+      )));
+      if (mailboxView === 'inbox' && openedThread && threadIds.includes(openedThread.id)) {
         const remainingVisible = visibleThreads.filter(t => !threadIds.includes(t.id));
         if (remainingVisible.length > 0) {
           openThread(remainingVisible[0]);
@@ -640,7 +717,9 @@ export function useMailState({
           openThread(null);
         }
       }
-      setFocusedThreadId(null);
+      if (mailboxView === 'inbox') {
+        setFocusedThreadId(null);
+      }
     } else if (kind === 'markRead') {
       setThreads(prev => prev.map(t => threadIds.includes(t.id) ? { ...t, isUnread: false } : t));
     } else if (kind === 'markUnread') {
@@ -697,6 +776,9 @@ export function useMailState({
 
 
   return {
+    mailboxView,
+    setMailboxView,
+    mailboxCounts,
     activeSplit,
     setActiveSplit,
     splitCounts,

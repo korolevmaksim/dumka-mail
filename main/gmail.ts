@@ -238,6 +238,83 @@ export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
   };
 }
 
+function buildThreadsFromDetails(
+  email: string,
+  threadDetails: any[],
+): { threads: MailThread[]; messages: MailMessage[]; historyId: string } {
+  const threads: MailThread[] = [];
+  const messages: MailMessage[] = [];
+  let latestHistoryId = '0';
+
+  for (const detail of threadDetails) {
+    const msgs = (detail.messages || []).map((m: any) => mapMessage(m, email));
+    messages.push(...msgs);
+
+    if (msgs.length === 0) continue;
+
+    const lastMsg = msgs[msgs.length - 1];
+    const detailHistId = detail.messages?.[detail.messages.length - 1]?.historyId;
+    if (detailHistId && BigInt(detailHistId) > BigInt(latestHistoryId)) {
+      latestHistoryId = detailHistId;
+    }
+
+    const senderNames = Array.from(new Set<string>(msgs.map((m: MailMessage) => m.senderName || m.senderEmail)));
+
+    threads.push({
+      id: detail.id,
+      accountId: email,
+      subject: lastMsg.subject,
+      snippet: lastMsg.snippet,
+      lastMessageAt: lastMsg.receivedAt,
+      senderNames,
+      senderEmail: lastMsg.senderEmail,
+      labelIds: Array.from(new Set(msgs.flatMap((m: MailMessage) => m.labelIds))),
+      hasAttachments: msgs.some((m: MailMessage) => m.hasAttachments),
+      isUnread: msgs.some((m: MailMessage) => m.isUnread)
+    });
+  }
+
+  return { threads, messages, historyId: latestHistoryId };
+}
+
+async function syncThreadsForQuery(
+  email: string,
+  query: string,
+  maxResults: number,
+): Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }> {
+  const accessToken = await getAccessToken(email);
+  const endpoint = `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
+
+  const listRes = await fetchWithTimeout(endpoint, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+
+  if (!listRes.ok) {
+    throw new Error(`syncThreadsForQuery list error (${query}): ${await listRes.text()}`);
+  }
+
+  const listData = await listRes.json() as any;
+  const threadSummaries = listData.threads || [];
+
+  const threadDetailsRaw = await poolConcurrentTasks(threadSummaries, 8, async (tSummary: any) => {
+    try {
+      const detailRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${tSummary.id}`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      if (!detailRes.ok) {
+        console.warn(`Thread detail fetch error for ${tSummary.id}: status ${detailRes.status}`);
+        return null;
+      }
+      return await detailRes.json();
+    } catch (err) {
+      console.warn(`Thread detail fetch error for ${tSummary.id}:`, err);
+      return null;
+    }
+  });
+
+  return buildThreadsFromDetails(email, threadDetailsRaw.filter(t => t !== null));
+}
+
 export const GmailSyncService = {
   async fetchDefaultSignature(email: string): Promise<GmailSignatureSyncResult> {
     const accessToken = await getAccessToken(email);
@@ -266,75 +343,12 @@ export const GmailSyncService = {
 
   // Sync Inbox: fetches up to 30 threads matching 'in:inbox'
   async syncInbox(email: string): Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }> {
-    const accessToken = await getAccessToken(email);
-    
-    // Fetch thread IDs list
-    const listRes = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/threads?q=in:inbox&maxResults=30', {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
+    return syncThreadsForQuery(email, 'in:inbox', 30);
+  },
 
-    if (!listRes.ok) {
-      throw new Error(`syncInbox list error: ${await listRes.text()}`);
-    }
-
-    const listData = await listRes.json() as any;
-    const threadSummaries = listData.threads || [];
-    
-    // Fetch details for each thread in parallel (up to 8 concurrent fetches)
-    const threadDetailsRaw = await poolConcurrentTasks(threadSummaries, 8, async (tSummary: any) => {
-      try {
-        const detailRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${tSummary.id}`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-        if (!detailRes.ok) {
-          console.warn(`Thread detail fetch error for ${tSummary.id}: status ${detailRes.status}`);
-          return null;
-        }
-        return await detailRes.json();
-      } catch (err) {
-        console.warn(`Thread detail fetch error for ${tSummary.id}:`, err);
-        return null;
-      }
-    });
-
-    const threadDetails = threadDetailsRaw.filter(t => t !== null);
-
-    const threads: MailThread[] = [];
-    const messages: MailMessage[] = [];
-    let latestHistoryId = '0';
-
-    for (const detail of threadDetails) {
-      const msgs = (detail.messages || []).map((m: any) => mapMessage(m, email));
-      messages.push(...msgs);
-
-      if (msgs.length > 0) {
-        // Latest message in thread
-        const lastMsg = msgs[msgs.length - 1];
-        
-        // Accumulate historyId
-        const detailHistId = detail.messages[detail.messages.length - 1].historyId;
-        if (BigInt(detailHistId) > BigInt(latestHistoryId)) {
-          latestHistoryId = detailHistId;
-        }
-
-        const senderNames = Array.from(new Set(msgs.map((m: any) => m.senderName || m.senderEmail))) as string[];
-
-        threads.push({
-          id: detail.id,
-          accountId: email,
-          subject: lastMsg.subject,
-          snippet: lastMsg.snippet,
-          lastMessageAt: lastMsg.receivedAt,
-          senderNames,
-          senderEmail: lastMsg.senderEmail,
-          labelIds: Array.from(new Set(msgs.flatMap((m: any) => m.labelIds))),
-          hasAttachments: msgs.some((m: any) => m.hasAttachments),
-          isUnread: msgs.some((m: any) => m.isUnread)
-        });
-      }
-    }
-
-    return { threads, messages, historyId: latestHistoryId };
+  // Sync Sent: fetches recent outgoing conversations so Sent is usable before full history backfill completes.
+  async syncSent(email: string): Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }> {
+    return syncThreadsForQuery(email, 'in:sent', 50);
   },
 
   // Incremental history sync: requests updates since historyId
