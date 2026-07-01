@@ -5,6 +5,7 @@ import {
   reminderDate,
   describeReminder,
 } from '../shared/reminders';
+import { parseReminderInput } from '../shared/reminderInput';
 
 describe('REMINDER_PRESETS', () => {
   it('exposes every preset id with a non-empty title', () => {
@@ -181,5 +182,63 @@ describe('describeReminder', () => {
     const now = new Date(2026, 5, 26, 9, 0, 0);
     const tomorrow = reminderDate('tomorrow', now)!; // 09:00
     expect(describeReminder(tomorrow, now)).toMatch(/9:00\s?[AP]M/);
+  });
+});
+
+describe('parseReminderInput', () => {
+  it('parses tomorrow with a bare hour', () => {
+    const now = new Date(2026, 5, 26, 10, 0, 0);
+    const result = parseReminderInput('tomorrow 10', now)!;
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(5);
+    expect(result.getDate()).toBe(27);
+    expect(result.getHours()).toBe(10);
+    expect(result.getMinutes()).toBe(0);
+  });
+
+  it('parses weekday and am/pm input', () => {
+    const now = new Date(2026, 5, 24, 10, 0, 0); // Wednesday
+    const result = parseReminderInput('fri 2pm', now)!;
+    expect(result.getDay()).toBe(5);
+    expect(result.getDate()).toBe(26);
+    expect(result.getHours()).toBe(14);
+    expect(result.getMinutes()).toBe(0);
+  });
+
+  it('parses month-day input with an explicit time', () => {
+    const now = new Date(2026, 5, 26, 10, 0, 0);
+    const result = parseReminderInput('jul 12 10am', now)!;
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(6);
+    expect(result.getDate()).toBe(12);
+    expect(result.getHours()).toBe(10);
+  });
+
+  it('parses numeric dates with 24-hour time', () => {
+    const now = new Date(2026, 5, 26, 10, 0, 0);
+    const result = parseReminderInput('2026-07-04 09:15', now)!;
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(6);
+    expect(result.getDate()).toBe(4);
+    expect(result.getHours()).toBe(9);
+    expect(result.getMinutes()).toBe(15);
+  });
+
+  it('parses relative durations', () => {
+    const now = new Date(2026, 5, 26, 10, 0, 0);
+    const result = parseReminderInput('in 2h', now)!;
+    expect(result.getTime()).toBe(now.getTime() + 2 * 60 * 60 * 1000);
+  });
+
+  it('rolls time-only input to tomorrow when the time has passed', () => {
+    const now = new Date(2026, 5, 26, 18, 0, 0);
+    const result = parseReminderInput('5pm', now)!;
+    expect(result.getDate()).toBe(27);
+    expect(result.getHours()).toBe(17);
+  });
+
+  it('rejects explicitly past same-day reminders', () => {
+    const now = new Date(2026, 5, 26, 10, 0, 0);
+    expect(parseReminderInput('today 9', now)).toBeNull();
   });
 });

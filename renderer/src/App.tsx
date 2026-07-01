@@ -381,6 +381,21 @@ function AppContent() {
     }
   }, [store.searchQuery, store.openedThread, store.enablePreviewPane]);
 
+  const openReminderPicker = (thread: MailThread) => {
+    setSnoozeOpen(false);
+    setCommandPaletteOpen(false);
+    setReminderTargetThread(thread);
+  };
+
+  const openReminderForCurrentTarget = () => {
+    const target = store.openedThread || store.visibleThreads.find(t => t.id === store.focusedThreadId) || store.visibleThreads[0];
+    if (!target) {
+      emitToast({ type: 'info', message: 'No thread selected.' });
+      return;
+    }
+    openReminderPicker(target);
+  };
+
   useKeyboard({
     isComposeActive: !!store.activeDraft,
     isSearchActive: !!store.searchQuery,
@@ -391,10 +406,7 @@ function AppContent() {
     },
     commandPaletteOpen,
     setCommandPaletteOpen,
-    onOpenReminder: (thread) => {
-      setSnoozeOpen(false);
-      setReminderTargetThread(thread);
-    },
+    onOpenReminder: openReminderPicker,
     onEscape: () => {
       if (threadSearchOpen) {
         setThreadSearchOpen(false);
@@ -1092,7 +1104,11 @@ function AppContent() {
       )}
 
       {/* 5. COMMAND PALETTE OVERLAY */}
-      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onOpenReminder={openReminderForCurrentTarget}
+      />
 
       {/* 6. BOTTOM SHORTCUTS HINTS BAR */}
       <BottomShortcutBar />

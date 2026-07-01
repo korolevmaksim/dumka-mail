@@ -7,9 +7,10 @@ import { nextMailboxView } from '../../../../shared/mailboxNavigation';
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenReminder: () => void;
 }
 
-export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPaletteProps) {
   const store = useAppStore();
   const [paletteSearch, setPaletteSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -24,17 +25,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     { title: 'Move to Trash', shortcut: '#', action: () => store.executeMailAction('moveToTrash') },
     { title: 'Move to Spam', shortcut: '!', action: () => store.executeMailAction('reportSpam') },
     { title: 'Ignore Thread', shortcut: 'M', action: () => store.muteThread() },
-    { title: 'Set Reminder', shortcut: 'H', action: () => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(9, 0, 0, 0);
-      const targetThreadId = store.openedThread?.id || store.focusedThreadId;
-      const thread = store.threads.find(t => t.id === targetThreadId);
-      const targetEmail = thread ? thread.accountId : (store.activeAccount?.email || '');
-      store.executeMailAction('autoMarkRead', null, null, async () => {
-        await window.electronAPI.saveReminder(targetEmail, targetThreadId!, tomorrow.toISOString());
-      });
-    }},
+    { title: 'Set Reminder', shortcut: 'H', action: onOpenReminder },
     { title: 'AI Triage Queue', shortcut: 'S', action: () => store.runAITriagePlan() },
     { title: 'Compose Message', shortcut: 'C', action: () => {
       const draft = store.startNewDraft();
