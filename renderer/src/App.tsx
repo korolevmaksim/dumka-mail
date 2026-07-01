@@ -491,13 +491,13 @@ function AppContent() {
 
             {/* SPLIT TABS BAR */}
             <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
-              <div className="flex min-w-0 h-full items-center gap-2">
-                <div className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
+              <div className="flex min-w-0 h-full items-end gap-2">
+                <div className="relative flex h-[var(--split-tab-h)] shrink-0 items-center" onClick={(event) => event.stopPropagation()}>
                   <button
                     type="button"
                     onClick={() => setMailboxMenuOpen(value => !value)}
                     title="Switch mailbox (G / Shift+G)"
-                    className="flex h-7 min-w-[112px] items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)]"
+                    className="flex h-full min-w-[112px] items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 text-tab text-[var(--text-primary)] hover:border-[var(--strong-border)]"
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
                       <ActiveMailboxIcon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
@@ -511,7 +511,7 @@ function AppContent() {
                     <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
                   </button>
                   {mailboxMenuOpen && (
-                    <div className="absolute left-0 top-8 z-40 w-48 rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] p-1 shadow-lg">
+                    <div className="absolute left-0 top-[calc(100%+4px)] z-40 w-48 rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] p-1 shadow-lg">
                       {mailboxTabs.map(mailbox => {
                         const Icon = mailbox.icon;
                         const isActive = store.mailboxView === mailbox.id;
@@ -547,7 +547,7 @@ function AppContent() {
                 </div>
 
                 {store.mailboxView === 'inbox' ? (
-                  <div className="flex gap-1 h-full items-end min-w-0 overflow-x-auto">
+                  <div className="flex h-[var(--split-tab-h)] min-w-0 items-end gap-1 overflow-x-auto">
                     {activeCategoryTabs.map((category, i) => {
                       const count = store.splitCounts[category.id] || 0;
                       return (
@@ -563,7 +563,7 @@ function AppContent() {
                             store.setActiveSplit(category.id);
                             store.setSettingsOpen(false);
                           }}
-                          className={`px-3 pb-2 pt-1 border-b-2 text-tab transition-all cursor-grab flex items-center gap-1.5 ${
+                          className={`flex h-full items-center gap-1.5 border-b-2 px-3 text-tab transition-all cursor-grab ${
                             store.activeSplit === category.id
                               ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
                               : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
