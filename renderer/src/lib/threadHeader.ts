@@ -1,34 +1,51 @@
 import { MailMessage, MailThread } from '../../../shared/types';
 
+export type ThreadHeaderMessagesStatus = 'idle' | 'loading' | 'ready';
+
 export interface ThreadHeaderIdentity {
-  senderNames: string[];
+  senderName: string;
   senderEmail: string;
+  source: 'message' | 'thread-fallback';
+}
+
+interface ThreadHeaderIdentityOptions {
+  messagesKey?: string | null;
+  status?: ThreadHeaderMessagesStatus;
+}
+
+function threadMessagesKey(thread: Pick<MailThread, 'accountId' | 'id'>): string {
+  return `${thread.accountId}:${thread.id}`;
 }
 
 export function resolveThreadHeaderIdentity(
   thread: MailThread,
   messages: MailMessage[],
-): ThreadHeaderIdentity {
+  options: ThreadHeaderIdentityOptions = {},
+): ThreadHeaderIdentity | null {
+  const expectedKey = threadMessagesKey(thread);
+  const messagesKey = options.messagesKey ?? expectedKey;
+  const status = options.status ?? 'ready';
+
+  if (status !== 'ready' || messagesKey !== expectedKey) {
+    return null;
+  }
+
   const threadMessages = messages.filter(message => (
     message.threadId === thread.id && message.accountId === thread.accountId
-  ));
+  )).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
 
-  if (threadMessages.length === 0) {
+  const firstMessage = threadMessages[0];
+  if (firstMessage) {
     return {
-      senderNames: thread.senderNames,
-      senderEmail: thread.senderEmail,
+      senderName: (firstMessage.senderName || firstMessage.senderEmail).trim(),
+      senderEmail: firstMessage.senderEmail,
+      source: 'message',
     };
   }
 
-  const senderNames = Array.from(new Set(
-    threadMessages
-      .map(message => (message.senderName || message.senderEmail).trim())
-      .filter(Boolean),
-  ));
-  const lastMessage = threadMessages[threadMessages.length - 1];
-
   return {
-    senderNames: senderNames.length > 0 ? senderNames : thread.senderNames,
-    senderEmail: lastMessage.senderEmail || thread.senderEmail,
+    senderName: (thread.senderNames[0] || thread.senderEmail).trim(),
+    senderEmail: thread.senderEmail,
+    source: 'thread-fallback',
   };
 }

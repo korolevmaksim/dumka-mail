@@ -7,6 +7,7 @@ import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
+import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 
 export interface SpeedProof {
   cacheReadyMs?: number;
@@ -58,7 +59,9 @@ export function useMailState({
   const [visibleThreads, setVisibleThreads] = useState<MailThread[]>([]);
   const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
   const [openedThread, setOpenedThread] = useState<MailThread | null>(null);
-  const [openedThreadMessages, setOpenedThreadMessages] = useState<MailMessage[]>([]);
+  const [openedThreadMessages, setOpenedThreadMessagesState] = useState<MailMessage[]>([]);
+  const [openedThreadMessagesKey, setOpenedThreadMessagesKey] = useState<string | null>(null);
+  const [openedThreadMessagesStatus, setOpenedThreadMessagesStatus] = useState<ThreadHeaderMessagesStatus>('idle');
   const openedThreadKeyRef = useRef<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -73,6 +76,30 @@ export function useMailState({
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
 
+  const resetOpenedThreadMessages = () => {
+    setOpenedThreadMessagesState([]);
+    setOpenedThreadMessagesKey(null);
+    setOpenedThreadMessagesStatus('idle');
+  };
+
+  const startOpenedThreadMessagesLoad = (key: string) => {
+    setOpenedThreadMessagesState([]);
+    setOpenedThreadMessagesKey(key);
+    setOpenedThreadMessagesStatus('loading');
+  };
+
+  const acceptOpenedThreadMessages = (key: string, messages: MailMessage[]) => {
+    setOpenedThreadMessagesState(messages);
+    setOpenedThreadMessagesKey(key);
+    setOpenedThreadMessagesStatus('ready');
+  };
+
+  const setOpenedThreadMessages = (messages: MailMessage[]) => {
+    const currentKey = openedThreadKeyRef.current;
+    setOpenedThreadMessagesState(messages);
+    setOpenedThreadMessagesKey(currentKey);
+    setOpenedThreadMessagesStatus(currentKey ? 'ready' : 'idle');
+  };
 
 
 
@@ -92,7 +119,7 @@ export function useMailState({
     setMailboxViewState('inbox');
     setActiveSplitState(split);
     setOpenedThread(null);
-    setOpenedThreadMessages([]);
+    resetOpenedThreadMessages();
     setFocusedThreadId(null);
     setSelectedThreadIds(new Set());
   };
@@ -100,7 +127,7 @@ export function useMailState({
   const setMailboxView = useCallback((view: MailboxView) => {
     setMailboxViewState(view);
     setOpenedThread(null);
-    setOpenedThreadMessages([]);
+    resetOpenedThreadMessages();
     setFocusedThreadId(null);
     setSelectedThreadIds(new Set());
   }, []);
@@ -168,7 +195,7 @@ export function useMailState({
   const setActiveAccount = useCallback((account: Account | null) => {
     setActiveAccountState(account);
     setOpenedThread(null);
-    setOpenedThreadMessages([]);
+    resetOpenedThreadMessages();
     setFocusedThreadId(null);
     setSearchQuery('');
     setSelectedThreadIds(new Set());
@@ -194,6 +221,7 @@ export function useMailState({
 
       setActiveAccount(acc);
       setMailboxViewState('inbox');
+      resetOpenedThreadMessages();
 
       const threadsList = await window.electronAPI.listThreads(accountId);
       const thread = threadsList.find(t => t.id === threadId);
@@ -201,11 +229,16 @@ export function useMailState({
         const category = getThreadCategory(thread);
         setActiveSplitState(category);
 
+        const nextThreadKey = threadStateKey(thread);
+        if (!nextThreadKey) return;
+        openedThreadKeyRef.current = nextThreadKey;
         setOpenedThread(thread);
         setFocusedThreadId(thread.id);
+        startOpenedThreadMessagesLoad(nextThreadKey);
 
         const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
-        setOpenedThreadMessages(msgs);
+        if (openedThreadKeyRef.current !== nextThreadKey) return;
+        acceptOpenedThreadMessages(nextThreadKey, msgs);
 
         if (thread.isUnread) {
           setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, isUnread: false } : t));
@@ -484,18 +517,22 @@ export function useMailState({
     openedThreadKeyRef.current = nextThreadKey;
     setOpenedThread(thread);
     if (!thread || !activeAccount) {
-      setOpenedThreadMessages([]);
+      resetOpenedThreadMessages();
       return;
     }
 
     setFocusedThreadId(thread.id);
-    if (previousThreadKey !== nextThreadKey) {
-      setOpenedThreadMessages([]);
+    if (!nextThreadKey) {
+      resetOpenedThreadMessages();
+      return;
+    }
+    if (previousThreadKey !== nextThreadKey || openedThreadMessagesKey !== nextThreadKey) {
+      startOpenedThreadMessagesLoad(nextThreadKey);
     }
 
     const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
     if (openedThreadKeyRef.current !== nextThreadKey) return;
-    setOpenedThreadMessages(msgs);
+    acceptOpenedThreadMessages(nextThreadKey, msgs);
 
     if (shouldRefreshInlineCidMetadata(msgs)) {
       void (async () => {
@@ -503,7 +540,7 @@ export function useMailState({
           const freshMessages = await window.electronAPI.fetchThreadDetail(thread.accountId, thread.id);
           await window.electronAPI.saveMessages(freshMessages);
           if (openedThreadKeyRef.current === nextThreadKey) {
-            setOpenedThreadMessages(freshMessages);
+            acceptOpenedThreadMessages(nextThreadKey, freshMessages);
           }
         } catch (err) {
           console.error('Failed to refresh inline message assets:', err);
@@ -915,6 +952,8 @@ export function useMailState({
     focusedThreadId,
     openedThread,
     openedThreadMessages,
+    openedThreadMessagesKey,
+    openedThreadMessagesStatus,
     searchQuery,
     searchCoverage,
     actionLog,

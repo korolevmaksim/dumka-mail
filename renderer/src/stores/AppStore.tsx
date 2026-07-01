@@ -40,6 +40,7 @@ import { useMailState } from './useMailState';
 import { useDraftsState } from './useDraftsState';
 import { useAIState } from './useAIState';
 import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
+import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 
 export const UNIFIED_ACCOUNT: Account = {
   id: 'unified',
@@ -289,6 +290,8 @@ interface AppStoreContextType {
   setFocusedThreadId: (id: string | null) => void;
   openedThread: MailThread | null;
   openedThreadMessages: MailMessage[];
+  openedThreadMessagesKey: string | null;
+  openedThreadMessagesStatus: ThreadHeaderMessagesStatus;
   openThread: (thread: MailThread | null) => Promise<void>;
   mailboxView: MailboxView;
   setMailboxView: (view: MailboxView) => void;

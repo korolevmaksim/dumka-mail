@@ -42,7 +42,10 @@ const getMaxWidthStyle = (option?: string) => {
 function AppContent() {
   const store = useAppStore();
   const threadHeaderIdentity = store.openedThread
-    ? resolveThreadHeaderIdentity(store.openedThread, store.openedThreadMessages)
+    ? resolveThreadHeaderIdentity(store.openedThread, store.openedThreadMessages, {
+      messagesKey: store.openedThreadMessagesKey,
+      status: store.openedThreadMessagesStatus,
+    })
     : null;
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
@@ -898,12 +901,20 @@ function AppContent() {
                               {store.openedThread.subject}
                             </h1>
                             <div className="flex items-center gap-2">
-                              <span className="font-semibold text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
-                                {threadHeaderIdentity?.senderNames.join(', ') || store.openedThread.senderEmail}
-                              </span>
-                              <span className="text-[var(--text-secondary)] text-[calc(11px*var(--font-scale))]">
-                                &lt;{threadHeaderIdentity?.senderEmail || store.openedThread.senderEmail}&gt;
-                              </span>
+                              {threadHeaderIdentity ? (
+                                <>
+                                  <span className="font-semibold text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
+                                    {threadHeaderIdentity.senderName}
+                                  </span>
+                                  <span className="text-[var(--text-secondary)] text-[calc(11px*var(--font-scale))]">
+                                    &lt;{threadHeaderIdentity.senderEmail}&gt;
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-[var(--text-secondary)] text-[calc(11px*var(--font-scale))]">
+                                  Loading sender...
+                                </span>
+                              )}
                             </div>
                           </div>
                           
