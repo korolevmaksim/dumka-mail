@@ -108,6 +108,7 @@ export function shortcutGuideSections(s: ShortcutSettings): ShortcutGuideSection
         item('Search', searchShortcut),
         item('Ask AI', '⌘J'),
         item('Focus Queue', '⌘⇧P'),
+        item('Switch Mailbox', 'G / ⇧G'),
         item('Refresh Gmail', '⌘⇧N'),
         item('Continue Older Mail', '⌘⇧I'),
         item('Command Palette', commandPaletteShortcut),

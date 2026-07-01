@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { Command, X } from 'lucide-react';
 import { emitToast } from '../../lib/toastBus';
+import { nextMailboxView } from '../../../../shared/mailboxNavigation';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -45,6 +46,10 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     }},
     { title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', action: () => {
       store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
+      store.setSettingsOpen(false);
+    } },
+    { title: 'Switch Mailbox', shortcut: 'G', action: () => {
+      store.setMailboxView(nextMailboxView(store.mailboxView));
       store.setSettingsOpen(false);
     } },
     { title: 'Undo Last Action', shortcut: 'Z', action: () => store.undoLastAction() },

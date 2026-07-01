@@ -45,6 +45,7 @@ describe('hintsForContext — list', () => {
       'U read/unread',
       'C compose',
       '/ search',
+      'G/⇧G mailbox',
       '⌘⇧P queue',
       'J/K move', // vim effective in superhuman mode
       '↩/O open', // list context (thread not open)
@@ -64,6 +65,7 @@ describe('hintsForContext — list', () => {
       '⌘⇧U read',
       '⌘N compose',
       '⌘F search',
+      'G/⇧G mailbox',
       '⌘⇧P queue',
       // no J/K — vim is not effective when single-key shortcuts are disabled
       '↩ open',

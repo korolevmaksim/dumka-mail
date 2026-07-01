@@ -75,6 +75,7 @@ describe('shortcutGuideSections', () => {
     it('exposes fixed (non-conditional) shortcuts', () => {
       expect(keysFor(sections, 'Ask AI')).toBe('⌘J');
       expect(keysFor(sections, 'Focus Queue')).toBe('⌘⇧P');
+      expect(keysFor(sections, 'Switch Mailbox')).toBe('G / ⇧G');
       expect(keysFor(sections, 'Refresh Gmail')).toBe('⌘⇧N');
       expect(keysFor(sections, 'Continue Older Mail')).toBe('⌘⇧I');
       expect(keysFor(sections, 'Settings')).toBe('⌘,');

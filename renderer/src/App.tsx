@@ -25,6 +25,8 @@ import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { buildLabelTree, flattenLabelTree, labelPresenceInThreads } from '../../shared/labels';
 import { isReversibleMailActionKind } from '../../shared/mailActions';
+import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
+import type { MailboxView } from '../../shared/types';
 
 const getMaxWidthStyle = (option?: string) => {
   switch (option) {
@@ -48,6 +50,7 @@ function AppContent() {
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [labelMenuOpen, setLabelMenuOpen] = useState(false);
   const [batchLabelMenuOpen, setBatchLabelMenuOpen] = useState(false);
+  const [mailboxMenuOpen, setMailboxMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -292,8 +295,19 @@ function AppContent() {
   }, [batchLabelMenuOpen]);
 
   useEffect(() => {
+    if (!mailboxMenuOpen) return;
+    const close = () => setMailboxMenuOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [mailboxMenuOpen]);
+
+  useEffect(() => {
     if (store.selectedThreadIds.size === 0) setBatchLabelMenuOpen(false);
   }, [store.selectedThreadIds.size]);
+
+  useEffect(() => {
+    setMailboxMenuOpen(false);
+  }, [store.mailboxView]);
 
   const labelNameForToast = (labelId: string) => store.labelDefinitions.find(label => label.id === labelId)?.name || 'label';
 
@@ -375,6 +389,8 @@ function AppContent() {
         setThreadSearchQuery('');
       } else if (commandPaletteOpen) {
         setCommandPaletteOpen(false);
+      } else if (mailboxMenuOpen) {
+        setMailboxMenuOpen(false);
       } else if (store.settingsOpen) {
         store.setSettingsOpen(false);
       } else if (store.searchQuery) {
@@ -393,15 +409,30 @@ function AppContent() {
     if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
     return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
   });
-  const mailboxTabs = [
-    { id: 'inbox' as const, label: 'Inbox', icon: Inbox, count: store.mailboxCounts.inbox, subtitle: 'Split inbox categories' },
-    { id: 'sent' as const, label: 'Sent', icon: Send, count: store.mailboxCounts.sent, subtitle: 'Recent sent conversations' },
-    { id: 'trash' as const, label: 'Trash', icon: Trash2, count: store.mailboxCounts.trash, subtitle: 'Deleted conversations' },
-    { id: 'spam' as const, label: 'Spam', icon: OctagonAlert, count: store.mailboxCounts.spam, subtitle: 'Reported spam' },
-    { id: 'muted' as const, label: 'Muted', icon: BellOff, count: store.mailboxCounts.muted, subtitle: 'Ignored conversations' },
-  ];
+  const mailboxIcons: Record<MailboxView, typeof Inbox> = {
+    inbox: Inbox,
+    sent: Send,
+    trash: Trash2,
+    spam: OctagonAlert,
+    muted: BellOff,
+  };
+  const mailboxSubtitles: Record<MailboxView, string> = {
+    inbox: 'Split inbox categories',
+    sent: 'Recent sent conversations',
+    trash: 'Deleted conversations',
+    spam: 'Reported spam',
+    muted: 'Ignored conversations',
+  };
+  const mailboxTabs = MAILBOX_VIEW_ORDER.map(id => ({
+    id,
+    label: MAILBOX_VIEW_LABELS[id],
+    icon: mailboxIcons[id],
+    count: store.mailboxCounts[id],
+    subtitle: mailboxSubtitles[id],
+  }));
   const activeMailbox = mailboxTabs.find(mailbox => mailbox.id === store.mailboxView) || mailboxTabs[0];
   const EmptyMailboxIcon = activeMailbox.icon;
+  const ActiveMailboxIcon = activeMailbox.icon;
   const emptyMailboxCopy = {
     inbox: {
       title: 'Clear inbox split',
@@ -444,39 +475,60 @@ function AppContent() {
 
             {/* SPLIT TABS BAR */}
             <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
-              <div className="flex min-w-0 h-full items-end gap-2">
-                <div className="flex gap-1 h-full items-end shrink-0">
-                  {mailboxTabs.map((mailbox) => {
-                    const Icon = mailbox.icon;
-                    const isActive = store.mailboxView === mailbox.id;
-                    return (
-                      <button
-                        key={mailbox.id}
-                        type="button"
-                        onClick={() => {
-                          store.setMailboxView(mailbox.id);
-                          store.setSettingsOpen(false);
-                        }}
-                        title={mailbox.label}
-                        className={`px-2.5 pb-2 pt-1 border-b-2 text-tab transition-colors cursor-pointer flex items-center gap-1.5 ${
-                          isActive
-                            ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
-                            : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                        }`}
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                        <span>{mailbox.label}</span>
-                        {mailbox.count > 0 && (
-                          <span className="bg-[var(--border)] px-1 rounded-full text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-normal">
-                            {mailbox.count}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+              <div className="flex min-w-0 h-full items-center gap-2">
+                <div className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => setMailboxMenuOpen(value => !value)}
+                    title="Switch mailbox (G / Shift+G)"
+                    className="flex h-7 min-w-[112px] items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)]"
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <ActiveMailboxIcon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                      <span className="truncate font-semibold">{activeMailbox.label}</span>
+                      {activeMailbox.count > 0 && (
+                        <span className="rounded-full bg-[var(--border)] px-1 text-[calc(10px*var(--font-scale))] font-normal text-[var(--text-primary)]">
+                          {activeMailbox.count}
+                        </span>
+                      )}
+                    </span>
+                    <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
+                  </button>
+                  {mailboxMenuOpen && (
+                    <div className="absolute left-0 top-8 z-40 w-48 rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] p-1 shadow-lg">
+                      {mailboxTabs.map(mailbox => {
+                        const Icon = mailbox.icon;
+                        const isActive = store.mailboxView === mailbox.id;
+                        return (
+                          <button
+                            key={mailbox.id}
+                            type="button"
+                            onClick={() => {
+                              store.setMailboxView(mailbox.id);
+                              store.setSettingsOpen(false);
+                              setMailboxMenuOpen(false);
+                            }}
+                            className={`flex w-full min-w-0 items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] ${
+                              isActive
+                                ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
+                                : 'text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]'
+                            }`}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <Icon className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{mailbox.label}</span>
+                            </span>
+                            {mailbox.count > 0 && (
+                              <span className="shrink-0 rounded-full bg-[var(--border)] px-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]">
+                                {mailbox.count}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-
-                <div className="w-px h-4 mb-2 bg-[var(--border)] shrink-0" />
 
                 {store.mailboxView === 'inbox' ? (
                   <div className="flex gap-1 h-full items-end min-w-0 overflow-x-auto">
@@ -522,8 +574,8 @@ function AppContent() {
                     })}
                   </div>
                 ) : (
-                  <div className="flex h-full items-end min-w-0">
-                    <div className="pb-2 pt-1 text-tab text-[var(--text-secondary)] truncate">
+                  <div className="flex h-full items-center min-w-0">
+                    <div className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] truncate">
                       {activeMailbox.subtitle}
                     </div>
                   </div>

@@ -77,6 +77,7 @@ function mailListHints(s: ShortcutSettings, isThreadOpen: boolean): ShortcutHint
     { keys: readKey, label: readLabel },
     { keys: composeKey, label: 'compose' },
     { keys: searchKey, label: 'search' },
+    { keys: 'G/⇧G', label: 'mailbox' },
     { keys: '⌘⇧P', label: 'queue' },
   ]
 

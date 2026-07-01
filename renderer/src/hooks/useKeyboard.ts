@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
 import { deriveShortcuts } from '../../../shared/keyboard';
+import { nextMailboxView } from '../../../shared/mailboxNavigation';
 import { emitToast } from '../lib/toastBus';
 
 interface KeyboardOptions {
@@ -111,6 +112,14 @@ export function useKeyboard(options: KeyboardOptions) {
         } else {
           currentStore.setActiveAccount(UNIFIED_ACCOUNT);
         }
+        currentStore.setSettingsOpen(false);
+        return;
+      }
+
+      // G / Shift+G: cycle mailbox views without mixing them into split tabs.
+      if (noModifiers && (e.code === 'KeyG' || e.key.toLowerCase() === 'g')) {
+        e.preventDefault();
+        currentStore.setMailboxView(nextMailboxView(currentStore.mailboxView, e.shiftKey ? -1 : 1));
         currentStore.setSettingsOpen(false);
         return;
       }
