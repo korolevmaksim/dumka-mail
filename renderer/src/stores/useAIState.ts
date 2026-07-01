@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings } from '../../../shared/types';
+import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings, AIPromptShortcut } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
 import { emitToast } from '../lib/toastBus';
@@ -313,44 +313,50 @@ export function useAIState({
     setSelectedTriageThreadIds(new Set());
   };
 
-  const runAIAction = async (action: AIAction) => {
+  const runAIInstruction = async ({
+    label,
+    instruction,
+    requiresThread,
+  }: {
+    label: string;
+    instruction: string;
+    requiresThread: boolean;
+  }) => {
     setAiPanelOpen(true);
-    if (action === 'queue') {
-      await runAITriagePlan();
-      return;
-    }
-
     if (!activeAccount) {
       emitToast({ type: 'warning', message: 'Connect an account before using AI actions.' });
+      return;
+    }
+    if (requiresThread && !openedThread) {
+      emitToast({ type: 'warning', message: 'Open a thread before running this AI shortcut.' });
       return;
     }
 
     setAiPanelLoading(true);
     const start = performance.now();
-    const context = buildThreadContext(openedThread, openedThreadMessages, settings.ai);
-    const tone = `Use a ${settings.ai.replyTone} tone.`;
     const notes = settings.ai.personalizationNotes ? `\nPersonalization notes: ${settings.ai.personalizationNotes}` : '';
-    const prompts: Record<Exclude<AIAction, 'queue'>, { label: string; instruction: string }> = {
-      summarize: { label: 'Summarize this thread', instruction: `Summarize this email thread in 3-5 crisp bullet points, then a single "Next step:" line.${notes}` },
-      draftReply: { label: 'Draft a reply', instruction: `Write a complete reply to the latest message in this thread. ${tone} Return only the email body, no preamble or subject.${notes}` },
-      rewrite: { label: 'Rewrite for clarity', instruction: `Rewrite the latest message to be clearer, well-structured, and polished. ${tone} Return only the rewritten text.${notes}` },
-      translate: { label: 'Translate to English', instruction: `Translate the latest message of this thread into clear English. If it is already English, return clear formal English. Return only the translation.` },
-    };
-    const cfg = prompts[action];
+    const context = requiresThread
+      ? buildThreadContext(openedThread, openedThreadMessages, settings.ai)
+      : 'No selected mail context. This reusable prompt shortcut is not thread-scoped; answer the user directly from the instruction and conversation history.';
 
-    const userMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'user', text: cfg.label };
-    const pending = [...activeAIMessages, userMsg];
+    const userMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'user', text: label };
+    const targetThreadId = requiresThread ? openedThread?.id || null : null;
+    const canReuseConversation = activeAIConversation?.threadId === targetThreadId;
+    const baseMessages = canReuseConversation ? activeAIMessages : [];
+    const pending = [...baseMessages, userMsg];
     setActiveAIMessages(pending);
 
-    const targetAccountId = openedThread ? openedThread.accountId : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
-    let conv = activeAIConversation;
+    const targetAccountId = requiresThread && openedThread
+      ? openedThread.accountId
+      : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
+    let conv = canReuseConversation ? activeAIConversation : null;
     if (!conv) {
       conv = {
         id: crypto.randomUUID(),
-        title: cfg.label,
+        title: label,
         accountId: targetAccountId,
-        threadId: openedThread?.id || null,
-        threadSubject: openedThread?.subject || null,
+        threadId: targetThreadId,
+        threadSubject: requiresThread ? openedThread?.subject || null : null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -362,7 +368,7 @@ export function useAIState({
         action: 'chat',
         context,
         conversationHistory: pending,
-        userInstruction: cfg.instruction
+        userInstruction: `${instruction}${notes}`
       }, aiProvider, aiModel || undefined);
 
       const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text };
@@ -381,6 +387,35 @@ export function useAIState({
     } finally {
       setAiPanelLoading(false);
     }
+  };
+
+  const runAIAction = async (action: AIAction) => {
+    if (action === 'queue') {
+      await runAITriagePlan();
+      return;
+    }
+
+    const tone = `Use a ${settings.ai.replyTone} tone.`;
+    const prompts: Record<Exclude<AIAction, 'queue'>, { label: string; instruction: string }> = {
+      summarize: { label: 'Summarize this thread', instruction: 'Summarize this email thread in 3-5 crisp bullet points, then a single "Next step:" line.' },
+      draftReply: { label: 'Draft a reply', instruction: `Write a complete reply to the latest message in this thread. ${tone} Return only the email body, no preamble or subject.` },
+      rewrite: { label: 'Rewrite for clarity', instruction: `Rewrite the latest message to be clearer, well-structured, and polished. ${tone} Return only the rewritten text.` },
+      translate: { label: 'Translate to English', instruction: 'Translate the latest message of this thread into clear English. If it is already English, return clear formal English. Return only the translation.' },
+    };
+    const cfg = prompts[action];
+    await runAIInstruction({
+      label: cfg.label,
+      instruction: cfg.instruction,
+      requiresThread: true,
+    });
+  };
+
+  const runAIPromptShortcut = async (shortcut: AIPromptShortcut) => {
+    await runAIInstruction({
+      label: shortcut.title,
+      instruction: shortcut.instruction,
+      requiresThread: shortcut.requiresThread,
+    });
   };
 
   const runAITriagePlan = async () => {
@@ -444,6 +479,7 @@ export function useAIState({
     selectAIConversation,
     sendAIMessage,
     runAIAction,
+    runAIPromptShortcut,
     runAITriagePlan,
     toggleTriagePlanItemSelection,
     selectAllApplicableTriagePlanItems,

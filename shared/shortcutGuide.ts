@@ -106,7 +106,7 @@ export function shortcutGuideSections(s: ShortcutSettings): ShortcutGuideSection
       items: compact([
         item('Compose', composeShortcut),
         item('Search', searchShortcut),
-        item('Ask AI', '⌘J'),
+        item('Open AI Assistant', '⌘J'),
         item('Focus Queue', '⌘⇧P'),
         item('Switch Mailbox', 'G / ⇧G'),
         item('Refresh Gmail', '⌘⇧N'),

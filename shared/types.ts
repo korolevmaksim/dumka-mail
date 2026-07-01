@@ -599,11 +599,19 @@ export interface AIProviderConfiguration {
   canRemove: boolean;
 }
 
+export interface AIPromptShortcut {
+  id: string;
+  title: string;
+  instruction: string;
+  requiresThread: boolean;
+}
+
 export interface AISettings {
   provider: AIProviderPreference;
   globalDefaultModel: string;
   fallback: AIFallbackSettings;
   providerConfigurations: AIProviderConfiguration[];
+  promptShortcuts: AIPromptShortcut[];
   replyTone: 'direct' | 'concise' | 'warm' | 'formal';
   allowMailBodyContext: boolean;
   savePromptHistory: boolean;

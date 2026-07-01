@@ -47,6 +47,7 @@ describe('hintsForContext — list', () => {
       '/ search',
       'G/⇧G mailbox',
       '⌘⇧P queue',
+      '⌘J ask AI',
       'J/K move', // vim effective in superhuman mode
       '↩/O open', // list context (thread not open)
       '? command', // palette enabled, single-key form
@@ -67,6 +68,7 @@ describe('hintsForContext — list', () => {
       '⌘F search',
       'G/⇧G mailbox',
       '⌘⇧P queue',
+      '⌘J ask AI',
       // no J/K — vim is not effective when single-key shortcuts are disabled
       '↩ open',
       '⌘K command',
@@ -141,6 +143,7 @@ describe('hintsForContext — search', () => {
     expect(pairs(hints)).toEqual([
       'esc close',
       '↩/O open',
+      '⌘J ask AI',
       'J/K move',
       '? command',
     ]);
@@ -151,6 +154,7 @@ describe('hintsForContext — search', () => {
     expect(pairs(hints)).toEqual([
       'esc close',
       '↩ open',
+      '⌘J ask AI',
       '⌘K command',
     ]);
   });

@@ -26,6 +26,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
     { title: 'Move to Spam', shortcut: '!', action: () => store.executeMailAction('reportSpam') },
     { title: 'Ignore Thread', shortcut: 'M', action: () => store.muteThread() },
     { title: 'Set Reminder', shortcut: 'H', action: onOpenReminder },
+    { title: 'Open AI Assistant', shortcut: 'Cmd+J', action: () => store.setAiPanelOpen(true) },
     { title: 'AI Triage Queue', shortcut: 'S', action: () => store.runAITriagePlan() },
     { title: 'Compose Message', shortcut: 'C', action: () => {
       const draft = store.startNewDraft();

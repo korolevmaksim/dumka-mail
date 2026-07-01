@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, mergeSettings, SETTINGS_SCHEMA_VERSION } from '../renderer/src/stores/AppStore';
+import { DEFAULT_SETTINGS, mergeSettings } from '../renderer/src/stores/AppStore';
 
 describe('mail notification defaults', () => {
   it('notifies for every new unread inbox message by default', () => {
@@ -9,7 +9,7 @@ describe('mail notification defaults', () => {
 
   it('migrates saved settings to notify for every new unread inbox message', () => {
     const merged = mergeSettings({
-      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+      settingsSchemaVersion: 5,
       notifications: {
         desktopNotifications: true,
         notifyImportantOnly: true,

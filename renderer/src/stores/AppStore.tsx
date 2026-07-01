@@ -20,6 +20,7 @@ import {
   AIChatMessage,
   AIProviderPreference,
   AIProviderDescriptor,
+  AIPromptShortcut,
   CustomClassifierRule,
   TabCategory,
   AppSettings,
@@ -56,7 +57,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 6;
+export const SETTINGS_SCHEMA_VERSION = 7;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -161,6 +162,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
       { id: 'deepSeek', provider: 'deepSeek', displayName: 'DeepSeek', defaultModel: getAIProviderConfig('deepSeek').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('deepSeek').defaultBaseUrl, isEnabled: false, canRemove: false },
       { id: 'openAICompatible', provider: 'openAICompatible', displayName: 'Local Model', defaultModel: getAIProviderConfig('openAICompatible').defaultModel, modelSelectionMode: 'custom', baseURL: 'http://localhost:11434/v1', isEnabled: false, canRemove: false }
     ],
+    promptShortcuts: [
+      {
+        id: 'explain-request',
+        title: 'Explain Request',
+        instruction: 'Read the selected email thread and explain plainly what the sender wants from me, who they are, why it matters, and the next action I should take. If the message is not in English, translate the relevant parts before explaining.',
+        requiresThread: true
+      }
+    ],
     replyTone: 'direct',
     allowMailBodyContext: true,
     savePromptHistory: false,
@@ -234,6 +243,16 @@ export function mergeSettings(parsed: any): AppSettings {
     return found ? deepMerge(def, found) : { ...def };
   });
   merged.ai.providerConfigurations = [...baseMerged, ...parsedProviders.filter((p: any) => !baseIds.has(p.id))];
+  merged.ai.promptShortcuts = Array.isArray(merged.ai.promptShortcuts)
+    ? merged.ai.promptShortcuts
+        .filter((shortcut: AIPromptShortcut) => shortcut.id && shortcut.title && shortcut.instruction)
+        .map((shortcut: AIPromptShortcut) => ({
+          id: String(shortcut.id),
+          title: String(shortcut.title),
+          instruction: String(shortcut.instruction),
+          requiresThread: shortcut.requiresThread !== false,
+        }))
+    : DEFAULT_SETTINGS.ai.promptShortcuts.map(shortcut => ({ ...shortcut }));
 
   if (parsedSchemaVersion < 6) {
     merged.notifications.notifyImportantOnly = false;
@@ -362,6 +381,7 @@ interface AppStoreContextType {
   selectAIConversation: (conv: AIConversation) => Promise<void>;
   sendAIMessage: (text: string) => Promise<void>;
   runAIAction: (action: AIAction) => Promise<void>;
+  runAIPromptShortcut: (shortcut: AIPromptShortcut) => Promise<void>;
   runAITriagePlan: () => Promise<void>;
   triagePlan: MailTriagePlan | null;
   setTriagePlan: (plan: MailTriagePlan | null) => void;

@@ -11,6 +11,7 @@ import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider, 
 import { AITriagePlanCard } from '../AITriagePlanCard';
 import { SearchableSelect } from '../common/SearchableSelect';
 import { compileMarkdownToHtmlFragment } from '../../../../shared/markdown';
+import { AIPromptShortcutStrip } from './AIPromptShortcutStrip';
 
 const AI_ICON: Record<string, LucideIcon> = {
   ListChecks, Text, PenLine, Wand2, Languages,
@@ -325,6 +326,7 @@ export function AICopilotPanel() {
       >
         <div className="flex items-center gap-1.5 font-semibold text-[calc(13px*var(--font-scale))] text-[var(--text-primary)]">
           <Sparkles className="w-4 h-4 text-[var(--ai-accent)]" /> AI Assistant
+          <kbd title="Open AI Assistant" className="ml-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1 py-0.5 font-mono text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">⌘J</kbd>
         </div>
         
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
@@ -453,6 +455,8 @@ export function AICopilotPanel() {
           );
         })}
       </div>
+
+      <AIPromptShortcutStrip />
 
       {/* Chat Messages container */}
       <div ref={aiMessagesRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-[var(--app-bg)]">

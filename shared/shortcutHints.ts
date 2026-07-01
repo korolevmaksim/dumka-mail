@@ -79,6 +79,7 @@ function mailListHints(s: ShortcutSettings, isThreadOpen: boolean): ShortcutHint
     { keys: searchKey, label: 'search' },
     { keys: 'G/⇧G', label: 'mailbox' },
     { keys: '⌘⇧P', label: 'queue' },
+    { keys: '⌘J', label: 'ask AI' },
   ]
 
   // Swift inserts undo at index 0.
@@ -123,6 +124,7 @@ function searchHints(s: ShortcutSettings): ShortcutHint[] {
   const hints: ShortcutHint[] = [
     { keys: 'esc', label: 'close' },
     { keys: singleKey ? '↩/O' : '↩', label: 'open' },
+    { keys: '⌘J', label: 'ask AI' },
   ]
   if (effectiveVimNavigation(s)) {
     hints.push({ keys: 'J/K', label: 'move' })

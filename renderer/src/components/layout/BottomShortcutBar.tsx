@@ -21,7 +21,15 @@ export function BottomShortcutBar() {
         ))}
       </div>
       <div className="shrink-0">
-        <span>Press <kbd className="bg-[var(--border)] px-1 rounded font-mono font-semibold">⌘K</kbd> for commands</span>
+        <span>
+          <kbd className="bg-[var(--border)] px-1 rounded font-mono font-semibold">⌘J</kbd> AI
+          {store.settings.shortcuts.commandPaletteEnabled && (
+            <>
+              <span className="px-1.5 text-[var(--text-tertiary)]">·</span>
+              <kbd className="bg-[var(--border)] px-1 rounded font-mono font-semibold">⌘K</kbd> Commands
+            </>
+          )}
+        </span>
       </div>
     </div>
   );

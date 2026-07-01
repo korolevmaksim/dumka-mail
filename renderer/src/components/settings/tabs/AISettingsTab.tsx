@@ -5,6 +5,7 @@ import { Toggle } from '../SettingsControls';
 import { emitToast } from '../../../lib/toastBus';
 import { AI_SECRET_STORED_PLACEHOLDER } from '../../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider } from '../../../../../shared/aiProviders';
+import { AIPromptShortcutsPanel } from '../AIPromptShortcutsPanel';
 
 type FormKeys = Record<string, string>;
 type VerifyStatus = Record<string, { status: 'idle' | 'verifying' | 'success' | 'error'; error?: string }>;
@@ -359,6 +360,8 @@ export function AISettingsTab() {
           </div>
         ))}
       </div>
+
+      <AIPromptShortcutsPanel />
 
       {/* Provider configurations (Keys) */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">

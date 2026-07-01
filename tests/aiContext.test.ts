@@ -46,6 +46,7 @@ function makeAISettings(allowMailBodyContext: boolean): AISettings {
     globalDefaultModel: '',
     fallback: { isEnabled: false, orderText: '' },
     providerConfigurations: [],
+    promptShortcuts: [],
     replyTone: 'direct',
     allowMailBodyContext,
     savePromptHistory: false,
