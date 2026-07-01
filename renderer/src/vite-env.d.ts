@@ -23,9 +23,12 @@ import {
   SyncState,
   AIConversation,
   AIChatMessage,
+  AIEmbeddingSettings,
   AIProviderPreference,
   AIProviderDescriptor,
-  MCPServerConfig
+  MCPServerConfig,
+  SemanticSearchResult,
+  ThreadAgentInsights
 } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 
@@ -118,6 +121,12 @@ export interface IElectronAPI {
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;
   completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string }>;
+  getThreadAgentInsights: (accountId: string, threadId: string) => Promise<ThreadAgentInsights>;
+  dismissAgentDraftSuggestion: (id: string) => Promise<void>;
+  markAgentDraftSuggestionApplied: (id: string) => Promise<void>;
+  testEmbeddingConfig: (settings: AIEmbeddingSettings) => Promise<{ model: string; dimensions: number; provider: AIEmbeddingSettings['provider'] }>;
+  searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchResult[]>;
+  unsubscribeThread: (email: string, threadId: string, actionId?: string) => Promise<{ method: string; archived: boolean }>;
   loadAIConfig: () => Promise<Record<string, string>>;
   saveAIConfig: (config: Record<string, string>) => Promise<void>;
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;

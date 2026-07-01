@@ -1,4 +1,5 @@
 import { useRef, useEffect } from 'react';
+import { stripTrackingPixelsFromHtml } from '../../../shared/mailSecurity';
 
 function findNextMediaRule(css: string, from: number): number {
   let i = from;
@@ -118,9 +119,10 @@ export function removeDarkColorSchemeMediaRules(css: string): string {
 
 function preprocessHtml(html: string): string {
   if (!html) return html;
+  const htmlWithoutTrackers = stripTrackingPixelsFromHtml(html);
   try {
     const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
+    const doc = parser.parseFromString(htmlWithoutTrackers, 'text/html');
     const colorSchemeMetas = doc.querySelectorAll(
       'meta[name="color-scheme" i], meta[name="supported-color-schemes" i]'
     );
@@ -160,7 +162,7 @@ function preprocessHtml(html: string): string {
     return `${doc.head.innerHTML}${doc.body.innerHTML}`;
   } catch (e) {
     console.error('Error preprocessing HTML:', e);
-    return html;
+    return htmlWithoutTrackers;
   }
 }
 

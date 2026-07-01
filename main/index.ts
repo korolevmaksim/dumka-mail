@@ -25,10 +25,12 @@ import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } f
 import { GoogleWorkspaceService } from './googleWorkspace';
 import { getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
+import { AgenticService } from './agentic';
 import { MCPManager } from './mcpManager';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
+import { shouldNotifyForMessage } from '../shared/mailSecurity';
 import type { CalendarAttendeeResponse, CalendarInvite, MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -91,19 +93,9 @@ function isInQuietHours(settings: MailNotificationSettings, now = new Date()): b
     : current >= start || current < end;
 }
 
-function hasLabel(message: MailMessage, label: string): boolean {
-  return message.labelIds.some(id => id.toUpperCase() === label);
-}
-
 function shouldNotifyOfNewMessage(message: MailMessage, settings: MailNotificationSettings): boolean {
   if (!settings.desktopNotifications || isInQuietHours(settings)) return false;
-  if (!hasLabel(message, 'INBOX') || !hasLabel(message, 'UNREAD')) return false;
-
-  if (settings.notifyImportantOnly) {
-    return hasLabel(message, 'IMPORTANT') || hasLabel(message, 'CATEGORY_PRIMARY');
-  }
-
-  return true;
+  return shouldNotifyForMessage(message, settings);
 }
 
 function readNotificationSettings(): MailNotificationSettings {
@@ -379,6 +371,7 @@ app.whenReady().then(() => {
   // Start background sync worker loop
   startBackgroundSyncWorker();
   startBackgroundMailboxSyncWorker();
+  startBackgroundAgenticWorker();
 
   // Initialize MCPManager with stored settings
   try {
@@ -417,6 +410,7 @@ async function saveMessagesToDatabase(messages: MailMessage[], options?: { notif
 
   if (options?.notifyOfNew && newMessages.length > 0) {
     notifyOfNewMessages(newMessages);
+    void AgenticService.processNewMessages(newMessages);
   }
 }
 
@@ -840,6 +834,57 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
 
 registerSecureHandler('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
 registerSecureHandler('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
+registerSecureHandler('api:getThreadAgentInsights', (_, accountId, threadId) => AgenticService.getThreadInsights(accountId, threadId));
+registerSecureHandler('api:dismissAgentDraftSuggestion', (_, id) => AgenticService.dismissDraftSuggestion(id));
+registerSecureHandler('api:markAgentDraftSuggestionApplied', (_, id) => AgenticService.markDraftSuggestionApplied(id));
+registerSecureHandler('api:testEmbeddingConfig', (_, settings) => AgenticService.testEmbeddingConfig(settings));
+registerSecureHandler('api:searchSemantic', async (_, accountId, query, limit) => {
+  try {
+    return await AgenticService.searchSemantic(accountId, query, limit);
+  } catch (err) {
+    console.warn('[Agentic] Semantic search unavailable:', err);
+    return [];
+  }
+});
+registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, actionId?: string) => {
+  const id = actionId || crypto.randomUUID();
+  const now = new Date().toISOString();
+  ActionLogRepo.save({
+    id,
+    accountId: email,
+    threadId,
+    kind: 'unsubscribeSender',
+    status: 'running',
+    createdAt: now
+  });
+
+  try {
+    const result = await AgenticService.unsubscribeThread(email, threadId);
+    ActionLogRepo.save({
+      id,
+      accountId: email,
+      threadId,
+      kind: 'unsubscribeSender',
+      status: 'completed',
+      createdAt: now,
+      completedAt: new Date().toISOString(),
+      payloadJson: JSON.stringify(result)
+    });
+    return result;
+  } catch (err: any) {
+    ActionLogRepo.save({
+      id,
+      accountId: email,
+      threadId,
+      kind: 'unsubscribeSender',
+      status: 'failed',
+      createdAt: now,
+      completedAt: new Date().toISOString(),
+      failureMessage: err?.message || String(err)
+    });
+    throw err;
+  }
+});
 registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
 registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
 registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
@@ -877,6 +922,7 @@ function isNetworkError(err: any): boolean {
 
 let syncWorkerActive = false;
 let mailboxSyncWorkerActive = false;
+let agenticWorkerActive = false;
 const activeBackfillAccounts = new Set<string>();
 
 function startBackgroundSyncWorker() {
@@ -1140,6 +1186,29 @@ function startBackgroundMailboxSyncWorker() {
   setInterval(() => {
     void run();
   }, 60000);
+}
+
+function startBackgroundAgenticWorker() {
+  const run = async () => {
+    if (agenticWorkerActive) return;
+    agenticWorkerActive = true;
+
+    try {
+      await AgenticService.runBackgroundPass();
+    } catch (err) {
+      console.error('[Agentic] Background pass failed:', err);
+    } finally {
+      agenticWorkerActive = false;
+    }
+  };
+
+  setTimeout(() => {
+    void run();
+  }, 20000);
+
+  setInterval(() => {
+    void run();
+  }, 120000);
 }
 
 function getMimeType(filePath: string): string {

@@ -10,7 +10,7 @@ This project is early alpha software. It is useful for local development and exp
 
 ## Features
 
-- Local SQLite mail cache with full-text search.
+- Local SQLite mail cache with full-text search and optional opt-in semantic search.
 - Gmail OAuth onboarding with macOS Keychain token storage.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
 - Split inbox categories, saved views, reminders, and action history.
@@ -19,6 +19,7 @@ This project is early alpha software. It is useful for local development and exp
 - Compose, reply, forward, signatures, snippets, attachments, and sent mail sync.
 - Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
+- Agentic mail layer with opt-in proactive draft previews, notification filtering, one-click unsubscribe support, local security snapshots, tracker stripping, and phishing-link warnings.
 - Secure Electron defaults: context isolation, sandboxed renderer, disabled Node integration, and typed preload IPC.
 
 ## Requirements
@@ -57,7 +58,13 @@ ANTHROPIC_API_KEY=...
 ANTHROPIC_MODEL=claude-sonnet-4.6
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=~openai/gpt-latest
+MISTRAL_API_KEY=...
+COHERE_API_KEY=...
+VOYAGE_API_KEY=...
+DASHSCOPE_API_KEY=...
 ```
+
+Semantic-search provider, model, endpoint, and dimensions are configured in Settings -> AI Configuration, not through `openai.env`.
 
 Do not commit local OAuth files, provider keys, refresh tokens, SQLite databases, logs, or app exports.
 

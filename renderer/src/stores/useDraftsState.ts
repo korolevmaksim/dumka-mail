@@ -143,6 +143,34 @@ export function useDraftsState({
     loadDrafts();
   };
 
+  const startReplyWithBody = (message: MailMessage, bodyPlain: string, replyAll = false) => {
+    if (!activeAccount) return;
+    const selfEmail = activeAccount.id === 'unified'
+      ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
+      : activeAccount.email;
+    const seed = buildReplySeed(message, selfEmail, replyAll || settings.compose.alwaysReplyAll);
+    const initialBody = buildInitialDraftBodyWithSignature(bodyPlain, settings.compose, settings.profile, message.accountId);
+    const draft: Draft = {
+      id: crypto.randomUUID(),
+      accountId: message.accountId,
+      threadId: message.threadId,
+      to: seed.to,
+      cc: seed.cc,
+      bcc: [],
+      subject: seed.subject,
+      bodyPlain: initialBody.bodyPlain,
+      bodyHtml: initialBody.bodyHtml,
+      attachments: [],
+      replyMessageId: seed.replyMessageId || null,
+      replyReferences: seed.replyReferences || null,
+      updatedAt: new Date().toISOString()
+    };
+    window.electronAPI.saveDraft(draft).catch(e => console.error('saveDraft (agent reply) failed', e));
+    setActiveDraft(draft);
+    setComposeLayout('inline');
+    loadDrafts();
+  };
+
   const startForward = (message: MailMessage) => {
     if (!activeAccount) return;
     const seed = buildForwardSeed(message);
@@ -312,6 +340,7 @@ export function useDraftsState({
     startNewDraft,
     saveDraftLocally,
     startReply,
+    startReplyWithBody,
     startForward,
     updateDraft,
     updateDraftBody,

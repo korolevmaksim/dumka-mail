@@ -57,6 +57,11 @@ export interface Recipient {
   email: string;
 }
 
+export interface MailHeader {
+  name: string;
+  value: string;
+}
+
 export type EmailAddressSuggestionKind = 'address' | 'contact' | 'group';
 
 export interface EmailAddressSuggestion extends Recipient {
@@ -236,6 +241,7 @@ export interface MailMessage {
   bodyHtml?: string | null;
   bodyPlain?: string | null;
   attachments: AttachmentMetadata[];
+  headers?: MailHeader[];
   rfcMessageId?: string | null;
   rfcReferences?: string | null;
   rfcInReplyTo?: string | null;
@@ -288,6 +294,7 @@ export type ActionKind =
   | 'setReminder'
   | 'clearReminder'
   | 'calendarRSVP'
+  | 'unsubscribeSender'
   | 'addCalendarEvent'
   | 'createCalendarEvent'
   | 'updateCalendarEvent'
@@ -323,6 +330,7 @@ export const ACTION_KIND_META: Record<ActionKind, ActionKindMeta> = {
   setReminder: { title: 'Reminder set', icon: 'Clock' },
   clearReminder: { title: 'Reminder cleared', icon: 'BellOff' },
   calendarRSVP: { title: 'RSVP sent', icon: 'CalendarCheck' },
+  unsubscribeSender: { title: 'Unsubscribed', icon: 'MailMinus' },
   addCalendarEvent: { title: 'Calendar event added', icon: 'CalendarPlus' },
   createCalendarEvent: { title: 'Calendar event created', icon: 'CalendarPlus' },
   updateCalendarEvent: { title: 'Calendar event updated', icon: 'CalendarCheck' },
@@ -353,7 +361,11 @@ export const AI_SECRET_KEYS = [
   'GEMINI_API_KEY',
   'OPENROUTER_API_KEY',
   'DEEPSEEK_API_KEY',
-  'OPENAI_COMPATIBLE_API_KEY'
+  'OPENAI_COMPATIBLE_API_KEY',
+  'MISTRAL_API_KEY',
+  'COHERE_API_KEY',
+  'VOYAGE_API_KEY',
+  'DASHSCOPE_API_KEY'
 ] as const;
 
 export type AISecretKey = typeof AI_SECRET_KEYS[number];
@@ -606,6 +618,29 @@ export interface AIPromptShortcut {
   requiresThread: boolean;
 }
 
+export type AIEmbeddingProvider =
+  | 'openAI'
+  | 'gemini'
+  | 'ollama'
+  | 'mistral'
+  | 'cohere'
+  | 'voyage'
+  | 'dashscope'
+  | 'openAICompatible';
+
+export interface AIEmbeddingSettings {
+  provider: AIEmbeddingProvider;
+  model: string;
+  baseURL: string;
+  dimensions: number | null;
+}
+
+export interface AgentRulesSettings {
+  proactiveDraftTrigger: 'directOnly' | 'directOrActionRequest';
+  blockBulkAndAutomated: boolean;
+  maxDraftSourceWords: number;
+}
+
 export interface AISettings {
   provider: AIProviderPreference;
   globalDefaultModel: string;
@@ -615,6 +650,10 @@ export interface AISettings {
   replyTone: 'direct' | 'concise' | 'warm' | 'formal';
   allowMailBodyContext: boolean;
   savePromptHistory: boolean;
+  proactiveDraftsEnabled: boolean;
+  semanticSearchEnabled: boolean;
+  embeddings: AIEmbeddingSettings;
+  agentRules: AgentRulesSettings;
   suggestDrafts: boolean;
   suggestAutoArchive: boolean;
   suggestLabels: boolean;
@@ -699,4 +738,92 @@ export interface MailTriageQueueReadiness {
   blockedActionCount: number;
   canApplySelected: boolean;
   applyButtonTitle: string;
+}
+
+export type AgentDraftStatus = 'ready' | 'applied' | 'dismissed' | 'failed';
+
+export interface AgentDraftSuggestion {
+  id: string;
+  accountId: AccountID;
+  threadId: ThreadID;
+  messageId: MessageID;
+  subject: string;
+  bodyPlain: string;
+  status: AgentDraftStatus;
+  confidence: number;
+  reason: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MailSecuritySeverity = 'info' | 'warning' | 'danger';
+
+export type MailSecurityWarningKind =
+  | 'trackingPixel'
+  | 'suspiciousLink'
+  | 'senderMismatch'
+  | 'styleShift'
+  | 'remoteForm'
+  | 'unsafeProtocol';
+
+export interface MailSecurityWarning {
+  kind: MailSecurityWarningKind;
+  severity: MailSecuritySeverity;
+  title: string;
+  detail: string;
+  evidence?: string;
+}
+
+export type MailSecurityRiskLevel = 'low' | 'medium' | 'high';
+
+export interface MessageSecurityInsight {
+  accountId: AccountID;
+  messageId: MessageID;
+  threadId: ThreadID;
+  riskLevel: MailSecurityRiskLevel;
+  warnings: MailSecurityWarning[];
+  trackerCount: number;
+  phishingLinkCount: number;
+  analyzedAt: string;
+}
+
+export type UnsubscribeMethodKind = 'httpPost' | 'httpGet' | 'mailto';
+
+export interface UnsubscribeMethod {
+  kind: UnsubscribeMethodKind;
+  url: string;
+  isOneClick: boolean;
+  email?: string;
+  subject?: string;
+  body?: string;
+}
+
+export interface UnsubscribeCandidate {
+  accountId: AccountID;
+  threadId: ThreadID;
+  messageId: MessageID;
+  senderEmail: string;
+  senderName: string;
+  methods: UnsubscribeMethod[];
+  recommendedMethod: UnsubscribeMethod | null;
+  canOneClick: boolean;
+}
+
+export interface ThreadAgentInsights {
+  accountId: AccountID;
+  threadId: ThreadID;
+  draftSuggestion: AgentDraftSuggestion | null;
+  securityInsights: MessageSecurityInsight[];
+  unsubscribeCandidate: UnsubscribeCandidate | null;
+}
+
+export interface SemanticSearchResult {
+  threadId: ThreadID;
+  messageId: MessageID;
+  score: number;
+  subject: string;
+  sender: string;
+  snippet: string;
+  receivedAt: string;
 }

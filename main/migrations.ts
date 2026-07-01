@@ -128,6 +128,7 @@ export function runMigrations(db: Database.Database) {
         body_html TEXT,
         body_plain TEXT,
         attachments_json TEXT NOT NULL DEFAULT '[]',
+        headers_json TEXT NOT NULL DEFAULT '[]',
         rfc_message_id TEXT,
         rfc_references TEXT,
         rfc_in_reply_to TEXT,
@@ -199,6 +200,48 @@ export function runMigrations(db: Database.Database) {
         failure_message TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS agent_drafts (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        body_plain TEXT NOT NULL,
+        status TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS message_security (
+        account_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        tracker_count INTEGER NOT NULL DEFAULT 0,
+        phishing_link_count INTEGER NOT NULL DEFAULT 0,
+        analyzed_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, message_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS mail_embeddings (
+        account_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        text_hash TEXT NOT NULL,
+        vector_json TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        snippet TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        indexed_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, message_id, model)
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -208,6 +251,9 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_ai_conversations_account_id ON ai_conversations(account_id);
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_created_at ON mail_action_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_account_id ON mail_action_log(account_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_drafts_thread ON agent_drafts(account_id, thread_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_message_security_thread ON message_security(account_id, thread_id);
+    CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model ON mail_embeddings(account_id, model, indexed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_threads_account_last_message_at ON threads(account_id, last_message_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_account_thread_received_at ON messages(account_id, thread_id, received_at);
     CREATE INDEX IF NOT EXISTS idx_contacts_account_email ON contacts(account_id, email);
@@ -229,6 +275,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'messages', column: 'to_recipients_json', definition: 'to_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'cc_recipients_json', definition: 'cc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'bcc_recipients_json', definition: 'bcc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
+    { table: 'messages', column: 'headers_json', definition: 'headers_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'rfc_message_id', definition: 'rfc_message_id TEXT' },
     { table: 'messages', column: 'rfc_references', definition: 'rfc_references TEXT' },
     { table: 'messages', column: 'rfc_in_reply_to', definition: 'rfc_in_reply_to TEXT' },

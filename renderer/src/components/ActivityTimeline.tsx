@@ -1,11 +1,11 @@
-import { CheckCircle, Inbox, MailOpen, Mail, Clock, Send, BellOff, Sparkles, Braces, Activity, Trash2, ArchiveRestore, OctagonAlert, Tag, FolderInput, CalendarCheck, CalendarPlus, type LucideIcon } from 'lucide-react';
+import { CheckCircle, Inbox, MailOpen, Mail, MailMinus, Clock, Send, BellOff, Sparkles, Braces, Activity, Trash2, ArchiveRestore, OctagonAlert, Tag, FolderInput, CalendarCheck, CalendarPlus, type LucideIcon } from 'lucide-react';
 import { MailActionLog, ActionStatus } from '../../../shared/types';
 import { makeActivityItems } from '../../../shared/activityTimeline';
 import { relativeTime } from '../../../shared/dateFormat';
 
 const ICON: Record<string, LucideIcon> = {
   CheckCircle, Inbox, MailOpen, Mail, Clock, Send, BellOff, Sparkles, Braces,
-  Trash2, ArchiveRestore, OctagonAlert, Tag, FolderInput, CalendarCheck, CalendarPlus,
+  Trash2, ArchiveRestore, OctagonAlert, Tag, FolderInput, CalendarCheck, CalendarPlus, MailMinus,
 };
 
 const STATUS_COLOR: Record<ActionStatus, string> = {

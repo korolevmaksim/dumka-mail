@@ -111,6 +111,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:getAIProviderDescriptor', preference, overrideModel),
   completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:completeAI', request, preference, overrideModel),
+  getThreadAgentInsights: (accountId: string, threadId: string) => ipcRenderer.invoke('api:getThreadAgentInsights', accountId, threadId),
+  dismissAgentDraftSuggestion: (id: string) => ipcRenderer.invoke('api:dismissAgentDraftSuggestion', id),
+  markAgentDraftSuggestionApplied: (id: string) => ipcRenderer.invoke('api:markAgentDraftSuggestionApplied', id),
+  testEmbeddingConfig: (settings: any) => ipcRenderer.invoke('api:testEmbeddingConfig', settings),
+  searchSemantic: (accountId: string, query: string, limit?: number) => ipcRenderer.invoke('api:searchSemantic', accountId, query, limit),
+  unsubscribeThread: (email: string, threadId: string, actionId?: string) => ipcRenderer.invoke('api:unsubscribeThread', email, threadId, actionId),
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),
   saveAIConfig: (config: Record<string, string>) => ipcRenderer.invoke('api:saveAIConfig', config),
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),

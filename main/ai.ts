@@ -1,5 +1,6 @@
-import { AIChatMessage, AIProviderPreference } from '../shared/types';
+import { AIChatMessage, AIEmbeddingSettings, AIProviderPreference } from '../shared/types';
 import { getAIProviderConfig } from '../shared/aiProviders';
+import { buildEmbeddingIndexKey, getEmbeddingProviderConfig, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { MCPManager } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
 
@@ -15,6 +16,13 @@ export interface AIRequest {
 export interface AIResponse {
   text: string;
 }
+
+export interface EmbeddingResponse {
+  model: string;
+  embeddings: number[][];
+}
+
+export type EmbeddingPurpose = 'document' | 'query' | 'test';
 
 function buildPrompt(request: AIRequest): string {
   const historyStr = request.conversationHistory.length > 0
@@ -498,4 +506,195 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
     default:
       throw new Error('Unsupported AI provider.');
   }
+}
+
+function buildEmbeddingsUrl(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, '');
+  if (trimmed.endsWith('/embeddings')) return trimmed;
+  return `${trimmed}/embeddings`;
+}
+
+function buildOllamaEmbedUrl(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, '');
+  if (trimmed.endsWith('/api/embed')) return trimmed;
+  if (trimmed.endsWith('/api')) return `${trimmed}/embed`;
+  return `${trimmed}/api/embed`;
+}
+
+function assertEmbeddingCount(embeddings: number[][], inputLength: number): number[][] {
+  if (embeddings.length !== inputLength) {
+    throw new Error('Embedding response count did not match request count.');
+  }
+  return embeddings;
+}
+
+function asEmbeddingArray(value: unknown): number[] | null {
+  if (Array.isArray(value) && value.every(item => typeof item === 'number')) return value;
+  return null;
+}
+
+function parseOpenAIEmbeddings(data: any, inputLength: number): number[][] {
+  const embeddings = (data.data || [])
+    .sort((a: any, b: any) => Number(a.index || 0) - Number(b.index || 0))
+    .map((item: any) => asEmbeddingArray(item.embedding))
+    .filter((embedding: number[] | null): embedding is number[] => Boolean(embedding));
+  return assertEmbeddingCount(embeddings, inputLength);
+}
+
+function parseGeminiEmbeddings(data: any, inputLength: number): number[][] {
+  const rawEmbeddings = Array.isArray(data.embeddings)
+    ? data.embeddings
+    : (data.inlinedResponses || []).map((item: any) => item?.response?.embedding).filter(Boolean);
+  const embeddings = rawEmbeddings
+    .map((item: any) => asEmbeddingArray(item?.values || item?.embedding?.values || item?.embedding || item?.response?.embedding?.values))
+    .filter((embedding: number[] | null): embedding is number[] => Boolean(embedding));
+  return assertEmbeddingCount(embeddings, inputLength);
+}
+
+function parseCohereEmbeddings(data: any, inputLength: number): number[][] {
+  const raw = data.embeddings?.float || data.embeddings || [];
+  const embeddings = raw
+    .map((item: any) => asEmbeddingArray(item))
+    .filter((embedding: number[] | null): embedding is number[] => Boolean(embedding));
+  return assertEmbeddingCount(embeddings, inputLength);
+}
+
+function embeddingAuthKey(env: Record<string, string>, settings: AIEmbeddingSettings): string {
+  const providerConfig = getEmbeddingProviderConfig(settings.provider);
+  const keyName = providerConfig.apiKeyEnv;
+  const apiKey = keyName ? env[keyName] : '';
+  if (providerConfig.requiresApiKey && !apiKey) {
+    throw new Error(`${providerConfig.displayName} API key missing for semantic search embeddings.`);
+  }
+  return apiKey || '';
+}
+
+export async function createEmbeddings(
+  input: string[],
+  options: { settings?: AIEmbeddingSettings; purpose?: EmbeddingPurpose } = {}
+): Promise<EmbeddingResponse> {
+  const settings = normalizeEmbeddingSettings(options.settings);
+  const providerConfig = getEmbeddingProviderConfig(settings.provider);
+  const env = await loadAIConfigAsync();
+  const apiKey = embeddingAuthKey(env, settings);
+  const purpose = options.purpose || 'document';
+  const dimensions = providerConfig.supportsDimensions && settings.dimensions ? settings.dimensions : null;
+
+  if (providerConfig.transport === 'gemini') {
+    const modelPath = settings.model.startsWith('models/') ? settings.model : `models/${settings.model}`;
+    const endpoint = `${settings.baseURL.replace(/\/+$/, '')}/${modelPath}:batchEmbedContents?key=${encodeURIComponent(apiKey)}`;
+    const taskType = purpose === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT';
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: input.map(text => ({
+          model: modelPath,
+          content: { parts: [{ text }] },
+          taskType,
+          ...(dimensions ? { outputDimensionality: dimensions } : {}),
+        })),
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
+    }
+    const data = await res.json() as any;
+    return { model: buildEmbeddingIndexKey(settings), embeddings: parseGeminiEmbeddings(data, input.length) };
+  }
+
+  if (providerConfig.transport === 'ollama') {
+    const body: Record<string, unknown> = { model: settings.model, input };
+    if (dimensions) body.dimensions = dimensions;
+    const res = await fetch(buildOllamaEmbedUrl(settings.baseURL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
+    }
+    const data = await res.json() as any;
+    const embeddings = (data.embeddings || [])
+      .map((item: any) => asEmbeddingArray(item))
+      .filter((embedding: number[] | null): embedding is number[] => Boolean(embedding));
+    return { model: buildEmbeddingIndexKey(settings), embeddings: assertEmbeddingCount(embeddings, input.length) };
+  }
+
+  if (providerConfig.transport === 'cohere') {
+    const body: Record<string, unknown> = {
+      model: settings.model,
+      texts: input,
+      input_type: purpose === 'query' ? 'search_query' : 'search_document',
+      embedding_types: ['float'],
+    };
+    if (dimensions) body.output_dimension = dimensions;
+    const res = await fetch(`${settings.baseURL.replace(/\/+$/, '')}/embed`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
+    }
+    const data = await res.json() as any;
+    return { model: buildEmbeddingIndexKey(settings), embeddings: parseCohereEmbeddings(data, input.length) };
+  }
+
+  if (providerConfig.transport === 'voyage') {
+    const body: Record<string, unknown> = {
+      model: settings.model,
+      input,
+      input_type: purpose === 'query' ? 'query' : 'document',
+      output_dtype: 'float',
+    };
+    if (dimensions) body.output_dimension = dimensions;
+    const res = await fetch(buildEmbeddingsUrl(settings.baseURL), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
+    }
+    const data = await res.json() as any;
+    return { model: buildEmbeddingIndexKey(settings), embeddings: parseOpenAIEmbeddings(data, input.length) };
+  }
+
+  const body: Record<string, unknown> = {
+    model: settings.model,
+    input,
+    encoding_format: 'float',
+  };
+  if (dimensions) body.dimensions = dimensions;
+
+  const res = await fetch(buildEmbeddingsUrl(settings.baseURL), {
+    method: 'POST',
+    headers: {
+      ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
+  }
+
+  const data = await res.json() as any;
+  return { model: buildEmbeddingIndexKey(settings), embeddings: parseOpenAIEmbeddings(data, input.length) };
+}
+
+export async function getEmbeddingModelName(settings?: AIEmbeddingSettings): Promise<string> {
+  return buildEmbeddingIndexKey(normalizeEmbeddingSettings(settings));
 }

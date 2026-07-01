@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory, MailboxView } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory, MailboxView, ThreadAgentInsights } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
 import { SplitInboxRouter } from '../../../shared/classifier';
@@ -62,6 +62,8 @@ export function useMailState({
   const [openedThreadMessages, setOpenedThreadMessagesState] = useState<MailMessage[]>([]);
   const [openedThreadMessagesKey, setOpenedThreadMessagesKey] = useState<string | null>(null);
   const [openedThreadMessagesStatus, setOpenedThreadMessagesStatus] = useState<ThreadHeaderMessagesStatus>('idle');
+  const [threadAgentInsights, setThreadAgentInsights] = useState<ThreadAgentInsights | null>(null);
+  const [agentInsightsLoading, setAgentInsightsLoading] = useState(false);
   const openedThreadKeyRef = useRef<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -80,6 +82,8 @@ export function useMailState({
     setOpenedThreadMessagesState([]);
     setOpenedThreadMessagesKey(null);
     setOpenedThreadMessagesStatus('idle');
+    setThreadAgentInsights(null);
+    setAgentInsightsLoading(false);
   };
 
   const startOpenedThreadMessagesLoad = (key: string) => {
@@ -100,6 +104,33 @@ export function useMailState({
     setOpenedThreadMessagesKey(currentKey);
     setOpenedThreadMessagesStatus(currentKey ? 'ready' : 'idle');
   };
+
+  const refreshThreadAgentInsights = useCallback(async (threadArg?: MailThread | null) => {
+    const thread = threadArg === undefined ? openedThread : threadArg;
+    if (!thread) {
+      setThreadAgentInsights(null);
+      setAgentInsightsLoading(false);
+      return;
+    }
+
+    const key = threadStateKey(thread);
+    setAgentInsightsLoading(true);
+    try {
+      const insights = await window.electronAPI.getThreadAgentInsights(thread.accountId, thread.id);
+      if (openedThreadKeyRef.current === key) {
+        setThreadAgentInsights(insights);
+      }
+    } catch (err) {
+      console.error('Failed to load agent insights:', err);
+      if (openedThreadKeyRef.current === key) {
+        setThreadAgentInsights(null);
+      }
+    } finally {
+      if (openedThreadKeyRef.current === key) {
+        setAgentInsightsLoading(false);
+      }
+    }
+  }, [openedThread]);
 
 
 
@@ -418,15 +449,25 @@ export function useMailState({
       if (searchQuery.trim()) {
         const parsed = parseSearchQuery(searchQuery);
         const start = performance.now();
+        const textQuery = parsed.textTerms.join(' ').trim();
         
         let ftsMatches: { threadId: string; messageId: string }[] = [];
-        if (activeAccount.id === 'unified') {
-          for (const acc of accounts) {
-            const matches = await window.electronAPI.searchFTS(acc.email, parsed.textTerms.join(' '));
-            ftsMatches.push(...matches);
+        if (textQuery) {
+          if (activeAccount.id === 'unified') {
+            for (const acc of accounts) {
+              const [fts, semantic] = await Promise.all([
+                window.electronAPI.searchFTS(acc.email, textQuery),
+                window.electronAPI.searchSemantic(acc.email, textQuery, 80),
+              ]);
+              ftsMatches.push(...fts, ...semantic.map(match => ({ threadId: match.threadId, messageId: match.messageId })));
+            }
+          } else {
+            const [fts, semantic] = await Promise.all([
+              window.electronAPI.searchFTS(activeAccount.email, textQuery),
+              window.electronAPI.searchSemantic(activeAccount.email, textQuery, 80),
+            ]);
+            ftsMatches = [...fts, ...semantic.map(match => ({ threadId: match.threadId, messageId: match.messageId }))];
           }
-        } else {
-          ftsMatches = await window.electronAPI.searchFTS(activeAccount.email, parsed.textTerms.join(' '));
         }
         
         setSpeedProof((prev: SpeedProof) => ({
@@ -435,7 +476,7 @@ export function useMailState({
         }));
 
         const matchThreadIds = new Set(ftsMatches.map(m => m.threadId));
-        filtered = threads.filter(t => matchThreadIds.has(t.id));
+        filtered = textQuery ? threads.filter(t => matchThreadIds.has(t.id)) : threads;
 
         if (mailboxView !== 'inbox') {
           filtered = filtered.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
@@ -533,6 +574,7 @@ export function useMailState({
     const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
     if (openedThreadKeyRef.current !== nextThreadKey) return;
     acceptOpenedThreadMessages(nextThreadKey, msgs);
+    void refreshThreadAgentInsights(thread);
 
     if (shouldRefreshInlineCidMetadata(msgs)) {
       void (async () => {
@@ -541,6 +583,7 @@ export function useMailState({
           await window.electronAPI.saveMessages(freshMessages);
           if (openedThreadKeyRef.current === nextThreadKey) {
             acceptOpenedThreadMessages(nextThreadKey, freshMessages);
+            void refreshThreadAgentInsights(thread);
           }
         } catch (err) {
           console.error('Failed to refresh inline message assets:', err);
@@ -682,6 +725,20 @@ export function useMailState({
       )));
       if (mailboxView === 'muted' && openedThread?.id === targetThreadId) {
         openThread(nextThread);
+      }
+    } else if (kind === 'unsubscribeSender') {
+      setThreads(prev => prev.map(t => (
+        t.id === targetThreadId && t.accountId === targetAccountId
+          ? { ...t, labelIds: t.labelIds.filter(label => label.toUpperCase() !== 'INBOX') }
+          : t
+      )));
+      if (mailboxView === 'inbox' && openedThread?.id === targetThreadId) {
+        openThread(nextThread);
+      }
+      if (mailboxView === 'inbox' && nextThread) {
+        setFocusedThreadId(nextThread.id);
+      } else if (mailboxView === 'inbox') {
+        setFocusedThreadId(null);
       }
     } else if ((kind === 'applyLabel' || kind === 'moveToLabel') && payloadLabelId) {
       setThreads(prev => prev.map(t => (
@@ -937,6 +994,34 @@ export function useMailState({
     loadThreadsFromDB();
   };
 
+  const dismissAgentDraftSuggestion = useCallback(async (id: string) => {
+    await window.electronAPI.dismissAgentDraftSuggestion(id);
+    setThreadAgentInsights(current => current?.draftSuggestion?.id === id
+      ? { ...current, draftSuggestion: null }
+      : current);
+  }, []);
+
+  const markAgentDraftSuggestionApplied = useCallback(async (id: string) => {
+    await window.electronAPI.markAgentDraftSuggestionApplied(id);
+    setThreadAgentInsights(current => current?.draftSuggestion?.id === id
+      ? { ...current, draftSuggestion: null }
+      : current);
+  }, []);
+
+  const unsubscribeThread = useCallback(async (threadId?: string | null) => {
+    const targetThreadId = threadId || openedThread?.id || focusedThreadId;
+    if (!targetThreadId) return;
+    const thread = threads.find(item => item.id === targetThreadId) || openedThread;
+    const targetAccountId = thread?.accountId || activeAccount?.email;
+    if (!targetAccountId) return;
+
+    await executeMailAction('unsubscribeSender', targetThreadId, null, async (actionId: string) => {
+      const result = await window.electronAPI.unsubscribeThread(targetAccountId, targetThreadId, actionId);
+      emitToast({ type: 'success', message: 'Unsubscribed and archived.' });
+      return result;
+    });
+  }, [activeAccount?.email, executeMailAction, focusedThreadId, openedThread, threads]);
+
 
   return {
     mailboxView,
@@ -954,6 +1039,8 @@ export function useMailState({
     openedThreadMessages,
     openedThreadMessagesKey,
     openedThreadMessagesStatus,
+    threadAgentInsights,
+    agentInsightsLoading,
     searchQuery,
     searchCoverage,
     actionLog,
@@ -983,6 +1070,10 @@ export function useMailState({
     setSpeedProof,
     setActiveAccount,
     openThread,
+    refreshThreadAgentInsights,
+    dismissAgentDraftSuggestion,
+    markAgentDraftSuggestionApplied,
+    unsubscribeThread,
     executeMailAction,
     undoLastAction,
     snoozeThread,

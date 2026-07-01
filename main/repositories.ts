@@ -17,6 +17,8 @@ import {
   SyncState,
   AIConversation,
   AIChatMessage,
+  AgentDraftSuggestion,
+  MessageSecurityInsight,
 } from '../shared/types';
 
 const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
@@ -106,6 +108,9 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM ai_conversations WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_action_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_search WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM agent_drafts WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM message_security WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM mail_embeddings WHERE account_id = ?').run(id);
     })();
   }
 };
@@ -286,6 +291,9 @@ export const ThreadsRepo = {
       db.prepare('DELETE FROM messages WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM mail_search WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM agent_drafts WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM message_security WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM mail_embeddings WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
     })();
   },
 
@@ -317,6 +325,32 @@ export const ThreadsRepo = {
   }
 };
 
+function mapMessageRow(r: any): MailMessage {
+  return {
+    id: r.id,
+    threadId: r.thread_id,
+    accountId: r.account_id,
+    senderName: r.sender_name,
+    senderEmail: r.sender_email,
+    subject: r.subject,
+    snippet: r.snippet,
+    receivedAt: r.received_at,
+    labelIds: JSON.parse(r.label_ids_json),
+    hasAttachments: r.has_attachments === 1,
+    isUnread: r.is_unread === 1,
+    to: JSON.parse(r.to_recipients_json),
+    cc: JSON.parse(r.cc_recipients_json),
+    bcc: JSON.parse(r.bcc_recipients_json),
+    bodyHtml: r.body_html,
+    bodyPlain: r.body_plain,
+    attachments: JSON.parse(r.attachments_json),
+    headers: JSON.parse(r.headers_json || '[]'),
+    rfcMessageId: r.rfc_message_id,
+    rfcReferences: r.rfc_references,
+    rfcInReplyTo: r.rfc_in_reply_to
+  };
+}
+
 // === Messages Repository ===
 export const MessagesRepo = {
   listForThread(accountId: string, threadId: string): MailMessage[] {
@@ -327,28 +361,7 @@ export const MessagesRepo = {
       ORDER BY received_at ASC
     `).all(accountId, threadId) as any[];
 
-    return rows.map(r => ({
-      id: r.id,
-      threadId: r.thread_id,
-      accountId: r.account_id,
-      senderName: r.sender_name,
-      senderEmail: r.sender_email,
-      subject: r.subject,
-      snippet: r.snippet,
-      receivedAt: r.received_at,
-      labelIds: JSON.parse(r.label_ids_json),
-      hasAttachments: r.has_attachments === 1,
-      isUnread: r.is_unread === 1,
-      to: JSON.parse(r.to_recipients_json),
-      cc: JSON.parse(r.cc_recipients_json),
-      bcc: JSON.parse(r.bcc_recipients_json),
-      bodyHtml: r.body_html,
-      bodyPlain: r.body_plain,
-      attachments: JSON.parse(r.attachments_json),
-      rfcMessageId: r.rfc_message_id,
-      rfcReferences: r.rfc_references,
-      rfcInReplyTo: r.rfc_in_reply_to
-    }));
+    return rows.map(mapMessageRow);
   },
 
   save(messages: MailMessage[]) {
@@ -357,8 +370,8 @@ export const MessagesRepo = {
       INSERT INTO messages (
         id, thread_id, account_id, sender_name, sender_email, subject, snippet, received_at,
         label_ids_json, has_attachments, is_unread, to_recipients_json, cc_recipients_json, bcc_recipients_json,
-        body_html, body_plain, attachments_json, rfc_message_id, rfc_references, rfc_in_reply_to
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        body_html, body_plain, attachments_json, headers_json, rfc_message_id, rfc_references, rfc_in_reply_to
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, id) DO UPDATE SET
         sender_name=excluded.sender_name,
         sender_email=excluded.sender_email,
@@ -374,6 +387,7 @@ export const MessagesRepo = {
         body_html=excluded.body_html,
         body_plain=excluded.body_plain,
         attachments_json=excluded.attachments_json,
+        headers_json=excluded.headers_json,
         rfc_message_id=excluded.rfc_message_id,
         rfc_references=excluded.rfc_references,
         rfc_in_reply_to=excluded.rfc_in_reply_to
@@ -405,6 +419,7 @@ export const MessagesRepo = {
           m.bodyHtml || null,
           m.bodyPlain || null,
           JSON.stringify(m.attachments),
+          JSON.stringify(m.headers || []),
           m.rfcMessageId || null,
           m.rfcReferences || null,
           m.rfcInReplyTo || null
@@ -423,6 +438,30 @@ export const MessagesRepo = {
         );
       }
     })();
+  },
+
+  listRecent(accountId: string, limit = 100): MailMessage[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM messages
+      WHERE account_id = ?
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(accountId, Math.max(1, Math.min(1000, limit))) as any[];
+    return rows.map(mapMessageRow);
+  },
+
+  listRecentBySender(accountId: string, senderEmail: string, beforeReceivedAt: string, limit = 8): MailMessage[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM messages
+      WHERE account_id = ?
+        AND lower(sender_email) = lower(?)
+        AND received_at < ?
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(accountId, senderEmail, beforeReceivedAt, Math.max(1, Math.min(50, limit))) as any[];
+    return rows.reverse().map(mapMessageRow);
   }
 };
 
@@ -850,6 +889,257 @@ export const SearchRepo = {
     }));
   }
 };
+
+// === Agent Drafts Repository ===
+export const AgentDraftsRepo = {
+  getReadyForThread(accountId: string, threadId: string): AgentDraftSuggestion | null {
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT * FROM agent_drafts
+      WHERE account_id = ? AND thread_id = ? AND status = 'ready'
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(accountId, threadId) as any;
+    return row ? mapAgentDraftRow(row) : null;
+  },
+
+  getForMessage(accountId: string, messageId: string): AgentDraftSuggestion | null {
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT * FROM agent_drafts
+      WHERE account_id = ? AND message_id = ? AND status IN ('ready', 'applied')
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(accountId, messageId) as any;
+    return row ? mapAgentDraftRow(row) : null;
+  },
+
+  save(draft: AgentDraftSuggestion) {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO agent_drafts (
+        id, account_id, thread_id, message_id, subject, body_plain, status,
+        confidence, reason, model, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        subject=excluded.subject,
+        body_plain=excluded.body_plain,
+        status=excluded.status,
+        confidence=excluded.confidence,
+        reason=excluded.reason,
+        model=excluded.model,
+        updated_at=excluded.updated_at
+    `).run(
+      draft.id,
+      draft.accountId,
+      draft.threadId,
+      draft.messageId,
+      draft.subject,
+      draft.bodyPlain,
+      draft.status,
+      draft.confidence,
+      draft.reason,
+      draft.model,
+      draft.createdAt,
+      draft.updatedAt
+    );
+  },
+
+  setStatus(id: string, status: AgentDraftSuggestion['status']) {
+    const db = getDatabase();
+    db.prepare('UPDATE agent_drafts SET status = ?, updated_at = ? WHERE id = ?')
+      .run(status, new Date().toISOString(), id);
+  }
+};
+
+function mapAgentDraftRow(row: any): AgentDraftSuggestion {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    threadId: row.thread_id,
+    messageId: row.message_id,
+    subject: row.subject,
+    bodyPlain: row.body_plain,
+    status: row.status,
+    confidence: row.confidence,
+    reason: row.reason,
+    model: row.model,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+// === Message Security Repository ===
+export const MessageSecurityRepo = {
+  listForThread(accountId: string, threadId: string): MessageSecurityInsight[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM message_security
+      WHERE account_id = ? AND thread_id = ?
+      ORDER BY analyzed_at DESC
+    `).all(accountId, threadId) as any[];
+    return rows.map(mapMessageSecurityRow);
+  },
+
+  save(insight: MessageSecurityInsight) {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO message_security (
+        account_id, message_id, thread_id, risk_level, warnings_json,
+        tracker_count, phishing_link_count, analyzed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, message_id) DO UPDATE SET
+        thread_id=excluded.thread_id,
+        risk_level=excluded.risk_level,
+        warnings_json=excluded.warnings_json,
+        tracker_count=excluded.tracker_count,
+        phishing_link_count=excluded.phishing_link_count,
+        analyzed_at=excluded.analyzed_at
+    `).run(
+      insight.accountId,
+      insight.messageId,
+      insight.threadId,
+      insight.riskLevel,
+      JSON.stringify(insight.warnings),
+      insight.trackerCount,
+      insight.phishingLinkCount,
+      insight.analyzedAt
+    );
+  },
+
+  saveMany(insights: MessageSecurityInsight[]) {
+    const db = getDatabase();
+    const insert = db.prepare(`
+      INSERT INTO message_security (
+        account_id, message_id, thread_id, risk_level, warnings_json,
+        tracker_count, phishing_link_count, analyzed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, message_id) DO UPDATE SET
+        thread_id=excluded.thread_id,
+        risk_level=excluded.risk_level,
+        warnings_json=excluded.warnings_json,
+        tracker_count=excluded.tracker_count,
+        phishing_link_count=excluded.phishing_link_count,
+        analyzed_at=excluded.analyzed_at
+    `);
+    db.transaction(() => {
+      for (const insight of insights) {
+        insert.run(
+          insight.accountId,
+          insight.messageId,
+          insight.threadId,
+          insight.riskLevel,
+          JSON.stringify(insight.warnings),
+          insight.trackerCount,
+          insight.phishingLinkCount,
+          insight.analyzedAt
+        );
+      }
+    })();
+  }
+};
+
+function mapMessageSecurityRow(row: any): MessageSecurityInsight {
+  return {
+    accountId: row.account_id,
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    riskLevel: row.risk_level,
+    warnings: JSON.parse(row.warnings_json || '[]'),
+    trackerCount: row.tracker_count,
+    phishingLinkCount: row.phishing_link_count,
+    analyzedAt: row.analyzed_at
+  };
+}
+
+export interface MailEmbeddingRow {
+  accountId: string;
+  messageId: string;
+  threadId: string;
+  model: string;
+  textHash: string;
+  vector: number[];
+  subject: string;
+  sender: string;
+  snippet: string;
+  receivedAt: string;
+  indexedAt: string;
+}
+
+export const MailEmbeddingsRepo = {
+  indexedHashes(accountId: string, model: string): Record<string, string> {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT message_id, text_hash
+      FROM mail_embeddings
+      WHERE account_id = ? AND model = ?
+    `).all(accountId, model) as { message_id: string; text_hash: string }[];
+    return Object.fromEntries(rows.map(row => [row.message_id, row.text_hash]));
+  },
+
+  listForAccount(accountId: string, model: string, limit = 10000): MailEmbeddingRow[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM mail_embeddings
+      WHERE account_id = ? AND model = ?
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(accountId, model, Math.max(1, Math.min(50000, limit))) as any[];
+    return rows.map(mapMailEmbeddingRow);
+  },
+
+  saveMany(rows: MailEmbeddingRow[]) {
+    const db = getDatabase();
+    const insert = db.prepare(`
+      INSERT INTO mail_embeddings (
+        account_id, message_id, thread_id, model, text_hash, vector_json,
+        subject, sender, snippet, received_at, indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, message_id, model) DO UPDATE SET
+        thread_id=excluded.thread_id,
+        text_hash=excluded.text_hash,
+        vector_json=excluded.vector_json,
+        subject=excluded.subject,
+        sender=excluded.sender,
+        snippet=excluded.snippet,
+        received_at=excluded.received_at,
+        indexed_at=excluded.indexed_at
+    `);
+    db.transaction(() => {
+      for (const row of rows) {
+        insert.run(
+          row.accountId,
+          row.messageId,
+          row.threadId,
+          row.model,
+          row.textHash,
+          JSON.stringify(row.vector),
+          row.subject,
+          row.sender,
+          row.snippet,
+          row.receivedAt,
+          row.indexedAt
+        );
+      }
+    })();
+  }
+};
+
+function mapMailEmbeddingRow(row: any): MailEmbeddingRow {
+  return {
+    accountId: row.account_id,
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    model: row.model,
+    textHash: row.text_hash,
+    vector: JSON.parse(row.vector_json || '[]'),
+    subject: row.subject,
+    sender: row.sender,
+    snippet: row.snippet,
+    receivedAt: row.received_at,
+    indexedAt: row.indexed_at
+  };
+}
 
 // === Reminders Repository ===
 export const RemindersRepo = {

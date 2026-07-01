@@ -246,6 +246,10 @@ export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
     bodyHtml,
     bodyPlain,
     attachments,
+    headers: headers.map(header => ({
+      name: String(header.name || ''),
+      value: String(header.value || '')
+    })).filter(header => header.name && header.value),
     rfcMessageId: findHeader('message-id'),
     rfcReferences: findHeader('references'),
     rfcInReplyTo: findHeader('in-reply-to')

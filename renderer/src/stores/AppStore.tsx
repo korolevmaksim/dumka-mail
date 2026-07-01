@@ -31,9 +31,11 @@ import {
   MCPServerConfig,
   MailTriageQueueReadiness,
   GmailSignatureSyncResult,
-  MailboxView
+  MailboxView,
+  ThreadAgentInsights
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
+import { getDefaultEmbeddingSettings } from '../../../shared/embeddingProviders';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
 import { useMailState } from './useMailState';
@@ -58,7 +60,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 7;
+export const SETTINGS_SCHEMA_VERSION = 9;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -174,6 +176,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
     replyTone: 'direct',
     allowMailBodyContext: true,
     savePromptHistory: false,
+    proactiveDraftsEnabled: false,
+    semanticSearchEnabled: false,
+    embeddings: getDefaultEmbeddingSettings(),
+    agentRules: {
+      proactiveDraftTrigger: 'directOrActionRequest',
+      blockBulkAndAutomated: true,
+      maxDraftSourceWords: 6000
+    },
     suggestDrafts: true,
     suggestAutoArchive: true,
     suggestLabels: true,
@@ -292,7 +302,13 @@ interface AppStoreContextType {
   openedThreadMessages: MailMessage[];
   openedThreadMessagesKey: string | null;
   openedThreadMessagesStatus: ThreadHeaderMessagesStatus;
+  threadAgentInsights: ThreadAgentInsights | null;
+  agentInsightsLoading: boolean;
   openThread: (thread: MailThread | null) => Promise<void>;
+  refreshThreadAgentInsights: () => Promise<void>;
+  dismissAgentDraftSuggestion: (id: string) => Promise<void>;
+  markAgentDraftSuggestionApplied: (id: string) => Promise<void>;
+  unsubscribeThread: (threadId?: string | null) => Promise<void>;
   mailboxView: MailboxView;
   setMailboxView: (view: MailboxView) => void;
   mailboxCounts: Record<MailboxView, number>;
@@ -355,6 +371,7 @@ interface AppStoreContextType {
   startNewDraft: (accountId?: string | null, seed?: Partial<Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject'>>) => Draft | null;
   saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
   startReply: (message: MailMessage, replyAll?: boolean) => void;
+  startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => void;
   startForward: (message: MailMessage) => void;
   updateDraft: (patch: Partial<Draft>) => void;
   updateDraftBody: (body: string, bodyHtml?: string | null) => void;

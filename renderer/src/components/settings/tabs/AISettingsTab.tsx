@@ -6,6 +6,8 @@ import { emitToast } from '../../../lib/toastBus';
 import { AI_SECRET_STORED_PLACEHOLDER } from '../../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider } from '../../../../../shared/aiProviders';
 import { AIPromptShortcutsPanel } from '../AIPromptShortcutsPanel';
+import { EmbeddingSettingsPanel } from '../EmbeddingSettingsPanel';
+import { AgentRulesPanel } from '../AgentRulesPanel';
 
 type FormKeys = Record<string, string>;
 type VerifyStatus = Record<string, { status: 'idle' | 'verifying' | 'success' | 'error'; error?: string }>;
@@ -50,6 +52,10 @@ export function AISettingsTab() {
       OPENAI_COMPATIBLE_API_KEY: store.customEnv['OPENAI_COMPATIBLE_API_KEY'] || '',
       OPENAI_COMPATIBLE_BASE_URL: store.customEnv['OPENAI_COMPATIBLE_BASE_URL'] || '',
       OPENAI_COMPATIBLE_MODEL: store.customEnv['OPENAI_COMPATIBLE_MODEL'] || '',
+      MISTRAL_API_KEY: store.customEnv['MISTRAL_API_KEY'] || '',
+      COHERE_API_KEY: store.customEnv['COHERE_API_KEY'] || '',
+      VOYAGE_API_KEY: store.customEnv['VOYAGE_API_KEY'] || '',
+      DASHSCOPE_API_KEY: store.customEnv['DASHSCOPE_API_KEY'] || '',
       PMC_AI_PROVIDER: store.customEnv['PMC_AI_PROVIDER'] || 'automatic'
     });
   }, [store.customEnv]);
@@ -131,6 +137,10 @@ export function AISettingsTab() {
       DEEPSEEK_BASE_URL: formKeys.DEEPSEEK_BASE_URL || '',
       OPENAI_COMPATIBLE_API_KEY: formKeys.OPENAI_COMPATIBLE_API_KEY || '',
       OPENAI_COMPATIBLE_BASE_URL: formKeys.OPENAI_COMPATIBLE_BASE_URL || '',
+      MISTRAL_API_KEY: formKeys.MISTRAL_API_KEY || '',
+      COHERE_API_KEY: formKeys.COHERE_API_KEY || '',
+      VOYAGE_API_KEY: formKeys.VOYAGE_API_KEY || '',
+      DASHSCOPE_API_KEY: formKeys.DASHSCOPE_API_KEY || '',
     };
     await store.saveAIConfig(credentialsOnly);
     setSavedStatus(true);
@@ -343,7 +353,8 @@ export function AISettingsTab() {
         {[
           { key: 'allowMailBodyContext', title: 'Include Email bodies in AI Context', desc: 'Allows sending mail message plain text for summaries' },
           { key: 'savePromptHistory', title: 'Save Local Prompt History', desc: 'Log previous inputs in conversation list' },
-          { key: 'suggestDrafts', title: 'Generate Suggest Drafts', desc: 'Show draft reply buttons inside thread details' },
+          { key: 'proactiveDraftsEnabled', title: 'Generate Proactive Drafts', desc: 'Background-generates reply drafts; may use paid AI tokens' },
+          { key: 'suggestDrafts', title: 'Show Draft Suggestions', desc: 'Show generated draft reply buttons inside thread details' },
           { key: 'suggestAutoArchive', title: 'Suggest Auto-Archive Rules', desc: 'Highlight low-priority alerts cleanup' },
           { key: 'suggestLabels', title: 'Suggest Labels', desc: 'Perform labeling suggestions' },
           { key: 'translationEnabled', title: 'Enable Realtime Translation', desc: 'Support translating foreign mail threads' },
@@ -360,6 +371,14 @@ export function AISettingsTab() {
           </div>
         ))}
       </div>
+
+      <AgentRulesPanel />
+
+      <EmbeddingSettingsPanel
+        formKeys={formKeys}
+        setFormKeys={setFormKeys}
+        onSecretBlur={handleSecretBlur}
+      />
 
       <AIPromptShortcutsPanel />
 

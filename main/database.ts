@@ -55,5 +55,8 @@ export {
   ActionLogRepo,
   DraftsRepo,
   AIConversationsRepo,
+  AgentDraftsRepo,
+  MailEmbeddingsRepo,
+  MessageSecurityRepo,
   SettingsRepo
 } from './repositories';
