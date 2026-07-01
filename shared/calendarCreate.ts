@@ -84,6 +84,25 @@ export function defaultCalendarEventFormForDate(
   };
 }
 
+export function calendarEventFormDefaultsFromRange(
+  startAt: string,
+  endAt: string,
+  fallbackDurationMinutes: number,
+): CalendarEventFormDefaults | null {
+  const start = new Date(startAt);
+  const end = new Date(endAt);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+
+  const durationMinutes = Math.max(15, Math.round((endMs - startMs) / 60_000) || Math.floor(fallbackDurationMinutes || 30));
+  return {
+    date: localDateInputValue(start),
+    startTime: localTimeInputValue(start),
+    durationMinutes,
+  };
+}
+
 export function calendarEventTimesFromLocalInput(
   dateValue: string,
   timeValue: string,

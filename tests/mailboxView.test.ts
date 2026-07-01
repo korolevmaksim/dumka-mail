@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasFutureReminder, isThreadInMailbox, threadHasLabel } from '../shared/mailboxView';
+import { hasFutureReminder, isMutedThread, isThreadInMailbox, threadHasLabel } from '../shared/mailboxView';
 import type { MailThread } from '../shared/types';
 
 const baseThread: MailThread = {
@@ -48,5 +48,32 @@ describe('mailboxView', () => {
 
     expect(isThreadInMailbox(conversation, 'inbox')).toBe(true);
     expect(isThreadInMailbox(conversation, 'sent')).toBe(true);
+  });
+
+  it('keeps ignored threads out of the inbox by account-specific muted label id', () => {
+    const ignored = thread({ labelIds: ['INBOX', 'Label_muted'] });
+    const options = {
+      mutedLabelIdsByAccount: {
+        'alex@example.com': ['Label_muted'],
+      },
+    };
+
+    expect(isMutedThread(ignored, options)).toBe(true);
+    expect(isThreadInMailbox(ignored, 'inbox', new Date('2026-06-30T10:00:00.000Z'), options)).toBe(false);
+  });
+
+  it('does not let muted label ids leak between accounts', () => {
+    const otherAccount = thread({
+      accountId: 'other@example.com',
+      labelIds: ['INBOX', 'Label_muted'],
+    });
+    const options = {
+      mutedLabelIdsByAccount: {
+        'alex@example.com': ['Label_muted'],
+      },
+    };
+
+    expect(isMutedThread(otherAccount, options)).toBe(false);
+    expect(isThreadInMailbox(otherAccount, 'inbox', new Date('2026-06-30T10:00:00.000Z'), options)).toBe(true);
   });
 });

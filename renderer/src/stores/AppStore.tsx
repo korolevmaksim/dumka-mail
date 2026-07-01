@@ -38,6 +38,7 @@ import { useSettingsState } from './useSettingsState';
 import { useMailState } from './useMailState';
 import { useDraftsState } from './useDraftsState';
 import { useAIState } from './useAIState';
+import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
 
 export const UNIFIED_ACCOUNT: Account = {
   id: 'unified',
@@ -308,6 +309,7 @@ interface AppStoreContextType {
   syncContacts: (email?: string) => Promise<void>;
   updateContactLocal: (contactId: string, patch: Partial<ContactCard>, email?: string) => Promise<void>;
   saveContactGroup: (name: string, email?: string) => Promise<void>;
+  renameContactGroup: (groupId: string, name: string, email?: string) => Promise<void>;
   deleteContactGroup: (groupId: string, email?: string) => Promise<void>;
   syncCalendarAgenda: (email?: string, range?: CalendarEventRange) => Promise<CalendarEvent[]>;
   queryCalendarFreeBusy: (input: CalendarFreeBusyRequest, email?: string) => Promise<CalendarFreeBusyResult>;
@@ -399,6 +401,11 @@ const AppStoreContext = createContext<AppStoreContextType | null>(null);
 
 export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const settingsState = useSettingsState();
+  const [googleIntegrationStatus, setGoogleIntegrationStatus] = useState<GoogleIntegrationStatus | null>(null);
+  const [labelDefinitions, setLabelDefinitions] = useState<MailLabelDefinition[]>([]);
+  const [contacts, setContacts] = useState<ContactCard[]>([]);
+  const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   const applyGmailSignatureSyncResult = useCallback(async (result: GmailSignatureSyncResult) => {
     await settingsState.updateSettings(s => {
@@ -417,10 +424,22 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
     });
   }, [settingsState.updateSettings]);
+
+  const mutedLabelIdsByAccount = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    for (const label of labelDefinitions) {
+      if (label.name.trim().toLowerCase() !== DUMKA_MUTED_LABEL_NAME.toLowerCase()) continue;
+      const accountLabelIds = result[label.accountId] || [];
+      accountLabelIds.push(label.id);
+      result[label.accountId] = accountLabelIds;
+    }
+    return result;
+  }, [labelDefinitions]);
   
   const mailState = useMailState({
     customClassifierRules: settingsState.customClassifierRules,
     tabCategories: settingsState.tabCategories,
+    mutedLabelIdsByAccount,
     applyGmailSignatureSyncResult,
   });
 
@@ -446,12 +465,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     executeMailAction: mailState.executeMailAction,
     setSpeedProof: mailState.setSpeedProof
   });
-
-  const [googleIntegrationStatus, setGoogleIntegrationStatus] = useState<GoogleIntegrationStatus | null>(null);
-  const [labelDefinitions, setLabelDefinitions] = useState<MailLabelDefinition[]>([]);
-  const [contacts, setContacts] = useState<ContactCard[]>([]);
-  const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   const primaryWorkspaceEmail = useMemo(() => {
     if (mailState.activeAccount && mailState.activeAccount.id !== 'unified') return mailState.activeAccount.email;
@@ -566,9 +579,11 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const muteThread = useCallback(async (threadId?: string | null) => {
     const targetEmail = primaryWorkspaceEmail;
     if (!targetEmail) return;
-    let mutedLabel = labelDefinitions.find(label => label.accountId === targetEmail && label.name.toLowerCase() === 'dumka/muted');
+    let mutedLabel = labelDefinitions.find(
+      label => label.accountId === targetEmail && label.name.toLowerCase() === DUMKA_MUTED_LABEL_NAME.toLowerCase()
+    );
     if (!mutedLabel) {
-      mutedLabel = await window.electronAPI.createLabel(targetEmail, 'Dumka/Muted');
+      mutedLabel = await window.electronAPI.createLabel(targetEmail, DUMKA_MUTED_LABEL_NAME);
       await syncLabels(targetEmail);
     }
     await mailState.executeMailAction('muteThread', threadId, null, undefined, JSON.stringify({ labelId: mutedLabel.id, labelName: mutedLabel.name }));
@@ -604,6 +619,19 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
     setContactGroups(await window.electronAPI.listContactGroups(targetEmail));
   }, [primaryWorkspaceEmail]);
+
+  const renameContactGroup = useCallback(async (groupId: string, name: string, email?: string) => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    const trimmed = name.trim();
+    const group = contactGroups.find(item => item.id === groupId && item.accountId === targetEmail);
+    if (!targetEmail || !trimmed || !group) return;
+    await window.electronAPI.saveContactGroup({
+      ...group,
+      name: trimmed,
+      updatedAt: new Date().toISOString()
+    });
+    setContactGroups(await window.electronAPI.listContactGroups(targetEmail));
+  }, [contactGroups, primaryWorkspaceEmail]);
 
   const deleteContactGroup = useCallback(async (groupId: string, email?: string) => {
     const targetEmail = email || primaryWorkspaceEmail;
@@ -758,6 +786,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     syncContacts,
     updateContactLocal,
     saveContactGroup,
+    renameContactGroup,
     deleteContactGroup,
     syncCalendarAgenda,
     queryCalendarFreeBusy,

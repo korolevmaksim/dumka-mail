@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calendarEventFormDefaultsFromRange,
   calendarEventTimesFromLocalInput,
   calendarTimeZoneForCreate,
   defaultCalendarEventFormForDate,
@@ -37,6 +38,21 @@ describe('calendar create helpers', () => {
       startTime: '09:00',
       durationMinutes: 45,
     });
+  });
+
+  it('uses an availability range as create-event defaults', () => {
+    const defaults = calendarEventFormDefaultsFromRange(
+      new Date(2026, 6, 6, 13, 15).toISOString(),
+      new Date(2026, 6, 6, 14, 0).toISOString(),
+      30,
+    );
+
+    expect(defaults).toEqual({
+      date: '2026-07-06',
+      startTime: '13:15',
+      durationMinutes: 45,
+    });
+    expect(calendarEventFormDefaultsFromRange('bad', new Date(2026, 6, 6, 14).toISOString(), 30)).toBeNull();
   });
 
   it('builds start and end ISO values from local form fields', () => {

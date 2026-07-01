@@ -4,7 +4,7 @@ import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
 import { CalendarEventForm } from './CalendarEventForm';
 import type { CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput } from '../../../shared/types';
-import { findAvailabilitySlots } from '../../../shared/calendarAvailability';
+import { findAvailabilitySlots, type CalendarAvailabilitySlot } from '../../../shared/calendarAvailability';
 import {
   MINI_CALENDAR_WEEKDAYS,
   addLocalDays,
@@ -39,6 +39,7 @@ export function CalendarAgendaPanel() {
   const [isSavingEvent, setIsSavingEvent] = useState(false);
   const [isDeletingEvent, setIsDeletingEvent] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [createSlot, setCreateSlot] = useState<CalendarAvailabilitySlot | null>(null);
   const calendarWeeks = useMemo(
     () => buildMiniCalendarMonth(visibleMonth, selectedDate, today),
     [selectedDate, today, visibleMonth],
@@ -84,11 +85,24 @@ export function CalendarAgendaPanel() {
   }
 
   function openCreateForm() {
+    setCreateSlot(null);
+    setEditingEvent(null);
+    setIsCreating(true);
+  }
+
+  function openCreateFormForSlot(slot: CalendarAvailabilitySlot) {
+    const slotStart = new Date(slot.startAt);
+    if (Number.isFinite(slotStart.getTime())) {
+      setSelectedDate(slotStart);
+      setVisibleMonth(new Date(slotStart.getFullYear(), slotStart.getMonth(), 1));
+    }
+    setCreateSlot(slot);
     setEditingEvent(null);
     setIsCreating(true);
   }
 
   function openEditForm(event: CalendarEvent) {
+    setCreateSlot(null);
     setIsCreating(false);
     setEditingEvent(event);
   }
@@ -96,6 +110,7 @@ export function CalendarAgendaPanel() {
   function closeEventForm() {
     setIsCreating(false);
     setEditingEvent(null);
+    setCreateSlot(null);
   }
 
   async function submitEventForm(input: CalendarEventCreateInput | CalendarEventUpdateInput) {
@@ -249,6 +264,7 @@ export function CalendarAgendaPanel() {
           </button>
         ) : isCreating || editingEvent ? (
           <CalendarEventForm
+            key={editingEvent ? `${editingEvent.calendarId}:${editingEvent.id}` : createSlot?.startAt || selectedDayStart.toISOString()}
             mode={editingEvent ? 'edit' : 'create'}
             event={editingEvent}
             selectedDate={selectedDate}
@@ -256,6 +272,8 @@ export function CalendarAgendaPanel() {
             defaultConferenceProvider={store.settings.calendar.defaultConferenceProvider}
             calendarSettings={store.settings.calendar}
             calendarEvents={store.calendarEvents}
+            initialStartAt={createSlot?.startAt}
+            initialEndAt={createSlot?.endAt}
             isSaving={isSavingEvent}
             isDeleting={isDeletingEvent}
             onCancel={closeEventForm}
@@ -312,10 +330,19 @@ export function CalendarAgendaPanel() {
             <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Availability</span>
             <div className="mt-1.5 flex flex-col gap-1">
               {availabilitySlots.map(slot => (
-                <div key={slot.startAt} className="flex min-w-0 items-center justify-between gap-2 text-[calc(10px*var(--font-scale))]">
+                <button
+                  key={slot.startAt}
+                  type="button"
+                  onClick={() => openCreateFormForSlot(slot)}
+                  title="Create event at this time"
+                  className="flex min-w-0 items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-[calc(10px*var(--font-scale))] hover:bg-[var(--hover-row)]"
+                >
                   <span className="min-w-0 truncate text-[var(--text-primary)]">{slot.dayLabel}</span>
-                  <span className="shrink-0 text-[var(--text-secondary)]">{slot.timeLabel}</span>
-                </div>
+                  <span className="flex shrink-0 items-center gap-1.5 text-[var(--text-secondary)]">
+                    {slot.timeLabel}
+                    <CalendarPlus className="h-3 w-3 text-[var(--accent)]" />
+                  </span>
+                </button>
               ))}
             </div>
           </div>

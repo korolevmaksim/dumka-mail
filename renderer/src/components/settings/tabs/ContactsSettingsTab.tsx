@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Mail, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react';
+import { Check, Copy, Mail, Pencil, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react';
 import type { Recipient } from '../../../../../shared/types';
 import { useAppStore } from '../../../stores/AppStore';
 import { emitToast } from '../../../lib/toastBus';
@@ -25,6 +25,8 @@ export function ContactsTab() {
   const store = useAppStore();
   const [query, setQuery] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [notesDraft, setNotesDraft] = useState('');
@@ -71,6 +73,24 @@ export function ContactsTab() {
     if (!name) return;
     void store.saveContactGroup(name);
     setNewGroupName('');
+  }
+
+  function startRenameGroup(groupId: string, name: string) {
+    setEditingGroupId(groupId);
+    setEditingGroupName(name);
+  }
+
+  function cancelRenameGroup() {
+    setEditingGroupId(null);
+    setEditingGroupName('');
+  }
+
+  async function saveGroupName() {
+    const name = editingGroupName.trim();
+    if (!editingGroupId || !name) return;
+    await store.renameContactGroup(editingGroupId, name);
+    cancelRenameGroup();
+    emitToast({ type: 'success', message: 'Group renamed.' });
   }
 
   return (
@@ -299,11 +319,33 @@ export function ContactsTab() {
                 <div className="flex flex-col gap-1">
                   {store.contactGroups.map(group => (
                     <div key={group.id} className="flex items-center justify-between gap-1 rounded bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))]">
-                      <span className="truncate text-[var(--text-primary)]" title={group.name}>
-                        {group.name}
-                        <span className="ml-1 text-[var(--text-tertiary)]">{groupMembershipCounts.get(group.id) ?? group.memberCount}</span>
-                      </span>
+                      {editingGroupId === group.id ? (
+                        <input
+                          autoFocus
+                          value={editingGroupName}
+                          onChange={(event) => setEditingGroupName(event.target.value)}
+                          onBlur={() => void saveGroupName()}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') void saveGroupName();
+                            if (event.key === 'Escape') cancelRenameGroup();
+                          }}
+                          className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                        />
+                      ) : (
+                        <span className="truncate text-[var(--text-primary)]" title={group.name}>
+                          {group.name}
+                          <span className="ml-1 text-[var(--text-tertiary)]">{groupMembershipCounts.get(group.id) ?? group.memberCount}</span>
+                        </span>
+                      )}
                       <span className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          title="Rename group"
+                          onClick={() => startRenameGroup(group.id, group.name)}
+                          className="rounded p-1 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
                         <button
                           type="button"
                           title="Compose to group"

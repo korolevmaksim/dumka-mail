@@ -20,6 +20,7 @@ const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
 interface UseMailStateProps {
   customClassifierRules: CustomClassifierRule[];
   tabCategories: TabCategory[];
+  mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
 }
 
@@ -42,6 +43,7 @@ function threadStateKey(thread: Pick<MailThread, 'accountId' | 'id'> | null): st
 export function useMailState({
   customClassifierRules,
   tabCategories,
+  mutedLabelIdsByAccount,
   applyGmailSignatureSyncResult,
 }: UseMailStateProps) {
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
@@ -402,7 +404,7 @@ export function useMailState({
         filtered = threads.filter(t => matchThreadIds.has(t.id));
 
         if (mailboxView === 'sent') {
-          filtered = filtered.filter(t => isThreadInMailbox(t, 'sent', now));
+          filtered = filtered.filter(t => isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount }));
         }
 
         if (parsed.from) {
@@ -418,10 +420,10 @@ export function useMailState({
           filtered = filtered.filter(t => t.isUnread === parsed.isUnread);
         }
       } else if (mailboxView === 'sent') {
-        filtered = threads.filter(t => isThreadInMailbox(t, 'sent', now));
+        filtered = threads.filter(t => isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount }));
       } else {
         filtered = threads.filter(t => {
-          if (!isThreadInMailbox(t, 'inbox', now)) return false;
+          if (!isThreadInMailbox(t, 'inbox', now, { mutedLabelIdsByAccount })) return false;
           return getThreadCategory(t) === activeSplit;
         });
       }
@@ -435,7 +437,7 @@ export function useMailState({
     };
 
     filterThreads();
-  }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory]);
+  }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory, mutedLabelIdsByAccount]);
 
   // Recalculate Split Tabs counters
   useEffect(() => {
@@ -447,11 +449,11 @@ export function useMailState({
     }
 
     for (const t of threads) {
-      if (isThreadInMailbox(t, 'sent', now)) {
+      if (isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount })) {
         nextMailboxCounts.sent++;
       }
 
-      if (!isThreadInMailbox(t, 'inbox', now)) continue;
+      if (!isThreadInMailbox(t, 'inbox', now, { mutedLabelIdsByAccount })) continue;
       nextMailboxCounts.inbox++;
       const split = getThreadCategory(t);
       if (counts[split] !== undefined) {
@@ -463,7 +465,7 @@ export function useMailState({
 
     setSplitCounts(counts);
     setMailboxCounts(nextMailboxCounts);
-  }, [threads, getThreadCategory, tabCategories]);
+  }, [threads, getThreadCategory, tabCategories, mutedLabelIdsByAccount]);
 
   // Open Thread Detail
   const openThread = async (thread: MailThread | null) => {

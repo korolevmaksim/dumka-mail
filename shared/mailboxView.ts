@@ -1,5 +1,11 @@
 import type { MailboxView, MailThread } from './types';
 
+export const DUMKA_MUTED_LABEL_NAME = 'Dumka/Muted';
+
+export interface MailboxFilterOptions {
+  mutedLabelIdsByAccount?: Readonly<Record<string, readonly string[]>>;
+}
+
 export function threadHasLabel(thread: Pick<MailThread, 'labelIds'>, label: string): boolean {
   const normalized = label.toUpperCase();
   return thread.labelIds.some(labelId => labelId.toUpperCase() === normalized);
@@ -14,14 +20,25 @@ export function hasFutureReminder(thread: Pick<MailThread, 'reminderAt'>, now: D
   return reminderTime > now.getTime();
 }
 
+export function isMutedThread(
+  thread: Pick<MailThread, 'accountId' | 'labelIds'>,
+  options: MailboxFilterOptions = {},
+): boolean {
+  const mutedLabelIds = options.mutedLabelIdsByAccount?.[thread.accountId] || [];
+  if (mutedLabelIds.length === 0) return false;
+
+  return thread.labelIds.some(labelId => mutedLabelIds.includes(labelId));
+}
+
 export function isThreadInMailbox(
-  thread: Pick<MailThread, 'labelIds' | 'reminderAt'>,
+  thread: Pick<MailThread, 'accountId' | 'labelIds' | 'reminderAt'>,
   mailboxView: MailboxView,
   now: Date = new Date(),
+  options: MailboxFilterOptions = {},
 ): boolean {
   if (mailboxView === 'sent') {
     return threadHasLabel(thread, 'SENT');
   }
 
-  return threadHasLabel(thread, 'INBOX') && !hasFutureReminder(thread, now);
+  return threadHasLabel(thread, 'INBOX') && !hasFutureReminder(thread, now) && !isMutedThread(thread, options);
 }

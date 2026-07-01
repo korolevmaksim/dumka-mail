@@ -5,6 +5,7 @@ import type { CalendarEvent, CalendarEventCreateInput, CalendarEventRecurrence, 
 import { findAvailabilitySlotsFromBusyIntervals, findRecurringCalendarConflicts, freeBusyWarningMessage } from '../../../shared/calendarAvailability';
 import {
   calendarEventTimesFromLocalInput,
+  calendarEventFormDefaultsFromRange,
   defaultCalendarEventFormForDate,
   localCalendarTimeZone,
   localDateInputValue,
@@ -30,6 +31,8 @@ interface CalendarEventFormProps {
   defaultConferenceProvider: 'none' | 'googleMeet' | 'calendly' | 'calCom';
   calendarSettings: CalendarSettings;
   calendarEvents: CalendarEvent[];
+  initialStartAt?: string | null;
+  initialEndAt?: string | null;
   isSaving: boolean;
   isDeleting?: boolean;
   onCancel: () => void;
@@ -46,6 +49,8 @@ export function CalendarEventForm({
   defaultConferenceProvider,
   calendarSettings,
   calendarEvents,
+  initialStartAt,
+  initialEndAt,
   isSaving,
   isDeleting = false,
   onCancel,
@@ -54,9 +59,12 @@ export function CalendarEventForm({
   onQueryFreeBusy,
 }: CalendarEventFormProps) {
   const today = new Date();
+  const initialRangeDefaults = !event && initialStartAt && initialEndAt
+    ? calendarEventFormDefaultsFromRange(initialStartAt, initialEndAt, defaultDurationMinutes)
+    : null;
   const defaults = event
     ? formDefaultsFromEvent(event, defaultDurationMinutes)
-    : defaultCalendarEventFormForDate(selectedDate, defaultDurationMinutes, today);
+    : initialRangeDefaults || defaultCalendarEventFormForDate(selectedDate, defaultDurationMinutes, today);
   const hasExistingMeet = Boolean(event?.conferenceUrl);
   const [quickEventText, setQuickEventText] = useState('');
   const [title, setTitle] = useState(event?.summary || '');

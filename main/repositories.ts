@@ -497,10 +497,10 @@ export const EmailSuggestionsRepo = {
     }[];
 
     const contactRows = db.prepare(`
-      SELECT display_name, email, updated_at
+      SELECT COALESCE(NULLIF(local_display_name, ''), display_name) AS display_name, email, updated_at
       FROM contacts
       ${contactsWhere}
-      ORDER BY display_name COLLATE NOCASE ASC, email COLLATE NOCASE ASC
+      ORDER BY COALESCE(NULLIF(local_display_name, ''), display_name) COLLATE NOCASE ASC, email COLLATE NOCASE ASC
       LIMIT @limit
     `).all({ accountId: normalizedAccountId, limit: sqlLimit }) as {
       display_name: string | null;
@@ -523,10 +523,10 @@ export const EmailSuggestionsRepo = {
     }[];
 
     const groupedContactRows = db.prepare(`
-      SELECT account_id, display_name, email, group_ids_json
+      SELECT account_id, COALESCE(NULLIF(local_display_name, ''), display_name) AS display_name, email, group_ids_json
       FROM contacts
       ${contactsWhere}
-      ORDER BY display_name COLLATE NOCASE ASC, email COLLATE NOCASE ASC
+      ORDER BY COALESCE(NULLIF(local_display_name, ''), display_name) COLLATE NOCASE ASC, email COLLATE NOCASE ASC
       LIMIT @limit
     `).all({ accountId: normalizedAccountId, limit: MAX_EMAIL_SUGGESTION_LIMIT }) as {
       account_id: string;
@@ -596,7 +596,7 @@ export const ContactsRepo = {
     const rows = db.prepare(`
       SELECT * FROM contacts
       WHERE account_id = ?
-      ORDER BY display_name COLLATE NOCASE ASC, email COLLATE NOCASE ASC
+      ORDER BY COALESCE(NULLIF(local_display_name, ''), display_name) COLLATE NOCASE ASC, email COLLATE NOCASE ASC
       LIMIT 2000
     `).all(accountId) as any[];
 
@@ -605,7 +605,7 @@ export const ContactsRepo = {
       accountId: row.account_id,
       resourceName: row.resource_name,
       etag: row.etag,
-      displayName: row.display_name,
+      displayName: row.local_display_name || row.display_name,
       email: row.email,
       photoUrl: row.photo_url,
       phoneNumbers: JSON.parse(row.phone_numbers_json),
@@ -632,9 +632,9 @@ export const ContactsRepo = {
     const db = getDatabase();
     const insert = db.prepare(`
       INSERT INTO contacts (
-        id, account_id, resource_name, etag, display_name, email, photo_url,
+        id, account_id, resource_name, etag, display_name, local_display_name, email, photo_url,
         phone_numbers_json, organizations_json, notes, group_ids_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, id) DO UPDATE SET
         resource_name=excluded.resource_name,
         etag=excluded.etag,
@@ -648,7 +648,7 @@ export const ContactsRepo = {
 
     db.transaction(() => {
       for (const contact of contacts) {
-        const existing = db.prepare('SELECT notes, group_ids_json FROM contacts WHERE account_id = ? AND id = ?')
+        const existing = db.prepare('SELECT local_display_name, notes, group_ids_json FROM contacts WHERE account_id = ? AND id = ?')
           .get(contact.accountId, contact.id) as any;
         insert.run(
           contact.id,
@@ -656,6 +656,7 @@ export const ContactsRepo = {
           contact.resourceName || null,
           contact.etag || null,
           contact.displayName,
+          existing?.local_display_name ?? null,
           contact.email,
           contact.photoUrl || null,
           JSON.stringify(contact.phoneNumbers),
@@ -672,12 +673,15 @@ export const ContactsRepo = {
     const db = getDatabase();
     const row = db.prepare('SELECT * FROM contacts WHERE account_id = ? AND id = ?').get(accountId, id) as any;
     if (!row) return;
+    const nextLocalDisplayName = patch.displayName === undefined
+      ? row.local_display_name
+      : (patch.displayName.trim() === row.display_name ? null : patch.displayName.trim());
     db.prepare(`
       UPDATE contacts
-      SET display_name = ?, notes = ?, group_ids_json = ?, updated_at = ?
+      SET local_display_name = ?, notes = ?, group_ids_json = ?, updated_at = ?
       WHERE account_id = ? AND id = ?
     `).run(
-      patch.displayName ?? row.display_name,
+      nextLocalDisplayName,
       patch.notes ?? row.notes,
       patch.groupIds ? JSON.stringify(patch.groupIds) : row.group_ids_json,
       new Date().toISOString(),
