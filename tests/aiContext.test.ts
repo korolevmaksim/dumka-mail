@@ -163,8 +163,9 @@ describe('buildThreadContext', () => {
     const msg = makeMessage({ bodyPlain: 'Secret plan inside body' });
     const out = buildThreadContext(baseThread, [msg], makeAISettings(false));
     expect(out).toContain('Messages:');
-    expect(out).toContain('Message 1 from Alice Smith:');
+    expect(out).toContain('Message 1 of 1 (only message) from Alice Smith:');
     expect(out).toContain('Subject: Quarterly report');
+    expect(out).toContain('Received: 2026-01-01T00:00:00.000Z');
     expect(out).not.toContain('Body:');
     expect(out).not.toContain('Secret plan inside body');
     expect(out).toContain('Has attachments: no');
@@ -198,12 +199,35 @@ describe('buildThreadContext', () => {
 
   it('numbers multiple messages sequentially', () => {
     const messages = [
-      makeMessage({ id: 'a', senderName: 'Alice Smith', bodyPlain: 'first' }),
-      makeMessage({ id: 'b', senderName: 'Bob Jones', hasAttachments: true, bodyPlain: 'second' }),
+      makeMessage({ id: 'a', senderName: 'Alice Smith', receivedAt: '2026-01-01T09:00:00.000Z', bodyPlain: 'first' }),
+      makeMessage({ id: 'b', senderName: 'Bob Jones', receivedAt: '2026-01-01T10:00:00.000Z', hasAttachments: true, bodyPlain: 'second' }),
     ];
     const out = buildThreadContext(baseThread, messages, makeAISettings(true));
-    expect(out).toContain('Message 1 from Alice Smith:');
-    expect(out).toContain('Message 2 from Bob Jones:');
+    expect(out).toContain('Message 1 of 2 (oldest message) from Alice Smith:');
+    expect(out).toContain('Message 2 of 2 (newest message) from Bob Jones:');
+  });
+
+  it('sorts thread messages chronologically so the latest message is explicit', () => {
+    const messages = [
+      makeMessage({ id: 'new', senderName: 'Latest Sender', receivedAt: '2026-01-01T12:00:00.000Z', bodyPlain: 'newest' }),
+      makeMessage({ id: 'old', senderName: 'Original Sender', receivedAt: '2026-01-01T08:00:00.000Z', bodyPlain: 'oldest' }),
+    ];
+    const out = buildThreadContext(baseThread, messages, makeAISettings(true));
+
+    expect(out.indexOf('Original Sender')).toBeLessThan(out.indexOf('Latest Sender'));
+    expect(out).toContain('Message 2 of 2 (newest message) from Latest Sender:');
+  });
+
+  it('ignores messages from a previous opened thread when a thread is provided', () => {
+    const out = buildThreadContext(baseThread, [
+      makeMessage({ id: 'previous', threadId: 'old-thread', senderName: 'Previous Sender', bodyPlain: 'stale body' }),
+      makeMessage({ id: 'current', senderName: 'Current Sender', bodyPlain: 'current body' }),
+    ], makeAISettings(true));
+
+    expect(out).toContain('Current Sender');
+    expect(out).toContain('current body');
+    expect(out).not.toContain('Previous Sender');
+    expect(out).not.toContain('stale body');
   });
 
   it('handles a null thread by emitting only message blocks', () => {

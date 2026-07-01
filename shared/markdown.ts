@@ -39,7 +39,18 @@ function parseBlockquotes(html: string): string {
   return processedLines.join('\n');
 }
 
-export function compileMarkdownToHtml(md: string): string {
+function safeMarkdownUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (/^(https?:|mailto:|tel:|#)/i.test(trimmed)) {
+    return trimmed
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+  return null;
+}
+
+export function compileMarkdownToHtmlFragment(md: string): string {
   if (!md) return '';
   
   // Escape HTML characters to ensure safety
@@ -64,8 +75,12 @@ export function compileMarkdownToHtml(md: string): string {
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
   html = html.replace(/_(.*?)_/g, '<em>$1</em>');
 
-  // Links: [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: #5383E6; text-decoration: underline;">$1</a>');
+  // Links: [text](url). Text is already escaped; URL is restricted to safe schemes.
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text: string, url: string) => {
+    const safeUrl = safeMarkdownUrl(url);
+    if (!safeUrl) return text;
+    return `<a href="${safeUrl}" target="_blank" rel="noreferrer" style="color: #5383E6; text-decoration: underline;">${text}</a>`;
+  });
 
   // Unordered list items
   html = html.replace(/^\s*[-*]\s+(.*?)$/gm, '<li>$1</li>');
@@ -95,6 +110,11 @@ export function compileMarkdownToHtml(md: string): string {
     .replace(/<br\/>(<h[1-6]>)/g, '$1')
     .replace(/(<\/h[1-6]>)<br\/>/g, '$1');
 
-  return `<html><body><div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1f2937;">${html}</div></body></html>`;
+  return html;
 }
 
+export function compileMarkdownToHtml(md: string): string {
+  if (!md) return '';
+  const html = compileMarkdownToHtmlFragment(md);
+  return `<html><body><div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #1f2937;">${html}</div></body></html>`;
+}

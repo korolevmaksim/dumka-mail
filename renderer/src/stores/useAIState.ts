@@ -148,7 +148,7 @@ export function useAIState({
       const response = await window.electronAPI.completeAI({
         action: 'chat',
         context: openedThread
-          ? `Thread Subject: ${openedThread.subject}\nSnippet: ${openedThread.snippet}\nMessages:\n${openedThreadMessages.map(m => m.bodyPlain).join('\n')}`
+          ? buildThreadContext(openedThread, openedThreadMessages, settings.ai)
           : 'No thread open.',
         conversationHistory: newMsgs,
         userInstruction: text

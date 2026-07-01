@@ -3,6 +3,7 @@ import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
 import { deriveShortcuts } from '../../../shared/keyboard';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
 import { emitToast } from '../lib/toastBus';
+import type { MailThread } from '../../../shared/types';
 
 interface KeyboardOptions {
   isComposeActive: boolean;
@@ -10,6 +11,7 @@ interface KeyboardOptions {
   onSearchFocus: () => void;
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (open: boolean) => void;
+  onOpenReminder: (thread: MailThread) => void;
   onEscape: () => void;
 }
 
@@ -88,6 +90,14 @@ export function useKeyboard(options: KeyboardOptions) {
       if (isMetaOrCtrl && e.shiftKey && (e.code === 'KeyU' || e.key === 'U')) {
         e.preventDefault();
         currentStore.executeMailAction('markRead');
+        return;
+      }
+
+      // Command + Shift + H: open Remind me even when single-key shortcuts are off.
+      if (isMetaOrCtrl && e.shiftKey && (e.code === 'KeyH' || e.key === 'H')) {
+        e.preventDefault();
+        const target = currentStore.openedThread || currentStore.visibleThreads.find(t => t.id === currentStore.focusedThreadId);
+        if (target) currentOptions.onOpenReminder(target);
         return;
       }
 
@@ -258,16 +268,11 @@ export function useKeyboard(options: KeyboardOptions) {
         return;
       }
 
-      // H: snooze the thread until tomorrow morning.
+      // H: open the Remind me chooser for the current thread.
       if (noModifiers && sc.reminderKey && (e.code === 'KeyH' || e.key === 'h')) {
         e.preventDefault();
         const target = currentStore.openedThread || focusedThread;
-        if (target) {
-          const tomorrow = new Date();
-          tomorrow.setDate(tomorrow.getDate() + 1);
-          tomorrow.setHours(9, 0, 0, 0);
-          currentStore.snoozeThread(target, tomorrow);
-        }
+        if (target) currentOptions.onOpenReminder(target);
         return;
       }
 

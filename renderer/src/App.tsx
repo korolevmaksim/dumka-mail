@@ -26,7 +26,7 @@ import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { buildLabelTree, flattenLabelTree, labelPresenceInThreads } from '../../shared/labels';
 import { isReversibleMailActionKind } from '../../shared/mailActions';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
-import type { MailboxView } from '../../shared/types';
+import type { MailboxView, MailThread } from '../../shared/types';
 
 const getMaxWidthStyle = (option?: string) => {
   switch (option) {
@@ -48,6 +48,7 @@ function AppContent() {
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [reminderTargetThread, setReminderTargetThread] = useState<MailThread | null>(null);
   const [labelMenuOpen, setLabelMenuOpen] = useState(false);
   const [batchLabelMenuOpen, setBatchLabelMenuOpen] = useState(false);
   const [mailboxMenuOpen, setMailboxMenuOpen] = useState(false);
@@ -281,6 +282,13 @@ function AppContent() {
   }, [snoozeOpen]);
 
   useEffect(() => {
+    if (!reminderTargetThread) return;
+    const close = () => setReminderTargetThread(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [reminderTargetThread]);
+
+  useEffect(() => {
     if (!labelMenuOpen) return;
     const close = () => setLabelMenuOpen(false);
     window.addEventListener('click', close);
@@ -383,12 +391,20 @@ function AppContent() {
     },
     commandPaletteOpen,
     setCommandPaletteOpen,
+    onOpenReminder: (thread) => {
+      setSnoozeOpen(false);
+      setReminderTargetThread(thread);
+    },
     onEscape: () => {
       if (threadSearchOpen) {
         setThreadSearchOpen(false);
         setThreadSearchQuery('');
       } else if (commandPaletteOpen) {
         setCommandPaletteOpen(false);
+      } else if (reminderTargetThread) {
+        setReminderTargetThread(null);
+      } else if (snoozeOpen) {
+        setSnoozeOpen(false);
       } else if (mailboxMenuOpen) {
         setMailboxMenuOpen(false);
       } else if (store.settingsOpen) {
@@ -904,6 +920,7 @@ function AppContent() {
                                 <SnoozeMenu
                                   onPick={(d) => store.snoozeThread(store.openedThread!, d)}
                                   onClose={() => setSnoozeOpen(false)}
+                                  targetSubject={store.openedThread.subject}
                                 />
                               )}
                             </div>
@@ -1083,6 +1100,15 @@ function AppContent() {
       {/* Floating Compose Drawer Overlay */}
       <FloatingComposeDrawer />
 
+      {reminderTargetThread && (
+        <SnoozeMenu
+          floating
+          targetSubject={reminderTargetThread.subject}
+          onPick={(date) => store.snoozeThread(reminderTargetThread, date)}
+          onClose={() => setReminderTargetThread(null)}
+        />
+      )}
+
       {contextMenu && (
         <div
           className="fixed z-50 w-[180px] bg-[var(--panel-bg)]/85 backdrop-blur-md border border-[var(--border)] rounded-xl shadow-2xl py-1.5 flex flex-col select-none scale-in"
@@ -1204,9 +1230,7 @@ function AppContent() {
               const tomorrow = new Date();
               tomorrow.setDate(tomorrow.getDate() + 1);
               tomorrow.setHours(9, 0, 0, 0);
-              store.executeMailAction('autoMarkRead', contextMenu.thread.id, null, async () => {
-                await window.electronAPI.saveReminder(contextMenu.thread.accountId, contextMenu.thread.id, tomorrow.toISOString());
-              });
+              store.snoozeThread(contextMenu.thread, tomorrow);
               setContextMenu(null);
             }}
             className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"

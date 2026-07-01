@@ -575,10 +575,11 @@ export function useMailState({
         setFocusedThreadId(null);
       }
     } else if (kind === 'autoMarkRead') {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(9, 0, 0, 0);
-      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, reminderAt: tomorrow.toISOString() } : t));
+      const fallbackReminder = new Date();
+      fallbackReminder.setDate(fallbackReminder.getDate() + 1);
+      fallbackReminder.setHours(9, 0, 0, 0);
+      const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
+      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, reminderAt } : t));
       if (openedThread?.id === targetThreadId) {
         openThread(nextThread);
       }
@@ -742,9 +743,10 @@ export function useMailState({
   };
 
   const snoozeThread = async (thread: MailThread, date: Date) => {
+    const reminderAt = date.toISOString();
     await executeMailAction('autoMarkRead', thread.id, null, async () => {
-      await window.electronAPI.saveReminder(thread.accountId, thread.id, date.toISOString());
-    });
+      await window.electronAPI.saveReminder(thread.accountId, thread.id, reminderAt);
+    }, JSON.stringify({ reminderAt }));
   };
 
   const clearThreadReminder = async (thread: MailThread) => {

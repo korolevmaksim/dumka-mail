@@ -1,18 +1,30 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import {
   Sparkles, Pin, PinOff, Plus, X, Send,
   ListChecks, Text, PenLine, Wand2, Languages,
+  SlidersHorizontal, ChevronDown,
   type LucideIcon
 } from 'lucide-react';
-import { AI_ACTIONS } from '../../../../shared/types';
+import { AI_ACTIONS, type AIProviderPreference } from '../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider, resolveConfiguredProviderModel } from '../../../../shared/aiProviders';
 import { AITriagePlanCard } from '../AITriagePlanCard';
 import { SearchableSelect } from '../common/SearchableSelect';
+import { compileMarkdownToHtmlFragment } from '../../../../shared/markdown';
 
 const AI_ICON: Record<string, LucideIcon> = {
   ListChecks, Text, PenLine, Wand2, Languages,
 };
+
+type ResizeMode = 'dockedWidth' | 'floatingSize' | null;
+
+const MIN_AI_WIDTH = 300;
+const MAX_AI_WIDTH = 560;
+const MIN_AI_HEIGHT = 420;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 const THINKING_CONTROLS: Partial<Record<ConfigurableAIProvider, {
   envKey: string;
@@ -70,25 +82,47 @@ const THINKING_CONTROLS: Partial<Record<ConfigurableAIProvider, {
   },
 };
 
+function AIMessageContent({ role, text }: { role: string; text: string }) {
+  if (role !== 'assistant') {
+    return (
+      <p className={`text-[calc(11px*var(--font-scale))] whitespace-pre-wrap select-text ${role === 'system' ? 'text-[var(--warning)]' : 'text-[var(--text-primary)]'}`}>
+        {text}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="ai-markdown text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] select-text"
+      dangerouslySetInnerHTML={{ __html: compileMarkdownToHtmlFragment(text) }}
+    />
+  );
+}
+
 export function AICopilotPanel() {
   const store = useAppStore();
   const [aiInput, setAiInput] = useState('');
   const [isAiUndocked, setIsAiUndocked] = useState(false);
   const [aiPosition, setAiPosition] = useState({ x: 96, y: 60 });
+  const [aiPanelSize, setAiPanelSize] = useState({ width: 340, height: 600 });
   const [isAiDragging, setIsAiDragging] = useState(false);
+  const [resizeMode, setResizeMode] = useState<ResizeMode>(null);
+  const [aiControlsOpen, setAiControlsOpen] = useState(false);
   const aiDragStartRef = useRef({ x: 0, y: 0 });
+  const aiResizeStartRef = useRef({ x: 0, y: 0, width: 340, height: 600 });
   const aiMessagesRef = useRef<HTMLDivElement>(null);
+  const aiControlsRef = useRef<HTMLDivElement>(null);
 
   // Handle dragging logic
   useEffect(() => {
     if (!isAiDragging) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (e: globalThis.MouseEvent) => {
       const newX = e.clientX - aiDragStartRef.current.x;
       const newY = e.clientY - aiDragStartRef.current.y;
       
-      const maxX = window.innerWidth - 340;
-      const maxY = window.innerHeight - 500;
+      const maxX = window.innerWidth - aiPanelSize.width;
+      const maxY = window.innerHeight - Math.min(aiPanelSize.height, window.innerHeight * 0.85);
       
       setAiPosition({
         x: Math.max(0, Math.min(newX, maxX)),
@@ -106,7 +140,49 @@ export function AICopilotPanel() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isAiDragging]);
+  }, [isAiDragging, aiPanelSize.height, aiPanelSize.width]);
+
+  useEffect(() => {
+    if (!resizeMode) return;
+
+    const handleMouseMove = (e: globalThis.MouseEvent) => {
+      const dx = e.clientX - aiResizeStartRef.current.x;
+      const dy = e.clientY - aiResizeStartRef.current.y;
+      const maxWidth = Math.min(MAX_AI_WIDTH, window.innerWidth - 72);
+
+      if (resizeMode === 'dockedWidth') {
+        setAiPanelSize(prev => ({
+          ...prev,
+          width: clamp(aiResizeStartRef.current.width + dx, MIN_AI_WIDTH, maxWidth),
+        }));
+      } else {
+        setAiPanelSize({
+          width: clamp(aiResizeStartRef.current.width + dx, MIN_AI_WIDTH, maxWidth),
+          height: clamp(aiResizeStartRef.current.height + dy, MIN_AI_HEIGHT, window.innerHeight - 40),
+        });
+      }
+    };
+
+    const handleMouseUp = () => setResizeMode(null);
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizeMode]);
+
+  useEffect(() => {
+    if (!aiControlsOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!aiControlsRef.current?.contains(event.target as Node)) {
+        setAiControlsOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, [aiControlsOpen]);
 
   useEffect(() => {
     if (!store.triagePlan) return;
@@ -121,6 +197,25 @@ export function AICopilotPanel() {
   const configuredModel = modelProvider
     ? resolveConfiguredProviderModel(modelProvider, store.customEnv)
     : '';
+  const thinkingValue = thinkingControl ? store.customEnv[thinkingControl.envKey] || 'disabled' : '';
+  const thinkingLabel = thinkingControl
+    ? thinkingControl.options.find(option => option.value === thinkingValue)?.label || thinkingValue
+    : '';
+  const providerLabel = effectiveProvider && isConfigurableAIProvider(effectiveProvider)
+    ? getAIProviderConfig(effectiveProvider).displayName
+    : store.aiProvider === 'automatic'
+      ? 'Automatic'
+      : store.aiProvider === 'disabled'
+        ? 'Disabled'
+        : 'Compatible';
+  const modelSummary = modelProvider
+    ? store.aiModel || configuredModel || getAIProviderConfig(modelProvider).defaultModel
+    : store.aiProviderDesc?.model || '';
+  const controlsSummary = [
+    providerLabel,
+    modelSummary,
+    thinkingControl ? `${thinkingLabel} thinking` : null,
+  ].filter(Boolean).join(' · ');
 
   const updateThinkingLevel = async (value: string) => {
     if (!thinkingControl) return;
@@ -134,7 +229,7 @@ export function AICopilotPanel() {
   };
 
   const updateProvider = (provider: string) => {
-    store.setAiProvider(provider as any);
+    store.setAiProvider(provider as AIProviderPreference);
     if (isConfigurableAIProvider(provider)) {
       store.setAiModel(resolveConfiguredProviderModel(provider, store.customEnv));
     }
@@ -186,18 +281,32 @@ export function AICopilotPanel() {
     return () => { active = false; };
   }, [modelProvider, store.customEnv, store.modelsCache, store.aiModel]);
 
+  const startResize = (mode: Exclude<ResizeMode, null>, event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    aiResizeStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      width: aiPanelSize.width,
+      height: aiPanelSize.height,
+    };
+    setResizeMode(mode);
+  };
+
   return (
     <div 
       className={
         isAiUndocked
-          ? "panel-surface absolute w-[340px] h-[600px] max-h-[85vh] border border-[var(--strong-border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden rounded-xl shadow-2xl z-50"
-          : "panel-surface w-[340px] border-r border-[var(--border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden h-full shrink-0"
+          ? "panel-surface absolute max-h-[85vh] border border-[var(--strong-border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden rounded-xl shadow-2xl z-50"
+          : "panel-surface relative border-r border-[var(--border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden h-full shrink-0"
       }
       style={isAiUndocked ? { 
         left: `${aiPosition.x}px`, 
         top: `${aiPosition.y}px`,
+        width: `${aiPanelSize.width}px`,
+        height: `${aiPanelSize.height}px`,
         boxShadow: isAiDragging ? '0 25px 50px -12px rgb(0 0 0 / 0.5)' : '0 20px 25px -5px rgb(0 0 0 / 0.3)'
-      } : undefined}
+      } : { width: `${aiPanelSize.width}px` }}
     >
       
       {/* Panel Header */}
@@ -246,54 +355,71 @@ export function AICopilotPanel() {
         </div>
       </div>
 
-      {/* Model provider picker */}
-      <div className="flex flex-col gap-1.5 px-4 py-2 border-b border-[var(--border)] bg-[var(--app-bg)] text-[calc(10px*var(--font-scale))]">
-        <div className="flex items-center justify-between">
-          <span className="text-[var(--text-secondary)]">Provider:</span>
-          <select
-            value={store.aiProvider}
-            onChange={(e) => updateProvider(e.target.value)}
-            className="bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-          >
-            <option value="automatic">Automatic</option>
-            <option value="openAI">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="gemini">Gemini</option>
-            <option value="openRouter">OpenRouter</option>
-            <option value="deepSeek">DeepSeek</option>
-            <option value="openAICompatible">Local Compatible</option>
-            <option value="disabled">Disabled</option>
-          </select>
-        </div>
-        {modelProvider && (
-          <div className="flex items-center justify-between mt-1">
-            <span className="text-[var(--text-secondary)]">Model:</span>
-            {loadingModels ? (
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] animate-pulse">Loading…</span>
-            ) : (
-              <SearchableSelect
-                value={store.aiModel || configuredModel}
-                options={modelList}
-                onChange={(model) => void updateModel(model)}
-                placeholder="Search models"
-                emptyLabel="No models found"
-                className="w-[190px]"
-              />
-            )}
-          </div>
-        )}
-        {thinkingControl && (
-          <div className="flex items-center justify-between mt-1">
-            <span className="text-[var(--text-secondary)]">Thinking:</span>
-            <select
-              value={store.customEnv[thinkingControl.envKey] || 'disabled'}
-              onChange={(e) => void updateThinkingLevel(e.target.value)}
-              className="bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] max-w-[160px] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)]"
-            >
-              {thinkingControl.options.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+      {/* Compact model controls */}
+      <div ref={aiControlsRef} className="relative border-b border-[var(--border)] bg-[var(--app-bg)] px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setAiControlsOpen(open => !open)}
+          className="flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5 text-left text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
+          aria-expanded={aiControlsOpen}
+          aria-haspopup="dialog"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-[var(--ai-accent)]" />
+          <span className="min-w-0 flex-1 truncate">{controlsSummary || 'AI disabled'}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
+        </button>
+        {aiControlsOpen && (
+          <div className="absolute left-3 right-3 top-[42px] z-50 rounded-lg border border-[var(--strong-border)] bg-[var(--raised-surface)] p-3 shadow-2xl">
+            <div className="flex flex-col gap-2 text-[calc(10px*var(--font-scale))]">
+              <label className="flex items-center justify-between gap-3">
+                <span className="shrink-0 text-[var(--text-secondary)]">Provider</span>
+                <select
+                  value={store.aiProvider}
+                  onChange={(e) => updateProvider(e.target.value)}
+                  className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+                >
+                  <option value="automatic">Automatic</option>
+                  <option value="openAI">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="openRouter">OpenRouter</option>
+                  <option value="deepSeek">DeepSeek</option>
+                  <option value="openAICompatible">Local Compatible</option>
+                  <option value="disabled">Disabled</option>
+                </select>
+              </label>
+              {modelProvider && (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="shrink-0 text-[var(--text-secondary)]">Model</span>
+                  {loadingModels ? (
+                    <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] animate-pulse">Loading…</span>
+                  ) : (
+                    <SearchableSelect
+                      value={store.aiModel || configuredModel}
+                      options={modelList}
+                      onChange={(model) => void updateModel(model)}
+                      placeholder="Search models"
+                      emptyLabel="No models found"
+                      className="min-w-0 flex-1"
+                    />
+                  )}
+                </div>
+              )}
+              {thinkingControl && (
+                <label className="flex items-center justify-between gap-3">
+                  <span className="shrink-0 text-[var(--text-secondary)]">Thinking</span>
+                  <select
+                    value={thinkingValue}
+                    onChange={(e) => void updateThinkingLevel(e.target.value)}
+                    className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)]"
+                  >
+                    {thinkingControl.options.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -355,9 +481,7 @@ export function AICopilotPanel() {
               <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
                 {m.role === 'user' ? 'You' : m.role === 'system' ? 'System' : 'Assistant'}
               </span>
-              <p className={`text-[calc(11px*var(--font-scale))] whitespace-pre-wrap select-text ${m.role === 'system' ? 'text-[var(--warning)]' : 'text-[var(--text-primary)]'}`}>
-                {m.text}
-              </p>
+              <AIMessageContent role={m.role} text={m.text} />
             </div>
           ))
         )}
@@ -396,6 +520,25 @@ export function AICopilotPanel() {
         </form>
       </div>
 
+      {isAiUndocked ? (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          title="Resize AI Assistant"
+          onMouseDown={(event) => startResize('floatingSize', event)}
+          className="absolute bottom-0 right-0 h-5 w-5 cursor-nwse-resize"
+        >
+          <div className="absolute bottom-1 right-1 h-2.5 w-2.5 border-b-2 border-r-2 border-[var(--strong-border)]" />
+        </div>
+      ) : (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="Resize AI Assistant"
+          onMouseDown={(event) => startResize('dockedWidth', event)}
+          className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[var(--ai-accent)]/20"
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compileMarkdownToHtml } from '../shared/markdown';
+import { compileMarkdownToHtml, compileMarkdownToHtmlFragment } from '../shared/markdown';
 
 describe('compileMarkdownToHtml', () => {
   it('compiles standard formatting', () => {
@@ -41,5 +41,20 @@ describe('compileMarkdownToHtml', () => {
     expect(html).toContain('<h1>Quoted Heading</h1>');
     expect(html).toContain('<li>Item 1</li>');
     expect(html).toContain('<li>Item 2</li>');
+  });
+
+  it('compiles a reusable fragment without document wrappers', () => {
+    const html = compileMarkdownToHtmlFragment('A **bold** point');
+
+    expect(html).toContain('A <strong>bold</strong> point');
+    expect(html).not.toContain('<html>');
+    expect(html).not.toContain('<body>');
+  });
+
+  it('does not emit unsafe link schemes', () => {
+    const html = compileMarkdownToHtmlFragment('[bad](javascript:alert(1)) and [good](https://example.com)');
+
+    expect(html).not.toContain('javascript:alert');
+    expect(html).toContain('href="https://example.com"');
   });
 });

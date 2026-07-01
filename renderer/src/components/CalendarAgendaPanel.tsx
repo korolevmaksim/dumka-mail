@@ -19,16 +19,10 @@ import {
   visibleMiniCalendarRange,
 } from '../../../shared/calendarMini';
 import { quickDraftLabel } from '../lib/calendarEventFormHelpers';
+import { agendaEventTime, upcomingAgendaDateTimeLabel } from '../lib/calendarAgenda';
 
 function dayLabel(date: Date): string {
   return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-function eventTime(event: CalendarEvent): string {
-  if (event.isAllDay) return 'All day';
-  const start = new Date(event.startAt);
-  const end = new Date(event.endAt);
-  return `${start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} - ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 export function CalendarAgendaPanel() {
@@ -382,7 +376,7 @@ export function CalendarAgendaPanel() {
                 </div>
                 <div className="mt-1 flex items-center gap-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
                   <Clock className="h-3 w-3" />
-                  <span>{eventTime(event)}</span>
+                  <span>{agendaEventTime(event)}</span>
                 </div>
                 {event.location && (
                   <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
@@ -435,7 +429,7 @@ export function CalendarAgendaPanel() {
               {upcoming.map(event => (
                 <div key={`${event.calendarId}:${event.id}`} className="flex min-w-0 items-center justify-between gap-2 text-[calc(10px*var(--font-scale))]">
                   <span className="min-w-0 truncate text-[var(--text-primary)]">{event.summary}</span>
-                  <span className="shrink-0 text-[var(--text-secondary)]">{dayLabel(new Date(event.startAt))}</span>
+                  <span className="shrink-0 text-[var(--text-secondary)]">{upcomingAgendaDateTimeLabel(event)}</span>
                 </div>
               ))}
             </div>

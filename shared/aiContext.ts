@@ -129,6 +129,25 @@ function messageText(message: MailMessage): string {
   return message.snippet ?? ''
 }
 
+function messageTime(message: MailMessage): number {
+  const parsed = Date.parse(message.receivedAt)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function orderedMessages(thread: MailThread | null, messages: MailMessage[]): MailMessage[] {
+  const scoped = thread
+    ? messages.filter(message => message.threadId === thread.id && message.accountId === thread.accountId)
+    : messages
+  return [...scoped].sort((a, b) => messageTime(a) - messageTime(b))
+}
+
+function messagePositionLabel(index: number, total: number): string {
+  if (total <= 1) return 'only message'
+  if (index === 0) return 'oldest message'
+  if (index === total - 1) return 'newest message'
+  return 'middle message'
+}
+
 /**
  * Build the structured AI context block for a thread and its messages.
  *
@@ -145,6 +164,7 @@ export function buildThreadContext(
   ai: AISettings,
 ): string {
   const includeBodies = ai?.allowMailBodyContext === true
+  const threadMessages = orderedMessages(thread, messages)
   const lines: string[] = []
 
   if (thread) {
@@ -154,11 +174,13 @@ export function buildThreadContext(
     lines.push(`Has attachments: ${thread.hasAttachments ? 'yes' : 'no'}`)
   }
 
-  if (messages.length > 0) {
+  if (threadMessages.length > 0) {
     lines.push('Messages:')
-    messages.forEach((message, index) => {
-      lines.push(`Message ${index + 1} from ${message.senderName}:`)
+    threadMessages.forEach((message, index) => {
+      const position = messagePositionLabel(index, threadMessages.length)
+      lines.push(`Message ${index + 1} of ${threadMessages.length} (${position}) from ${message.senderName || message.senderEmail}:`)
       lines.push(`Subject: ${message.subject}`)
+      lines.push(`Received: ${message.receivedAt}`)
       if (includeBodies) {
         lines.push('Body:')
         lines.push(redactSecrets(messageText(message)))
