@@ -497,7 +497,7 @@ function AppContent() {
                     type="button"
                     onClick={() => setMailboxMenuOpen(value => !value)}
                     title="Switch mailbox (G / Shift+G)"
-                    className="flex h-full min-w-[112px] items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 text-tab text-[var(--text-primary)] hover:border-[var(--strong-border)]"
+                    className="flex h-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-transparent px-2 text-tab text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
                       <ActiveMailboxIcon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
