@@ -11,7 +11,10 @@ describe('OAuth account onboarding', () => {
   it('keeps Calendar and Contacts scopes separate for incremental authorization', () => {
     expect(GOOGLE_OAUTH_SCOPES).not.toContain('https://www.googleapis.com/auth/calendar.events');
     expect(GOOGLE_OAUTH_SCOPES).not.toContain('https://www.googleapis.com/auth/contacts.readonly');
-    expect(GOOGLE_CALENDAR_SCOPES).toEqual(['https://www.googleapis.com/auth/calendar.events']);
+    expect(GOOGLE_CALENDAR_SCOPES).toEqual([
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.freebusy',
+    ]);
     expect(GOOGLE_CONTACTS_SCOPES).toEqual(['https://www.googleapis.com/auth/contacts.readonly']);
   });
 

@@ -95,13 +95,43 @@ export function visibleMiniCalendarRange(visibleMonth: Date, weekStartsOn = 1): 
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
 
+function eventTimeBounds(event: CalendarEvent): { start: Date; end: Date } | null {
+  const start = new Date(event.startAt);
+  const end = new Date(event.endAt);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) return null;
+  return { start, end };
+}
+
+export function calendarEventOverlapsDay(event: CalendarEvent, day: Date): boolean {
+  const bounds = eventTimeBounds(event);
+  if (!bounds) return false;
+  const dayStart = startOfLocalDay(day);
+  const dayEnd = addLocalDays(dayStart, 1);
+  return bounds.start < dayEnd && bounds.end > dayStart;
+}
+
+export function calendarEventsForDay(events: CalendarEvent[], day: Date, limit = 8): CalendarEvent[] {
+  return events
+    .filter(event => calendarEventOverlapsDay(event, day))
+    .sort((a, b) => {
+      if (a.isAllDay !== b.isAllDay) return a.isAllDay ? -1 : 1;
+      return new Date(a.startAt).getTime() - new Date(b.startAt).getTime();
+    })
+    .slice(0, limit);
+}
+
 export function countCalendarEventsByDay(events: CalendarEvent[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const event of events) {
-    const start = new Date(event.startAt);
-    if (!Number.isFinite(start.getTime())) continue;
-    const key = localDateKey(start);
-    counts[key] = (counts[key] || 0) + 1;
+    const bounds = eventTimeBounds(event);
+    if (!bounds) continue;
+    let cursor = startOfLocalDay(bounds.start);
+    const lastIncludedDay = startOfLocalDay(new Date(bounds.end.getTime() - 1));
+    for (let guard = 0; cursor <= lastIncludedDay && guard < 370; guard += 1) {
+      const key = localDateKey(cursor);
+      counts[key] = (counts[key] || 0) + 1;
+      cursor = addLocalDays(cursor, 1);
+    }
   }
   return counts;
 }

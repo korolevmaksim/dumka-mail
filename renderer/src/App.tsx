@@ -10,6 +10,7 @@ import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
 import { ToastHost } from './components/Toast';
 import { MessageCard } from './components/MessageCard';
+import { ThreadLabelMoveMenu } from './components/ThreadLabelMoveMenu';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { LeftRail } from './components/layout/LeftRail';
 import { AICopilotPanel } from './components/layout/AICopilotPanel';
@@ -45,6 +46,7 @@ function AppContent() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [labelMenuOpen, setLabelMenuOpen] = useState(false);
+  const [batchLabelMenuOpen, setBatchLabelMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -267,6 +269,28 @@ function AppContent() {
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [labelMenuOpen]);
+
+  useEffect(() => {
+    if (!batchLabelMenuOpen) return;
+    const close = () => setBatchLabelMenuOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [batchLabelMenuOpen]);
+
+  useEffect(() => {
+    if (store.selectedThreadIds.size === 0) setBatchLabelMenuOpen(false);
+  }, [store.selectedThreadIds.size]);
+
+  const moveSelectedThreadsToLabel = (labelId: string) => {
+    const threadIds = Array.from(store.selectedThreadIds);
+    if (threadIds.length === 0) return;
+    setBatchLabelMenuOpen(false);
+    store.clearThreadSelection();
+    for (const threadId of threadIds) {
+      void store.executeMailAction('moveToLabel', threadId, null, undefined, JSON.stringify({ labelId }));
+    }
+    emitToast({ type: 'success', message: `Moved ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'} to label.` });
+  };
 
   useEffect(() => {
     const handleGlobalClick = () => {
@@ -552,6 +576,27 @@ function AppContent() {
                               <CheckCircle className="w-3.5 h-3.5" />
                             </button>
                           )}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setBatchLabelMenuOpen(value => !value);
+                              }}
+                              title="Move selected to label"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                            >
+                              <FolderInput className="w-3.5 h-3.5" />
+                            </button>
+                            {batchLabelMenuOpen && (
+                              <ThreadLabelMoveMenu
+                                nodes={userLabelNodes}
+                                onSyncLabels={() => void store.syncLabels()}
+                                onMove={moveSelectedThreadsToLabel}
+                                className="absolute bottom-8 right-0"
+                              />
+                            )}
+                          </div>
                           <button
                             type="button"
                             onClick={() => store.executeBatchMailAction('reportSpam', Array.from(store.selectedThreadIds))}
@@ -736,47 +781,16 @@ function AppContent() {
                               >
                                 <Tags className="w-4 h-4" />
                               </button>
-                              {labelMenuOpen && (
-                                <div
-                                  className="absolute right-0 top-8 z-30 w-[230px] max-h-[280px] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {userLabelNodes.length === 0 ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => void store.syncLabels()}
-                                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-                                    >
-                                      <Tags className="h-3.5 w-3.5" />
-                                      Sync Gmail labels
-                                    </button>
-                                  ) : userLabelNodes.map(node => (
-                                    node.label ? (
-                                      <button
-                                        key={node.fullName}
-                                        type="button"
-                                        onClick={() => {
-                                          void store.moveThreadToLabel(node.label!.id, store.openedThread?.id, true);
-                                          setLabelMenuOpen(false);
-                                        }}
-                                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-                                        style={{ paddingLeft: `${10 + node.depth * 14}px` }}
-                                      >
-                                        <FolderInput className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                                        <span className="truncate">{node.segment}</span>
-                                      </button>
-                                    ) : (
-                                      <div
-                                        key={node.fullName}
-                                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]"
-                                        style={{ paddingLeft: `${10 + node.depth * 14}px` }}
-                                      >
-                                        <FolderInput className="h-3.5 w-3.5 text-[var(--text-tertiary)]" />
-                                        <span className="truncate">{node.segment}</span>
-                                      </div>
-                                    )
-                                  ))}
-                                </div>
+                            {labelMenuOpen && (
+                                <ThreadLabelMoveMenu
+                                  nodes={userLabelNodes}
+                                  onSyncLabels={() => void store.syncLabels()}
+                                  onMove={(labelId) => {
+                                    void store.moveThreadToLabel(labelId, store.openedThread?.id, true);
+                                    setLabelMenuOpen(false);
+                                  }}
+                                  className="absolute right-0 top-8"
+                                />
                               )}
                             </div>
                             <button

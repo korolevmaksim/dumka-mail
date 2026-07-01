@@ -1,5 +1,18 @@
 import crypto from 'crypto';
-import { CalendarAttendee, CalendarAttendeeResponse, CalendarEvent, CalendarInvite, ContactCard, ContactGroup } from '../shared/types';
+import {
+  CalendarAttendee,
+  CalendarAttendeeResponse,
+  CalendarBusyInterval,
+  CalendarEvent,
+  CalendarEventCreateInput,
+  CalendarEventUpdateInput,
+  CalendarFreeBusyRequest,
+  CalendarFreeBusyResult,
+  CalendarInvite,
+  ContactCard,
+  ContactGroup
+} from '../shared/types';
+import { calendarTimeZoneForCreate, recurrenceRuleForCalendarCreate } from '../shared/calendarCreate';
 import { fetchWithTimeout, getAccessToken } from './gmail';
 
 function googleApiError(prefix: string, responseText: string): Error {
@@ -29,6 +42,31 @@ function conferenceUrlFromEvent(raw: any): string | null {
   const entryPoints = raw.conferenceData?.entryPoints || [];
   const video = entryPoints.find((entry: any) => entry.entryPointType === 'video' && entry.uri);
   return video?.uri || null;
+}
+
+function uniqueCalendarIds(ids: string[]): string[] {
+  return [...new Set(ids.map(id => id.trim()).filter(Boolean))];
+}
+
+function mapFreeBusyResult(raw: any): CalendarFreeBusyResult {
+  const calendars = Object.entries(raw.calendars || {}).map(([id, value]: [string, any]) => {
+    const busy: CalendarBusyInterval[] = (value.busy || [])
+      .filter((interval: any) => interval.start && interval.end)
+      .map((interval: any) => ({
+        calendarId: id,
+        startAt: new Date(interval.start).toISOString(),
+        endAt: new Date(interval.end).toISOString(),
+      }));
+    return {
+      id,
+      busy,
+      errors: value.errors || undefined,
+    };
+  });
+  return {
+    calendars,
+    busy: calendars.flatMap(calendar => calendar.busy),
+  };
 }
 
 function mapCalendarEvent(raw: any, accountId: string, calendarId = 'primary'): CalendarEvent {
@@ -149,6 +187,28 @@ export const GoogleWorkspaceService = {
     return (data.items || []).map(event => mapCalendarEvent(event, email));
   },
 
+  async queryCalendarFreeBusy(email: string, input: CalendarFreeBusyRequest): Promise<CalendarFreeBusyResult> {
+    const accessToken = await getAccessToken(email);
+    const calendarIds = uniqueCalendarIds(['primary', ...input.attendees]);
+    const body = {
+      timeMin: input.timeMin,
+      timeMax: input.timeMax,
+      timeZone: input.timeZone || undefined,
+      items: calendarIds.map(id => ({ id }))
+    };
+    const res = await fetchWithTimeout('https://www.googleapis.com/calendar/v3/freeBusy', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) throw googleApiError('Calendar free/busy query error', await res.text());
+    return mapFreeBusyResult(await res.json());
+  },
+
   async createGoogleMeetDraftEvent(
     email: string,
     input: { summary: string; attendees: string[]; durationMinutes: number }
@@ -177,6 +237,93 @@ export const GoogleWorkspaceService = {
 
     if (!res.ok) throw googleApiError('Google Meet event create error', await res.text());
     return mapCalendarEvent(await res.json(), email);
+  },
+
+  async createCalendarEvent(email: string, input: CalendarEventCreateInput): Promise<CalendarEvent> {
+    const accessToken = await getAccessToken(email);
+    const createMeet = input.conferenceProvider === 'googleMeet';
+    const recurrence = recurrenceRuleForCalendarCreate(input.recurrence);
+    const timeZone = calendarTimeZoneForCreate(input.recurrence, input.timeZone);
+    const body = {
+      summary: input.summary || '(No title)',
+      description: input.description || undefined,
+      location: input.location || undefined,
+      start: { dateTime: input.startAt, timeZone },
+      end: { dateTime: input.endAt, timeZone },
+      attendees: (input.attendees || [])
+        .map(attendeeEmail => attendeeEmail.trim())
+        .filter(Boolean)
+        .map(attendeeEmail => ({ email: attendeeEmail })),
+      recurrence,
+      conferenceData: createMeet
+        ? { createRequest: { requestId: `dumka-${crypto.randomUUID()}` } }
+        : undefined
+    };
+    const params = new URLSearchParams({ sendUpdates: 'none' });
+    if (createMeet) params.set('conferenceDataVersion', '1');
+    const res = await fetchWithTimeout(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) throw googleApiError('Calendar event create error', await res.text());
+    return mapCalendarEvent(await res.json(), email);
+  },
+
+  async updateCalendarEvent(email: string, input: CalendarEventUpdateInput): Promise<CalendarEvent> {
+    const accessToken = await getAccessToken(email);
+    const calendarId = input.calendarId || 'primary';
+    const addMeet = input.conferenceProvider === 'googleMeet';
+    const timeZone = calendarTimeZoneForCreate(input.recurrence, input.timeZone);
+    const body = {
+      summary: input.summary || '(No title)',
+      description: input.description || undefined,
+      location: input.location || '',
+      start: { dateTime: input.startAt, timeZone },
+      end: { dateTime: input.endAt, timeZone },
+      attendees: (input.attendees || [])
+        .map(attendeeEmail => attendeeEmail.trim())
+        .filter(Boolean)
+        .map(attendeeEmail => ({ email: attendeeEmail })),
+      conferenceData: addMeet
+        ? { createRequest: { requestId: `dumka-${crypto.randomUUID()}` } }
+        : undefined
+    };
+    const params = new URLSearchParams({ sendUpdates: 'none' });
+    if (addMeet) params.set('conferenceDataVersion', '1');
+    const res = await fetchWithTimeout(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(input.eventId)}?${params.toString()}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }
+    );
+
+    if (!res.ok) throw googleApiError('Calendar event update error', await res.text());
+    return mapCalendarEvent(await res.json(), email, calendarId);
+  },
+
+  async deleteCalendarEvent(email: string, eventId: string, calendarId = 'primary'): Promise<void> {
+    const accessToken = await getAccessToken(email);
+    const res = await fetchWithTimeout(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=none`,
+      {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (!res.ok && res.status !== 404 && res.status !== 410) {
+      throw googleApiError('Calendar event delete error', await res.text());
+    }
   },
 
   async respondToInvite(email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse): Promise<CalendarEvent> {

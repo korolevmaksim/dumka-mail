@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Clock, MapPin, RefreshCw } from 'lucide-react';
+import { CalendarCheck, CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Clock, MapPin, Pencil, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../stores/AppStore';
-import type { CalendarEvent } from '../../../shared/types';
+import { emitToast } from '../lib/toastBus';
+import { CalendarEventForm } from './CalendarEventForm';
+import type { CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput } from '../../../shared/types';
 import { findAvailabilitySlots } from '../../../shared/calendarAvailability';
 import {
   MINI_CALENDAR_WEEKDAYS,
   addLocalDays,
   addLocalMonths,
   buildMiniCalendarMonth,
+  calendarEventsForDay,
   countCalendarEventsByDay,
   monthTitle,
   sameLocalDay,
@@ -32,6 +35,10 @@ export function CalendarAgendaPanel() {
   const today = new Date();
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [visibleMonth, setVisibleMonth] = useState(() => new Date());
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSavingEvent, setIsSavingEvent] = useState(false);
+  const [isDeletingEvent, setIsDeletingEvent] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const calendarWeeks = useMemo(
     () => buildMiniCalendarMonth(visibleMonth, selectedDate, today),
     [selectedDate, today, visibleMonth],
@@ -39,10 +46,7 @@ export function CalendarAgendaPanel() {
   const eventCounts = useMemo(() => countCalendarEventsByDay(store.calendarEvents), [store.calendarEvents]);
   const selectedDayStart = startOfLocalDay(selectedDate);
   const selectedDayEnd = addLocalDays(selectedDayStart, 1);
-  const selectedEvents = store.calendarEvents
-    .filter(event => sameLocalDay(new Date(event.startAt), selectedDate))
-    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-    .slice(0, 8);
+  const selectedEvents = calendarEventsForDay(store.calendarEvents, selectedDate, 8);
   const upcoming = store.calendarEvents
     .filter(event => new Date(event.startAt).getTime() >= selectedDayEnd.getTime())
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
@@ -79,6 +83,56 @@ export function CalendarAgendaPanel() {
     setVisibleMonth(new Date(next.getFullYear(), next.getMonth(), 1));
   }
 
+  function openCreateForm() {
+    setEditingEvent(null);
+    setIsCreating(true);
+  }
+
+  function openEditForm(event: CalendarEvent) {
+    setIsCreating(false);
+    setEditingEvent(event);
+  }
+
+  function closeEventForm() {
+    setIsCreating(false);
+    setEditingEvent(null);
+  }
+
+  async function submitEventForm(input: CalendarEventCreateInput | CalendarEventUpdateInput) {
+    if (!enabled || isSavingEvent) return;
+    setIsSavingEvent(true);
+    try {
+      const saved = 'eventId' in input
+        ? await store.updateCalendarEvent(input)
+        : await store.createCalendarEvent(input);
+      const start = new Date(saved.startAt);
+      setSelectedDate(start);
+      setVisibleMonth(new Date(start.getFullYear(), start.getMonth(), 1));
+      closeEventForm();
+      emitToast({ type: 'success', message: 'eventId' in input ? 'Calendar event updated.' : 'Calendar event created.' });
+    } catch (error) {
+      console.error('Calendar event save failed:', error);
+      emitToast({ type: 'error', message: 'Could not save calendar event.' });
+    } finally {
+      setIsSavingEvent(false);
+    }
+  }
+
+  async function deleteEditingEvent() {
+    if (!editingEvent || isDeletingEvent) return;
+    setIsDeletingEvent(true);
+    try {
+      await store.deleteCalendarEvent(editingEvent);
+      closeEventForm();
+      emitToast({ type: 'success', message: 'Calendar event deleted.' });
+    } catch (error) {
+      console.error('Calendar event delete failed:', error);
+      emitToast({ type: 'error', message: 'Could not delete calendar event.' });
+    } finally {
+      setIsDeletingEvent(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <h3 className="text-chrome text-[var(--text-secondary)] flex items-center justify-between">
@@ -107,15 +161,27 @@ export function CalendarAgendaPanel() {
               <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{selectedEvents.length} event{selectedEvents.length === 1 ? '' : 's'}</span>
             </div>
           </div>
-          {!sameLocalDay(selectedDate, today) && (
-            <button
-              type="button"
-              onClick={selectToday}
-              className="rounded-md border border-[var(--border)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]"
-            >
-              Today
-            </button>
-          )}
+          <div className="flex items-center gap-1.5">
+            {enabled && (
+              <button
+                type="button"
+                onClick={openCreateForm}
+                title="New event"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--accent)]"
+              >
+                <CalendarPlus className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {!sameLocalDay(selectedDate, today) && (
+              <button
+                type="button"
+                onClick={selectToday}
+                className="rounded-md border border-[var(--border)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]"
+              >
+                Today
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2">
@@ -181,6 +247,22 @@ export function CalendarAgendaPanel() {
             <CalendarCheck className="h-3.5 w-3.5" />
             Enable Calendar
           </button>
+        ) : isCreating || editingEvent ? (
+          <CalendarEventForm
+            mode={editingEvent ? 'edit' : 'create'}
+            event={editingEvent}
+            selectedDate={selectedDate}
+            defaultDurationMinutes={store.settings.calendar.defaultMeetingDurationMinutes}
+            defaultConferenceProvider={store.settings.calendar.defaultConferenceProvider}
+            calendarSettings={store.settings.calendar}
+            calendarEvents={store.calendarEvents}
+            isSaving={isSavingEvent}
+            isDeleting={isDeletingEvent}
+            onCancel={closeEventForm}
+            onSubmit={submitEventForm}
+            onDelete={editingEvent ? deleteEditingEvent : undefined}
+            onQueryFreeBusy={store.queryCalendarFreeBusy}
+          />
         ) : selectedEvents.length === 0 ? (
           <div className="rounded-md border border-dashed border-[var(--border)] px-3 py-4 text-center text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             No events on this day.
@@ -189,7 +271,17 @@ export function CalendarAgendaPanel() {
           <div className="flex flex-col gap-2">
             {selectedEvents.map(event => (
               <div key={`${event.calendarId}:${event.id}`} className="rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-2">
-                <div className="truncate text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{event.summary}</div>
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="min-w-0 truncate text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{event.summary}</div>
+                  <button
+                    type="button"
+                    onClick={() => openEditForm(event)}
+                    title="Edit event"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent)]"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
                 <div className="mt-1 flex items-center gap-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
                   <Clock className="h-3 w-3" />
                   <span>{eventTime(event)}</span>

@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
   Account,
   CalendarAttendeeResponse,
+  CalendarEventCreateInput,
+  CalendarEventUpdateInput,
+  CalendarFreeBusyRequest,
   CalendarInvite,
   ContactCard,
   ContactGroup,
@@ -97,9 +100,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   uploadAttachment: () => ipcRenderer.invoke('api:uploadAttachment'),
   syncContacts: (email: string) => ipcRenderer.invoke('api:syncContacts', email),
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => ipcRenderer.invoke('api:syncCalendarEvents', email, startAt, endAt),
+  queryCalendarFreeBusy: (email: string, input: CalendarFreeBusyRequest) => ipcRenderer.invoke('api:queryCalendarFreeBusy', email, input),
   respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => ipcRenderer.invoke('api:respondToCalendarInvite', email, invite, responseStatus, actionId),
   addCalendarEvent: (email: string, invite: CalendarInvite, actionId?: string) => ipcRenderer.invoke('api:addCalendarEvent', email, invite, actionId),
   createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => ipcRenderer.invoke('api:createGoogleMeetDraftEvent', email, input),
+  createCalendarEvent: (email: string, input: CalendarEventCreateInput, actionId?: string) => ipcRenderer.invoke('api:createCalendarEvent', email, input, actionId),
+  updateCalendarEvent: (email: string, input: CalendarEventUpdateInput, actionId?: string) => ipcRenderer.invoke('api:updateCalendarEvent', email, input, actionId),
+  deleteCalendarEvent: (email: string, calendarId: string, eventId: string, actionId?: string) => ipcRenderer.invoke('api:deleteCalendarEvent', email, calendarId, eventId, actionId),
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:getAIProviderDescriptor', preference, overrideModel),

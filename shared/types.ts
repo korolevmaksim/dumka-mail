@@ -141,6 +141,49 @@ export interface CalendarEvent {
   updatedAt: string;
 }
 
+export type CalendarEventRecurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface CalendarEventCreateInput {
+  summary: string;
+  description?: string | null;
+  location?: string | null;
+  startAt: string;
+  endAt: string;
+  attendees?: string[];
+  conferenceProvider?: 'none' | 'googleMeet';
+  recurrence?: CalendarEventRecurrence;
+  timeZone?: string | null;
+}
+
+export interface CalendarEventUpdateInput extends CalendarEventCreateInput {
+  eventId: string;
+  calendarId?: string | null;
+}
+
+export interface CalendarBusyInterval {
+  calendarId: string;
+  startAt: string;
+  endAt: string;
+}
+
+export interface CalendarFreeBusyRequest {
+  timeMin: string;
+  timeMax: string;
+  attendees: string[];
+  timeZone?: string | null;
+}
+
+export interface CalendarFreeBusyCalendar {
+  id: string;
+  busy: CalendarBusyInterval[];
+  errors?: Array<{ reason?: string; domain?: string }>;
+}
+
+export interface CalendarFreeBusyResult {
+  calendars: CalendarFreeBusyCalendar[];
+  busy: CalendarBusyInterval[];
+}
+
 export interface CalendarInvite {
   uid: string;
   method?: string | null;
@@ -244,6 +287,9 @@ export type ActionKind =
   | 'clearReminder'
   | 'calendarRSVP'
   | 'addCalendarEvent'
+  | 'createCalendarEvent'
+  | 'updateCalendarEvent'
+  | 'deleteCalendarEvent'
   | 'applyAIDraftPreview'
   | 'insertSnippet';
 export type ActionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'pending_sync';
@@ -274,6 +320,9 @@ export const ACTION_KIND_META: Record<ActionKind, ActionKindMeta> = {
   clearReminder: { title: 'Reminder cleared', icon: 'BellOff' },
   calendarRSVP: { title: 'RSVP sent', icon: 'CalendarCheck' },
   addCalendarEvent: { title: 'Calendar event added', icon: 'CalendarPlus' },
+  createCalendarEvent: { title: 'Calendar event created', icon: 'CalendarPlus' },
+  updateCalendarEvent: { title: 'Calendar event updated', icon: 'CalendarCheck' },
+  deleteCalendarEvent: { title: 'Calendar event deleted', icon: 'Trash2' },
   applyAIDraftPreview: { title: 'Applied AI draft', icon: 'Sparkles' },
   insertSnippet: { title: 'Inserted snippet', icon: 'Braces' },
 };

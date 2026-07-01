@@ -4,6 +4,10 @@ import {
   AttachmentMetadata,
   CalendarAttendeeResponse,
   CalendarEvent,
+  CalendarEventCreateInput,
+  CalendarEventUpdateInput,
+  CalendarFreeBusyRequest,
+  CalendarFreeBusyResult,
   CalendarInvite,
   ContactCard,
   ContactGroup,
@@ -103,9 +107,13 @@ export interface IElectronAPI {
   uploadAttachment: () => Promise<AttachmentMetadata | null>;
   syncContacts: (email: string) => Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }>;
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
+  queryCalendarFreeBusy: (email: string, input: CalendarFreeBusyRequest) => Promise<CalendarFreeBusyResult>;
   respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => Promise<CalendarEvent>;
   addCalendarEvent: (email: string, invite: CalendarInvite, actionId?: string) => Promise<CalendarEvent>;
   createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => Promise<CalendarEvent>;
+  createCalendarEvent: (email: string, input: CalendarEventCreateInput, actionId?: string) => Promise<CalendarEvent>;
+  updateCalendarEvent: (email: string, input: CalendarEventUpdateInput, actionId?: string) => Promise<CalendarEvent>;
+  deleteCalendarEvent: (email: string, calendarId: string, eventId: string, actionId?: string) => Promise<void>;
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;

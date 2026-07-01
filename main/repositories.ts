@@ -809,6 +809,12 @@ export const CalendarEventsRepo = {
         );
       }
     })();
+  },
+
+  delete(accountId: string, calendarId: string, eventId: string) {
+    getDatabase()
+      .prepare('DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = ? AND id = ?')
+      .run(accountId, calendarId, eventId);
   }
 };
 

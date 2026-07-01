@@ -1,16 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { AttachmentMetadata, MailMessage } from '../../../shared/types';
-import type { CalendarInvite } from '../../../shared/types';
-import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, CalendarCheck, CalendarX, CalendarClock, CalendarPlus, MapPin, Users } from 'lucide-react';
+import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
 import { hasRemoteImages, SafeHtmlRenderer } from './SafeHtmlRenderer';
 import { resolveInlineCids } from '../../../shared/messageBody';
 import { calendarInvitesFromMessage } from '../../../shared/calendar';
-import { useAppStore } from '../stores/AppStore';
-import { emitToast } from '../lib/toastBus';
+import { CalendarInviteCard } from './CalendarInviteCard';
 
 export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
-  const store = useAppStore();
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
   const [copied, setCopied] = useState(false);
   const [showRawModal, setShowRawModal] = useState(false);
@@ -155,7 +152,7 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
         {calendarInvites.length > 0 && (
           <div className="mb-3 flex flex-col gap-2">
             {calendarInvites.map(invite => (
-              <CalendarInviteCard key={invite.uid} invite={invite} accountId={msg.accountId} store={store} />
+              <CalendarInviteCard key={`${invite.uid}:${invite.startAt}`} invite={invite} accountId={msg.accountId} />
             ))}
           </div>
         )}
@@ -202,138 +199,6 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
           onClose={() => setShowRawModal(false)}
         />
       )}
-    </div>
-  );
-}
-
-function CalendarInviteCard({
-  invite,
-  accountId,
-  store,
-}: {
-  invite: CalendarInvite;
-  accountId: string;
-  store: ReturnType<typeof useAppStore>;
-}) {
-  const start = new Date(invite.startAt);
-  const end = new Date(invite.endAt);
-  const [isAdding, setIsAdding] = useState(false);
-  const matchingCalendarEvent = store.calendarEvents.find(event => {
-    const sameUid = event.iCalUID && event.iCalUID === invite.uid;
-    const sameTimeAndTitle = event.summary === invite.summary && event.startAt === invite.startAt && event.endAt === invite.endAt;
-    return sameUid || sameTimeAndTitle;
-  });
-  const conflict = store.calendarEvents.find(event => {
-    if (matchingCalendarEvent && event.id === matchingCalendarEvent.id) return false;
-    const eventStart = new Date(event.startAt).getTime();
-    const eventEnd = new Date(event.endAt).getTime();
-    return eventEnd > start.getTime() && eventStart < end.getTime();
-  });
-  const canRespond = store.googleIntegrationStatus?.calendarEnabled === true;
-
-  const respond = async (responseStatus: 'accepted' | 'declined' | 'tentative') => {
-    await store.respondToCalendarInvite(invite, responseStatus, accountId);
-  };
-
-  const addToCalendar = async () => {
-    setIsAdding(true);
-    try {
-      await store.addCalendarEvent(invite, accountId);
-      emitToast({ type: 'success', message: 'Event added to calendar.' });
-    } catch (error) {
-      console.error('Calendar event add failed:', error);
-      emitToast({ type: 'error', message: 'Could not add event to calendar.' });
-    } finally {
-      setIsAdding(false);
-    }
-  };
-
-  return (
-    <div className="rounded-[6px] border border-[var(--accent)]/30 bg-[var(--accent)]/8 p-3 select-none">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <CalendarClock className="h-4 w-4 text-[var(--accent)]" />
-            <span className="truncate text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{invite.summary}</span>
-          </div>
-          <div className="mt-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
-            {start.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-            {' - '}
-            {end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-          </div>
-          {invite.location && (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-              <MapPin className="h-3 w-3 shrink-0" />
-              <span className="truncate">{invite.location}</span>
-            </div>
-          )}
-          {invite.attendees.length > 0 && (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-              <Users className="h-3 w-3 shrink-0" />
-              <span className="truncate">{invite.attendees.map(attendee => attendee.displayName || attendee.email).join(', ')}</span>
-            </div>
-          )}
-          {conflict && (
-            <div className="mt-2 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">
-              Conflicts with {conflict.summary}
-            </div>
-          )}
-          {matchingCalendarEvent && (
-            <div className="mt-2 text-[calc(10px*var(--font-scale))] font-medium text-[var(--success)]">
-              Already on calendar
-            </div>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {!canRespond ? (
-            <button
-              type="button"
-              onClick={() => void store.authorizeGoogleIntegration('calendar', accountId)}
-              className="rounded-md bg-[var(--accent)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] font-semibold text-white"
-            >
-              Enable Calendar
-            </button>
-          ) : (
-            <>
-              {!matchingCalendarEvent && (
-                <button
-                  type="button"
-                  title="Add to Calendar"
-                  disabled={isAdding}
-                  onClick={() => void addToCalendar()}
-                  className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent)] disabled:opacity-50"
-                >
-                  <CalendarPlus className="h-4 w-4" />
-                </button>
-              )}
-              <button
-                type="button"
-                title="Accept"
-                onClick={() => void respond('accepted')}
-                className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--success)]"
-              >
-                <CalendarCheck className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                title="Maybe"
-                onClick={() => void respond('tentative')}
-                className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--warning)]"
-              >
-                <CalendarClock className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                title="Decline"
-                onClick={() => void respond('declined')}
-                className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
-              >
-                <CalendarX className="h-4 w-4" />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

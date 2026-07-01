@@ -64,7 +64,7 @@ export function useDraftsState({
       : activeAccount.email;
   };
 
-  const startNewDraft = (preferredAccountId?: string | null): Draft | null => {
+  const startNewDraft = (preferredAccountId?: string | null, seed: Partial<Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject'>> = {}): Draft | null => {
     const accountId = resolveDraftAccountId(preferredAccountId);
     if (!accountId) return null;
 
@@ -73,10 +73,10 @@ export function useDraftsState({
       id: crypto.randomUUID(),
       accountId,
       threadId: null,
-      to: [],
-      cc: [],
-      bcc: [],
-      subject: '',
+      to: seed.to || [],
+      cc: seed.cc || [],
+      bcc: seed.bcc || [],
+      subject: seed.subject || '',
       bodyPlain: initialBody.bodyPlain,
       bodyHtml: initialBody.bodyHtml,
       attachments: [],

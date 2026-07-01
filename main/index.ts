@@ -600,6 +600,10 @@ registerSecureHandler('api:syncCalendarEvents', async (_, email, startAt, endAt)
   return events;
 });
 
+registerSecureHandler('api:queryCalendarFreeBusy', async (_, email, input) => (
+  GoogleWorkspaceService.queryCalendarFreeBusy(email, input)
+));
+
 registerSecureHandler('api:respondToCalendarInvite', async (_, email, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => {
   const event = await GoogleWorkspaceService.respondToInvite(email, invite, responseStatus);
   CalendarEventsRepo.saveMany([event]);
@@ -640,6 +644,59 @@ registerSecureHandler('api:createGoogleMeetDraftEvent', async (_, email, input) 
   const event = await GoogleWorkspaceService.createGoogleMeetDraftEvent(email, input);
   CalendarEventsRepo.saveMany([event]);
   return event;
+});
+
+registerSecureHandler('api:createCalendarEvent', async (_, email, input, actionId?: string) => {
+  const event = await GoogleWorkspaceService.createCalendarEvent(email, input);
+  CalendarEventsRepo.saveMany([event]);
+  if (actionId) {
+    const now = new Date().toISOString();
+    ActionLogRepo.save({
+      id: actionId,
+      accountId: email,
+      kind: 'createCalendarEvent',
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      payloadJson: JSON.stringify({ eventId: event.id, summary: event.summary })
+    });
+  }
+  return event;
+});
+
+registerSecureHandler('api:updateCalendarEvent', async (_, email, input, actionId?: string) => {
+  const event = await GoogleWorkspaceService.updateCalendarEvent(email, input);
+  CalendarEventsRepo.saveMany([event]);
+  if (actionId) {
+    const now = new Date().toISOString();
+    ActionLogRepo.save({
+      id: actionId,
+      accountId: email,
+      kind: 'updateCalendarEvent',
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      payloadJson: JSON.stringify({ eventId: event.id, summary: event.summary })
+    });
+  }
+  return event;
+});
+
+registerSecureHandler('api:deleteCalendarEvent', async (_, email, calendarId: string, eventId: string, actionId?: string) => {
+  await GoogleWorkspaceService.deleteCalendarEvent(email, eventId, calendarId || 'primary');
+  CalendarEventsRepo.delete(email, calendarId || 'primary', eventId);
+  if (actionId) {
+    const now = new Date().toISOString();
+    ActionLogRepo.save({
+      id: actionId,
+      accountId: email,
+      kind: 'deleteCalendarEvent',
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      payloadJson: JSON.stringify({ calendarId: calendarId || 'primary', eventId })
+    });
+  }
 });
 
 registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));

@@ -192,15 +192,22 @@ export function InlineReplyComposer() {
                   const next = composeBody ? `${composeBody}\n\nBook a time: ${store.settings.calendar.calendlyUrl.trim()}` : `Book a time: ${store.settings.calendar.calendlyUrl.trim()}`;
                   setComposeBody(next);
                   store.updateDraftBody(next, null);
+                  emitToast({ type: 'success', message: 'Calendly link inserted.' });
                   return;
                 }
                 if (provider === 'calCom' && store.settings.calendar.calComUrl.trim()) {
                   const next = composeBody ? `${composeBody}\n\nBook a time: ${store.settings.calendar.calComUrl.trim()}` : `Book a time: ${store.settings.calendar.calComUrl.trim()}`;
                   setComposeBody(next);
                   store.updateDraftBody(next, null);
+                  emitToast({ type: 'success', message: 'Cal.com link inserted.' });
                   return;
                 }
-                await store.createGoogleMeetDraftEvent();
+                const event = await store.createGoogleMeetDraftEvent();
+                const link = event?.conferenceUrl || event?.htmlLink;
+                if (link) {
+                  setComposeBody(`${composeBody.trimEnd()}\n\nGoogle Meet: ${link}`.trimStart());
+                  emitToast({ type: 'success', message: 'Google Meet link inserted.' });
+                }
               } catch (err) {
                 console.error('Scheduling link insert failed:', err);
                 emitToast({ type: 'error', message: 'Could not insert scheduling link' });

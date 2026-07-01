@@ -9,7 +9,8 @@ import { AboutTab } from './tabs/AboutTab';
 import { AppearanceSettingsTab } from './tabs/AppearanceSettingsTab';
 import { ClassificationSettingsTab } from './tabs/ClassificationSettingsTab';
 import { AISettingsTab } from './tabs/AISettingsTab';
-import { CalendarSettingsTab, ContactsTab, LabelsTab } from './tabs/WorkspaceSettingsTabs';
+import { ContactsTab } from './tabs/ContactsSettingsTab';
+import { CalendarSettingsTab, LabelsTab } from './tabs/WorkspaceSettingsTabs';
 
 export function SettingsPanel() {
   const store = useAppStore();
