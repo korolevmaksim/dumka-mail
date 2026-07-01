@@ -1,10 +1,141 @@
 import { useRef, useEffect } from 'react';
 
+function findNextMediaRule(css: string, from: number): number {
+  let i = from;
+  while (i < css.length) {
+    const char = css[i];
+    if (char === '"' || char === "'") {
+      i = skipQuotedString(css, i);
+      continue;
+    }
+    if (char === '/' && css[i + 1] === '*') {
+      i = skipCssComment(css, i);
+      continue;
+    }
+    if (css.slice(i, i + 6).toLowerCase() === '@media') {
+      const next = css[i + 6];
+      if (!next || /[\s({]/.test(next)) return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function findNextOpeningBrace(css: string, from: number): number {
+  let i = from;
+  while (i < css.length) {
+    const char = css[i];
+    if (char === '"' || char === "'") {
+      i = skipQuotedString(css, i);
+      continue;
+    }
+    if (char === '/' && css[i + 1] === '*') {
+      i = skipCssComment(css, i);
+      continue;
+    }
+    if (char === '{') return i;
+    i += 1;
+  }
+  return -1;
+}
+
+function findMatchingBrace(css: string, openBrace: number): number {
+  let depth = 0;
+  let i = openBrace;
+  while (i < css.length) {
+    const char = css[i];
+    if (char === '"' || char === "'") {
+      i = skipQuotedString(css, i);
+      continue;
+    }
+    if (char === '/' && css[i + 1] === '*') {
+      i = skipCssComment(css, i);
+      continue;
+    }
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function skipQuotedString(css: string, start: number): number {
+  const quote = css[start];
+  let i = start + 1;
+  while (i < css.length) {
+    if (css[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (css[i] === quote) return i + 1;
+    i += 1;
+  }
+  return css.length;
+}
+
+function skipCssComment(css: string, start: number): number {
+  const end = css.indexOf('*/', start + 2);
+  return end === -1 ? css.length : end + 2;
+}
+
+export function removeDarkColorSchemeMediaRules(css: string): string {
+  let result = '';
+  let cursor = 0;
+
+  while (cursor < css.length) {
+    const mediaStart = findNextMediaRule(css, cursor);
+    if (mediaStart === -1) {
+      result += css.slice(cursor);
+      break;
+    }
+
+    const openingBrace = findNextOpeningBrace(css, mediaStart + 6);
+    if (openingBrace === -1) {
+      result += css.slice(cursor);
+      break;
+    }
+
+    const closingBrace = findMatchingBrace(css, openingBrace);
+    if (closingBrace === -1) {
+      result += css.slice(cursor);
+      break;
+    }
+
+    result += css.slice(cursor, mediaStart);
+    const mediaPrelude = css.slice(mediaStart, openingBrace);
+    if (!/prefers-color-scheme\s*:\s*dark/i.test(mediaPrelude)) {
+      result += css.slice(mediaStart, closingBrace + 1);
+    }
+    cursor = closingBrace + 1;
+  }
+
+  return result;
+}
+
 function preprocessHtml(html: string): string {
   if (!html) return html;
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
+    const colorSchemeMetas = doc.querySelectorAll(
+      'meta[name="color-scheme" i], meta[name="supported-color-schemes" i]'
+    );
+    colorSchemeMetas.forEach((meta) => meta.setAttribute('content', 'light'));
+
+    const styleElements = doc.querySelectorAll('style');
+    styleElements.forEach((styleElement) => {
+      const sanitizedCss = removeDarkColorSchemeMediaRules(styleElement.textContent || '');
+      if (sanitizedCss.trim()) {
+        styleElement.textContent = sanitizedCss;
+      } else {
+        styleElement.remove();
+      }
+    });
+
     const images = doc.querySelectorAll('img');
     images.forEach((img) => {
       const hasHeight = img.hasAttribute('height');
@@ -26,7 +157,7 @@ function preprocessHtml(html: string): string {
         }
       }
     });
-    return doc.documentElement.innerHTML;
+    return `${doc.head.innerHTML}${doc.body.innerHTML}`;
   } catch (e) {
     console.error('Error preprocessing HTML:', e);
     return html;
@@ -64,9 +195,13 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
 
       const head = `
         <meta http-equiv="Content-Security-Policy" content="${csp}">
+        <meta name="color-scheme" content="light">
         <meta name="referrer" content="no-referrer">
         <base target="_blank">
         <style>
+          :root {
+            color-scheme: light;
+          }
           body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             font-size: 12px;

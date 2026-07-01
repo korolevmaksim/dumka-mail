@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { hasRemoteImages } from '../renderer/src/components/SafeHtmlRenderer';
+import { hasRemoteImages, removeDarkColorSchemeMediaRules } from '../renderer/src/components/SafeHtmlRenderer';
 
 function indexCsp(): string {
   const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
@@ -34,6 +34,45 @@ describe('hasRemoteImages', () => {
 
   it('ignores local cid and data image references', () => {
     expect(hasRemoteImages('<img src="cid:hero"><img src="data:image/png;base64,AAAA">')).toBe(false);
+  });
+});
+
+describe('removeDarkColorSchemeMediaRules', () => {
+  it('removes dark color-scheme media rules while preserving normal styles', () => {
+    const css = `
+      .primary-text { color: #3c4043 !important; }
+      @media (prefers-color-scheme: dark) {
+        .primary-text { color: #e8eaed !important; }
+        .primary-button { background-color: #8ab4f8 !important; }
+      }
+      @media only screen and (max-width: 580px) {
+        .main-container-inner { padding: 12px !important; }
+      }
+    `;
+
+    const sanitized = removeDarkColorSchemeMediaRules(css);
+
+    expect(sanitized).toContain('#3c4043');
+    expect(sanitized).not.toContain('#e8eaed');
+    expect(sanitized).not.toContain('#8ab4f8');
+    expect(sanitized).toContain('max-width: 580px');
+  });
+
+  it('ignores media-looking text inside strings and comments', () => {
+    const css = `
+      .hero { background-image: url("@media (prefers-color-scheme: dark)"); }
+      /* @media (prefers-color-scheme: dark) { .hero { color: white; } } */
+      @media (prefers-color-scheme: dark) {
+        .hero { color: #ffffff; }
+      }
+      .hero { color: #111111; }
+    `;
+
+    const sanitized = removeDarkColorSchemeMediaRules(css);
+
+    expect(sanitized).toContain('background-image');
+    expect(sanitized).toContain('#111111');
+    expect(sanitized).not.toContain('#ffffff');
   });
 });
 
