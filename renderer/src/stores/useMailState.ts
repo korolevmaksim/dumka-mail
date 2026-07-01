@@ -49,7 +49,7 @@ export function useMailState({
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
   const [mailboxView, setMailboxViewState] = useState<MailboxView>('inbox');
-  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, sent: 0 });
+  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccount, setActiveAccountState] = useState<Account | null>(null);
   
@@ -403,8 +403,8 @@ export function useMailState({
         const matchThreadIds = new Set(ftsMatches.map(m => m.threadId));
         filtered = threads.filter(t => matchThreadIds.has(t.id));
 
-        if (mailboxView === 'sent') {
-          filtered = filtered.filter(t => isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount }));
+        if (mailboxView !== 'inbox') {
+          filtered = filtered.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
         }
 
         if (parsed.from) {
@@ -419,8 +419,8 @@ export function useMailState({
         if (parsed.isUnread !== undefined) {
           filtered = filtered.filter(t => t.isUnread === parsed.isUnread);
         }
-      } else if (mailboxView === 'sent') {
-        filtered = threads.filter(t => isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount }));
+      } else if (mailboxView !== 'inbox') {
+        filtered = threads.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
       } else {
         filtered = threads.filter(t => {
           if (!isThreadInMailbox(t, 'inbox', now, { mutedLabelIdsByAccount })) return false;
@@ -442,7 +442,7 @@ export function useMailState({
   // Recalculate Split Tabs counters
   useEffect(() => {
     const counts: Record<string, number> = {};
-    const nextMailboxCounts: Record<MailboxView, number> = { inbox: 0, sent: 0 };
+    const nextMailboxCounts: Record<MailboxView, number> = { inbox: 0, sent: 0, trash: 0, spam: 0, muted: 0 };
     const now = new Date();
     for (const c of tabCategories) {
       counts[c.id] = 0;
@@ -451,6 +451,15 @@ export function useMailState({
     for (const t of threads) {
       if (isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount })) {
         nextMailboxCounts.sent++;
+      }
+      if (isThreadInMailbox(t, 'trash', now, { mutedLabelIdsByAccount })) {
+        nextMailboxCounts.trash++;
+      }
+      if (isThreadInMailbox(t, 'spam', now, { mutedLabelIdsByAccount })) {
+        nextMailboxCounts.spam++;
+      }
+      if (isThreadInMailbox(t, 'muted', now, { mutedLabelIdsByAccount })) {
+        nextMailboxCounts.muted++;
       }
 
       if (!isThreadInMailbox(t, 'inbox', now, { mutedLabelIdsByAccount })) continue;

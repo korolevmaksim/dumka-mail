@@ -354,8 +354,37 @@ function AppContent() {
     if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
     return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
   });
-  const emptyMailboxIcon = store.mailboxView === 'sent' ? Send : Inbox;
-  const EmptyMailboxIcon = emptyMailboxIcon;
+  const mailboxTabs = [
+    { id: 'inbox' as const, label: 'Inbox', icon: Inbox, count: store.mailboxCounts.inbox, subtitle: 'Split inbox categories' },
+    { id: 'sent' as const, label: 'Sent', icon: Send, count: store.mailboxCounts.sent, subtitle: 'Recent sent conversations' },
+    { id: 'trash' as const, label: 'Trash', icon: Trash2, count: store.mailboxCounts.trash, subtitle: 'Deleted conversations' },
+    { id: 'spam' as const, label: 'Spam', icon: OctagonAlert, count: store.mailboxCounts.spam, subtitle: 'Reported spam' },
+    { id: 'muted' as const, label: 'Muted', icon: BellOff, count: store.mailboxCounts.muted, subtitle: 'Ignored conversations' },
+  ];
+  const activeMailbox = mailboxTabs.find(mailbox => mailbox.id === store.mailboxView) || mailboxTabs[0];
+  const EmptyMailboxIcon = activeMailbox.icon;
+  const emptyMailboxCopy = {
+    inbox: {
+      title: 'Clear inbox split',
+      body: 'Jump to other splits or press C to compose.',
+    },
+    sent: {
+      title: 'No sent conversations',
+      body: 'Recent sent mail appears here after sync.',
+    },
+    trash: {
+      title: 'Trash is empty',
+      body: 'Deleted conversations appear here while they are cached locally.',
+    },
+    spam: {
+      title: 'Spam is empty',
+      body: 'Reported spam appears here while it is cached locally.',
+    },
+    muted: {
+      title: 'No muted conversations',
+      body: 'Ignored threads appear here when they carry the Dumka muted label.',
+    },
+  }[activeMailbox.id];
 
   return (
     <div className="flex flex-col h-screen w-full overflow-hidden select-none text-[calc(12px*var(--font-scale))] leading-tight">
@@ -378,10 +407,7 @@ function AppContent() {
             <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
               <div className="flex min-w-0 h-full items-end gap-2">
                 <div className="flex gap-1 h-full items-end shrink-0">
-                  {[
-                    { id: 'inbox' as const, label: 'Inbox', icon: Inbox, count: store.mailboxCounts.inbox },
-                    { id: 'sent' as const, label: 'Sent', icon: Send, count: store.mailboxCounts.sent },
-                  ].map((mailbox) => {
+                  {mailboxTabs.map((mailbox) => {
                     const Icon = mailbox.icon;
                     const isActive = store.mailboxView === mailbox.id;
                     return (
@@ -459,7 +485,7 @@ function AppContent() {
                 ) : (
                   <div className="flex h-full items-end min-w-0">
                     <div className="pb-2 pt-1 text-tab text-[var(--text-secondary)] truncate">
-                      Recent sent conversations
+                      {activeMailbox.subtitle}
                     </div>
                   </div>
                 )}
@@ -511,14 +537,8 @@ function AppContent() {
                       {store.visibleThreads.length === 0 ? (
                         <div className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
                           <EmptyMailboxIcon className="w-10 h-10 mb-2 opacity-30" />
-                          <p className="font-semibold">
-                            {store.mailboxView === 'sent' ? 'No sent conversations' : 'Clear inbox split'}
-                          </p>
-                          <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">
-                            {store.mailboxView === 'sent'
-                              ? 'Recent sent mail appears here after sync.'
-                              : 'Jump to other splits or press C to compose.'}
-                          </p>
+                          <p className="font-semibold">{emptyMailboxCopy.title}</p>
+                          <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">{emptyMailboxCopy.body}</p>
                         </div>
                       ) : (
                         store.visibleThreads.map((thread) => (

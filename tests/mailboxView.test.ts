@@ -43,6 +43,16 @@ describe('mailboxView', () => {
     expect(isThreadInMailbox(sent, 'inbox')).toBe(false);
   });
 
+  it('shows trash and spam threads only in their system mailbox views', () => {
+    const trashed = thread({ labelIds: ['TRASH'] });
+    const spam = thread({ labelIds: ['SPAM'] });
+
+    expect(isThreadInMailbox(trashed, 'trash')).toBe(true);
+    expect(isThreadInMailbox(trashed, 'inbox')).toBe(false);
+    expect(isThreadInMailbox(spam, 'spam')).toBe(true);
+    expect(isThreadInMailbox(spam, 'inbox')).toBe(false);
+  });
+
   it('lets a conversation appear in both inbox and sent when Gmail labels both sides', () => {
     const conversation = thread({ labelIds: ['INBOX', 'SENT'] });
 
@@ -60,6 +70,7 @@ describe('mailboxView', () => {
 
     expect(isMutedThread(ignored, options)).toBe(true);
     expect(isThreadInMailbox(ignored, 'inbox', new Date('2026-06-30T10:00:00.000Z'), options)).toBe(false);
+    expect(isThreadInMailbox(ignored, 'muted', new Date('2026-06-30T10:00:00.000Z'), options)).toBe(true);
   });
 
   it('does not let muted label ids leak between accounts', () => {

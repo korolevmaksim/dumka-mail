@@ -36,9 +36,16 @@ export function isThreadInMailbox(
   now: Date = new Date(),
   options: MailboxFilterOptions = {},
 ): boolean {
-  if (mailboxView === 'sent') {
-    return threadHasLabel(thread, 'SENT');
+  switch (mailboxView) {
+    case 'sent':
+      return threadHasLabel(thread, 'SENT');
+    case 'trash':
+      return threadHasLabel(thread, 'TRASH');
+    case 'spam':
+      return threadHasLabel(thread, 'SPAM');
+    case 'muted':
+      return isMutedThread(thread, options);
+    case 'inbox':
+      return threadHasLabel(thread, 'INBOX') && !hasFutureReminder(thread, now) && !isMutedThread(thread, options);
   }
-
-  return threadHasLabel(thread, 'INBOX') && !hasFutureReminder(thread, now) && !isMutedThread(thread, options);
 }
