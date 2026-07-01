@@ -24,6 +24,7 @@ import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer
 import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
+import { shouldCloseReaderForSearchChange } from './lib/searchReaderBehavior';
 import { buildLabelTree, flattenLabelTree, labelPresenceInThreads } from '../../shared/labels';
 import { isReversibleMailActionKind } from '../../shared/mailActions';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
@@ -61,6 +62,7 @@ function AppContent() {
     y: number;
     thread: any;
   } | null>(null);
+  const previousSearchQueryRef = useRef(store.searchQuery);
   const userLabelNodes = useMemo(
     () => flattenLabelTree(buildLabelTree(store.labelDefinitions.filter(label => label.type !== 'system'))),
     [store.labelDefinitions],
@@ -380,7 +382,16 @@ function AppContent() {
   }, [contextMenu]);
 
   useEffect(() => {
-    if (store.searchQuery.trim() && store.openedThread && !store.enablePreviewPane) {
+    const previousSearchQuery = previousSearchQueryRef.current;
+    const nextSearchQuery = store.searchQuery;
+    previousSearchQueryRef.current = nextSearchQuery;
+
+    if (shouldCloseReaderForSearchChange({
+      previousSearchQuery,
+      nextSearchQuery,
+      hasOpenedThread: Boolean(store.openedThread),
+      enablePreviewPane: store.enablePreviewPane,
+    })) {
       store.openThread(null);
     }
   }, [store.searchQuery, store.openedThread, store.enablePreviewPane]);
