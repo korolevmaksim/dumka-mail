@@ -83,4 +83,25 @@ describe('mapMessage', () => {
       base64Data: Buffer.from('image-bytes').toString('base64'),
     });
   });
+
+  it('does not treat Gmail snippet as a plain body when a full HTML body exists', () => {
+    const message = mapMessage(gmailMessage([
+      {
+        partId: '1',
+        mimeType: 'text/html',
+        body: { data: b64url('<p>Full HTML body continues past the short preview.</p>') },
+      },
+    ]), 'alex@example.com');
+
+    expect(message.snippet).toBe('snippet');
+    expect(message.bodyPlain).toBe('');
+    expect(message.bodyHtml).toContain('Full HTML body continues');
+  });
+
+  it('keeps snippet as a last-resort body when Gmail returns no readable body parts', () => {
+    const message = mapMessage(gmailMessage([]), 'alex@example.com');
+
+    expect(message.bodyPlain).toBe('snippet');
+    expect(message.bodyHtml).toBe('');
+  });
 });

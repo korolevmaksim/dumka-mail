@@ -185,6 +185,17 @@ describe('buildThreadContext', () => {
     expect(out).toContain('Hello HTML');
   });
 
+  it('uses HTML text when cached plain body is only the Gmail snippet fallback', () => {
+    const msg = makeMessage({
+      snippet: 'Short preview ending at as best as',
+      bodyPlain: 'Short preview ending at as best as',
+      bodyHtml: '<p>Short preview ending at as best as possible, then continues with the full instruction.</p>',
+    });
+    const out = buildThreadContext(baseThread, [msg], makeAISettings(true));
+
+    expect(out).toContain('possible, then continues with the full instruction.');
+  });
+
   it('falls back to the snippet when both bodies are empty', () => {
     const msg = makeMessage({ bodyPlain: '   ', bodyHtml: '', snippet: 'just the snippet' });
     const out = buildThreadContext(baseThread, [msg], makeAISettings(true));

@@ -222,7 +222,7 @@ export function mapMessage(gmailMsg: any, accountId: string): MailMessage {
 
   extractBody(gmailMsg.payload);
 
-  if (!bodyPlain && gmailMsg.snippet) {
+  if (!bodyPlain && !bodyHtml && gmailMsg.snippet) {
     bodyPlain = gmailMsg.snippet;
   }
 

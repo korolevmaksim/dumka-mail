@@ -123,9 +123,12 @@ export function redactSecrets(s: string): string {
  */
 function messageText(message: MailMessage): string {
   const plain = (message.bodyPlain ?? '').trim()
-  if (plain) return plain
   const html = (message.bodyHtml ?? '').trim()
+  const snippet = (message.snippet ?? '').trim()
+  const plainLooksLikeSnippetFallback = Boolean(html && snippet && plain === snippet)
+  if (plain && !plainLooksLikeSnippetFallback) return plain
   if (html) return htmlToText(html)
+  if (plain) return plain
   return message.snippet ?? ''
 }
 
