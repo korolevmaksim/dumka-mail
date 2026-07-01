@@ -2,17 +2,56 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
 import { Trash2, GripVertical, Pencil } from 'lucide-react';
 import { emitToast } from '../../../lib/toastBus';
+import type { TabCategory } from '../../../../../shared/types';
+import {
+  GLOBAL_CLASSIFICATION_SCOPE,
+  accountDetail,
+  accountLabel,
+  accountMatchesScope,
+  categoryBelongsToScope,
+  categoryRouteLabel,
+  categoryScope,
+  normalizeClassificationScope,
+  reorderCategoriesWithinScope,
+  routeTargetBelongsToScope,
+  ruleBelongsToScope,
+  scopeDisplayLabel,
+} from './classificationScope';
 
 export function ClassificationSettingsTab() {
   const store = useAppStore();
+  const [selectedScope, setSelectedScope] = useState<string>(GLOBAL_CLASSIFICATION_SCOPE);
   const [draggedSettingId, setDraggedSettingId] = useState<string | null>(null);
   const [dragOverSettingId, setDragOverSettingId] = useState<string | null>(null);
-  const [categoryToDelete, setCategoryToDelete] = useState<any | null>(null);
-  const [categoryToEdit, setCategoryToEdit] = useState<any | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<TabCategory | null>(null);
+  const [categoryToEdit, setCategoryToEdit] = useState<TabCategory | null>(null);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const editDialogRef = useRef<HTMLDivElement>(null);
   const editNameInputRef = useRef<HTMLInputElement>(null);
+  const normalizedSelectedScope = normalizeClassificationScope(selectedScope);
+  const selectedScopeLabel = scopeDisplayLabel(normalizedSelectedScope, store.accounts);
+  const scopeOptions = [
+    { id: GLOBAL_CLASSIFICATION_SCOPE, label: 'Global', detail: 'All accounts', colorHex: '' },
+    ...store.accounts.map(account => ({
+      id: normalizeClassificationScope(account.email),
+      label: accountLabel(store.accounts, account.email),
+      detail: accountDetail(store.accounts, account.email),
+      colorHex: account.colorHex,
+    })),
+  ];
+  const visibleCategories = store.tabCategories.filter(category => categoryBelongsToScope(category, normalizedSelectedScope));
+  const routeTargetCategories = store.tabCategories.filter(category => (
+    category.active && routeTargetBelongsToScope(category, normalizedSelectedScope)
+  ));
+  const visibleRules = store.customClassifierRules.filter(rule => ruleBelongsToScope(rule, normalizedSelectedScope));
+
+  useEffect(() => {
+    if (normalizedSelectedScope === GLOBAL_CLASSIFICATION_SCOPE) return;
+    if (!store.accounts.some(account => accountMatchesScope(account, normalizedSelectedScope))) {
+      setSelectedScope(GLOBAL_CLASSIFICATION_SCOPE);
+    }
+  }, [normalizedSelectedScope, store.accounts]);
 
   const trapDialogTab = (event: KeyboardEvent, dialog: HTMLDivElement | null) => {
     if (event.key !== 'Tab' || !dialog) return;
@@ -95,12 +134,13 @@ export function ClassificationSettingsTab() {
   const handleDropSetting = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
     if (draggedSettingId && draggedSettingId !== targetId) {
-      const draggedIndex = store.tabCategories.findIndex(c => c.id === draggedSettingId);
-      const targetIndex = store.tabCategories.findIndex(c => c.id === targetId);
-      if (draggedIndex !== -1 && targetIndex !== -1) {
-        const newCategories = [...store.tabCategories];
-        const [removed] = newCategories.splice(draggedIndex, 1);
-        newCategories.splice(targetIndex, 0, removed);
+      const newCategories = reorderCategoriesWithinScope(
+        store.tabCategories,
+        draggedSettingId,
+        targetId,
+        normalizedSelectedScope,
+      );
+      if (newCategories !== store.tabCategories) {
         store.updateTabCategoriesOrder(newCategories);
       }
     }
@@ -208,16 +248,16 @@ export function ClassificationSettingsTab() {
 
               {!categoryToEdit.isSystem && (
                 <div className="flex flex-col gap-1">
-                  <label htmlFor="edit-category-account" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Account:</label>
+                  <label htmlFor="edit-category-account" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Scope:</label>
                   <select
                     id="edit-category-account"
-                    value={categoryToEdit.accountId || 'global'}
-                    onChange={(e) => setCategoryToEdit({ ...categoryToEdit, accountId: e.target.value })}
+                    value={normalizeClassificationScope(categoryToEdit.accountId)}
+                    onChange={(e) => setCategoryToEdit({ ...categoryToEdit, accountId: normalizeClassificationScope(e.target.value) })}
                     className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
                   >
-                    <option value="global">Global</option>
+                    <option value={GLOBAL_CLASSIFICATION_SCOPE}>Global</option>
                     {store.accounts.map(acc => (
-                      <option key={acc.id} value={acc.email}>{acc.displayName || acc.email}</option>
+                      <option key={acc.id} value={normalizeClassificationScope(acc.email)}>{acc.displayName || acc.email}</option>
                     ))}
                   </select>
                 </div>
@@ -240,7 +280,7 @@ export function ClassificationSettingsTab() {
                   store.updateTabCategory(categoryToEdit.id, {
                     displayName: categoryToEdit.displayName.trim(),
                     colorHex: categoryToEdit.colorHex,
-                    accountId: categoryToEdit.isSystem ? undefined : categoryToEdit.accountId
+                    accountId: categoryToEdit.isSystem ? undefined : normalizeClassificationScope(categoryToEdit.accountId)
                   });
                   setCategoryToEdit(null);
                   emitToast({ type: 'success', message: `Saved changes to “${categoryToEdit.displayName}”` });
@@ -259,11 +299,48 @@ export function ClassificationSettingsTab() {
         <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Create custom routing rules to sort mail based on headers or domains.</p>
       </div>
 
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[calc(9px*var(--font-scale))] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Scope</span>
+        <div className="flex gap-1.5 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--rail-bg)] p-1">
+          {scopeOptions.map(option => {
+            const active = option.id === normalizedSelectedScope;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setSelectedScope(option.id)}
+                title={option.detail ? `${option.label} · ${option.detail}` : option.label}
+                className={`min-w-[116px] max-w-[190px] h-[34px] px-2.5 rounded-md flex items-center gap-2 text-left shrink-0 transition-colors ${
+                  active
+                    ? 'bg-[var(--accent)] text-white shadow-sm'
+                    : 'bg-[var(--panel-bg)] text-[var(--text-primary)] hover:bg-[var(--border)]/20'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${option.colorHex ? '' : 'border border-current opacity-70'}`}
+                  style={option.colorHex ? { backgroundColor: option.colorHex } : undefined}
+                />
+                <span className="min-w-0 flex flex-col leading-tight">
+                  <span className="truncate text-[calc(10px*var(--font-scale))] font-semibold">{option.label}</span>
+                  {option.detail && (
+                    <span className={`truncate text-[calc(8px*var(--font-scale))] ${active ? 'text-white/75' : 'text-[var(--text-secondary)]'}`}>{option.detail}</span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Manage Inbox Tabs */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Manage Inbox Tabs</span>
         <div className="flex flex-col gap-2 p-3 bg-[var(--panel-bg)] border border-[var(--border)] rounded-md">
-          <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Create Custom Tab</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Create Custom Tab</span>
+            <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)] truncate max-w-[260px]">{selectedScopeLabel}</span>
+          </div>
           <div className="flex gap-2.5 items-end flex-wrap sm:flex-nowrap w-full">
             <div className="flex-1 min-w-[140px] flex flex-col gap-1">
               <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</span>
@@ -289,26 +366,13 @@ export function ClassificationSettingsTab() {
                 <option value="#14b8a6">Teal</option>
               </select>
             </div>
-            <div className="w-[130px] flex flex-col gap-1 shrink-0">
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Account:</span>
-              <select
-                id="new-tab-account-pref"
-                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
-              >
-                <option value="global">Global</option>
-                {store.accounts.map(acc => (
-                  <option key={acc.id} value={acc.email}>{acc.displayName || acc.email}</option>
-                ))}
-              </select>
-            </div>
             <button
               type="button"
               onClick={() => {
                 const nameEl = document.getElementById('new-tab-name-pref') as HTMLInputElement;
                 const colorEl = document.getElementById('new-tab-color-pref') as HTMLSelectElement;
-                const accountEl = document.getElementById('new-tab-account-pref') as HTMLSelectElement;
                 if (!nameEl.value.trim()) return;
-                store.addTabCategory(nameEl.value.trim(), colorEl.value, accountEl ? accountEl.value : 'global');
+                store.addTabCategory(nameEl.value.trim(), colorEl.value, normalizedSelectedScope);
                 nameEl.value = '';
               }}
               className="px-3.5 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/90 transition-colors h-[26px] shrink-0"
@@ -320,7 +384,11 @@ export function ClassificationSettingsTab() {
 
         {/* Draggable tab list */}
         <div className="flex flex-col gap-1.5 mt-1.5">
-          {store.tabCategories.map((category) => (
+          {visibleCategories.length === 0 ? (
+            <div className="bg-[var(--panel-bg)] border border-dashed border-[var(--border)] rounded px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              No custom tabs for {selectedScopeLabel}.
+            </div>
+          ) : visibleCategories.map((category) => (
             <div
               key={category.id}
               draggable
@@ -350,7 +418,7 @@ export function ClassificationSettingsTab() {
                     <span className="text-[calc(8px*var(--font-scale))] opacity-40 uppercase">(System)</span>
                   ) : (
                     <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)] opacity-80">
-                      • Account: <strong>{(!category.accountId || category.accountId === 'global') ? 'Global' : category.accountId}</strong>
+                      • <strong>{scopeDisplayLabel(categoryScope(category), store.accounts, { compactGlobal: true })}</strong>
                     </span>
                   )}
                 </span>
@@ -393,7 +461,10 @@ export function ClassificationSettingsTab() {
 
       {/* Create Custom Rule */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
-        <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Add Custom Classification Rule</span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Add Custom Classification Rule</span>
+          <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)] truncate max-w-[260px]">{selectedScopeLabel}</span>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Match Field:</span>
@@ -429,27 +500,15 @@ export function ClassificationSettingsTab() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <div className="flex flex-col gap-1">
             <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Target Split:</span>
             <select
               id="new-rule-target-pref"
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
             >
-              {store.tabCategories.filter(c => c.active).map(c => (
-                <option key={c.id} value={c.id}>{c.displayName}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Apply to Account:</span>
-            <select
-              id="new-rule-account-pref"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
-            >
-              <option value="global">Global (All Accounts)</option>
-              {store.accounts.map(acc => (
-                <option key={acc.id} value={acc.email}>{acc.displayName || acc.email}</option>
+              {routeTargetCategories.map(c => (
+                <option key={c.id} value={c.id}>{categoryRouteLabel(c.id, store.tabCategories, store.accounts)}</option>
               ))}
             </select>
           </div>
@@ -462,15 +521,14 @@ export function ClassificationSettingsTab() {
             const cond = document.getElementById('new-rule-condition-pref') as HTMLSelectElement;
             const val = document.getElementById('new-rule-value-pref') as HTMLInputElement;
             const target = document.getElementById('new-rule-target-pref') as HTMLSelectElement;
-            const account = document.getElementById('new-rule-account-pref') as HTMLSelectElement;
             if (!val.value.trim()) return;
             store.addCustomClassifierRule({
-              field: field.value as any,
-              condition: cond.value as any,
+              field: field.value as 'from' | 'subject',
+              condition: cond.value as 'contains' | 'equals' | 'startsWith' | 'endsWith',
               value: val.value.trim(),
-              targetCategory: target.value,
+              targetCategory: target.value || routeTargetCategories[0]?.id || 'other',
               active: true,
-              accountId: account ? account.value : 'global'
+              accountId: normalizedSelectedScope
             });
             val.value = '';
           }}
@@ -481,38 +539,40 @@ export function ClassificationSettingsTab() {
       </div>
 
       {/* Custom Rules list */}
-      {store.customClassifierRules.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Configured Rules ({store.customClassifierRules.length})</span>
-          {store.customClassifierRules.map(rule => (
-            <div key={rule.id} className="flex justify-between items-center bg-[var(--rail-bg)] border border-[var(--border)] rounded-md px-3 py-1.5">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={rule.active}
-                  onChange={(e) => store.updateCustomClassifierRule(rule.id, { active: e.target.checked })}
-                  className="w-3.5 h-3.5 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
-                />
-                <div className="flex flex-col text-[calc(10px*var(--font-scale))]">
-                  <span>If <strong>{rule.field}</strong> {rule.condition} "{rule.value}"</span>
-                  <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
-                    <span>Route: <strong className="uppercase">{rule.targetCategory}</strong></span>
-                    <span>•</span>
-                    <span>Account: <strong>{(!rule.accountId || rule.accountId === 'global') ? 'Global' : rule.accountId}</strong></span>
-                  </span>
-                </div>
+      <div className="flex flex-col gap-2">
+        <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Configured Rules ({visibleRules.length})</span>
+        {visibleRules.length === 0 ? (
+          <div className="bg-[var(--rail-bg)] border border-dashed border-[var(--border)] rounded-md px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+            No rules for {selectedScopeLabel}.
+          </div>
+        ) : visibleRules.map(rule => (
+          <div key={rule.id} className="flex justify-between items-center bg-[var(--rail-bg)] border border-[var(--border)] rounded-md px-3 py-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={rule.active}
+                onChange={(e) => store.updateCustomClassifierRule(rule.id, { active: e.target.checked })}
+                className="w-3.5 h-3.5 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
+              />
+              <div className="flex flex-col text-[calc(10px*var(--font-scale))]">
+                <span>If <strong>{rule.field}</strong> {rule.condition} "{rule.value}"</span>
+                <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
+                  <span>Route: <strong>{categoryRouteLabel(rule.targetCategory, store.tabCategories, store.accounts)}</strong></span>
+                  <span>•</span>
+                  <span>Scope: <strong>{scopeDisplayLabel(normalizeClassificationScope(rule.accountId), store.accounts, { compactGlobal: true })}</strong></span>
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => store.deleteCustomClassifierRule(rule.id)}
-                className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
             </div>
-          ))}
-        </div>
-      )}
+            <button
+              type="button"
+              onClick={() => store.deleteCustomClassifierRule(rule.id)}
+              className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
