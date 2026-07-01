@@ -1,4 +1,4 @@
-import type { CalendarEvent, CalendarEventRecurrence, CalendarFreeBusyResult } from '../../../shared/types';
+import type { CalendarEvent, CalendarEventRecurrence } from '../../../shared/types';
 import type { CalendarConflict } from '../../../shared/calendarAvailability';
 import {
   localDateInputValue,
@@ -66,16 +66,4 @@ export function sameBusyInterval(startA: string, endA: string, startB: string, e
   const toleranceMs = 60_000;
   return Math.abs(new Date(startA).getTime() - new Date(startB).getTime()) <= toleranceMs
     && Math.abs(new Date(endA).getTime() - new Date(endB).getTime()) <= toleranceMs;
-}
-
-export function freeBusyWarningMessage(result: CalendarFreeBusyResult, attendeeEmails: string[]): string | null {
-  const calendarsById = new Map(result.calendars.map(calendar => [calendar.id.toLowerCase(), calendar]));
-  const failed = attendeeEmails.filter(email => {
-    const calendar = calendarsById.get(email.toLowerCase());
-    return !calendar || Boolean(calendar.errors?.length);
-  });
-  if (failed.length === 0) return null;
-  const visible = failed.slice(0, 2).join(', ');
-  const suffix = failed.length > 2 ? ` and ${failed.length - 2} more` : '';
-  return `Could not read availability for ${visible}${suffix}.`;
 }

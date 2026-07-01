@@ -11,14 +11,12 @@ import {
   Image,
   Italic,
   Link,
-  Link2,
   List,
   ListOrdered,
   Maximize2,
   Minimize2,
   Paperclip,
   Palette,
-  Save,
   Send,
   Sparkles,
   Strikethrough,
@@ -32,59 +30,19 @@ import { formatAIUserError } from '../../../../shared/aiErrors';
 import {
   buildInitialDraftBodyWithSignature,
   htmlFragmentToPlainText,
-  plainTextToHtmlFragment,
   renderComposeSignaturePlain,
   replaceComposeSignatureForAccount,
-  sanitizeDraftHtmlFragment,
 } from '../../../../shared/draftHtml';
 import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
 import type { AttachmentMetadata, EmailAddressSuggestion } from '../../../../shared/types';
-import { availabilitySlotsHtml, findAvailabilitySlots } from '../../../../shared/calendarAvailability';
+import { availabilitySlotsHtml, findAvailabilitySlots, findAvailabilitySlotsFromBusyIntervals, freeBusyWarningMessage, type CalendarAvailabilitySlot } from '../../../../shared/calendarAvailability';
+import { fileToBase64, inlineImageHtml, textOrHtmlToFragment } from '../../lib/composeHtmlHelpers';
 import { RecipientField } from '../compose/RecipientField';
+import { ComposeSchedulingMenu } from '../compose/ComposeSchedulingMenu';
+import { ComposeTemplatesMenu } from '../compose/ComposeTemplatesMenu';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
 
-type ComposeCommand =
-  | 'bold'
-  | 'italic'
-  | 'underline'
-  | 'strikeThrough'
-  | 'insertUnorderedList'
-  | 'insertOrderedList'
-  | 'justifyLeft'
-  | 'justifyCenter'
-  | 'justifyRight'
-  | 'removeFormat';
-
-const IMAGE_MAX_WIDTH = 620;
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      const marker = ';base64,';
-      const markerIndex = result.indexOf(marker);
-      resolve(markerIndex >= 0 ? result.slice(markerIndex + marker.length) : result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function inlineImageHtml(attachment: AttachmentMetadata): string {
-  const cid = attachment.contentId || `${attachment.id}@dumka-mail`;
-  const alt = attachment.filename.replace(/[<>"']/g, '');
-  return `<p><img src="cid:${cid}" alt="${alt}" style="max-width:${IMAGE_MAX_WIDTH}px; width:100%; height:auto; border-radius:6px;" /></p>`;
-}
-
-function textOrHtmlToFragment(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return '';
-  if (/<[a-z][\s\S]*>/i.test(trimmed)) {
-    return sanitizeDraftHtmlFragment(trimmed);
-  }
-  return plainTextToHtmlFragment(trimmed);
-}
+type ComposeCommand = 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'insertUnorderedList' | 'insertOrderedList' | 'justifyLeft' | 'justifyCenter' | 'justifyRight' | 'removeFormat';
 
 interface ToolbarButtonProps {
   title: string;
@@ -264,15 +222,42 @@ export function FloatingComposeDrawer() {
       if (!store.googleIntegrationStatus?.calendarEnabled) {
         await store.authorizeGoogleIntegration('calendar', activeDraft.accountId);
       }
-      const events = await store.syncCalendarAgenda(activeDraft.accountId);
-      const slots = findAvailabilitySlots(events, store.settings.calendar, new Date(), 3);
+      const attendeeEmails = [...activeDraft.to, ...activeDraft.cc]
+        .map(recipient => recipient.email.trim())
+        .filter(Boolean);
+      const now = new Date();
+      let slots: CalendarAvailabilitySlot[];
+      let intro = 'A few times that work for me:';
+
+      if (attendeeEmails.length > 0) {
+        const rangeEnd = new Date(now);
+        rangeEnd.setDate(rangeEnd.getDate() + Math.max(1, Math.floor(store.settings.calendar.availabilityLookaheadDays || 5)));
+        const result = await store.queryCalendarFreeBusy({
+          timeMin: now.toISOString(),
+          timeMax: rangeEnd.toISOString(),
+          attendees: attendeeEmails,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }, activeDraft.accountId);
+        const warning = freeBusyWarningMessage(result, attendeeEmails);
+        intro = warning
+          ? 'A few times that work for my calendar:'
+          : 'A few shared times that look open:';
+        slots = findAvailabilitySlotsFromBusyIntervals(result.busy, store.settings.calendar, now, 5);
+        if (warning) {
+          emitToast({ type: 'warning', message: `${warning} Inserted your availability only.` });
+        }
+      } else {
+        const events = await store.syncCalendarAgenda(activeDraft.accountId);
+        slots = findAvailabilitySlots(events, store.settings.calendar, now, 3);
+      }
+
       if (slots.length === 0) {
         emitToast({ type: 'warning', message: 'No availability found in your configured window.' });
         return;
       }
-      editorRef.current?.insertHtml(availabilitySlotsHtml(slots));
+      editorRef.current?.insertHtml(availabilitySlotsHtml(slots, intro));
       setSchedulingOpen(false);
-      emitToast({ type: 'success', message: 'Availability inserted.' });
+      emitToast({ type: 'success', message: attendeeEmails.length > 0 ? 'Proposed times inserted.' : 'Availability inserted.' });
     } catch (error) {
       console.error('Availability insert failed:', error);
       emitToast({ type: 'error', message: 'Could not insert availability.' });
@@ -589,61 +574,19 @@ export function FloatingComposeDrawer() {
           <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-4 w-4" /></ToolbarButton>
 
           {schedulingOpen && (
-            <div className="absolute bottom-10 right-16 z-50 w-[250px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
-              <button
-                type="button"
-                onClick={() => void insertSchedulingLink('googleMeet')}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-              >
-                <CalendarPlus className="h-3.5 w-3.5" />
-                Create Google Meet link
-              </button>
-              <button
-                type="button"
-                onClick={() => void insertAvailability()}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-              >
-                <CalendarPlus className="h-3.5 w-3.5" />
-                Insert availability
-              </button>
-              <button
-                type="button"
-                onClick={() => void insertSchedulingLink('calendly')}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-              >
-                <Link2 className="h-3.5 w-3.5" />
-                Insert Calendly link
-              </button>
-              <button
-                type="button"
-                onClick={() => void insertSchedulingLink('calCom')}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-              >
-                <Link2 className="h-3.5 w-3.5" />
-                Insert Cal.com link
-              </button>
-            </div>
+            <ComposeSchedulingMenu
+              onInsertGoogleMeet={() => void insertSchedulingLink('googleMeet')}
+              onInsertAvailability={() => void insertAvailability()}
+              onInsertCalendly={() => void insertSchedulingLink('calendly')}
+              onInsertCalCom={() => void insertSchedulingLink('calCom')}
+            />
           )}
 
           {templatesOpen && (
-            <div className="absolute bottom-10 right-8 z-50 w-[230px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
-              <button
-                type="button"
-                onClick={insertDefaultSnippet}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-              >
-                <Braces className="h-3.5 w-3.5" />
-                Insert default snippet
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveCurrentBodyAsSnippet()}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-              >
-                <Save className="h-3.5 w-3.5" />
-                Save body as snippet
-              </button>
-            </div>
+            <ComposeTemplatesMenu
+              onInsertDefaultSnippet={insertDefaultSnippet}
+              onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
+            />
           )}
         </div>
       </div>

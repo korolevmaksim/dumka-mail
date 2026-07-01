@@ -17,7 +17,7 @@ This project is early alpha software. It is useful for local development and exp
 - Offline-first mailbox mutations with background reconciliation, including archive, trash, spam, ignore, and nested Gmail labels.
 - Address book sync with contact detail cards, local notes, display-name edits, mailing groups, internal compose handoff, and compose autocomplete.
 - Compose, reply, forward, signatures, snippets, attachments, and sent mail sync.
-- Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
+- Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
 - Secure Electron defaults: context isolation, sandboxed renderer, disabled Node integration, and typed preload IPC.
 

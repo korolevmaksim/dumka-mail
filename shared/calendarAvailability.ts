@@ -1,4 +1,4 @@
-import type { CalendarBusyInterval, CalendarEvent, CalendarEventRecurrence, CalendarInvite, CalendarSettings } from './types';
+import type { CalendarBusyInterval, CalendarEvent, CalendarEventRecurrence, CalendarFreeBusyResult, CalendarInvite, CalendarSettings } from './types';
 
 export interface CalendarAvailabilitySlot {
   startAt: string;
@@ -346,6 +346,18 @@ export function findAvailabilitySlotsFromBusyIntervals(
   return slots;
 }
 
+export function freeBusyWarningMessage(result: CalendarFreeBusyResult, attendeeEmails: string[]): string | null {
+  const calendarsById = new Map(result.calendars.map(calendar => [calendar.id.toLowerCase(), calendar]));
+  const failed = attendeeEmails.filter(email => {
+    const calendar = calendarsById.get(email.toLowerCase());
+    return !calendar || Boolean(calendar.errors?.length);
+  });
+  if (failed.length === 0) return null;
+  const visible = failed.slice(0, 2).join(', ');
+  const suffix = failed.length > 2 ? ` and ${failed.length - 2} more` : '';
+  return `Could not read availability for ${visible}${suffix}.`;
+}
+
 function slotFromRange(start: Date, end: Date): CalendarAvailabilitySlot {
   const dayLabel = formatDay(start);
   const timeLabel = formatTimeRange(start, end);
@@ -367,16 +379,16 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
-export function availabilitySlotsPlainText(slots: CalendarAvailabilitySlot[]): string {
+export function availabilitySlotsPlainText(slots: CalendarAvailabilitySlot[], intro = 'A few times that work for me:'): string {
   if (slots.length === 0) return '';
   return [
-    'A few times that work for me:',
+    intro,
     ...slots.map(slot => `- ${slot.label}`),
   ].join('\n');
 }
 
-export function availabilitySlotsHtml(slots: CalendarAvailabilitySlot[]): string {
+export function availabilitySlotsHtml(slots: CalendarAvailabilitySlot[], intro = 'A few times that work for me:'): string {
   if (slots.length === 0) return '';
   const items = slots.map(slot => `<li>${escapeHtml(slot.label)}</li>`).join('');
-  return `<p>A few times that work for me:</p><ul>${items}</ul>`;
+  return `<p>${escapeHtml(intro)}</p><ul>${items}</ul>`;
 }

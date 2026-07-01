@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { AlertTriangle, CalendarPlus, Trash2, Video, X } from 'lucide-react';
 import type { CalendarAvailabilitySlot } from '../../../shared/calendarAvailability';
 import type { CalendarEvent, CalendarEventCreateInput, CalendarEventRecurrence, CalendarEventUpdateInput, CalendarFreeBusyRequest, CalendarFreeBusyResult, CalendarSettings } from '../../../shared/types';
-import { findAvailabilitySlotsFromBusyIntervals, findRecurringCalendarConflicts } from '../../../shared/calendarAvailability';
+import { findAvailabilitySlotsFromBusyIntervals, findRecurringCalendarConflicts, freeBusyWarningMessage } from '../../../shared/calendarAvailability';
 import {
   calendarEventTimesFromLocalInput,
   defaultCalendarEventFormForDate,
@@ -18,7 +18,6 @@ import {
   attendeeInputValue,
   conflictTimeLabel,
   formDefaultsFromEvent,
-  freeBusyWarningMessage,
   quickDraftLabel,
   sameBusyInterval,
 } from '../lib/calendarEventFormHelpers';

@@ -9,6 +9,7 @@ import {
   findAvailabilitySlotsFromBusyIntervals,
   findCalendarInviteConflicts,
   findRecurringCalendarConflicts,
+  freeBusyWarningMessage,
 } from '../shared/calendarAvailability';
 import type { CalendarEvent, CalendarInvite, CalendarSettings } from '../shared/types';
 
@@ -84,6 +85,7 @@ describe('findAvailabilitySlots', () => {
     expect(availabilitySlotsPlainText(slots)).toContain('- ');
     expect(availabilitySlotsHtml(slots)).toContain('<ul>');
     expect(availabilitySlotsHtml(slots)).toContain('<li>');
+    expect(availabilitySlotsHtml(slots, 'A few shared times that look open:')).toContain('A few shared times that look open:');
   });
 
   it('returns shared open slots from free/busy intervals', () => {
@@ -94,6 +96,19 @@ describe('findAvailabilitySlots', () => {
     ], settings, localDate(8, 45), 2);
 
     expect(slots.map(slot => localTime(slot.startAt))).toEqual(['11:00', '11:30']);
+  });
+
+  it('reports guest calendars that FreeBusy could not read', () => {
+    const warning = freeBusyWarningMessage({
+      calendars: [
+        { id: 'primary', busy: [] },
+        { id: 'ada@example.com', busy: [] },
+        { id: 'grace@example.com', busy: [], errors: [{ reason: 'notFound' }] },
+      ],
+      busy: [],
+    }, ['ada@example.com', 'grace@example.com', 'missing@example.com']);
+
+    expect(warning).toBe('Could not read availability for grace@example.com, missing@example.com.');
   });
 });
 
