@@ -276,7 +276,9 @@ export type ActionKind =
   | 'moveToTrash'
   | 'restoreFromTrash'
   | 'reportSpam'
+  | 'restoreFromSpam'
   | 'muteThread'
+  | 'unmuteThread'
   | 'applyLabel'
   | 'removeLabel'
   | 'moveToLabel'
@@ -309,7 +311,9 @@ export const ACTION_KIND_META: Record<ActionKind, ActionKindMeta> = {
   moveToTrash: { title: 'Moved to Trash', icon: 'Trash2' },
   restoreFromTrash: { title: 'Restored from Trash', icon: 'ArchiveRestore' },
   reportSpam: { title: 'Moved to Spam', icon: 'OctagonAlert' },
+  restoreFromSpam: { title: 'Moved to Inbox', icon: 'Inbox' },
   muteThread: { title: 'Ignored thread', icon: 'BellOff' },
+  unmuteThread: { title: 'Unmuted thread', icon: 'Bell' },
   applyLabel: { title: 'Label applied', icon: 'Tag' },
   removeLabel: { title: 'Label removed', icon: 'Tag' },
   moveToLabel: { title: 'Moved to label', icon: 'FolderInput' },

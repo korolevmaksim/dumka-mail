@@ -2,9 +2,9 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAppStore, AppStoreProvider } from './stores/AppStore';
 import { useKeyboard } from './hooks/useKeyboard';
 import {
-  Inbox, Clock, CheckCircle, X, ArrowLeft,
+  ArchiveRestore, Bell, Inbox, Clock, CheckCircle, X, ArrowLeft,
   Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles, Send,
-  ChevronUp, ChevronDown, MailOpen, Trash2, OctagonAlert, BellOff, Tags, FolderInput
+  ChevronUp, ChevronDown, MailOpen, Trash2, OctagonAlert, BellOff, Tags
 } from 'lucide-react';
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
@@ -23,7 +23,8 @@ import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer
 import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
-import { buildLabelTree, flattenLabelTree } from '../../shared/labels';
+import { buildLabelTree, flattenLabelTree, labelPresenceInThreads } from '../../shared/labels';
+import { isReversibleMailActionKind } from '../../shared/mailActions';
 
 const getMaxWidthStyle = (option?: string) => {
   switch (option) {
@@ -56,6 +57,19 @@ function AppContent() {
     () => flattenLabelTree(buildLabelTree(store.labelDefinitions.filter(label => label.type !== 'system'))),
     [store.labelDefinitions],
   );
+  const selectedThreads = useMemo(
+    () => store.threads.filter(thread => store.selectedThreadIds.has(thread.id)),
+    [store.selectedThreadIds, store.threads],
+  );
+  const selectedLabelPresenceById = useMemo(() => {
+    const presenceById: Record<string, 'some' | 'all'> = {};
+    for (const node of userLabelNodes) {
+      if (!node.label) continue;
+      const presence = labelPresenceInThreads(node.label.id, selectedThreads);
+      if (presence !== 'none') presenceById[node.label.id] = presence;
+    }
+    return presenceById;
+  }, [selectedThreads, userLabelNodes]);
 
   // Set platform attribute for cross-platform layout padding overrides (macOS vs Windows/Linux titlebars)
   useEffect(() => {
@@ -100,7 +114,7 @@ function AppContent() {
     if (!window.electronAPI?.setMenuCommandState) return;
 
     const canCreateDraft = Boolean(resolveComposeAccountId(store.activeAccount, store.accounts));
-    const canUndo = store.actionLog.some(l => l.status === 'completed' && ['markRead', 'markUnread', 'markDone', 'restoreInbox'].includes(l.kind));
+    const canUndo = store.actionLog.some(l => l.status === 'completed' && isReversibleMailActionKind(l.kind));
 
     window.electronAPI.setMenuCommandState({ canCreateDraft, canUndo }).catch(err => {
       console.error('Failed to update native menu command state:', err);
@@ -281,15 +295,40 @@ function AppContent() {
     if (store.selectedThreadIds.size === 0) setBatchLabelMenuOpen(false);
   }, [store.selectedThreadIds.size]);
 
-  const moveSelectedThreadsToLabel = (labelId: string) => {
+  const labelNameForToast = (labelId: string) => store.labelDefinitions.find(label => label.id === labelId)?.name || 'label';
+
+  const runSelectedLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
     const threadIds = Array.from(store.selectedThreadIds);
     if (threadIds.length === 0) return;
     setBatchLabelMenuOpen(false);
     store.clearThreadSelection();
     for (const threadId of threadIds) {
-      void store.executeMailAction('moveToLabel', threadId, null, undefined, JSON.stringify({ labelId }));
+      void store.executeMailAction(kind, threadId, null, undefined, JSON.stringify({ labelId }));
     }
-    emitToast({ type: 'success', message: `Moved ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'} to label.` });
+    const verb = kind === 'moveToLabel' ? 'Moved' : kind === 'applyLabel' ? 'Applied' : 'Removed';
+    const suffix = kind === 'removeLabel' ? ` from ${labelNameForToast(labelId)}` : ` ${labelNameForToast(labelId)}`;
+    emitToast({ type: 'success', message: `${verb} ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'}${suffix}.` });
+  };
+
+  const runOpenedThreadLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
+    const threadId = store.openedThread?.id;
+    if (!threadId) return;
+    setLabelMenuOpen(false);
+    if (kind === 'removeLabel') {
+      void store.executeMailAction('removeLabel', threadId, null, undefined, JSON.stringify({ labelId }));
+      return;
+    }
+    void store.moveThreadToLabel(labelId, threadId, kind === 'moveToLabel');
+  };
+
+  const unmuteSelectedThreads = () => {
+    const threadIds = Array.from(store.selectedThreadIds);
+    if (threadIds.length === 0) return;
+    store.clearThreadSelection();
+    for (const threadId of threadIds) {
+      void store.unmuteThread(threadId);
+    }
+    emitToast({ type: 'success', message: `Unmuted ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'}.` });
   };
 
   useEffect(() => {
@@ -603,36 +642,71 @@ function AppContent() {
                                 event.stopPropagation();
                                 setBatchLabelMenuOpen(value => !value);
                               }}
-                              title="Move selected to label"
+                              title="Label selected threads"
                               className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
                             >
-                              <FolderInput className="w-3.5 h-3.5" />
+                              <Tags className="w-3.5 h-3.5" />
                             </button>
                             {batchLabelMenuOpen && (
                               <ThreadLabelMoveMenu
                                 nodes={userLabelNodes}
                                 onSyncLabels={() => void store.syncLabels()}
-                                onMove={moveSelectedThreadsToLabel}
+                                onMove={(labelId) => runSelectedLabelAction('moveToLabel', labelId)}
+                                onApply={(labelId) => runSelectedLabelAction('applyLabel', labelId)}
+                                onRemove={(labelId) => runSelectedLabelAction('removeLabel', labelId)}
+                                labelPresenceById={selectedLabelPresenceById}
                                 className="absolute bottom-8 right-0"
                               />
                             )}
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => store.executeBatchMailAction('reportSpam', Array.from(store.selectedThreadIds))}
-                            title="Move to Spam"
-                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--warning)] cursor-pointer transition-colors"
-                          >
-                            <OctagonAlert className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => store.executeBatchMailAction('moveToTrash', Array.from(store.selectedThreadIds))}
-                            title="Move to Trash"
-                            className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {store.mailboxView === 'spam' ? (
+                            <button
+                              type="button"
+                              onClick={() => store.executeBatchMailAction('restoreFromSpam', Array.from(store.selectedThreadIds))}
+                              title="Not Spam"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success)] cursor-pointer transition-colors"
+                            >
+                              <Inbox className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => store.executeBatchMailAction('reportSpam', Array.from(store.selectedThreadIds))}
+                              title="Move to Spam"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--warning)] cursor-pointer transition-colors"
+                            >
+                              <OctagonAlert className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {store.mailboxView === 'trash' ? (
+                            <button
+                              type="button"
+                              onClick={() => store.executeBatchMailAction('restoreFromTrash', Array.from(store.selectedThreadIds))}
+                              title="Restore from Trash"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success)] cursor-pointer transition-colors"
+                            >
+                              <ArchiveRestore className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => store.executeBatchMailAction('moveToTrash', Array.from(store.selectedThreadIds))}
+                              title="Move to Trash"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {store.mailboxView === 'muted' && (
+                            <button
+                              type="button"
+                              onClick={unmuteSelectedThreads}
+                              title="Unmute selected"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success)] cursor-pointer transition-colors"
+                            >
+                              <Bell className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <div className="w-px h-3.5 bg-[var(--border)] mx-1" />
                           <button
                             type="button"
@@ -805,35 +879,65 @@ function AppContent() {
                                 <ThreadLabelMoveMenu
                                   nodes={userLabelNodes}
                                   onSyncLabels={() => void store.syncLabels()}
-                                  onMove={(labelId) => {
-                                    void store.moveThreadToLabel(labelId, store.openedThread?.id, true);
-                                    setLabelMenuOpen(false);
-                                  }}
+                                  onMove={(labelId) => runOpenedThreadLabelAction('moveToLabel', labelId)}
+                                  onApply={(labelId) => runOpenedThreadLabelAction('applyLabel', labelId)}
+                                  onRemove={(labelId) => runOpenedThreadLabelAction('removeLabel', labelId)}
+                                  currentLabelIds={store.openedThread?.labelIds || []}
                                   className="absolute right-0 top-8"
                                 />
                               )}
                             </div>
-                            <button
-                              onClick={() => store.muteThread(store.openedThread!.id)}
-                              title="Ignore / Mute Thread"
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                            >
-                              <BellOff className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => store.executeMailAction('reportSpam', store.openedThread!.id)}
-                              title="Move to Spam"
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--warning)]"
-                            >
-                              <OctagonAlert className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => store.executeMailAction('moveToTrash', store.openedThread!.id)}
-                              title="Move to Trash"
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--danger)]"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {store.mailboxView === 'muted' ? (
+                              <button
+                                onClick={() => store.unmuteThread(store.openedThread!.id)}
+                                title="Unmute Thread"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--success)]"
+                              >
+                                <Bell className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => store.muteThread(store.openedThread!.id)}
+                                title="Ignore / Mute Thread"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                              >
+                                <BellOff className="w-4 h-4" />
+                              </button>
+                            )}
+                            {store.mailboxView === 'spam' ? (
+                              <button
+                                onClick={() => store.executeMailAction('restoreFromSpam', store.openedThread!.id)}
+                                title="Not Spam"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--success)]"
+                              >
+                                <Inbox className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => store.executeMailAction('reportSpam', store.openedThread!.id)}
+                                title="Move to Spam"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--warning)]"
+                              >
+                                <OctagonAlert className="w-4 h-4" />
+                              </button>
+                            )}
+                            {store.mailboxView === 'trash' ? (
+                              <button
+                                onClick={() => store.executeMailAction('restoreFromTrash', store.openedThread!.id)}
+                                title="Restore from Trash"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--success)]"
+                              >
+                                <ArchiveRestore className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => store.executeMailAction('moveToTrash', store.openedThread!.id)}
+                                title="Move to Trash"
+                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--danger)]"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               onClick={() => store.openThread(null)}
                               className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -971,38 +1075,77 @@ function AppContent() {
             </button>
           )}
 
-          <button
-            onClick={() => {
-              store.muteThread(contextMenu.thread.id);
-              setContextMenu(null);
-            }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
-          >
-            <BellOff className="w-3.5 h-3.5 opacity-80" />
-            <span>Ignore Thread</span>
-          </button>
+          {store.mailboxView === 'muted' ? (
+            <button
+              onClick={() => {
+                store.unmuteThread(contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5 opacity-80" />
+              <span>Unmute Thread</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                store.muteThread(contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <BellOff className="w-3.5 h-3.5 opacity-80" />
+              <span>Ignore Thread</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => {
-              store.executeMailAction('reportSpam', contextMenu.thread.id);
-              setContextMenu(null);
-            }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
-          >
-            <OctagonAlert className="w-3.5 h-3.5 opacity-80" />
-            <span>Move to Spam</span>
-          </button>
+          {store.mailboxView === 'spam' ? (
+            <button
+              onClick={() => {
+                store.executeMailAction('restoreFromSpam', contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <Inbox className="w-3.5 h-3.5 opacity-80" />
+              <span>Not Spam</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                store.executeMailAction('reportSpam', contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <OctagonAlert className="w-3.5 h-3.5 opacity-80" />
+              <span>Move to Spam</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => {
-              store.executeMailAction('moveToTrash', contextMenu.thread.id);
-              setContextMenu(null);
-            }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5 opacity-80" />
-            <span>Move to Trash</span>
-          </button>
+          {store.mailboxView === 'trash' ? (
+            <button
+              onClick={() => {
+                store.executeMailAction('restoreFromTrash', contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <ArchiveRestore className="w-3.5 h-3.5 opacity-80" />
+              <span>Restore from Trash</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                store.executeMailAction('moveToTrash', contextMenu.thread.id);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 opacity-80" />
+              <span>Move to Trash</span>
+            </button>
+          )}
           
           <button
             onClick={() => {

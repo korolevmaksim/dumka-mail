@@ -7,6 +7,7 @@ import {
   labelDisplayName,
   labelLeafName,
   labelParentName,
+  labelPresenceInThreads,
   pillColorHex,
   primaryRowLabel,
   threadRowLabelIds,
@@ -108,6 +109,19 @@ describe('label helpers', () => {
   it('recognizes descendants without treating siblings as descendants', () => {
     expect(isDescendantLabel('Clients/Acme/Invoices', 'Clients/Acme')).toBe(true);
     expect(isDescendantLabel('Clients/Other', 'Clients/Acme')).toBe(false);
+  });
+
+  it('summarizes label presence across selected threads', () => {
+    const threads = [
+      { ...baseThread, id: 't1', labelIds: ['INBOX', 'Clients'] },
+      { ...baseThread, id: 't2', labelIds: ['INBOX', 'Clients', 'Waiting'] },
+      { ...baseThread, id: 't3', labelIds: ['INBOX'] },
+    ];
+
+    expect(labelPresenceInThreads('Clients', threads.slice(0, 2))).toBe('all');
+    expect(labelPresenceInThreads('Waiting', threads)).toBe('some');
+    expect(labelPresenceInThreads('Done', threads)).toBe('none');
+    expect(labelPresenceInThreads('Clients', [])).toBe('none');
   });
 
   it('builds a tree with virtual parent folders when Gmail only returns leaf labels', () => {

@@ -748,6 +748,7 @@ function inferLabelActionKind(addLabelIds: string[], removeLabelIds: string[]): 
   if (addLabelIds.includes('TRASH')) return 'moveToTrash';
   if (removeLabelIds.includes('TRASH')) return 'restoreFromTrash';
   if (addLabelIds.includes('SPAM')) return 'reportSpam';
+  if (removeLabelIds.includes('SPAM')) return 'restoreFromSpam';
   if (addLabelIds.includes('UNREAD')) return 'markUnread';
   if (removeLabelIds.includes('UNREAD')) return 'markRead';
   if (addLabelIds.includes('INBOX')) return 'restoreInbox';
@@ -912,9 +913,14 @@ function startBackgroundSyncWorker() {
             await GmailSyncService.untrashThread(action.accountId, action.threadId!);
           } else if (action.kind === 'reportSpam') {
             await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['SPAM'], ['INBOX']);
+          } else if (action.kind === 'restoreFromSpam') {
+            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['INBOX'], ['SPAM']);
           } else if (action.kind === 'muteThread') {
             const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
             await GmailSyncService.modifyLabels(action.accountId, action.threadId!, labelId ? [labelId] : [], ['INBOX']);
+          } else if (action.kind === 'unmuteThread') {
+            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
+            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['INBOX'], labelId ? [labelId] : []);
           } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel') {
             const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
             if (labelId) {
@@ -966,9 +972,14 @@ function startBackgroundSyncWorker() {
                 ThreadsRepo.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX']);
               } else if (action.kind === 'reportSpam') {
                 ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM']);
+              } else if (action.kind === 'restoreFromSpam') {
+                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['SPAM'], ['INBOX']);
               } else if (action.kind === 'muteThread') {
                 const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
                 ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof payload.labelId === 'string' ? [payload.labelId] : []);
+              } else if (action.kind === 'unmuteThread') {
+                const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+                ThreadsRepo.updateLabels(action.accountId, action.threadId, typeof payload.labelId === 'string' ? [payload.labelId] : [], ['INBOX']);
               } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel' || action.kind === 'removeLabel') {
                 const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
                 const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;

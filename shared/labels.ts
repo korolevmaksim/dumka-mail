@@ -146,6 +146,23 @@ export interface RowLabel {
   color: string;
 }
 
+export type LabelPresence = 'none' | 'some' | 'all';
+
+export function labelPresenceInThreads(
+  labelId: string,
+  threads: Array<Pick<MailThread, 'labelIds'>>,
+): LabelPresence {
+  if (threads.length === 0) return 'none';
+
+  let matchingThreads = 0;
+  for (const thread of threads) {
+    if (thread.labelIds.includes(labelId)) matchingThreads += 1;
+  }
+
+  if (matchingThreads === 0) return 'none';
+  return matchingThreads === threads.length ? 'all' : 'some';
+}
+
 export function primaryRowLabel(thread: MailThread): RowLabel | null {
   const [id] = threadRowLabelIds(thread.labelIds);
   if (id === undefined) return null;

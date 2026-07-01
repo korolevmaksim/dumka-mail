@@ -4,6 +4,7 @@ import { SplitInboxKind } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
 import { SplitInboxRouter } from '../../../shared/classifier';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
+import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
 
@@ -603,6 +604,9 @@ export function useMailState({
           ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'TRASH'), 'INBOX'])) }
           : t
       )));
+      if (mailboxView === 'trash' && openedThread?.id === targetThreadId) {
+        openThread(nextThread);
+      }
     } else if (kind === 'reportSpam') {
       setThreads(prev => prev.map(t => (
         t.id === targetThreadId && t.accountId === targetAccountId
@@ -610,6 +614,15 @@ export function useMailState({
           : t
       )));
       if (openedThread?.id === targetThreadId) openThread(nextThread);
+    } else if (kind === 'restoreFromSpam') {
+      setThreads(prev => prev.map(t => (
+        t.id === targetThreadId && t.accountId === targetAccountId
+          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'SPAM'), 'INBOX'])) }
+          : t
+      )));
+      if (mailboxView === 'spam' && openedThread?.id === targetThreadId) {
+        openThread(nextThread);
+      }
     } else if (kind === 'muteThread') {
       setThreads(prev => prev.map(t => (
         t.id === targetThreadId && t.accountId === targetAccountId
@@ -623,6 +636,15 @@ export function useMailState({
           : t
       )));
       if (openedThread?.id === targetThreadId) openThread(nextThread);
+    } else if (kind === 'unmuteThread' && payloadLabelId) {
+      setThreads(prev => prev.map(t => (
+        t.id === targetThreadId && t.accountId === targetAccountId
+          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label !== payloadLabelId), 'INBOX'])) }
+          : t
+      )));
+      if (mailboxView === 'muted' && openedThread?.id === targetThreadId) {
+        openThread(nextThread);
+      }
     } else if ((kind === 'applyLabel' || kind === 'moveToLabel') && payloadLabelId) {
       setThreads(prev => prev.map(t => (
         t.id === targetThreadId && t.accountId === targetAccountId
@@ -671,9 +693,14 @@ export function useMailState({
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['TRASH'], actionId, kind, payloadJson || undefined);
           } else if (kind === 'reportSpam' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['SPAM'], ['INBOX'], actionId, kind, payloadJson || undefined);
+          } else if (kind === 'restoreFromSpam' && targetThreadId) {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['SPAM'], actionId, kind, payloadJson || undefined);
           } else if (kind === 'muteThread' && targetThreadId) {
             const addLabels = payloadLabelId ? [payloadLabelId] : [];
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, addLabels, ['INBOX'], actionId, kind, payloadJson || undefined);
+          } else if (kind === 'unmuteThread' && targetThreadId) {
+            const removeLabels = payloadLabelId ? [payloadLabelId] : [];
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], removeLabels, actionId, kind, payloadJson || undefined);
           } else if ((kind === 'applyLabel' || kind === 'moveToLabel') && targetThreadId && payloadLabelId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [payloadLabelId], kind === 'moveToLabel' ? ['INBOX'] : [], actionId, kind, payloadJson || undefined);
           } else if (kind === 'removeLabel' && targetThreadId && payloadLabelId) {
@@ -702,20 +729,14 @@ export function useMailState({
   };
 
   const undoLastAction = async () => {
-    const lastReversible = actionLog.find(l => l.status === 'completed' && ['markRead', 'markUnread', 'markDone', 'restoreInbox', 'moveToTrash', 'restoreFromTrash', 'applyLabel', 'removeLabel'].includes(l.kind));
+    const lastReversible = actionLog.find(l => l.status === 'completed' && isReversibleMailActionKind(l.kind));
     if (!lastReversible) {
       emitToast({ type: 'info', message: 'Nothing to undo.' });
       return;
     }
 
-    const reverseKind: MailActionLog['kind'] = 
-      lastReversible.kind === 'markDone' ? 'restoreInbox' :
-      lastReversible.kind === 'restoreInbox' ? 'markDone' :
-      lastReversible.kind === 'moveToTrash' ? 'restoreFromTrash' :
-      lastReversible.kind === 'restoreFromTrash' ? 'moveToTrash' :
-      lastReversible.kind === 'applyLabel' ? 'removeLabel' :
-      lastReversible.kind === 'removeLabel' ? 'applyLabel' :
-      lastReversible.kind === 'markRead' ? 'markUnread' : 'markRead';
+    const reverseKind = reverseMailActionKind(lastReversible.kind);
+    if (!reverseKind) return;
 
     await executeMailAction(reverseKind, lastReversible.threadId, null, undefined, lastReversible.payloadJson || null);
   };
@@ -780,7 +801,7 @@ export function useMailState({
   }, []);
 
   const executeBatchMailAction = async (
-    kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'reportSpam',
+    kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam',
     threadIds: string[]
   ) => {
     if (!activeAccount || threadIds.length === 0) return;
@@ -814,6 +835,11 @@ export function useMailState({
       setThreads(prev => prev.map(t => threadIds.includes(t.id)
         ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'INBOX'), targetLabel])) }
         : t));
+    } else if (kind === 'restoreFromTrash' || kind === 'restoreFromSpam') {
+      const sourceLabel = kind === 'restoreFromTrash' ? 'TRASH' : 'SPAM';
+      setThreads(prev => prev.map(t => threadIds.includes(t.id)
+        ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== sourceLabel), 'INBOX'])) }
+        : t));
     }
 
     const promises = threadIds.map(async (targetThreadId) => {
@@ -844,8 +870,12 @@ export function useMailState({
           res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
         } else if (kind === 'moveToTrash') {
           res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['TRASH'], ['INBOX'], actionId, kind);
+        } else if (kind === 'restoreFromTrash') {
+          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['TRASH'], actionId, kind);
         } else if (kind === 'reportSpam') {
           res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['SPAM'], ['INBOX'], actionId, kind);
+        } else if (kind === 'restoreFromSpam') {
+          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['SPAM'], actionId, kind);
         }
 
         if (res && res.offline) {

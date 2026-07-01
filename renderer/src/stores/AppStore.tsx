@@ -306,6 +306,7 @@ interface AppStoreContextType {
   deleteLabel: (labelId: string, email?: string) => Promise<void>;
   moveThreadToLabel: (labelId: string, threadId?: string | null, move?: boolean) => Promise<void>;
   muteThread: (threadId?: string | null) => Promise<void>;
+  unmuteThread: (threadId?: string | null) => Promise<void>;
   syncContacts: (email?: string) => Promise<void>;
   updateContactLocal: (contactId: string, patch: Partial<ContactCard>, email?: string) => Promise<void>;
   saveContactGroup: (name: string, email?: string) => Promise<void>;
@@ -385,7 +386,7 @@ interface AppStoreContextType {
   toggleThreadSelection: (threadId: string) => void;
   selectAllThreads: () => void;
   clearThreadSelection: () => void;
-  executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'reportSpam', threadIds: string[]) => Promise<void>;
+  executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam', threadIds: string[]) => Promise<void>;
   selectedTriageThreadIds: Set<string>;
   toggleTriagePlanItemSelection: (threadId: string) => void;
 
@@ -577,7 +578,8 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [loadWorkspaceCache, mailState.executeMailAction]);
 
   const muteThread = useCallback(async (threadId?: string | null) => {
-    const targetEmail = primaryWorkspaceEmail;
+    const thread = threadId ? mailState.threads.find(item => item.id === threadId) : mailState.openedThread;
+    const targetEmail = thread?.accountId || primaryWorkspaceEmail;
     if (!targetEmail) return;
     let mutedLabel = labelDefinitions.find(
       label => label.accountId === targetEmail && label.name.toLowerCase() === DUMKA_MUTED_LABEL_NAME.toLowerCase()
@@ -587,7 +589,18 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await syncLabels(targetEmail);
     }
     await mailState.executeMailAction('muteThread', threadId, null, undefined, JSON.stringify({ labelId: mutedLabel.id, labelName: mutedLabel.name }));
-  }, [labelDefinitions, mailState.executeMailAction, primaryWorkspaceEmail, syncLabels]);
+  }, [labelDefinitions, mailState.executeMailAction, mailState.openedThread, mailState.threads, primaryWorkspaceEmail, syncLabels]);
+
+  const unmuteThread = useCallback(async (threadId?: string | null) => {
+    const thread = threadId ? mailState.threads.find(item => item.id === threadId) : mailState.openedThread;
+    const targetEmail = thread?.accountId || primaryWorkspaceEmail;
+    if (!targetEmail) return;
+    const mutedLabel = labelDefinitions.find(
+      label => label.accountId === targetEmail && label.name.toLowerCase() === DUMKA_MUTED_LABEL_NAME.toLowerCase()
+    );
+    if (!mutedLabel) return;
+    await mailState.executeMailAction('unmuteThread', threadId, null, undefined, JSON.stringify({ labelId: mutedLabel.id, labelName: mutedLabel.name }));
+  }, [labelDefinitions, mailState.executeMailAction, mailState.openedThread, mailState.threads, primaryWorkspaceEmail]);
 
   const syncContacts = useCallback(async (email?: string) => {
     const targetEmail = email || primaryWorkspaceEmail;
@@ -783,6 +796,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     deleteLabel,
     moveThreadToLabel,
     muteThread,
+    unmuteThread,
     syncContacts,
     updateContactLocal,
     saveContactGroup,
