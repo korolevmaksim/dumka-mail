@@ -83,6 +83,8 @@ describe('contact repository', () => {
       ContactsRepo.updateLocal(accountId, 'ada', {
         displayName: 'Ada Local',
         notes: 'Met at the planning review',
+        phoneNumbers: ['+44 20 7946 0958'],
+        organizations: ['Local Advisory Board'],
         groupIds: ['g1'],
       });
 
@@ -102,8 +104,8 @@ describe('contact repository', () => {
       expect(contact).toMatchObject({
         displayName: 'Ada Local',
         notes: 'Met at the planning review',
-        phoneNumbers: ['+1 555 0101'],
-        organizations: ['Analytical Engine'],
+        phoneNumbers: ['+44 20 7946 0958'],
+        organizations: ['Local Advisory Board'],
         groupIds: ['g1'],
       });
 

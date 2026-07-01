@@ -14,6 +14,7 @@ export interface ParsedCalendarAttendees {
 export interface NaturalLanguageCalendarEventDraft extends CalendarEventFormDefaults {
   title: string;
   location: string | null;
+  attendees: string[];
   recurrence: CalendarEventRecurrence;
   hasExplicitDate: boolean;
   hasExplicitTime: boolean;
@@ -224,22 +225,31 @@ export function parseNaturalLanguageCalendarEvent(
     working = removeMatchedText(working, durationMatch);
   }
 
-  const timeWithMeridiem = /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(working);
-  if (timeWithMeridiem) {
-    const parsed = timeFromParts(timeWithMeridiem[1], timeWithMeridiem[2] || '00', timeWithMeridiem[3]);
-    if (parsed) {
-      startTime = parsed;
-      hasExplicitTime = true;
-      working = removeMatchedText(working, timeWithMeridiem);
-    }
+  const timeRange = /\b(?:(from|at)\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i.exec(working);
+  const parsedTimeRange = timeRange ? timeRangeFromMatch(timeRange) : null;
+  if (timeRange && parsedTimeRange) {
+    startTime = parsedTimeRange.startTime;
+    durationMinutes = parsedTimeRange.durationMinutes;
+    hasExplicitTime = true;
+    working = removeMatchedText(working, timeRange);
   } else {
-    const twentyFourHour = /\bat\s+(\d{1,2}):(\d{2})\b/i.exec(working);
-    if (twentyFourHour) {
-      const parsed = timeFromParts(twentyFourHour[1], twentyFourHour[2]);
+    const timeWithMeridiem = /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(working);
+    if (timeWithMeridiem) {
+      const parsed = timeFromParts(timeWithMeridiem[1], timeWithMeridiem[2] || '00', timeWithMeridiem[3]);
       if (parsed) {
         startTime = parsed;
         hasExplicitTime = true;
-        working = removeMatchedText(working, twentyFourHour);
+        working = removeMatchedText(working, timeWithMeridiem);
+      }
+    } else {
+      const twentyFourHour = /\bat\s+(\d{1,2}):(\d{2})\b/i.exec(working);
+      if (twentyFourHour) {
+        const parsed = timeFromParts(twentyFourHour[1], twentyFourHour[2]);
+        if (parsed) {
+          startTime = parsed;
+          hasExplicitTime = true;
+          working = removeMatchedText(working, twentyFourHour);
+        }
       }
     }
   }
@@ -313,6 +323,9 @@ export function parseNaturalLanguageCalendarEvent(
     working = working.trim().slice(0, locationMatch.index).trim();
   }
 
+  const attendeeResult = extractAttendeeEmails(working);
+  working = attendeeResult.text;
+
   const title = cleanNaturalLanguageText(working) || 'New event';
   return {
     title,
@@ -320,6 +333,7 @@ export function parseNaturalLanguageCalendarEvent(
     startTime,
     durationMinutes,
     location,
+    attendees: attendeeResult.attendees,
     recurrence,
     hasExplicitDate,
     hasExplicitTime,
@@ -346,6 +360,56 @@ function cleanNaturalLanguageText(text: string): string {
     .trim();
 }
 
+function extractAttendeeEmails(text: string): { text: string; attendees: string[] } {
+  const attendees = new Set<string>();
+  const matches = text.match(EMAIL_PATTERN) || [];
+  for (const email of matches) attendees.add(email.toLowerCase());
+  if (attendees.size === 0) return { text, attendees: [] };
+
+  const cleaned = cleanNaturalLanguageText(
+    text
+      .replace(EMAIL_PATTERN, ' ')
+      .replace(/\s+(?:with|invite|inviting|including|guests?|attendees?|and)\s*$/i, ''),
+  );
+  return {
+    text: cleaned,
+    attendees: [...attendees],
+  };
+}
+
+function timeRangeFromMatch(match: RegExpExecArray): { startTime: string; durationMinutes: number } | null {
+  const marker = match[1];
+  const startHour = match[2];
+  const startMinute = match[3] || '00';
+  let startMeridiem = match[4];
+  const endHour = match[5];
+  const endMinute = match[6] || '00';
+  let endMeridiem = match[7];
+  const hasClockSignal = Boolean(marker || match[3] || match[4] || match[6] || match[7]);
+  if (!hasClockSignal) return null;
+
+  if (!startMeridiem && endMeridiem) {
+    const startHourNumber = Number(startHour);
+    const endHourNumber = Number(endHour);
+    startMeridiem = endMeridiem.toLowerCase() === 'pm' && endHourNumber < startHourNumber ? 'am' : endMeridiem;
+  }
+  if (!endMeridiem && startMeridiem) endMeridiem = startMeridiem;
+
+  const startTime = timeFromParts(startHour, startMinute, startMeridiem);
+  const endTime = timeFromParts(endHour, endMinute, endMeridiem);
+  if (!startTime || !endTime) return null;
+
+  const startMinutes = minutesFromTime(startTime);
+  let endMinutes = minutesFromTime(endTime);
+  if (endMinutes <= startMinutes) endMinutes += 24 * 60;
+  const durationMinutes = endMinutes - startMinutes;
+  if (durationMinutes <= 0) return null;
+  return {
+    startTime,
+    durationMinutes: Math.max(15, Math.min(480, durationMinutes)),
+  };
+}
+
 function timeFromParts(hourValue: string, minuteValue: string, meridiem?: string): string | null {
   let hour = Number(hourValue);
   const minute = Number(minuteValue);
@@ -359,6 +423,11 @@ function timeFromParts(hourValue: string, minuteValue: string, meridiem?: string
     return null;
   }
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function minutesFromTime(value: string): number {
+  const [hour, minute] = value.split(':').map(Number);
+  return hour * 60 + minute;
 }
 
 function dateFromParts(year: number, month: number, day: number): string | null {

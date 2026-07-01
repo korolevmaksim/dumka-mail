@@ -124,6 +124,7 @@ export function CalendarEventForm({
     setStartTime(quickEventDraft.startTime);
     setDuration(quickEventDraft.durationMinutes);
     setLocation(quickEventDraft.location || '');
+    setGuests(quickEventDraft.attendees.join(', '));
     setRecurrence(quickEventDraft.recurrence);
     setQuickEventText('');
   }
@@ -135,12 +136,13 @@ export function CalendarEventForm({
     const summary = title.trim() || quickValues?.title.trim() || '';
     if (!times || !summary || parsedGuests.invalid.length > 0) return;
     const conferenceProvider = addMeet && !hasExistingMeet ? 'googleMeet' : 'none';
+    const attendees = quickValues?.attendees.length ? quickValues.attendees : parsedGuests.emails;
     const baseInput: CalendarEventCreateInput = {
       summary,
       location: quickValues ? quickValues.location : location.trim() || null,
       startAt: times.startAt,
       endAt: times.endAt,
-      attendees: parsedGuests.emails,
+      attendees,
       conferenceProvider,
       recurrence: mode === 'create' ? (quickValues?.recurrence || recurrence) : 'none',
       timeZone,

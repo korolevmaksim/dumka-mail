@@ -43,6 +43,24 @@ export function toggledContactGroupIds(currentGroupIds: string[], groupId: strin
     : [...currentGroupIds, groupId];
 }
 
+export function contactListFieldToText(values: string[]): string {
+  return values.join('\n');
+}
+
+export function contactTextToList(value: string): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of value.split(/\r?\n/)) {
+    const item = rawLine.trim();
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
 export function contactRecipient(contact: Pick<ContactCard, 'displayName' | 'email'>): Recipient {
   return {
     name: contact.displayName.trim(),

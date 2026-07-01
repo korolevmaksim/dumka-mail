@@ -88,9 +88,46 @@ describe('calendar create helpers', () => {
       startTime: '13:00',
       durationMinutes: 45,
       location: 'Cafe',
+      attendees: [],
       recurrence: 'none',
       hasExplicitDate: true,
       hasExplicitTime: true,
+    });
+  });
+
+  it('parses quick-add time ranges and attendee emails', () => {
+    const draft = parseNaturalLanguageCalendarEvent(
+      'Product demo tomorrow 2-3pm with Sam@example.com @ Zoom',
+      new Date(2026, 6, 4, 18),
+      30,
+      new Date(2026, 6, 4, 9),
+    );
+
+    expect(draft).toMatchObject({
+      title: 'Product demo',
+      date: '2026-07-05',
+      startTime: '14:00',
+      durationMinutes: 60,
+      location: 'Zoom',
+      attendees: ['sam@example.com'],
+      hasExplicitDate: true,
+      hasExplicitTime: true,
+    });
+  });
+
+  it('parses 24-hour quick-add ranges', () => {
+    const draft = parseNaturalLanguageCalendarEvent(
+      'Design review next Monday 14:00-15:30',
+      new Date(2026, 6, 1, 18),
+      30,
+      new Date(2026, 6, 1, 9),
+    );
+
+    expect(draft).toMatchObject({
+      title: 'Design review',
+      date: '2026-07-06',
+      startTime: '14:00',
+      durationMinutes: 90,
     });
   });
 
@@ -193,6 +230,7 @@ describe('calendar create helpers', () => {
       startTime: '09:00',
       durationMinutes: 45,
       location: null,
+      attendees: [],
       recurrence: 'none',
       hasExplicitDate: false,
       hasExplicitTime: false,

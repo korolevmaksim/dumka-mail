@@ -6,7 +6,9 @@ import { emitToast } from '../../../lib/toastBus';
 import {
   contactGroupMembershipCounts,
   contactInitials,
+  contactListFieldToText,
   contactRecipient,
+  contactTextToList,
   filterContacts,
   groupRecipients,
   toggledContactGroupIds,
@@ -29,6 +31,8 @@ export function ContactsTab() {
   const [editingGroupName, setEditingGroupName] = useState('');
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState('');
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [organizationDraft, setOrganizationDraft] = useState('');
   const [notesDraft, setNotesDraft] = useState('');
   const activeEmail = store.activeAccount && store.activeAccount.id !== 'unified'
     ? store.activeAccount.email
@@ -38,10 +42,17 @@ export function ContactsTab() {
   const selectedContact = filteredContacts.find(contact => contact.id === selectedContactId) || filteredContacts[0] || null;
   const groupMembershipCounts = useMemo(() => contactGroupMembershipCounts(store.contacts), [store.contacts]);
   const contactDirty = Boolean(selectedContact)
-    && (nameDraft !== selectedContact.displayName || notesDraft !== (selectedContact.notes || ''));
+    && (
+      nameDraft !== selectedContact.displayName
+      || phoneDraft !== contactListFieldToText(selectedContact.phoneNumbers)
+      || organizationDraft !== contactListFieldToText(selectedContact.organizations)
+      || notesDraft !== (selectedContact.notes || '')
+    );
 
   useEffect(() => {
     setNameDraft(selectedContact?.displayName || '');
+    setPhoneDraft(contactListFieldToText(selectedContact?.phoneNumbers || []));
+    setOrganizationDraft(contactListFieldToText(selectedContact?.organizations || []));
     setNotesDraft(selectedContact?.notes || '');
   }, [selectedContact?.id]);
 
@@ -59,6 +70,8 @@ export function ContactsTab() {
     if (!selectedContact || !contactDirty) return;
     await store.updateContactLocal(selectedContact.id, {
       displayName: nameDraft.trim() || selectedContact.email,
+      phoneNumbers: contactTextToList(phoneDraft),
+      organizations: contactTextToList(organizationDraft),
       notes: notesDraft,
     });
     emitToast({ type: 'success', message: 'Contact saved.' });
@@ -227,26 +240,28 @@ export function ContactsTab() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
+                  <label className="flex flex-col gap-1">
                     <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Phones</span>
-                    <div className="mt-1 flex flex-col gap-1">
-                      {selectedContact.phoneNumbers.length === 0 ? (
-                        <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">No phone numbers synced.</span>
-                      ) : selectedContact.phoneNumbers.map(phone => (
-                        <span key={phone} className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]">{phone}</span>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
+                    <textarea
+                      value={phoneDraft}
+                      onChange={(event) => setPhoneDraft(event.target.value)}
+                      onBlur={() => void saveContactDraft()}
+                      placeholder="Phone numbers"
+                      rows={3}
+                      className="min-h-[76px] resize-none rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
                     <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Work</span>
-                    <div className="mt-1 flex flex-col gap-1">
-                      {selectedContact.organizations.length === 0 ? (
-                        <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">No role or company synced.</span>
-                      ) : selectedContact.organizations.map(org => (
-                        <span key={org} className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]">{org}</span>
-                      ))}
-                    </div>
-                  </div>
+                    <textarea
+                      value={organizationDraft}
+                      onChange={(event) => setOrganizationDraft(event.target.value)}
+                      onBlur={() => void saveContactDraft()}
+                      placeholder="Company / role"
+                      rows={3}
+                      className="min-h-[76px] resize-none rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    />
+                  </label>
                 </div>
 
                 <label className="flex min-h-0 flex-1 flex-col gap-1">

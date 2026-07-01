@@ -39,6 +39,7 @@ export function quickDraftLabel(draft: NaturalLanguageCalendarEventDraft): strin
     `${draft.durationMinutes}m`,
     draft.recurrence !== 'none' ? recurrenceLabel(draft.recurrence) : null,
     draft.location,
+    draft.attendees.length > 0 ? `${draft.attendees.length} guest${draft.attendees.length === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' · ');
 }
 

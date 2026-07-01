@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { CalendarCheck, CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Clock, MapPin, Pencil, RefreshCw } from 'lucide-react';
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
 import { CalendarEventForm } from './CalendarEventForm';
 import type { CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput } from '../../../shared/types';
 import { findAvailabilitySlots, type CalendarAvailabilitySlot } from '../../../shared/calendarAvailability';
+import { calendarEventTimesFromLocalInput, localCalendarTimeZone, parseNaturalLanguageCalendarEvent } from '../../../shared/calendarCreate';
 import {
   MINI_CALENDAR_WEEKDAYS,
   addLocalDays,
@@ -17,6 +18,7 @@ import {
   startOfLocalDay,
   visibleMiniCalendarRange,
 } from '../../../shared/calendarMini';
+import { quickDraftLabel } from '../lib/calendarEventFormHelpers';
 
 function dayLabel(date: Date): string {
   return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -37,12 +39,21 @@ export function CalendarAgendaPanel() {
   const [visibleMonth, setVisibleMonth] = useState(() => new Date());
   const [isCreating, setIsCreating] = useState(false);
   const [isSavingEvent, setIsSavingEvent] = useState(false);
+  const [isQuickCreating, setIsQuickCreating] = useState(false);
   const [isDeletingEvent, setIsDeletingEvent] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [createSlot, setCreateSlot] = useState<CalendarAvailabilitySlot | null>(null);
+  const [quickEventText, setQuickEventText] = useState('');
+  const defaultMeetingDurationMinutes = store.settings.calendar.defaultMeetingDurationMinutes;
   const calendarWeeks = useMemo(
     () => buildMiniCalendarMonth(visibleMonth, selectedDate, today),
     [selectedDate, today, visibleMonth],
+  );
+  const quickEventDraft = useMemo(
+    () => enabled
+      ? parseNaturalLanguageCalendarEvent(quickEventText, selectedDate, defaultMeetingDurationMinutes, new Date())
+      : null,
+    [defaultMeetingDurationMinutes, enabled, quickEventText, selectedDate],
   );
   const eventCounts = useMemo(() => countCalendarEventsByDay(store.calendarEvents), [store.calendarEvents]);
   const selectedDayStart = startOfLocalDay(selectedDate);
@@ -130,6 +141,48 @@ export function CalendarAgendaPanel() {
       emitToast({ type: 'error', message: 'Could not save calendar event.' });
     } finally {
       setIsSavingEvent(false);
+    }
+  }
+
+  async function submitQuickEvent(formEvent: FormEvent) {
+    formEvent.preventDefault();
+    if (!enabled) {
+      emitToast({ type: 'info', message: 'Enable Calendar in Settings before creating events.' });
+      return;
+    }
+    if (!quickEventDraft || isQuickCreating) return;
+    const times = calendarEventTimesFromLocalInput(
+      quickEventDraft.date,
+      quickEventDraft.startTime,
+      quickEventDraft.durationMinutes,
+    );
+    if (!times) {
+      emitToast({ type: 'error', message: 'Could not parse that event time.' });
+      return;
+    }
+
+    setIsQuickCreating(true);
+    try {
+      const saved = await store.createCalendarEvent({
+        summary: quickEventDraft.title,
+        location: quickEventDraft.location,
+        startAt: times.startAt,
+        endAt: times.endAt,
+        attendees: quickEventDraft.attendees,
+        conferenceProvider: store.settings.calendar.defaultConferenceProvider === 'googleMeet' ? 'googleMeet' : 'none',
+        recurrence: quickEventDraft.recurrence,
+        timeZone: localCalendarTimeZone(),
+      });
+      const start = new Date(saved.startAt);
+      setSelectedDate(start);
+      setVisibleMonth(new Date(start.getFullYear(), start.getMonth(), 1));
+      setQuickEventText('');
+      emitToast({ type: 'success', message: 'Calendar event created.' });
+    } catch (error) {
+      console.error('Quick calendar event create failed:', error);
+      emitToast({ type: 'error', message: 'Could not create calendar event.' });
+    } finally {
+      setIsQuickCreating(false);
     }
   }
 
@@ -253,6 +306,33 @@ export function CalendarAgendaPanel() {
           </div>
         </div>
 
+        {enabled && !isCreating && !editingEvent && (
+          <form onSubmit={submitQuickEvent} className="flex flex-col gap-1.5">
+            <div className="flex gap-1.5">
+              <input
+                value={quickEventText}
+                onChange={(inputEvent) => setQuickEventText(inputEvent.target.value)}
+                placeholder="Demo tomorrow 2-3pm with sam@example.com"
+                className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+              />
+              <button
+                type="submit"
+                title="Create event"
+                disabled={!quickEventDraft || isQuickCreating}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-white disabled:opacity-50"
+              >
+                <CalendarPlus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {quickEventText.trim() && quickEventDraft && (
+              <div className="flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--accent)]/25 bg-[var(--accent)]/8 px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+                <CalendarPlus className="h-3 w-3 shrink-0 text-[var(--accent)]" />
+                <span className="truncate">{quickDraftLabel(quickEventDraft)}</span>
+              </div>
+            )}
+          </form>
+        )}
+
         {!enabled ? (
           <button
             type="button"
@@ -268,7 +348,7 @@ export function CalendarAgendaPanel() {
             mode={editingEvent ? 'edit' : 'create'}
             event={editingEvent}
             selectedDate={selectedDate}
-            defaultDurationMinutes={store.settings.calendar.defaultMeetingDurationMinutes}
+            defaultDurationMinutes={defaultMeetingDurationMinutes}
             defaultConferenceProvider={store.settings.calendar.defaultConferenceProvider}
             calendarSettings={store.settings.calendar}
             calendarEvents={store.calendarEvents}

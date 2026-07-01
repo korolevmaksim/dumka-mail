@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   contactGroupMembershipCounts,
   contactInitials,
+  contactListFieldToText,
   contactRecipient,
+  contactTextToList,
   filterContacts,
   groupRecipients,
   toggledContactGroupIds,
@@ -57,6 +59,11 @@ describe('contact helpers', () => {
     expect(toggledContactGroupIds(source, 'g2')).toEqual(['g1', 'g2']);
     expect(toggledContactGroupIds(source, 'g1')).toEqual([]);
     expect(source).toEqual(['g1']);
+  });
+
+  it('round-trips editable multi-value contact fields', () => {
+    expect(contactListFieldToText(['+1 555 0101', 'Analytical Engine'])).toBe('+1 555 0101\nAnalytical Engine');
+    expect(contactTextToList(' +1 555 0101 \n\n+1 555 0101\nResearch Lab ')).toEqual(['+1 555 0101', 'Research Lab']);
   });
 
   it('maps contacts and local mailing groups into compose recipients', () => {

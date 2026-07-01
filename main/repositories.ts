@@ -608,8 +608,8 @@ export const ContactsRepo = {
       displayName: row.local_display_name || row.display_name,
       email: row.email,
       photoUrl: row.photo_url,
-      phoneNumbers: JSON.parse(row.phone_numbers_json),
-      organizations: JSON.parse(row.organizations_json),
+      phoneNumbers: row.local_phone_numbers_json ? parseStringArray(row.local_phone_numbers_json) : parseStringArray(row.phone_numbers_json),
+      organizations: row.local_organizations_json ? parseStringArray(row.local_organizations_json) : parseStringArray(row.organizations_json),
       notes: row.notes,
       groupIds: JSON.parse(row.group_ids_json),
       updatedAt: row.updated_at
@@ -633,8 +633,8 @@ export const ContactsRepo = {
     const insert = db.prepare(`
       INSERT INTO contacts (
         id, account_id, resource_name, etag, display_name, local_display_name, email, photo_url,
-        phone_numbers_json, organizations_json, notes, group_ids_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        phone_numbers_json, local_phone_numbers_json, organizations_json, local_organizations_json, notes, group_ids_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, id) DO UPDATE SET
         resource_name=excluded.resource_name,
         etag=excluded.etag,
@@ -648,7 +648,7 @@ export const ContactsRepo = {
 
     db.transaction(() => {
       for (const contact of contacts) {
-        const existing = db.prepare('SELECT local_display_name, notes, group_ids_json FROM contacts WHERE account_id = ? AND id = ?')
+        const existing = db.prepare('SELECT local_display_name, local_phone_numbers_json, local_organizations_json, notes, group_ids_json FROM contacts WHERE account_id = ? AND id = ?')
           .get(contact.accountId, contact.id) as any;
         insert.run(
           contact.id,
@@ -660,7 +660,9 @@ export const ContactsRepo = {
           contact.email,
           contact.photoUrl || null,
           JSON.stringify(contact.phoneNumbers),
+          existing?.local_phone_numbers_json ?? null,
           JSON.stringify(contact.organizations),
+          existing?.local_organizations_json ?? null,
           existing?.notes ?? contact.notes ?? null,
           existing?.group_ids_json ?? JSON.stringify(contact.groupIds),
           contact.updatedAt
@@ -669,19 +671,27 @@ export const ContactsRepo = {
     })();
   },
 
-  updateLocal(accountId: string, id: string, patch: Pick<Partial<ContactCard>, 'notes' | 'groupIds' | 'displayName'>) {
+  updateLocal(accountId: string, id: string, patch: Pick<Partial<ContactCard>, 'notes' | 'groupIds' | 'displayName' | 'phoneNumbers' | 'organizations'>) {
     const db = getDatabase();
     const row = db.prepare('SELECT * FROM contacts WHERE account_id = ? AND id = ?').get(accountId, id) as any;
     if (!row) return;
     const nextLocalDisplayName = patch.displayName === undefined
       ? row.local_display_name
       : (patch.displayName.trim() === row.display_name ? null : patch.displayName.trim());
+    const nextLocalPhoneNumbers = patch.phoneNumbers === undefined
+      ? row.local_phone_numbers_json
+      : (JSON.stringify(patch.phoneNumbers) === row.phone_numbers_json ? null : JSON.stringify(patch.phoneNumbers));
+    const nextLocalOrganizations = patch.organizations === undefined
+      ? row.local_organizations_json
+      : (JSON.stringify(patch.organizations) === row.organizations_json ? null : JSON.stringify(patch.organizations));
     db.prepare(`
       UPDATE contacts
-      SET local_display_name = ?, notes = ?, group_ids_json = ?, updated_at = ?
+      SET local_display_name = ?, local_phone_numbers_json = ?, local_organizations_json = ?, notes = ?, group_ids_json = ?, updated_at = ?
       WHERE account_id = ? AND id = ?
     `).run(
       nextLocalDisplayName,
+      nextLocalPhoneNumbers,
+      nextLocalOrganizations,
       patch.notes ?? row.notes,
       patch.groupIds ? JSON.stringify(patch.groupIds) : row.group_ids_json,
       new Date().toISOString(),
