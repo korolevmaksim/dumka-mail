@@ -1,9 +1,9 @@
 import http from 'http';
 import url from 'url';
 import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import { shell } from 'electron';
+import { resolveConfigFile } from './appPaths';
 
 export interface GoogleClientConfig {
   installed: {
@@ -36,16 +36,11 @@ export type GoogleOAuthScope = typeof GOOGLE_OAUTH_SCOPES[number]
   | typeof GOOGLE_CONTACTS_SCOPES[number];
 
 export function loadGoogleConfig(): GoogleClientConfig {
-  const primaryPath = path.join(process.env.HOME || '', '.config', 'dumka-mail-agy', 'google-oauth-client.json');
-  const fallbackPath = path.join(process.env.HOME || '', '.config', 'personal-mail-client', 'google-oauth-client.json');
+  const config = resolveConfigFile('google-oauth-client.json');
+  const configPath = config.path;
 
-  let configPath = primaryPath;
-  if (!fs.existsSync(primaryPath) && fs.existsSync(fallbackPath)) {
-    configPath = fallbackPath;
-  }
-
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`Google OAuth Client credentials not found at ${primaryPath} or ${fallbackPath}`);
+  if (!configPath) {
+    throw new Error(`Google OAuth Client credentials not found at ${config.candidates.join(' or ')}`);
   }
 
   const raw = fs.readFileSync(configPath, 'utf-8');

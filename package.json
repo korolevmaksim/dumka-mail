@@ -1,17 +1,17 @@
 {
-  "name": "dumka-mail-agy",
+  "name": "dumka-mail",
   "version": "0.1.0",
   "description": "Cross-platform agentic mail client based on Electron, React 19, and Tailwind CSS 4",
   "license": "MIT",
   "author": "Maksim Korolyov",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/korolevmaksim/dumka-mail-agy.git"
+    "url": "git+https://github.com/korolevmaksim/dumka-mail.git"
   },
   "bugs": {
-    "url": "https://github.com/korolevmaksim/dumka-mail-agy/issues"
+    "url": "https://github.com/korolevmaksim/dumka-mail/issues"
   },
-  "homepage": "https://github.com/korolevmaksim/dumka-mail-agy#readme",
+  "homepage": "https://github.com/korolevmaksim/dumka-mail#readme",
   "keywords": [
     "electron",
     "gmail",

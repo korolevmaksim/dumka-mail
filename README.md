@@ -40,13 +40,13 @@ npm install
 Place the Google OAuth client JSON here:
 
 ```text
-~/.config/dumka-mail-agy/google-oauth-client.json
+~/.config/dumka-mail/google-oauth-client.json
 ```
 
 Optional AI provider settings are read from:
 
 ```text
-~/.config/dumka-mail-agy/openai.env
+~/.config/dumka-mail/openai.env
 ```
 
 Example values:

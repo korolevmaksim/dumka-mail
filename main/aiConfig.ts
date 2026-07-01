@@ -4,6 +4,7 @@ import { AIProviderDescriptor, AIProviderPreference, AI_SECRET_KEYS, AI_SECRET_S
 import { getAIProviderConfig } from '../shared/aiProviders';
 import { SettingsRepo } from './database';
 import { getRefreshToken, saveRefreshToken, deleteRefreshToken } from './keychain';
+import { ensurePrimaryConfigDir, resolveConfigFile } from './appPaths';
 
 const AI_CONFIG_KEYS = [
   ...AI_SECRET_KEYS,
@@ -73,15 +74,8 @@ function parseEnvFile(filePath: string): Record<string, string> {
 }
 
 function loadAIConfigFromFiles(): Record<string, string> {
-  const primaryPath = path.join(process.env.HOME || '', '.config', 'dumka-mail-agy', 'openai.env');
-  const fallbackPath = path.join(process.env.HOME || '', '.config', 'personal-mail-client', 'openai.env');
-
-  let env = parseEnvFile(primaryPath);
-  if (Object.keys(env).length === 0) {
-    env = parseEnvFile(fallbackPath);
-  }
-
-  return env;
+  const config = resolveConfigFile('openai.env');
+  return config.path ? parseEnvFile(config.path) : {};
 }
 
 function shouldUseKeychainForSecrets(): boolean {
@@ -142,10 +136,7 @@ export async function loadAIConfigForRenderer(): Promise<Record<string, string>>
 }
 
 export function saveAIConfig(config: Record<string, string>): void {
-  const dir = path.join(process.env.HOME || '', '.config', 'dumka-mail-agy');
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  const dir = ensurePrimaryConfigDir();
   const filePath = path.join(dir, 'openai.env');
   
   let content = '# Dumka Mail AI Configuration\n';

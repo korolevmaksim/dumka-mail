@@ -29,6 +29,7 @@ coverage
 playwright-report
 test-results
 screenshots
+.playwright-mcp
 
 # Temporary exports and local backups
 tmp

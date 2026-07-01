@@ -15,8 +15,8 @@ Use GitHub private vulnerability reporting if it is enabled for the repository. 
 The repository must not contain runtime secrets. Local configuration is read from the user's home directory:
 
 ```text
-~/.config/dumka-mail-agy/google-oauth-client.json
-~/.config/dumka-mail-agy/openai.env
+~/.config/dumka-mail/google-oauth-client.json
+~/.config/dumka-mail/openai.env
 ```
 
 OAuth refresh tokens are stored in the macOS Keychain when available. AI provider keys are kept out of SQLite and out of committed source.

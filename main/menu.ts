@@ -87,7 +87,7 @@ export function installApplicationMenu(getMainWindow: () => BrowserWindow | null
         {
           label: 'Documentation',
           click: async () => {
-            await shell.openExternal('https://github.com/dumka-mail-agy');
+            await shell.openExternal('https://github.com/korolevmaksim/dumka-mail');
           }
         }
       ]

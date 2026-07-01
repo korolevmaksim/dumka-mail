@@ -41,7 +41,7 @@ Channel naming convention: `db:*` channels are thin wrappers over the repositori
 
 `better-sqlite3` (synchronous). It is **externalized** from the Vite/Rollup bundle (`rollupOptions.external` in `vite.config.mts`) because it is a native module — it must remain a real `node_modules` dependency and is the only entry under `dependencies` in `package.json`.
 
-- DB lives at `~/Library/Application Support/dumka-mail-agy/database.sqlite`, opened with WAL + `foreign_keys=ON`.
+- DB lives at `~/Library/Application Support/dumka-mail/database.sqlite`, opened with WAL + `foreign_keys=ON`. The app migrates the pre-rename `dumka-mail-agy` support directory on first launch when the new directory does not exist.
 - Repositories are plain object literals (`AccountsRepo`, `ThreadsRepo`, `MessagesRepo`, `DraftsRepo`, `RemindersRepo`, `SyncStateRepo`, `ActionLogRepo`, `AIConversationsRepo`, `SearchRepo`, `SettingsRepo`) that map snake_case DB rows ↔ camelCase `shared/types.ts` interfaces. Full-text search uses an FTS5 virtual table `mail_search`.
 - Bulk thread/message writes must go through `main/databaseWorkerClient.ts` (`main/databaseWorker.ts` is a separate Vite Electron entry). Do not call `MessagesRepo.save` directly from IPC handlers or sync loops for large batches; it updates the FTS index synchronously and will freeze the app if run on the main event loop.
 - History backfill is owned by `api:runBackfillPage` in `main/index.ts`: it fetches the Gmail page, persists it through the database worker, saves `sync_state`, and returns only progress. The renderer should not shuttle full backfill `MailMessage` pages over IPC.
@@ -73,8 +73,8 @@ State is centralized in a single large React context store, `stores/AppStore.tsx
 
 Runtime config is read from the user's home dir, with a legacy fallback to the pre-rename `personal-mail-client` directory:
 
-- Google OAuth client JSON: `~/.config/dumka-mail-agy/google-oauth-client.json` (fallback `~/.config/personal-mail-client/`).
-- AI provider env: `~/.config/dumka-mail-agy/openai.env` (dotenv format; `process.env` overrides file values). Keys include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_COMPATIBLE_*`, and `*_MODEL` / `*_BASE_URL` overrides. OpenRouter also supports optional `OPENROUTER_REFERER` and `OPENROUTER_APP_TITLE` headers.
-- OAuth **refresh tokens** are stored in the macOS Keychain via the `security` CLI (`main/keychain.ts`, service name `dumka-mail-agy`), with an in-memory fallback on non-macOS / test environments.
+- Google OAuth client JSON: `~/.config/dumka-mail/google-oauth-client.json` (fallbacks `~/.config/dumka-mail-agy/` and `~/.config/personal-mail-client/`).
+- AI provider env: `~/.config/dumka-mail/openai.env` (dotenv format; `process.env` overrides file values; fallbacks `~/.config/dumka-mail-agy/` and `~/.config/personal-mail-client/`). Keys include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_COMPATIBLE_*`, and `*_MODEL` / `*_BASE_URL` overrides. OpenRouter also supports optional `OPENROUTER_REFERER` and `OPENROUTER_APP_TITLE` headers.
+- OAuth **refresh tokens** are stored in the macOS Keychain via the `security` CLI (`main/keychain.ts`, service name `dumka-mail`, fallback `dumka-mail-agy`), with an in-memory fallback on non-macOS / test environments.
 
 When renaming config keys or paths, preserve the `personal-mail-client` fallback so existing installs keep working.
