@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe('app path compatibility', () => {
-  it('prefers dumka-mail config files and falls back to legacy locations', async () => {
+  it('prefers dumka-mail config files and falls back to legacy filenames and locations', async () => {
     await withTempHome(async () => {
       const { resolveConfigFile } = await import('../main/appPaths');
       const home = process.env.HOME || '';
@@ -36,13 +36,17 @@ describe('app path compatibility', () => {
       mkdirSync(legacyDir, { recursive: true });
       writeFileSync(join(legacyDir, 'openai.env'), 'OPENAI_MODEL=gpt-5\n');
 
-      expect(resolveConfigFile('openai.env').path).toBe(join(legacyDir, 'openai.env'));
+      expect(resolveConfigFile('ai.env', ['openai.env']).path).toBe(join(legacyDir, 'openai.env'));
 
       const primaryDir = join(home, '.config', 'dumka-mail');
       mkdirSync(primaryDir, { recursive: true });
       writeFileSync(join(primaryDir, 'openai.env'), 'OPENAI_MODEL=gpt-5.4-mini\n');
 
-      expect(resolveConfigFile('openai.env').path).toBe(join(primaryDir, 'openai.env'));
+      expect(resolveConfigFile('ai.env', ['openai.env']).path).toBe(join(primaryDir, 'openai.env'));
+
+      writeFileSync(join(primaryDir, 'ai.env'), 'OPENAI_MODEL=gpt-5.5\n');
+
+      expect(resolveConfigFile('ai.env', ['openai.env']).path).toBe(join(primaryDir, 'ai.env'));
     });
   });
 

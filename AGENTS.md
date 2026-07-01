@@ -74,7 +74,7 @@ State is centralized in a single large React context store, `stores/AppStore.tsx
 Runtime config is read from the user's home dir, with a legacy fallback to the pre-rename `personal-mail-client` directory:
 
 - Google OAuth client JSON: `~/.config/dumka-mail/google-oauth-client.json` (fallbacks `~/.config/dumka-mail-agy/` and `~/.config/personal-mail-client/`).
-- AI provider env: `~/.config/dumka-mail/openai.env` (dotenv format; `process.env` overrides file values; fallbacks `~/.config/dumka-mail-agy/` and `~/.config/personal-mail-client/`). Keys include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_COMPATIBLE_*`, and `*_MODEL` / `*_BASE_URL` overrides. OpenRouter also supports optional `OPENROUTER_REFERER` and `OPENROUTER_APP_TITLE` headers.
+- AI provider settings are configured through Settings -> AI Configuration. Advanced dotenv preload path: `~/.config/dumka-mail/ai.env` (`process.env` overrides file values; legacy fallback filenames include `openai.env` under `~/.config/dumka-mail/`, `~/.config/dumka-mail-agy/`, and `~/.config/personal-mail-client/`). Keys include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_COMPATIBLE_*`, and `*_MODEL` / `*_BASE_URL` overrides. OpenRouter also supports optional `OPENROUTER_REFERER` and `OPENROUTER_APP_TITLE` headers.
 - OAuth **refresh tokens** are stored in the macOS Keychain via the `security` CLI (`main/keychain.ts`, service name `dumka-mail`, fallback `dumka-mail-agy`), with an in-memory fallback on non-macOS / test environments.
 
 When renaming config keys or paths, preserve the `personal-mail-client` fallback so existing installs keep working.

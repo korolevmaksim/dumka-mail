@@ -16,12 +16,18 @@ export function configDirCandidates(): string[] {
   ];
 }
 
-export function configFileCandidates(fileName: string): string[] {
-  return configDirCandidates().map(dir => path.join(dir, fileName));
+export function configFileCandidates(fileName: string, legacyFileNames: string[] = []): string[] {
+  return configDirCandidates().flatMap(dir => [
+    path.join(dir, fileName),
+    ...legacyFileNames.map(legacyFileName => path.join(dir, legacyFileName)),
+  ]);
 }
 
-export function resolveConfigFile(fileName: string): { primaryPath: string; path: string | null; candidates: string[] } {
-  const candidates = configFileCandidates(fileName);
+export function resolveConfigFile(
+  fileName: string,
+  legacyFileNames: string[] = [],
+): { primaryPath: string; path: string | null; candidates: string[] } {
+  const candidates = configFileCandidates(fileName, legacyFileNames);
   return {
     primaryPath: candidates[0],
     path: candidates.find(candidate => fs.existsSync(candidate)) || null,
@@ -76,4 +82,3 @@ export function ensureAppSupportDir(): string {
 
   return primaryDir;
 }
-

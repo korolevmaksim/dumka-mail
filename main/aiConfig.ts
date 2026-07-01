@@ -74,7 +74,7 @@ function parseEnvFile(filePath: string): Record<string, string> {
 }
 
 function loadAIConfigFromFiles(): Record<string, string> {
-  const config = resolveConfigFile('openai.env');
+  const config = resolveConfigFile('ai.env', ['openai.env']);
   return config.path ? parseEnvFile(config.path) : {};
 }
 
@@ -137,7 +137,7 @@ export async function loadAIConfigForRenderer(): Promise<Record<string, string>>
 
 export function saveAIConfig(config: Record<string, string>): void {
   const dir = ensurePrimaryConfigDir();
-  const filePath = path.join(dir, 'openai.env');
+  const filePath = path.join(dir, 'ai.env');
   
   let content = '# Dumka Mail AI Configuration\n';
   for (const [key, value] of Object.entries(config)) {

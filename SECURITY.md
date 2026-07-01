@@ -16,7 +16,7 @@ The repository must not contain runtime secrets. Local configuration is read fro
 
 ```text
 ~/.config/dumka-mail/google-oauth-client.json
-~/.config/dumka-mail/openai.env
+~/.config/dumka-mail/ai.env
 ```
 
 OAuth refresh tokens are stored in the macOS Keychain when available. AI provider keys are kept out of SQLite and out of committed source.

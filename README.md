@@ -43,28 +43,11 @@ Place the Google OAuth client JSON here:
 ~/.config/dumka-mail/google-oauth-client.json
 ```
 
-Optional AI provider settings are read from:
+Configure optional AI providers from Settings -> AI Configuration. The app stores provider keys in the macOS Keychain by default and keeps non-secret provider settings in a local config file outside the repository.
 
-```text
-~/.config/dumka-mail/openai.env
-```
+Advanced users can pre-seed AI settings with a dotenv-style file at `~/.config/dumka-mail/ai.env`. The old `openai.env` filename is still read as a legacy fallback.
 
-Example values:
-
-```bash
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5.4-mini
-ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL=claude-sonnet-4.6
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=~openai/gpt-latest
-MISTRAL_API_KEY=...
-COHERE_API_KEY=...
-VOYAGE_API_KEY=...
-DASHSCOPE_API_KEY=...
-```
-
-Semantic-search provider, model, endpoint, dimensions, and index maintenance are configured in Settings -> AI Configuration, not through `openai.env`. Semantic search is disabled by default. When enabled, background indexing only backfills small recent batches; use the Settings index controls to inspect coverage, reindex all cached mail, rebuild the current provider/model/dimension index, cancel an active job, or delete old indexes. Changing provider, model, endpoint, or dimensions creates a separate local index key, so vectors from a previous configuration are not mixed with new query vectors.
+Semantic-search provider, model, endpoint, dimensions, and index maintenance are configured in Settings -> AI Configuration. Semantic search is disabled by default. When enabled, background indexing only backfills small recent batches; use the Settings index controls to inspect coverage, reindex all cached mail, rebuild the current provider/model/dimension index, cancel an active job, or delete old indexes. Changing provider, model, endpoint, or dimensions creates a separate local index key, so vectors from a previous configuration are not mixed with new query vectors.
 
 Do not commit local OAuth files, provider keys, refresh tokens, SQLite databases, logs, or app exports.
 

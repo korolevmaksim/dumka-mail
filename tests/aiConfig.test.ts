@@ -8,6 +8,10 @@ let mockKeychain = new Map<string, string>();
 let mockUseKeychain = true;
 let mockFileContent = '';
 
+function isAIEnvPath(path: unknown): path is string {
+  return typeof path === 'string' && (path.endsWith('ai.env') || path.endsWith('openai.env'));
+}
+
 // Mock database and keychain
 vi.mock('../main/database', () => ({
   SettingsRepo: {
@@ -28,21 +32,21 @@ describe('saveAIConfigAsync self-healing and separation', () => {
     mockFileContent = '';
 
     vi.spyOn(fs, 'existsSync').mockImplementation((path) => {
-      if (typeof path === 'string' && path.includes('openai.env')) {
+      if (isAIEnvPath(path)) {
         return true;
       }
       return false;
     });
 
     vi.spyOn(fs, 'readFileSync').mockImplementation((path) => {
-      if (typeof path === 'string' && path.includes('openai.env')) {
+      if (isAIEnvPath(path)) {
         return mockFileContent;
       }
       return '';
     });
 
     vi.spyOn(fs, 'writeFileSync').mockImplementation((path, content) => {
-      if (typeof path === 'string' && path.includes('openai.env')) {
+      if (isAIEnvPath(path)) {
         mockFileContent = content as string;
       }
       return undefined;
