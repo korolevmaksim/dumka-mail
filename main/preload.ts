@@ -16,6 +16,8 @@ import {
   MailActionLog,
   AIConversation,
   AIChatMessage,
+  EmbeddingIndexReindexOptions,
+  EmbeddingIndexStatus,
   AIProviderPreference
 } from '../shared/types';
 import { AIRequest } from './ai';
@@ -115,6 +117,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dismissAgentDraftSuggestion: (id: string) => ipcRenderer.invoke('api:dismissAgentDraftSuggestion', id),
   markAgentDraftSuggestionApplied: (id: string) => ipcRenderer.invoke('api:markAgentDraftSuggestionApplied', id),
   testEmbeddingConfig: (settings: any) => ipcRenderer.invoke('api:testEmbeddingConfig', settings),
+  getEmbeddingIndexStatus: (accountId: string): Promise<EmbeddingIndexStatus> => ipcRenderer.invoke('api:getEmbeddingIndexStatus', accountId),
+  startEmbeddingReindex: (accountId: string, options?: EmbeddingIndexReindexOptions): Promise<EmbeddingIndexStatus> => ipcRenderer.invoke('api:startEmbeddingReindex', accountId, options),
+  cancelEmbeddingReindex: (accountId: string): Promise<EmbeddingIndexStatus> => ipcRenderer.invoke('api:cancelEmbeddingReindex', accountId),
+  deleteEmbeddingIndex: (accountId: string, model: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> => ipcRenderer.invoke('api:deleteEmbeddingIndex', accountId, model),
+  deleteOtherEmbeddingIndexes: (accountId: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> => ipcRenderer.invoke('api:deleteOtherEmbeddingIndexes', accountId),
   searchSemantic: (accountId: string, query: string, limit?: number) => ipcRenderer.invoke('api:searchSemantic', accountId, query, limit),
   unsubscribeThread: (email: string, threadId: string, actionId?: string) => ipcRenderer.invoke('api:unsubscribeThread', email, threadId, actionId),
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),

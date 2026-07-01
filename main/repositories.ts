@@ -451,6 +451,17 @@ export const MessagesRepo = {
     return rows.map(mapMessageRow);
   },
 
+  listForEmbedding(accountId: string, limit = 100000): MailMessage[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM messages
+      WHERE account_id = ?
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(accountId, Math.max(1, Math.min(200000, limit))) as any[];
+    return rows.map(mapMessageRow);
+  },
+
   listRecentBySender(accountId: string, senderEmail: string, beforeReceivedAt: string, limit = 8): MailMessage[] {
     const db = getDatabase();
     const rows = db.prepare(`
@@ -1066,6 +1077,12 @@ export interface MailEmbeddingRow {
   indexedAt: string;
 }
 
+export interface MailEmbeddingModelStats {
+  model: string;
+  count: number;
+  lastIndexedAt: string | null;
+}
+
 export const MailEmbeddingsRepo = {
   indexedHashes(accountId: string, model: string): Record<string, string> {
     const db = getDatabase();
@@ -1086,6 +1103,40 @@ export const MailEmbeddingsRepo = {
       LIMIT ?
     `).all(accountId, model, Math.max(1, Math.min(50000, limit))) as any[];
     return rows.map(mapMailEmbeddingRow);
+  },
+
+  modelStats(accountId: string): MailEmbeddingModelStats[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT model, COUNT(*) AS count, MAX(indexed_at) AS last_indexed_at
+      FROM mail_embeddings
+      WHERE account_id = ?
+      GROUP BY model
+      ORDER BY last_indexed_at DESC
+    `).all(accountId) as Array<{ model: string; count: number; last_indexed_at: string | null }>;
+    return rows.map(row => ({
+      model: row.model,
+      count: Number(row.count),
+      lastIndexedAt: row.last_indexed_at,
+    }));
+  },
+
+  deleteByModel(accountId: string, model: string): number {
+    const db = getDatabase();
+    const result = db.prepare(`
+      DELETE FROM mail_embeddings
+      WHERE account_id = ? AND model = ?
+    `).run(accountId, model);
+    return Number(result.changes || 0);
+  },
+
+  deleteOtherModels(accountId: string, currentModel: string): number {
+    const db = getDatabase();
+    const result = db.prepare(`
+      DELETE FROM mail_embeddings
+      WHERE account_id = ? AND model <> ?
+    `).run(accountId, currentModel);
+    return Number(result.changes || 0);
   },
 
   saveMany(rows: MailEmbeddingRow[]) {

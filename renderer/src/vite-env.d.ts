@@ -24,6 +24,8 @@ import {
   AIConversation,
   AIChatMessage,
   AIEmbeddingSettings,
+  EmbeddingIndexReindexOptions,
+  EmbeddingIndexStatus,
   AIProviderPreference,
   AIProviderDescriptor,
   MCPServerConfig,
@@ -125,6 +127,11 @@ export interface IElectronAPI {
   dismissAgentDraftSuggestion: (id: string) => Promise<void>;
   markAgentDraftSuggestionApplied: (id: string) => Promise<void>;
   testEmbeddingConfig: (settings: AIEmbeddingSettings) => Promise<{ model: string; dimensions: number; provider: AIEmbeddingSettings['provider'] }>;
+  getEmbeddingIndexStatus: (accountId: string) => Promise<EmbeddingIndexStatus>;
+  startEmbeddingReindex: (accountId: string, options?: EmbeddingIndexReindexOptions) => Promise<EmbeddingIndexStatus>;
+  cancelEmbeddingReindex: (accountId: string) => Promise<EmbeddingIndexStatus>;
+  deleteEmbeddingIndex: (accountId: string, model: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
+  deleteOtherEmbeddingIndexes: (accountId: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchResult[]>;
   unsubscribeThread: (email: string, threadId: string, actionId?: string) => Promise<{ method: string; archived: boolean }>;
   loadAIConfig: () => Promise<Record<string, string>>;

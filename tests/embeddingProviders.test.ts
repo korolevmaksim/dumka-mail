@@ -24,6 +24,12 @@ describe('embedding provider settings', () => {
     expect(settings.baseURL).toBe('http://localhost:11434');
   });
 
+  it('offers the current Gemini maximum dimension as a preset', () => {
+    const config = getEmbeddingProviderConfig('gemini');
+
+    expect(config.models.find(model => model.id === 'gemini-embedding-2')?.dimensions).toContain(3072);
+  });
+
   it('separates vector indexes by provider, model, dimensions, and compatible base URL', () => {
     const first = buildEmbeddingIndexKey({
       provider: 'openAICompatible',

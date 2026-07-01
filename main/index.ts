@@ -838,6 +838,11 @@ registerSecureHandler('api:getThreadAgentInsights', (_, accountId, threadId) => 
 registerSecureHandler('api:dismissAgentDraftSuggestion', (_, id) => AgenticService.dismissDraftSuggestion(id));
 registerSecureHandler('api:markAgentDraftSuggestionApplied', (_, id) => AgenticService.markDraftSuggestionApplied(id));
 registerSecureHandler('api:testEmbeddingConfig', (_, settings) => AgenticService.testEmbeddingConfig(settings));
+registerSecureHandler('api:getEmbeddingIndexStatus', (_, accountId) => AgenticService.getEmbeddingIndexStatus(accountId));
+registerSecureHandler('api:startEmbeddingReindex', (_, accountId, options) => AgenticService.startEmbeddingReindex(accountId, options));
+registerSecureHandler('api:cancelEmbeddingReindex', (_, accountId) => AgenticService.cancelEmbeddingReindex(accountId));
+registerSecureHandler('api:deleteEmbeddingIndex', (_, accountId, model) => AgenticService.deleteEmbeddingIndex(accountId, model));
+registerSecureHandler('api:deleteOtherEmbeddingIndexes', (_, accountId) => AgenticService.deleteOtherEmbeddingIndexes(accountId));
 registerSecureHandler('api:searchSemantic', async (_, accountId, query, limit) => {
   try {
     return await AgenticService.searchSemantic(accountId, query, limit);

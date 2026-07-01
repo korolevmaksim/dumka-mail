@@ -58,8 +58,8 @@ export const EMBEDDING_PROVIDER_CONFIGS: Record<AIEmbeddingProvider, EmbeddingPr
     supportsDimensions: true,
     requiresApiKey: true,
     models: [
-      { id: 'gemini-embedding-001', label: 'gemini-embedding-001', dimensions: [2048, 1536, 768, 512, 256, 128] },
-      { id: 'gemini-embedding-2', label: 'gemini-embedding-2', dimensions: [2048, 1536, 768, 512, 256, 128] },
+      { id: 'gemini-embedding-001', label: 'gemini-embedding-001', dimensions: [3072, 2048, 1536, 1024, 768, 512, 256, 128] },
+      { id: 'gemini-embedding-2', label: 'gemini-embedding-2', dimensions: [3072, 2048, 1536, 1024, 768, 512, 256, 128] },
     ],
   },
   ollama: {

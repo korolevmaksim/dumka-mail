@@ -827,3 +827,45 @@ export interface SemanticSearchResult {
   snippet: string;
   receivedAt: string;
 }
+
+export type EmbeddingIndexJobState = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface EmbeddingIndexModelStats {
+  model: string;
+  count: number;
+  lastIndexedAt: string | null;
+  isCurrent: boolean;
+}
+
+export interface EmbeddingIndexJobStatus {
+  state: EmbeddingIndexJobState;
+  accountId: AccountID;
+  model: string;
+  total: number;
+  processed: number;
+  indexed: number;
+  failed: number;
+  startedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  error: string | null;
+  cancelRequested: boolean;
+}
+
+export interface EmbeddingIndexStatus {
+  accountId: AccountID;
+  currentModel: string;
+  totalMessages: number;
+  indexedMessages: number;
+  pendingMessages: number;
+  staleMessages: number;
+  otherIndexedMessages: number;
+  models: EmbeddingIndexModelStats[];
+  job: EmbeddingIndexJobStatus | null;
+  semanticSearchEnabled: boolean;
+}
+
+export interface EmbeddingIndexReindexOptions {
+  clearCurrent?: boolean;
+  clearOther?: boolean;
+}

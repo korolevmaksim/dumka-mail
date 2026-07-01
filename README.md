@@ -64,7 +64,7 @@ VOYAGE_API_KEY=...
 DASHSCOPE_API_KEY=...
 ```
 
-Semantic-search provider, model, endpoint, and dimensions are configured in Settings -> AI Configuration, not through `openai.env`.
+Semantic-search provider, model, endpoint, dimensions, and index maintenance are configured in Settings -> AI Configuration, not through `openai.env`. Semantic search is disabled by default. When enabled, background indexing only backfills small recent batches; use the Settings index controls to inspect coverage, reindex all cached mail, rebuild the current provider/model/dimension index, cancel an active job, or delete old indexes. Changing provider, model, endpoint, or dimensions creates a separate local index key, so vectors from a previous configuration are not mixed with new query vectors.
 
 Do not commit local OAuth files, provider keys, refresh tokens, SQLite databases, logs, or app exports.
 

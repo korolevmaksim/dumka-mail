@@ -551,6 +551,13 @@ function parseGeminiEmbeddings(data: any, inputLength: number): number[][] {
   return assertEmbeddingCount(embeddings, inputLength);
 }
 
+function formatGeminiEmbeddingText(text: string, purpose: EmbeddingPurpose, model: string): string {
+  if (!model.includes('gemini-embedding-2')) return text;
+  if (purpose === 'query') return `Represent this question for retrieving relevant email messages:\n${text}`;
+  if (purpose === 'document') return `Represent this email message for retrieval:\n${text}`;
+  return text;
+}
+
 function parseCohereEmbeddings(data: any, inputLength: number): number[][] {
   const raw = data.embeddings?.float || data.embeddings || [];
   const embeddings = raw
@@ -584,15 +591,22 @@ export async function createEmbeddings(
     const modelPath = settings.model.startsWith('models/') ? settings.model : `models/${settings.model}`;
     const endpoint = `${settings.baseURL.replace(/\/+$/, '')}/${modelPath}:batchEmbedContents?key=${encodeURIComponent(apiKey)}`;
     const taskType = purpose === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT';
+    const isGeminiEmbedding2 = settings.model.includes('gemini-embedding-2');
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         requests: input.map(text => ({
           model: modelPath,
-          content: { parts: [{ text }] },
-          taskType,
-          ...(dimensions ? { outputDimensionality: dimensions } : {}),
+          content: { parts: [{ text: formatGeminiEmbeddingText(text, purpose, settings.model) }] },
+          ...(!isGeminiEmbedding2 ? { taskType } : {}),
+          ...(dimensions ? {
+            outputDimensionality: dimensions,
+            embedContentConfig: {
+              outputDimensionality: dimensions,
+              ...(!isGeminiEmbedding2 ? { taskType } : {}),
+            },
+          } : {}),
         })),
       }),
     });

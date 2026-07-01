@@ -17,7 +17,7 @@ Runtime credentials are not stored in the repository.
 
 ## Network requests
 
-The app talks directly to Gmail and to the AI provider selected by the user. If the user enables Calendar or Contacts in settings, the app also talks directly to Google Calendar and Google People APIs for the selected account. Mail content is only sent to an AI provider when the user enables AI features and allows the relevant context to be included. Proactive draft generation and semantic-search embeddings are disabled by default because they can use paid provider tokens. Semantic search uses the embeddings provider configured in Settings, supports local and cloud providers, and stores vectors locally.
+The app talks directly to Gmail and to the AI provider selected by the user. If the user enables Calendar or Contacts in settings, the app also talks directly to Google Calendar and Google People APIs for the selected account. Mail content is only sent to an AI provider when the user enables AI features and allows the relevant context to be included. Proactive draft generation and semantic-search embeddings are disabled by default because they can use paid provider tokens. Semantic search uses the embeddings provider configured in Settings, supports local and cloud providers, and stores vectors locally. The local vector index is keyed by provider, model, endpoint, and dimensions; changing those settings does not reuse incompatible vectors, and Settings exposes controls to reindex or delete old vector rows.
 
 ## Google scopes
 

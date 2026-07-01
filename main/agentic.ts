@@ -9,7 +9,7 @@ import {
   SettingsRepo,
   ThreadsRepo,
 } from './database';
-import { completeAI, createEmbeddings, getAIProviderDescriptor, getEmbeddingModelName } from './ai';
+import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
 import { GmailSyncService } from './gmail';
 import {
   analyzeMessageSecurity,
@@ -26,6 +26,9 @@ import type {
   AIProviderPreference,
   AISettings,
   Draft,
+  EmbeddingIndexJobStatus,
+  EmbeddingIndexReindexOptions,
+  EmbeddingIndexStatus,
   MailMessage,
   MailThread,
   SemanticSearchResult,
@@ -65,7 +68,16 @@ function normalizeAgentRules(input: Partial<AgentRulesSettings> | undefined): Ag
 }
 
 const activeDraftThreads = new Set<string>();
-const activeEmbeddingAccounts = new Set<string>();
+const activeRecentEmbeddingAccounts = new Set<string>();
+const embeddingIndexJobs = new Map<string, EmbeddingIndexJobStatus>();
+const EMBEDDING_BATCH_SIZE = 16;
+const EMBEDDING_FULL_INDEX_LIMIT = 100000;
+
+interface EmbeddingCandidate {
+  message: MailMessage;
+  text: string;
+  textHash: string;
+}
 
 function readAgentSettings(): RuntimeAgentSettings {
   try {
@@ -115,6 +127,68 @@ function buildEmbeddingText(message: MailMessage): string {
     `Snippet: ${message.snippet}`,
     body,
   ].filter(Boolean).join('\n'));
+}
+
+function nowISO(): string {
+  return new Date().toISOString();
+}
+
+function toErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isRunningEmbeddingJob(accountId: string): boolean {
+  return embeddingIndexJobs.get(accountId)?.state === 'running';
+}
+
+function currentEmbeddingModel(settings: AIEmbeddingSettings): string {
+  return buildEmbeddingIndexKey(normalizeEmbeddingSettings(settings));
+}
+
+function buildEmbeddingCandidates(messages: MailMessage[]): EmbeddingCandidate[] {
+  return messages
+    .map(message => ({ message, text: buildEmbeddingText(message) }))
+    .filter(item => item.text.length >= 20)
+    .map(item => ({ ...item, textHash: stableTextHash(item.text) }));
+}
+
+function selectPendingEmbeddingCandidates(candidates: EmbeddingCandidate[], indexedHashes: Record<string, string>): EmbeddingCandidate[] {
+  return candidates.filter(item => indexedHashes[item.message.id] !== item.textHash);
+}
+
+async function pauseBetweenEmbeddingBatches(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function saveEmbeddingBatch(settings: AIEmbeddingSettings, batch: EmbeddingCandidate[]): Promise<number> {
+  const response = await createEmbeddings(batch.map(item => item.text), {
+    settings,
+    purpose: 'document',
+  });
+  if (response.embeddings.length !== batch.length) {
+    throw new Error(`Embedding provider returned ${response.embeddings.length} vectors for ${batch.length} messages.`);
+  }
+
+  const indexedAt = nowISO();
+  MailEmbeddingsRepo.saveMany(batch.map((item, batchIndex) => ({
+    accountId: item.message.accountId,
+    messageId: item.message.id,
+    threadId: item.message.threadId,
+    model: response.model,
+    textHash: item.textHash,
+    vector: response.embeddings[batchIndex],
+    subject: item.message.subject,
+    sender: item.message.senderName || item.message.senderEmail,
+    snippet: item.message.snippet,
+    receivedAt: item.message.receivedAt,
+    indexedAt,
+  })));
+
+  return batch.length;
+}
+
+function embeddingJobSnapshot(job: EmbeddingIndexJobStatus | undefined): EmbeddingIndexJobStatus | null {
+  return job ? { ...job } : null;
 }
 
 function cleanDraftText(text: string): string {
@@ -226,45 +300,27 @@ function analyzeThreadMessages(accountId: string, messages: MailMessage[]): void
 }
 
 async function indexRecentMessages(accountId: string, maxMessages = 40): Promise<number> {
-  if (activeEmbeddingAccounts.has(accountId)) return 0;
-  activeEmbeddingAccounts.add(accountId);
+  if (isRunningEmbeddingJob(accountId)) return 0;
+  if (activeRecentEmbeddingAccounts.has(accountId)) return 0;
+  activeRecentEmbeddingAccounts.add(accountId);
 
   try {
     const settings = readAgentSettings().embeddings;
-    const model = await getEmbeddingModelName(settings);
+    const model = currentEmbeddingModel(settings);
     const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
-    const candidates = MessagesRepo.listRecent(accountId, maxMessages * 3)
-      .map(message => ({ message, text: buildEmbeddingText(message) }))
-      .filter(item => item.text.length >= 20)
-      .map(item => ({ ...item, textHash: stableTextHash(item.text) }))
-      .filter(item => indexedHashes[item.message.id] !== item.textHash)
+    const candidates = selectPendingEmbeddingCandidates(
+      buildEmbeddingCandidates(MessagesRepo.listRecent(accountId, maxMessages * 3)),
+      indexedHashes
+    )
       .slice(0, maxMessages);
 
     if (candidates.length === 0) return 0;
 
-    const batchSize = 16;
     let indexed = 0;
-    for (let index = 0; index < candidates.length; index += batchSize) {
-      const batch = candidates.slice(index, index + batchSize);
-      const response = await createEmbeddings(batch.map(item => item.text), {
-        settings,
-        purpose: 'document',
-      });
-      const now = new Date().toISOString();
-      MailEmbeddingsRepo.saveMany(batch.map((item, batchIndex) => ({
-        accountId: item.message.accountId,
-        messageId: item.message.id,
-        threadId: item.message.threadId,
-        model: response.model,
-        textHash: item.textHash,
-        vector: response.embeddings[batchIndex],
-        subject: item.message.subject,
-        sender: item.message.senderName || item.message.senderEmail,
-        snippet: item.message.snippet,
-        receivedAt: item.message.receivedAt,
-        indexedAt: now,
-      })));
-      indexed += batch.length;
+    for (let index = 0; index < candidates.length; index += EMBEDDING_BATCH_SIZE) {
+      const batch = candidates.slice(index, index + EMBEDDING_BATCH_SIZE);
+      indexed += await saveEmbeddingBatch(settings, batch);
+      await pauseBetweenEmbeddingBatches();
     }
 
     return indexed;
@@ -272,8 +328,192 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
     console.warn('[Agentic] Semantic indexing skipped:', err);
     return 0;
   } finally {
-    activeEmbeddingAccounts.delete(accountId);
+    activeRecentEmbeddingAccounts.delete(accountId);
   }
+}
+
+async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<EmbeddingIndexStatus> {
+  const settings = readAgentSettings();
+  const model = currentEmbeddingModel(settings.embeddings);
+  const modelStats = MailEmbeddingsRepo.modelStats(accountId);
+  const models = modelStats.map(item => ({
+    model: item.model,
+    count: item.count,
+    lastIndexedAt: item.lastIndexedAt,
+    isCurrent: item.model === model,
+  }));
+  const otherIndexedMessages = modelStats
+    .filter(item => item.model !== model)
+    .reduce((sum, item) => sum + item.count, 0);
+  const job = embeddingIndexJobs.get(accountId);
+
+  if (job?.state === 'running') {
+    const currentIndexedCount = modelStats.find(item => item.model === model)?.count || 0;
+    const jobPendingMessages = Math.max(0, job.total - job.processed);
+    return {
+      accountId,
+      currentModel: model,
+      totalMessages: Math.max(currentIndexedCount + jobPendingMessages, job.total),
+      indexedMessages: currentIndexedCount,
+      pendingMessages: jobPendingMessages,
+      staleMessages: 0,
+      otherIndexedMessages,
+      models,
+      job: embeddingJobSnapshot(job),
+      semanticSearchEnabled: settings.semanticSearchEnabled,
+    };
+  }
+
+  const candidates = buildEmbeddingCandidates(MessagesRepo.listForEmbedding(accountId, EMBEDDING_FULL_INDEX_LIMIT));
+  const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
+
+  let indexedMessages = 0;
+  let pendingMessages = 0;
+  let staleMessages = 0;
+
+  for (const candidate of candidates) {
+    const indexedHash = indexedHashes[candidate.message.id];
+    if (!indexedHash) {
+      pendingMessages += 1;
+    } else if (indexedHash !== candidate.textHash) {
+      staleMessages += 1;
+    } else {
+      indexedMessages += 1;
+    }
+  }
+
+  return {
+    accountId,
+    currentModel: model,
+    totalMessages: candidates.length,
+    indexedMessages,
+    pendingMessages,
+    staleMessages,
+    otherIndexedMessages,
+    models,
+    job: embeddingJobSnapshot(job),
+    semanticSearchEnabled: settings.semanticSearchEnabled,
+  };
+}
+
+async function runEmbeddingReindexJob(
+  job: EmbeddingIndexJobStatus,
+  settings: AIEmbeddingSettings,
+  candidates: EmbeddingCandidate[]
+): Promise<void> {
+  try {
+    for (let index = 0; index < candidates.length; index += EMBEDDING_BATCH_SIZE) {
+      if (job.cancelRequested) break;
+
+      const batch = candidates.slice(index, index + EMBEDDING_BATCH_SIZE);
+      try {
+        job.indexed += await saveEmbeddingBatch(settings, batch);
+        job.processed += batch.length;
+      } catch (err) {
+        job.failed += batch.length;
+        job.processed += batch.length;
+        throw err;
+      }
+      job.updatedAt = nowISO();
+      await pauseBetweenEmbeddingBatches();
+    }
+
+    job.state = job.cancelRequested ? 'cancelled' : 'completed';
+  } catch (err) {
+    job.state = 'failed';
+    job.error = toErrorMessage(err);
+    console.warn('[Agentic] Embedding reindex failed:', err);
+  } finally {
+    const finishedAt = nowISO();
+    job.updatedAt = finishedAt;
+    job.completedAt = finishedAt;
+  }
+}
+
+async function startEmbeddingReindexForAccount(
+  accountId: string,
+  options: EmbeddingIndexReindexOptions = {}
+): Promise<EmbeddingIndexStatus> {
+  const runningJob = embeddingIndexJobs.get(accountId);
+  if (runningJob?.state === 'running') {
+    return getEmbeddingIndexStatusForAccount(accountId);
+  }
+
+  const settings = readAgentSettings();
+  if (!settings.semanticSearchEnabled) {
+    throw new Error('Semantic search is disabled. Enable it before indexing mail.');
+  }
+
+  const embeddingSettings = settings.embeddings;
+  const model = currentEmbeddingModel(embeddingSettings);
+  if (options.clearCurrent) {
+    MailEmbeddingsRepo.deleteByModel(accountId, model);
+  }
+  if (options.clearOther) {
+    MailEmbeddingsRepo.deleteOtherModels(accountId, model);
+  }
+
+  const candidates = buildEmbeddingCandidates(MessagesRepo.listForEmbedding(accountId, EMBEDDING_FULL_INDEX_LIMIT));
+  const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
+  const pendingCandidates = selectPendingEmbeddingCandidates(candidates, indexedHashes);
+  const startedAt = nowISO();
+  const job: EmbeddingIndexJobStatus = {
+    state: pendingCandidates.length > 0 ? 'running' : 'completed',
+    accountId,
+    model,
+    total: pendingCandidates.length,
+    processed: 0,
+    indexed: 0,
+    failed: 0,
+    startedAt,
+    updatedAt: startedAt,
+    completedAt: pendingCandidates.length > 0 ? null : startedAt,
+    error: null,
+    cancelRequested: false,
+  };
+  embeddingIndexJobs.set(accountId, job);
+
+  if (pendingCandidates.length > 0) {
+    void runEmbeddingReindexJob(job, embeddingSettings, pendingCandidates);
+  }
+
+  return getEmbeddingIndexStatusForAccount(accountId);
+}
+
+async function cancelEmbeddingReindexForAccount(accountId: string): Promise<EmbeddingIndexStatus> {
+  const job = embeddingIndexJobs.get(accountId);
+  if (job?.state === 'running') {
+    job.cancelRequested = true;
+    job.updatedAt = nowISO();
+  }
+  return getEmbeddingIndexStatusForAccount(accountId);
+}
+
+async function deleteEmbeddingIndexForAccount(accountId: string, model: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> {
+  const job = embeddingIndexJobs.get(accountId);
+  if (job?.state === 'running') {
+    throw new Error('Stop the active embedding index job before deleting indexes.');
+  }
+
+  const deleted = MailEmbeddingsRepo.deleteByModel(accountId, model);
+  return {
+    deleted,
+    status: await getEmbeddingIndexStatusForAccount(accountId),
+  };
+}
+
+async function deleteOtherEmbeddingIndexesForAccount(accountId: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> {
+  const job = embeddingIndexJobs.get(accountId);
+  if (job?.state === 'running') {
+    throw new Error('Stop the active embedding index job before deleting indexes.');
+  }
+
+  const model = currentEmbeddingModel(readAgentSettings().embeddings);
+  const deleted = MailEmbeddingsRepo.deleteOtherModels(accountId, model);
+  return {
+    deleted,
+    status: await getEmbeddingIndexStatusForAccount(accountId),
+  };
 }
 
 function chooseUnsubscribeCandidate(messages: MailMessage[]): UnsubscribeCandidate | null {
@@ -377,6 +617,26 @@ export const AgenticService = {
 
   async markDraftSuggestionApplied(id: string): Promise<void> {
     AgentDraftsRepo.setStatus(id, 'applied');
+  },
+
+  async getEmbeddingIndexStatus(accountId: string): Promise<EmbeddingIndexStatus> {
+    return getEmbeddingIndexStatusForAccount(accountId);
+  },
+
+  async startEmbeddingReindex(accountId: string, options?: EmbeddingIndexReindexOptions): Promise<EmbeddingIndexStatus> {
+    return startEmbeddingReindexForAccount(accountId, options);
+  },
+
+  async cancelEmbeddingReindex(accountId: string): Promise<EmbeddingIndexStatus> {
+    return cancelEmbeddingReindexForAccount(accountId);
+  },
+
+  async deleteEmbeddingIndex(accountId: string, model: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> {
+    return deleteEmbeddingIndexForAccount(accountId, model);
+  },
+
+  async deleteOtherEmbeddingIndexes(accountId: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> {
+    return deleteOtherEmbeddingIndexesForAccount(accountId);
   },
 
   async searchSemantic(accountId: string, query: string, limit = 60): Promise<SemanticSearchResult[]> {
