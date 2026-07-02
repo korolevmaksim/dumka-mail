@@ -44,6 +44,15 @@ export function labelParentName(name: string): string {
   return segments.length > 1 ? segments.slice(0, -1).join('/') : '';
 }
 
+export function labelDefinitionsForAccount(
+  labels: MailLabelDefinition[],
+  accountId?: string | null,
+): MailLabelDefinition[] {
+  const normalizedAccountId = accountId?.trim().toLowerCase();
+  if (!normalizedAccountId) return [];
+  return labels.filter(label => label.accountId.trim().toLowerCase() === normalizedAccountId);
+}
+
 export function composeNestedLabelName(parentName: string, leafName: string): string {
   const leafSegments = labelSegments(leafName);
   if (leafSegments.length > 1) return leafSegments.join('/');
@@ -90,6 +99,58 @@ export function labelDisplayName(labelId: string): string {
       return labelLeafName(labelId).replace(/_/g, ' ').toLowerCase();
     }
   }
+}
+
+function normalizedLabelSearchValue(value: string): string {
+  return value.trim().replace(/_/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+}
+
+function labelSearchCandidates(labelId: string, labels: MailLabelDefinition[], accountId?: string): string[] {
+  const candidates = [
+    labelId,
+    labelDisplayName(labelId),
+    labelLeafName(labelId),
+  ];
+  const categoryPrefix = 'CATEGORY_';
+  if (labelId.toUpperCase().startsWith(categoryPrefix)) {
+    candidates.push(labelId.slice(categoryPrefix.length));
+  }
+
+  const definition = labels.find(label =>
+    label.id.toLowerCase() === labelId.toLowerCase()
+    && (accountId === undefined || label.accountId === accountId)
+  );
+  if (definition) {
+    candidates.push(
+      definition.id,
+      definition.name,
+      labelDisplayName(definition.name),
+      labelLeafName(definition.name),
+    );
+  }
+
+  return candidates;
+}
+
+export function labelMatchesSearchQuery(
+  labelId: string,
+  query: string,
+  labels: MailLabelDefinition[] = [],
+  accountId?: string,
+): boolean {
+  const normalizedQuery = normalizedLabelSearchValue(query);
+  if (!normalizedQuery) return false;
+
+  return labelSearchCandidates(labelId, labels, accountId)
+    .some(candidate => normalizedLabelSearchValue(candidate) === normalizedQuery);
+}
+
+export function threadMatchesLabelSearchQuery(
+  thread: Pick<MailThread, 'accountId' | 'labelIds'>,
+  query: string,
+  labels: MailLabelDefinition[] = [],
+): boolean {
+  return thread.labelIds.some(labelId => labelMatchesSearchQuery(labelId, query, labels, thread.accountId));
 }
 
 /**

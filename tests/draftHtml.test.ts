@@ -148,6 +148,23 @@ describe('rich draft HTML helpers', () => {
     expect(body.bodyHtml).toContain('<b>Alex</b>');
   });
 
+  it('preserves a rich Gmail-style quoted reply after the signature', () => {
+    const quoteHtml = '<div class="gmail_quote" data-dumka-quoted-reply="true"><div class="gmail_attr">On Jun 26, Alice wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex; border-left:1px solid rgb(204,204,204); padding-left:1ex"><p>Line one<br>Line two</p></blockquote></div>';
+    const body = buildInitialDraftBodyWithSignature(
+      '\n\nOn Jun 26, Alice wrote:\n> Line one\n> Line two',
+      compose,
+      profile,
+      'alex@example.com',
+      quoteHtml,
+    );
+
+    expect(body.bodyHtml).toContain('<p><br></p>');
+    expect(body.bodyHtml).toContain('<div class="gmail_signature"');
+    expect(body.bodyHtml).toContain('data-dumka-quoted-reply="true"');
+    expect(body.bodyHtml).toContain('<blockquote class="gmail_quote"');
+    expect(body.bodyHtml).not.toContain('&gt; Line one');
+  });
+
   it('replaces the managed signature when the compose account changes', () => {
     const settings: ComposeSettings = {
       ...compose,

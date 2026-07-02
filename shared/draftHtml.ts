@@ -228,19 +228,24 @@ export function buildInitialDraftBodyWithSignature(
   compose: ComposeSettings,
   profile: ProfileSettings,
   accountId?: string | null,
+  bodyHtml?: string | null,
 ): { bodyPlain: string; bodyHtml: string | null } {
   const normalizedBody = bodyPlain.replace(/\r\n?/g, '\n');
+  const normalizedBodyHtml = sanitizeDraftHtmlFragment(bodyHtml || '');
+  const renderedBodyHtml = normalizedBodyHtml || plainTextToHtmlFragment(normalizedBody);
   const signaturePlain = renderComposeSignaturePlain(compose, profile, accountId);
   const signatureHtml = renderComposeSignatureHtmlFragment(compose, profile, accountId);
+  const signatureFragment = signatureHtml || plainTextToHtmlFragment(signaturePlain);
+  const hasBody = normalizedBody.trim().length > 0 || normalizedBodyHtml.trim().length > 0;
 
   if (!signaturePlain && !signatureHtml) {
     return {
       bodyPlain: normalizedBody,
-      bodyHtml: normalizedBody.trim() ? plainTextToHtmlFragment(normalizedBody) : null,
+      bodyHtml: renderedBodyHtml || null,
     };
   }
 
-  if (!normalizedBody.trim()) {
+  if (!hasBody) {
     return {
       bodyPlain: signaturePlain,
       bodyHtml: signatureHtml ? `<p><br></p>${signatureHtml}` : plainTextToHtmlFragment(signaturePlain),
@@ -249,7 +254,7 @@ export function buildInitialDraftBodyWithSignature(
 
   return {
     bodyPlain: `${signaturePlain}${normalizedBody.startsWith('\n') ? '' : '\n\n'}${normalizedBody}`,
-    bodyHtml: `${signatureHtml || plainTextToHtmlFragment(signaturePlain)}${plainTextToHtmlFragment(normalizedBody)}`,
+    bodyHtml: `<p><br></p>${signatureFragment}${renderedBodyHtml}`,
   };
 }
 

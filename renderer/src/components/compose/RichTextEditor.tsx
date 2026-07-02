@@ -8,6 +8,7 @@ import {
 
 export interface RichTextEditorHandle {
   focus: () => void;
+  focusAtStart: () => void;
   execute: (command: string, value?: string) => void;
   insertHtml: (html: string) => void;
   insertText: (text: string) => void;
@@ -21,6 +22,8 @@ interface RichTextEditorProps {
   bodyHtml?: string | null;
   placeholder: string;
   spellCheck?: boolean;
+  editorClassName?: string;
+  collapseQuotedText?: boolean;
   onChange: (bodyPlain: string, bodyHtml: string) => void;
   onImageFile?: (file: File) => Promise<string | null>;
 }
@@ -39,6 +42,8 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   bodyHtml,
   placeholder,
   spellCheck = true,
+  editorClassName = '',
+  collapseQuotedText = false,
   onChange,
   onImageFile,
 }, ref) {
@@ -78,6 +83,17 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
 
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
+    focusAtStart: () => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      const range = document.createRange();
+      range.setStart(editor, 0);
+      range.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    },
     execute: (command: string, value?: string) => {
       editorRef.current?.focus();
       document.execCommand(command, false, value);
@@ -133,7 +149,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
           event.preventDefault();
           void handleImageFiles(event.dataTransfer.files);
         }}
-        className="rich-compose-editor min-h-[300px] flex-1 overflow-y-auto px-5 py-4 text-[calc(13px*var(--font-scale))] leading-relaxed text-[var(--text-primary)] outline-none"
+        className={`rich-compose-editor ${collapseQuotedText ? 'rich-compose-editor--quotes-collapsed' : ''} min-h-[300px] flex-1 overflow-y-auto px-5 py-4 text-[calc(13px*var(--font-scale))] leading-relaxed text-[var(--text-primary)] outline-none ${editorClassName}`}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronRight, Folder, FolderPlus, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { useAppStore } from '../../../stores/AppStore';
 import { emitToast } from '../../../lib/toastBus';
@@ -7,6 +7,7 @@ import {
   composeNestedLabelName,
   flattenLabelTree,
   isDescendantLabel,
+  labelDefinitionsForAccount,
   labelLeafName,
   labelParentName,
 } from '../../../../../shared/labels';
@@ -17,18 +18,25 @@ function activeEmailLabel(email?: string): string {
 
 export function LabelsTab() {
   const store = useAppStore();
+  const preferredLabelEmail = store.activeAccount && store.activeAccount.id !== 'unified'
+    ? store.activeAccount.email
+    : store.accounts[0]?.email || '';
+  const [selectedLabelEmail, setSelectedLabelEmail] = useState(preferredLabelEmail);
   const [newLabelName, setNewLabelName] = useState('');
   const [newParentName, setNewParentName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingParentName, setEditingParentName] = useState('');
-  const userLabels = store.labelDefinitions.filter(label => label.type !== 'system');
-  const systemLabels = store.labelDefinitions.filter(label => label.type === 'system');
+  const [labelsSyncing, setLabelsSyncing] = useState(false);
+  const accountLabels = useMemo(
+    () => labelDefinitionsForAccount(store.labelDefinitions, selectedLabelEmail),
+    [selectedLabelEmail, store.labelDefinitions],
+  );
+  const userLabels = accountLabels.filter(label => label.type !== 'system');
+  const systemLabels = accountLabels.filter(label => label.type === 'system');
   const labelTree = useMemo(() => buildLabelTree(userLabels), [userLabels]);
   const flattenedLabels = useMemo(() => flattenLabelTree(labelTree), [labelTree]);
-  const activeEmail = store.activeAccount && store.activeAccount.id !== 'unified'
-    ? store.activeAccount.email
-    : store.accounts[0]?.email;
+  const selectedAccount = store.accounts.find(account => account.email === selectedLabelEmail) || null;
   const parentOptions = useMemo(() => {
     const editingLabel = editingId ? userLabels.find(label => label.id === editingId) : null;
     return flattenedLabels
@@ -36,11 +44,40 @@ export function LabelsTab() {
       .map(node => node.fullName);
   }, [editingId, flattenedLabels, userLabels]);
 
+  useEffect(() => {
+    if (!selectedLabelEmail && preferredLabelEmail) {
+      setSelectedLabelEmail(preferredLabelEmail);
+      return;
+    }
+
+    if (
+      selectedLabelEmail
+      && store.accounts.length > 0
+      && !store.accounts.some(account => account.email === selectedLabelEmail)
+    ) {
+      setSelectedLabelEmail(preferredLabelEmail);
+    }
+  }, [preferredLabelEmail, selectedLabelEmail, store.accounts]);
+
+  useEffect(() => {
+    if (!selectedLabelEmail) return;
+    void store.loadLabels(selectedLabelEmail).catch(err => {
+      console.error('Label cache load failed:', err);
+    });
+  }, [selectedLabelEmail, store.loadLabels]);
+
+  useEffect(() => {
+    setNewParentName('');
+    setEditingId(null);
+    setEditingName('');
+    setEditingParentName('');
+  }, [selectedLabelEmail]);
+
   const create = async () => {
     const labelName = composeNestedLabelName(newParentName, newLabelName);
-    if (!labelName) return;
+    if (!selectedLabelEmail || !labelName) return;
     try {
-      await store.createLabel(labelName);
+      await store.createLabel(labelName, selectedLabelEmail);
       setNewLabelName('');
       emitToast({ type: 'success', message: 'Label created.' });
     } catch (err) {
@@ -51,9 +88,9 @@ export function LabelsTab() {
 
   const saveEdit = async () => {
     const labelName = composeNestedLabelName(editingParentName, editingName);
-    if (!editingId || !labelName) return;
+    if (!selectedLabelEmail || !editingId || !labelName) return;
     try {
-      await store.updateLabel(editingId, { name: labelName });
+      await store.updateLabel(editingId, { name: labelName }, selectedLabelEmail);
       setEditingId(null);
       setEditingName('');
       setEditingParentName('');
@@ -61,6 +98,20 @@ export function LabelsTab() {
     } catch (err) {
       console.error('Label rename failed:', err);
       emitToast({ type: 'error', message: 'Could not rename Gmail label.' });
+    }
+  };
+
+  const syncSelectedLabels = async () => {
+    if (!selectedLabelEmail || labelsSyncing) return;
+    setLabelsSyncing(true);
+    try {
+      await store.syncLabels(selectedLabelEmail);
+      emitToast({ type: 'success', message: `Labels synced for ${selectedLabelEmail}.` });
+    } catch (err) {
+      console.error('Label sync failed:', err);
+      emitToast({ type: 'error', message: `Could not sync labels for ${selectedLabelEmail}.` });
+    } finally {
+      setLabelsSyncing(false);
     }
   };
 
@@ -72,27 +123,46 @@ export function LabelsTab() {
       </div>
 
       <div className="rounded-lg border border-[var(--border)] bg-[var(--rail-bg)] p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
-            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{activeEmailLabel(activeEmail)}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Synced from Gmail labels API.</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{activeEmailLabel(selectedLabelEmail)}</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+              {selectedAccount ? 'Labels are cached separately for this Gmail account.' : 'Choose a Gmail account to manage labels.'}
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={() => void store.syncLabels()}
-            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)]"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Sync
-          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedLabelEmail}
+              onChange={(event) => setSelectedLabelEmail(event.target.value)}
+              disabled={store.accounts.length === 0}
+              title="Gmail account"
+              className="max-w-[260px] rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            >
+              {store.accounts.length === 0 ? (
+                <option value="">No accounts</option>
+              ) : store.accounts.map(account => (
+                <option key={account.email} value={account.email}>{account.email}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void syncSelectedLabels()}
+              disabled={!selectedLabelEmail || labelsSyncing}
+              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${labelsSyncing ? 'animate-spin' : ''}`} />
+              {labelsSyncing ? 'Syncing' : 'Sync'}
+            </button>
+          </div>
         </div>
 
         <div className="flex gap-2">
           <select
             value={newParentName}
             onChange={(event) => setNewParentName(event.target.value)}
+            disabled={!selectedLabelEmail}
             title="Parent folder"
-            className="max-w-[190px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="max-w-[190px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             <option value="">Top level</option>
             {parentOptions.map(parent => (
@@ -102,16 +172,18 @@ export function LabelsTab() {
           <input
             value={newLabelName}
             onChange={(event) => setNewLabelName(event.target.value)}
+            disabled={!selectedLabelEmail}
             onKeyDown={(event) => {
               if (event.key === 'Enter') void create();
             }}
             placeholder={newParentName ? 'Child folder' : 'e.g. Clients or Clients/Acme'}
-            className="flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
           <button
             type="button"
             onClick={() => void create()}
-            className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white"
+            disabled={!selectedLabelEmail || !newLabelName.trim()}
+            className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FolderPlus className="h-3.5 w-3.5" />
             Create
@@ -186,7 +258,13 @@ export function LabelsTab() {
                         type: 'warning',
                         message: `Delete ${node.label.name}?`,
                         actionLabel: 'Delete',
-                        onAction: () => void store.deleteLabel(node.label!.id),
+                        onAction: () => {
+                          if (!selectedLabelEmail) return;
+                          void store.deleteLabel(node.label!.id, selectedLabelEmail).catch(err => {
+                            console.error('Label delete failed:', err);
+                            emitToast({ type: 'error', message: 'Could not delete Gmail label.' });
+                          });
+                        },
                         duration: 6000,
                       });
                     }}

@@ -25,7 +25,7 @@ import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { shouldCloseReaderForSearchChange } from './lib/searchReaderBehavior';
-import { buildLabelTree, flattenLabelTree, labelPresenceInThreads } from '../../shared/labels';
+import { buildLabelTree, flattenLabelTree, labelDefinitionsForAccount, labelPresenceInThreads } from '../../shared/labels';
 import { isReversibleMailActionKind } from '../../shared/mailActions';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
 import type { MailboxView, MailThread } from '../../shared/types';
@@ -63,23 +63,36 @@ function AppContent() {
     thread: any;
   } | null>(null);
   const previousSearchQueryRef = useRef(store.searchQuery);
-  const userLabelNodes = useMemo(
-    () => flattenLabelTree(buildLabelTree(store.labelDefinitions.filter(label => label.type !== 'system'))),
-    [store.labelDefinitions],
-  );
   const selectedThreads = useMemo(
     () => store.threads.filter(thread => store.selectedThreadIds.has(thread.id)),
     [store.selectedThreadIds, store.threads],
   );
+  const selectedThreadsAccountId = useMemo(() => {
+    const accountIds = Array.from(new Set(selectedThreads.map(thread => thread.accountId)));
+    return accountIds.length === 1 ? accountIds[0] : null;
+  }, [selectedThreads]);
+  const openedThreadAccountId = store.openedThread?.accountId || null;
+  const selectedUserLabelNodes = useMemo(
+    () => flattenLabelTree(buildLabelTree(
+      labelDefinitionsForAccount(store.labelDefinitions, selectedThreadsAccountId).filter(label => label.type !== 'system')
+    )),
+    [selectedThreadsAccountId, store.labelDefinitions],
+  );
+  const openedUserLabelNodes = useMemo(
+    () => flattenLabelTree(buildLabelTree(
+      labelDefinitionsForAccount(store.labelDefinitions, openedThreadAccountId).filter(label => label.type !== 'system')
+    )),
+    [openedThreadAccountId, store.labelDefinitions],
+  );
   const selectedLabelPresenceById = useMemo(() => {
     const presenceById: Record<string, 'some' | 'all'> = {};
-    for (const node of userLabelNodes) {
+    for (const node of selectedUserLabelNodes) {
       if (!node.label) continue;
       const presence = labelPresenceInThreads(node.label.id, selectedThreads);
       if (presence !== 'none') presenceById[node.label.id] = presence;
     }
     return presenceById;
-  }, [selectedThreads, userLabelNodes]);
+  }, [selectedThreads, selectedUserLabelNodes]);
 
   // Set platform attribute for cross-platform layout padding overrides (macOS vs Windows/Linux titlebars)
   useEffect(() => {
@@ -323,7 +336,10 @@ function AppContent() {
     setMailboxMenuOpen(false);
   }, [store.mailboxView]);
 
-  const labelNameForToast = (labelId: string) => store.labelDefinitions.find(label => label.id === labelId)?.name || 'label';
+  const labelNameForToast = (labelId: string, accountId?: string | null) =>
+    store.labelDefinitions.find(label =>
+      label.id === labelId && (!accountId || label.accountId === accountId)
+    )?.name || 'label';
 
   const runSelectedLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
     const threadIds = Array.from(store.selectedThreadIds);
@@ -334,7 +350,8 @@ function AppContent() {
       void store.executeMailAction(kind, threadId, null, undefined, JSON.stringify({ labelId }));
     }
     const verb = kind === 'moveToLabel' ? 'Moved' : kind === 'applyLabel' ? 'Applied' : 'Removed';
-    const suffix = kind === 'removeLabel' ? ` from ${labelNameForToast(labelId)}` : ` ${labelNameForToast(labelId)}`;
+    const labelName = labelNameForToast(labelId, selectedThreadsAccountId);
+    const suffix = kind === 'removeLabel' ? ` from ${labelName}` : ` ${labelName}`;
     emitToast({ type: 'success', message: `${verb} ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'}${suffix}.` });
   };
 
@@ -735,6 +752,10 @@ function AppContent() {
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
+                                if (!selectedThreadsAccountId) {
+                                  emitToast({ type: 'warning', message: 'Select threads from one account to apply Gmail labels.' });
+                                  return;
+                                }
                                 setBatchLabelMenuOpen(value => !value);
                               }}
                               title="Label selected threads"
@@ -744,8 +765,10 @@ function AppContent() {
                             </button>
                             {batchLabelMenuOpen && (
                               <ThreadLabelMoveMenu
-                                nodes={userLabelNodes}
-                                onSyncLabels={() => void store.syncLabels()}
+                                nodes={selectedUserLabelNodes}
+                                onSyncLabels={() => {
+                                  if (selectedThreadsAccountId) void store.syncLabels(selectedThreadsAccountId);
+                                }}
                                 onMove={(labelId) => runSelectedLabelAction('moveToLabel', labelId)}
                                 onApply={(labelId) => runSelectedLabelAction('applyLabel', labelId)}
                                 onRemove={(labelId) => runSelectedLabelAction('removeLabel', labelId)}
@@ -981,8 +1004,10 @@ function AppContent() {
                               </button>
                             {labelMenuOpen && (
                                 <ThreadLabelMoveMenu
-                                  nodes={userLabelNodes}
-                                  onSyncLabels={() => void store.syncLabels()}
+                                  nodes={openedUserLabelNodes}
+                                  onSyncLabels={() => {
+                                    if (openedThreadAccountId) void store.syncLabels(openedThreadAccountId);
+                                  }}
                                   onMove={(labelId) => runOpenedThreadLabelAction('moveToLabel', labelId)}
                                   onApply={(labelId) => runOpenedThreadLabelAction('applyLabel', labelId)}
                                   onRemove={(labelId) => runOpenedThreadLabelAction('removeLabel', labelId)}

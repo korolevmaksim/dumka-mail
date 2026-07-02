@@ -338,6 +338,7 @@ interface AppStoreContextType {
   contactGroups: ContactGroup[];
   calendarEvents: CalendarEvent[];
   authorizeGoogleIntegration: (integration: 'calendar' | 'contacts', email?: string) => Promise<void>;
+  loadLabels: (email?: string) => Promise<MailLabelDefinition[]>;
   syncLabels: (email?: string) => Promise<void>;
   createLabel: (name: string, email?: string) => Promise<void>;
   updateLabel: (labelId: string, patch: Partial<MailLabelDefinition>, email?: string) => Promise<void>;
@@ -440,6 +441,18 @@ interface AppStoreContextType {
 
 const AppStoreContext = createContext<AppStoreContextType | null>(null);
 
+function replaceLabelsForAccount(
+  current: MailLabelDefinition[],
+  accountId: string,
+  next: MailLabelDefinition[],
+): MailLabelDefinition[] {
+  const normalizedAccountId = accountId.trim().toLowerCase();
+  return [
+    ...current.filter(label => label.accountId.trim().toLowerCase() !== normalizedAccountId),
+    ...next,
+  ];
+}
+
 export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const settingsState = useSettingsState();
   const [googleIntegrationStatus, setGoogleIntegrationStatus] = useState<GoogleIntegrationStatus | null>(null);
@@ -480,6 +493,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const mailState = useMailState({
     customClassifierRules: settingsState.customClassifierRules,
     tabCategories: settingsState.tabCategories,
+    labelDefinitions,
     mutedLabelIdsByAccount,
     applyGmailSignatureSyncResult,
   });
@@ -572,7 +586,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       window.electronAPI.listCalendarEvents(targetEmail, startAt, endAt),
     ]);
     setGoogleIntegrationStatus(status);
-    setLabelDefinitions(labels);
+    setLabelDefinitions(current => replaceLabelsForAccount(current, targetEmail, labels));
     setContacts(contactList);
     setContactGroups(groups);
     setCalendarEvents(events);
@@ -582,11 +596,19 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     void loadWorkspaceCache();
   }, [loadWorkspaceCache]);
 
+  const loadLabels = useCallback(async (email?: string): Promise<MailLabelDefinition[]> => {
+    const targetEmail = email || primaryWorkspaceEmail;
+    if (!targetEmail) return [];
+    const labels = await window.electronAPI.listLabels(targetEmail);
+    setLabelDefinitions(current => replaceLabelsForAccount(current, targetEmail, labels));
+    return labels;
+  }, [primaryWorkspaceEmail]);
+
   const syncLabels = useCallback(async (email?: string) => {
     const targetEmail = email || primaryWorkspaceEmail;
     if (!targetEmail) return;
     const labels = await window.electronAPI.syncLabels(targetEmail);
-    setLabelDefinitions(labels);
+    setLabelDefinitions(current => replaceLabelsForAccount(current, targetEmail, labels));
   }, [primaryWorkspaceEmail]);
 
   const createLabel = useCallback(async (name: string, email?: string) => {
@@ -830,6 +852,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     contactGroups,
     calendarEvents,
     authorizeGoogleIntegration,
+    loadLabels,
     syncLabels,
     createLabel,
     updateLabel,

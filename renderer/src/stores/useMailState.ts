@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory, MailboxView, ThreadAgentInsights } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { parseSearchQuery } from '../../../shared/search';
 import { SplitInboxRouter } from '../../../shared/classifier';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
+import { threadMatchesLabelSearchQuery } from '../../../shared/labels';
 import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
@@ -22,6 +23,7 @@ const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
 interface UseMailStateProps {
   customClassifierRules: CustomClassifierRule[];
   tabCategories: TabCategory[];
+  labelDefinitions: MailLabelDefinition[];
   mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
 }
@@ -45,6 +47,7 @@ function threadStateKey(thread: Pick<MailThread, 'accountId' | 'id'> | null): st
 export function useMailState({
   customClassifierRules,
   tabCategories,
+  labelDefinitions,
   mutedLabelIdsByAccount,
   applyGmailSignatureSyncResult,
 }: UseMailStateProps) {
@@ -494,6 +497,9 @@ export function useMailState({
         if (parsed.isUnread !== undefined) {
           filtered = filtered.filter(t => t.isUnread === parsed.isUnread);
         }
+        if (parsed.label) {
+          filtered = filtered.filter(t => threadMatchesLabelSearchQuery(t, parsed.label!, labelDefinitions));
+        }
       } else if (mailboxView !== 'inbox') {
         filtered = threads.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
       } else {
@@ -512,7 +518,7 @@ export function useMailState({
     };
 
     filterThreads();
-  }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory, mutedLabelIdsByAccount]);
+  }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory, labelDefinitions, mutedLabelIdsByAccount]);
 
   // Recalculate Split Tabs counters
   useEffect(() => {

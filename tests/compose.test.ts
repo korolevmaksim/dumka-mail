@@ -181,6 +181,10 @@ describe('startReply', () => {
     expect(seed.body).toContain('Alice Sender wrote:');
     expect(seed.body).toContain('> Line one');
     expect(seed.body).toContain('> Line two');
+    expect(seed.bodyHtml).toContain('data-dumka-quoted-reply="true"');
+    expect(seed.bodyHtml).toContain('<blockquote class="gmail_quote"');
+    expect(seed.bodyHtml).toContain('Line one<br>Line two');
+    expect(seed.bodyHtml).not.toContain('&gt; Line one');
   });
 
   it('does not double-prefix an existing Re: subject (case-insensitive)', () => {
@@ -213,6 +217,18 @@ describe('startReply', () => {
   it('quotes the snippet when there is no plain body', () => {
     const seed = startReply(makeMessage({ bodyPlain: null, snippet: 'snip line' }), 'me@example.com');
     expect(seed.body).toContain('> snip line');
+    expect(seed.bodyHtml).toContain('<p>snip line</p>');
+  });
+
+  it('uses sanitized original HTML inside the Gmail-style quote', () => {
+    const seed = startReply(makeMessage({
+      bodyHtml: '<p>Hello <strong>team</strong></p><script>alert(1)</script>',
+      bodyPlain: 'Hello team',
+    }), 'me@example.com');
+
+    expect(seed.bodyHtml).toContain('<strong>team</strong>');
+    expect(seed.bodyHtml).toContain('<blockquote class="gmail_quote"');
+    expect(seed.bodyHtml).not.toContain('<script>');
   });
 });
 

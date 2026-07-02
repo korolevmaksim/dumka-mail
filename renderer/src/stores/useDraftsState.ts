@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Account, MailThread, MailMessage, Draft, AppSettings } from '../../../shared/types';
 import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
-import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText } from '../../../shared/draftHtml';
+import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
 
 interface UseDraftsStateProps {
@@ -122,7 +122,7 @@ export function useDraftsState({
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
     const seed = buildReplySeed(message, selfEmail, replyAll || settings.compose.alwaysReplyAll);
-    const initialBody = buildInitialDraftBodyWithSignature(seed.body, settings.compose, settings.profile, message.accountId);
+    const initialBody = buildInitialDraftBodyWithSignature(seed.body, settings.compose, settings.profile, message.accountId, seed.bodyHtml);
     const draft: Draft = {
       id: crypto.randomUUID(),
       accountId: message.accountId,
@@ -140,6 +140,7 @@ export function useDraftsState({
     };
     window.electronAPI.saveDraft(draft).catch(e => console.error('saveDraft (reply) failed', e));
     setActiveDraft(draft);
+    setComposeLayout('inline');
     loadDrafts();
   };
 
@@ -149,7 +150,10 @@ export function useDraftsState({
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
     const seed = buildReplySeed(message, selfEmail, replyAll || settings.compose.alwaysReplyAll);
-    const initialBody = buildInitialDraftBodyWithSignature(bodyPlain, settings.compose, settings.profile, message.accountId);
+    const responsePlain = bodyPlain.trim();
+    const combinedBodyPlain = responsePlain ? `${responsePlain}${seed.body}` : seed.body;
+    const combinedBodyHtml = `${responsePlain ? plainTextToHtmlFragment(responsePlain) : ''}${seed.bodyHtml || ''}`;
+    const initialBody = buildInitialDraftBodyWithSignature(combinedBodyPlain, settings.compose, settings.profile, message.accountId, combinedBodyHtml);
     const draft: Draft = {
       id: crypto.randomUUID(),
       accountId: message.accountId,

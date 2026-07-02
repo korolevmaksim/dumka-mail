@@ -7,6 +7,7 @@
 // (standard JS/TS + Intl + relative `shared/` imports only).
 
 import type { EmailAddressSuggestion, MailMessage, Recipient } from './types'
+import { escapeHtml, plainTextToHtmlFragment, sanitizeDraftHtmlFragment } from './draftHtml'
 
 /** A pre-filled draft skeleton produced by reply/forward actions. */
 export interface DraftSeed {
@@ -14,6 +15,7 @@ export interface DraftSeed {
   cc: Recipient[]
   subject: string
   body: string
+  bodyHtml?: string | null
   /** RFC `In-Reply-To` message id (from the message's `rfcMessageId`). */
   replyMessageId?: string | null
   /** RFC `References` header value (existing refs + the message id). */
@@ -240,6 +242,11 @@ function bodySource(message: MailMessage): string {
   return message.bodyPlain ?? message.snippet ?? ''
 }
 
+function bodyHtmlSource(message: MailMessage): string {
+  const richBody = sanitizeDraftHtmlFragment(message.bodyHtml || '')
+  return richBody || plainTextToHtmlFragment(bodySource(message))
+}
+
 // ---------------------------------------------------------------------------
 // Subject helpers (ported from `Draft.subject`)
 // ---------------------------------------------------------------------------
@@ -268,12 +275,31 @@ function replyThreading(message: MailMessage): { replyMessageId: string | null; 
 // Body builders
 // ---------------------------------------------------------------------------
 
-function quoteReplyBody(message: MailMessage): string {
-  const original = bodySource(message)
+const GMAIL_QUOTE_STYLE = 'margin:0px 0px 0px 0.8ex; border-left:1px solid rgb(204,204,204); padding-left:1ex'
+
+function replyAttribution(message: MailMessage): string {
   const sender = (message.senderName ?? '').trim() || message.senderEmail
   const date = formatMessageHeaderDate(message.receivedAt)
+  return `On ${date}, ${sender} wrote:`
+}
+
+function quoteReplyBody(message: MailMessage): string {
+  const original = bodySource(message)
   const quoted = original.split('\n').map((line) => `> ${line}`).join('\n')
-  return `\n\nOn ${date}, ${sender} wrote:\n${quoted}`
+  return `\n\n${replyAttribution(message)}\n${quoted}`
+}
+
+function quoteReplyBodyHtml(message: MailMessage): string {
+  const original = bodyHtmlSource(message)
+  const attribution = escapeHtml(replyAttribution(message))
+  return [
+    '<div class="gmail_quote" data-dumka-quoted-reply="true">',
+    `<div class="gmail_attr" dir="ltr">${attribution}<br></div>`,
+    `<blockquote class="gmail_quote" style="${GMAIL_QUOTE_STYLE}">`,
+    original,
+    '</blockquote>',
+    '</div>',
+  ].join('')
 }
 
 function forwardBody(message: MailMessage): string {
@@ -344,6 +370,7 @@ export function startReply(message: MailMessage, selfEmail: string, replyAll = f
     cc,
     subject: replySubject(message.subject),
     body: quoteReplyBody(message),
+    bodyHtml: quoteReplyBodyHtml(message),
     replyMessageId,
     replyReferences,
   }

@@ -4,12 +4,15 @@ import {
   composeNestedLabelName,
   flattenLabelTree,
   isDescendantLabel,
+  labelDefinitionsForAccount,
+  labelMatchesSearchQuery,
   labelDisplayName,
   labelLeafName,
   labelParentName,
   labelPresenceInThreads,
   pillColorHex,
   primaryRowLabel,
+  threadMatchesLabelSearchQuery,
   threadRowLabelIds,
 } from '../shared/labels';
 import type { MailLabelDefinition, MailThread } from '../shared/types';
@@ -92,6 +95,39 @@ describe('label helpers', () => {
       name: 'acme inc',
       color: '#668FEA',
     });
+  });
+
+  it('matches search label queries against Gmail system label ids and visible names', () => {
+    expect(labelMatchesSearchQuery('CATEGORY_FORUMS', 'FORUMS')).toBe(true);
+    expect(labelMatchesSearchQuery('CATEGORY_FORUMS', 'forums')).toBe(true);
+    expect(labelMatchesSearchQuery('CATEGORY_PROMOTIONS', 'promotions')).toBe(true);
+    expect(labelMatchesSearchQuery('CATEGORY_PROMOTIONS', 'marketing')).toBe(true);
+    expect(labelMatchesSearchQuery('CATEGORY_UPDATES', 'forums')).toBe(false);
+  });
+
+  it('matches custom Gmail labels by definition name when threads only store label ids', () => {
+    const labels = [
+      label('Label_123', 'Jira'),
+      label('Label_456', 'Clients/Acme_Inc'),
+    ];
+
+    expect(threadMatchesLabelSearchQuery({ accountId: 'me@example.com', labelIds: ['Label_123'] }, 'JIRA', labels)).toBe(true);
+    expect(threadMatchesLabelSearchQuery({ accountId: 'me@example.com', labelIds: ['Label_456'] }, 'acme inc', labels)).toBe(true);
+    expect(threadMatchesLabelSearchQuery({ accountId: 'me@example.com', labelIds: ['Label_456'] }, 'Clients/Acme Inc', labels)).toBe(true);
+    expect(threadMatchesLabelSearchQuery({ accountId: 'me@example.com', labelIds: ['Label_123'] }, 'GitHub', labels)).toBe(false);
+    expect(threadMatchesLabelSearchQuery({ accountId: 'other@example.com', labelIds: ['Label_123'] }, 'JIRA', labels)).toBe(false);
+  });
+
+  it('filters cached label definitions by account before building account-scoped UIs', () => {
+    const labels = [
+      label('Label_123', 'Clients'),
+      { ...label('Label_123', 'Personal'), accountId: 'other@example.com' },
+      { ...label('Label_456', 'News'), accountId: 'Other@Example.com' },
+    ];
+
+    expect(labelDefinitionsForAccount(labels, 'ME@EXAMPLE.COM').map(item => item.name)).toEqual(['Clients']);
+    expect(labelDefinitionsForAccount(labels, 'other@example.com').map(item => item.name)).toEqual(['Personal', 'News']);
+    expect(labelDefinitionsForAccount(labels, null)).toEqual([]);
   });
 
   it('composes Gmail nested label names while normalizing separators', () => {

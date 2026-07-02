@@ -44,6 +44,11 @@ describe('Search Query Parser', () => {
     expect(parsed.textTerms).toEqual([]);
   });
 
+  it('handles label: with and without a space before the value', () => {
+    expect(parseSearchQuery('label:forums').label).toBe('FORUMS');
+    expect(parseSearchQuery('label: Jira').label).toBe('JIRA');
+  });
+
   it('handles mixed spaced and non-spaced operators', () => {
     const parsed = parseSearchQuery('from: john@test.com is:unread hello');
     expect(parsed.from).toBe('john@test.com');

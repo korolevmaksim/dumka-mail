@@ -297,6 +297,20 @@ body {
   color: var(--text-secondary);
 }
 
+.rich-compose-editor .gmail_attr {
+  margin: 0 0 0.35em;
+  color: var(--text-tertiary);
+  font-size: calc(12px * var(--font-scale));
+}
+
+.rich-compose-editor [data-dumka-quoted-reply="true"] {
+  margin-top: 1rem;
+}
+
+.rich-compose-editor--quotes-collapsed [data-dumka-quoted-reply="true"] {
+  display: none;
+}
+
 .rich-compose-editor a {
   color: var(--accent);
   text-decoration: underline;
