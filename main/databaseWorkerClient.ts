@@ -3,7 +3,7 @@ import { Worker } from 'worker_threads';
 import type { MailMessage, MailThread } from '../shared/types';
 
 type WorkerPayload =
-  | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean }
+  | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { type: 'saveThreads'; threads: MailThread[] };
 
 type WorkerResponse =
@@ -97,7 +97,7 @@ class DatabaseWorkerClient {
     });
   }
 
-  async saveMessages(messages: MailMessage[], options?: { notifyOfNew?: boolean }): Promise<{ newMessages: MailMessage[] }> {
+  async saveMessages(messages: MailMessage[], options?: { notifyOfNew?: boolean; indexBodies?: boolean }): Promise<{ newMessages: MailMessage[] }> {
     const newMessages: MailMessage[] = [];
     const batches = chunk(messages, MESSAGE_BATCH_SIZE);
 
@@ -105,7 +105,8 @@ class DatabaseWorkerClient {
       const result = await this.request<{ newMessages: MailMessage[] }>({
         type: 'saveMessages',
         messages: batches[index],
-        notifyOfNew: options?.notifyOfNew
+        notifyOfNew: options?.notifyOfNew,
+        indexBodies: options?.indexBodies
       });
       newMessages.push(...result.newMessages);
 

@@ -3,7 +3,7 @@ import { getDatabase, initializeDatabase, MessagesRepo, ThreadsRepo } from './da
 import type { MailMessage, MailThread } from '../shared/types';
 
 type WorkerRequest =
-  | { id: number; type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean }
+  | { id: number; type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { id: number; type: 'saveThreads'; threads: MailThread[] };
 
 type WorkerResponse =
@@ -43,7 +43,7 @@ parentPort?.on('message', (request: WorkerRequest) => {
   try {
     if (request.type === 'saveMessages') {
       const newMessages = request.notifyOfNew ? findNewMessages(request.messages) : [];
-      MessagesRepo.save(request.messages);
+      MessagesRepo.save(request.messages, { indexBodies: request.indexBodies });
       send({ id: request.id, ok: true, result: { newMessages } });
       return;
     }

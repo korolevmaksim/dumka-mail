@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSearchQuery } from '../shared/search';
+import { matchesSearchDateRange, parseSearchQuery, searchDateBoundaryMs } from '../shared/search';
 
 describe('Search Query Parser', () => {
   it('parses basic query terms', () => {
@@ -30,6 +30,12 @@ describe('Search Query Parser', () => {
     expect(parsed.textTerms).toEqual(['project']);
     expect(parsed.after).toBe('2026-01-01');
     expect(parsed.before).toBe('2026-06-30');
+  });
+
+  it('parses in: split or mailbox constraints', () => {
+    const parsed = parseSearchQuery('receipt in:purchases');
+    expect(parsed.textTerms).toEqual(['receipt']);
+    expect(parsed.inSplit).toBe('purchases');
   });
 
   it('handles space between operator and value (from: apple.com)', () => {
@@ -73,5 +79,17 @@ describe('Search Query Parser', () => {
     const parsed = parseSearchQuery('from: is:unread');
     expect(parsed.from).toBeUndefined();
     expect(parsed.isUnread).toBe(true);
+  });
+
+  it('builds inclusive date-only boundaries for after: and before:', () => {
+    expect(searchDateBoundaryMs('2026-01-01', 'start')).toBe(new Date(2026, 0, 1, 0, 0, 0, 0).getTime());
+    expect(searchDateBoundaryMs('2026-01-01', 'end')).toBe(new Date(2026, 0, 1, 23, 59, 59, 999).getTime());
+    expect(searchDateBoundaryMs('not-a-date', 'start')).toBeNull();
+  });
+
+  it('matches message dates against after:/before: ranges', () => {
+    expect(matchesSearchDateRange(new Date(2026, 2, 15, 12, 0, 0, 0).toISOString(), '2026-03-15', '2026-03-15')).toBe(true);
+    expect(matchesSearchDateRange(new Date(2026, 2, 14, 23, 59, 59, 999).toISOString(), '2026-03-15', undefined)).toBe(false);
+    expect(matchesSearchDateRange(new Date(2026, 2, 16, 0, 0, 0, 0).toISOString(), undefined, '2026-03-15')).toBe(false);
   });
 });

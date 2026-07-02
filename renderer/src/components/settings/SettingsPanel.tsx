@@ -11,36 +11,38 @@ import { ClassificationSettingsTab } from './tabs/ClassificationSettingsTab';
 import { AISettingsTab } from './tabs/AISettingsTab';
 import { ContactsTab } from './tabs/ContactsSettingsTab';
 import { CalendarSettingsTab, LabelsTab } from './tabs/WorkspaceSettingsTabs';
+import { createTranslator } from '../../../../shared/i18n';
 
 export function SettingsPanel() {
   const store = useAppStore();
+  const t = createTranslator(store.settings.general.language);
   const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'labels' | 'contacts' | 'calendar' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'mcp' | 'privacy' | 'appearance' | 'about'>('accounts');
   
   const tabsList = [
-    { id: 'accounts', name: 'Accounts', icon: Key },
-    { id: 'profile', name: 'Profile', icon: User },
-    { id: 'general', name: 'General', icon: Settings },
-    { id: 'inbox', name: 'Inbox', icon: Inbox },
-    { id: 'classification', name: 'Classification', icon: ListPlus },
-    { id: 'labels', name: 'Labels', icon: Tags },
-    { id: 'contacts', name: 'Contacts', icon: Users },
-    { id: 'calendar', name: 'Calendar', icon: CalendarDays },
-    { id: 'compose', name: 'Compose', icon: SquarePen },
-    { id: 'shortcuts', name: 'Shortcuts', icon: Keyboard },
-    { id: 'snippets', name: 'Snippets', icon: FileText },
-    { id: 'notifications', name: 'Notifications', icon: Bell },
-    { id: 'ai', name: 'AI Config', icon: Sparkles },
-    { id: 'mcp', name: 'MCP & Search', icon: Cpu },
-    { id: 'privacy', name: 'Privacy', icon: Shield },
-    { id: 'appearance', name: 'Appearance', icon: Palette },
-    { id: 'about', name: 'About', icon: Info },
+    { id: 'accounts', nameKey: 'settings.tabs.accounts', icon: Key },
+    { id: 'profile', nameKey: 'settings.tabs.profile', icon: User },
+    { id: 'general', nameKey: 'settings.tabs.general', icon: Settings },
+    { id: 'inbox', nameKey: 'settings.tabs.inbox', icon: Inbox },
+    { id: 'classification', nameKey: 'settings.tabs.classification', icon: ListPlus },
+    { id: 'labels', nameKey: 'settings.tabs.labels', icon: Tags },
+    { id: 'contacts', nameKey: 'settings.tabs.contacts', icon: Users },
+    { id: 'calendar', nameKey: 'settings.tabs.calendar', icon: CalendarDays },
+    { id: 'compose', nameKey: 'settings.tabs.compose', icon: SquarePen },
+    { id: 'shortcuts', nameKey: 'settings.tabs.shortcuts', icon: Keyboard },
+    { id: 'snippets', nameKey: 'settings.tabs.snippets', icon: FileText },
+    { id: 'notifications', nameKey: 'settings.tabs.notifications', icon: Bell },
+    { id: 'ai', nameKey: 'settings.tabs.ai', icon: Sparkles },
+    { id: 'mcp', nameKey: 'settings.tabs.mcp', icon: Cpu },
+    { id: 'privacy', nameKey: 'settings.tabs.privacy', icon: Shield },
+    { id: 'appearance', nameKey: 'settings.tabs.appearance', icon: Palette },
+    { id: 'about', nameKey: 'settings.tabs.about', icon: Info },
   ] as const;
 
   return (
     <div className="flex-1 flex bg-[var(--panel-bg)] select-none h-full overflow-hidden">
       {/* Sidebar Navigation */}
       <div className="w-[180px] border-r border-[var(--border)] bg-[var(--rail-bg)] p-3 flex flex-col gap-1 overflow-y-auto">
-        <h2 className="font-semibold text-[var(--text-secondary)] text-[calc(10px*var(--font-scale))] px-2 mb-2 uppercase tracking-wider">Preferences</h2>
+        <h2 className="font-semibold text-[var(--text-secondary)] text-[calc(10px*var(--font-scale))] px-2 mb-2 uppercase tracking-wider">{t('settings.panel.title')}</h2>
         {tabsList.map(tab => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
@@ -55,7 +57,7 @@ export function SettingsPanel() {
               }`}
             >
               <Icon className={`w-[14px] h-[14px] ${active ? 'text-[var(--accent)]' : ''}`} />
-              <span>{tab.name}</span>
+              <span>{t(tab.nameKey)}</span>
             </button>
           );
         })}
@@ -65,7 +67,7 @@ export function SettingsPanel() {
             onClick={() => store.setSettingsOpen(false)}
             className="w-full text-center py-1.5 border border-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--strong-border)] text-[calc(11px*var(--font-scale))] font-medium cursor-pointer transition-colors"
           >
-            Close Settings
+            {t('settings.panel.close')}
           </button>
         </div>
       </div>

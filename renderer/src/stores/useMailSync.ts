@@ -6,6 +6,7 @@ import { SpeedProof } from './useMailState';
 interface UseMailSyncProps {
   accounts: Account[];
   activeAccount: Account | null;
+  clearCacheOnDisconnect: boolean;
   loadAccounts: () => Promise<void>;
   setActiveAccountState: (acc: Account | null) => void;
   loadThreadsFromDB: () => Promise<void>;
@@ -16,6 +17,7 @@ interface UseMailSyncProps {
 export function useMailSync({
   accounts,
   activeAccount,
+  clearCacheOnDisconnect,
   loadAccounts,
   setActiveAccountState,
   loadThreadsFromDB,
@@ -207,7 +209,7 @@ export function useMailSync({
   };
 
   const disconnectAccount = async (id: string) => {
-    await window.electronAPI.deleteAccount(id);
+    await window.electronAPI.disconnectAccount(id, { purgeCache: clearCacheOnDisconnect, revokeToken: true });
     loadAccounts();
     if (activeAccount?.id === id) {
       setActiveAccountState(null);

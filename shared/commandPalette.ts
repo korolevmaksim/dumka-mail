@@ -21,7 +21,7 @@ export interface PaletteCommand {
   keywords?: string[];
 }
 
-export interface RankedCommand extends PaletteCommand {
+export type RankedCommand<T extends PaletteCommand = PaletteCommand> = T & {
   score: number;
 }
 
@@ -108,7 +108,7 @@ export function fuzzyScore(query: string, command: PaletteCommand): number {
  * An empty (or whitespace-only) query keeps the original order unfiltered, with
  * every command assigned a score of 0.
  */
-export function rankCommands(query: string, commands: PaletteCommand[]): RankedCommand[] {
+export function rankCommands<T extends PaletteCommand>(query: string, commands: T[]): RankedCommand<T>[] {
   if (query.trim().length === 0) {
     return commands.map((command) => ({ ...command, score: 0 }));
   }

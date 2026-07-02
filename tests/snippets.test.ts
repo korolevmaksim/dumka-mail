@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
+  createSnippetTemplateId,
+  normalizeSnippetTemplates,
   renderTokens,
   renderDefaultSnippet,
   renderDefaultSnippetHtml,
+  renderSnippetTemplate,
+  renderSnippetTemplateHtml,
   expandSnippetAtCursor,
 } from '../shared/snippets';
 import type { ProfileSettings, SnippetSettings, ComposeSettings } from '../shared/types';
@@ -20,6 +24,7 @@ const snippets: SnippetSettings = {
   includeSignature: true,
   defaultSnippetTrigger: ';thanks',
   defaultSnippet: 'Thanks, Alex',
+  templates: [],
 };
 
 const compose: ComposeSettings = {
@@ -172,6 +177,62 @@ describe('renderDefaultSnippet', () => {
   });
 });
 
+describe('snippet template library', () => {
+  it('normalizes saved snippet templates', () => {
+    expect(normalizeSnippetTemplates([
+      { id: 'Follow Up!', title: 'Follow Up', trigger: ';follow', body: 'Hi' },
+      { title: '', trigger: ';empty', body: '   ' },
+      null,
+    ])).toEqual([
+      {
+        id: 'follow-up',
+        title: 'Follow Up',
+        trigger: ';follow',
+        body: 'Hi',
+        includeSignature: true,
+      },
+    ]);
+  });
+
+  it('creates unique template ids from titles', () => {
+    expect(createSnippetTemplateId('Follow Up', [{ id: 'follow-up' }, { id: 'follow-up-2' }])).toBe('follow-up-3');
+  });
+
+  it('renders a named snippet template with tokens and signature', () => {
+    const out = renderSnippetTemplate(
+      {
+        id: 'follow-up',
+        title: 'Follow up',
+        trigger: ';follow',
+        body: 'Hi {first_name}',
+        includeSignature: true,
+      },
+      snippets,
+      { ...compose, defaultSignature: '{first_name} @ {company}' },
+      profile,
+    );
+
+    expect(out).toBe('Hi Alex\n\nAlex @ Example Co');
+  });
+
+  it('renders a named HTML snippet template', () => {
+    const out = renderSnippetTemplateHtml(
+      {
+        id: 'rich',
+        title: 'Rich',
+        trigger: ';rich',
+        body: '<p>Hello <strong>{first_name}</strong></p>',
+        includeSignature: false,
+      },
+      snippets,
+      compose,
+      profile,
+    );
+
+    expect(out).toBe('<p>Hello <strong>Alex</strong></p>');
+  });
+});
+
 describe('expandSnippetAtCursor', () => {
   it('expands when the line is exactly the trigger (Rule 1)', () => {
     const body = ';thanks';
@@ -188,6 +249,56 @@ describe('expandSnippetAtCursor', () => {
     expect(edit).not.toBeNull();
     expect(edit!.text).toBe('Hello\nThanks, Alex');
     expect(edit!.selection).toBe('Hello\n'.length + 'Thanks, Alex'.length);
+  });
+
+  it('expands a named template trigger', () => {
+    const body = ';follow';
+    const edit = expandSnippetAtCursor(
+      body,
+      body.length,
+      {
+        ...snippets,
+        templates: [
+          {
+            id: 'follow-up',
+            title: 'Follow up',
+            trigger: ';follow',
+            body: 'Hi {first_name}',
+            includeSignature: false,
+          },
+        ],
+      },
+      compose,
+      profile,
+    );
+
+    expect(edit).not.toBeNull();
+    expect(edit!.text).toBe('Hi Alex');
+  });
+
+  it('keeps the default trigger ahead of duplicate template triggers', () => {
+    const body = ';thanks';
+    const edit = expandSnippetAtCursor(
+      body,
+      body.length,
+      {
+        ...snippets,
+        templates: [
+          {
+            id: 'custom-thanks',
+            title: 'Custom thanks',
+            trigger: ';thanks',
+            body: 'Custom',
+            includeSignature: false,
+          },
+        ],
+      },
+      compose,
+      profile,
+    );
+
+    expect(edit).not.toBeNull();
+    expect(edit!.text).toBe('Thanks, Alex');
   });
 
   it('does not expand a trigger when the line suffix is non-blank', () => {

@@ -69,7 +69,8 @@ describe('shortcutGuideSections', () => {
       expect(keysFor(sections, 'Open Thread')).toBe('↩ / O');
       expect(keysFor(sections, 'Mark Done')).toBe('⌘⇧E / E');
       expect(keysFor(sections, 'Remind...')).toBe('⌘⇧H / H');
-      expect(keysFor(sections, 'Command Palette')).toBe('⌘K / ?');
+      expect(keysFor(sections, 'Command Palette')).toBe('⌘K');
+      expect(keysFor(sections, 'Keyboard Shortcuts')).toBe('?');
     });
 
     it('exposes fixed (non-conditional) shortcuts', () => {
@@ -119,6 +120,7 @@ describe('shortcutGuideSections', () => {
       expect(keysFor(sections, 'Mark Done')).toBe('⌘⇧E');
       expect(keysFor(sections, 'Remind...')).toBe('⌘⇧H');
       expect(keysFor(sections, 'Command Palette')).toBe('⌘K');
+      expect(findItem(sections, 'Keyboard Shortcuts')).toBeUndefined();
       expect(keysFor(sections, 'Open Thread')).toBe('↩');
     });
 
@@ -154,6 +156,7 @@ describe('shortcutGuideSections', () => {
       expect(keysFor(sections, 'Search')).toBe('⌘F');
       expect(findItem(sections, 'Toggle Read/Unread')).toBeUndefined();
       expect(findItem(sections, 'Open Important')).toBeUndefined();
+      expect(findItem(sections, 'Keyboard Shortcuts')).toBeUndefined();
       // superhuman mode no longer matters once single-key is off
       expect(findItem(sections, 'Vim Navigation')).toBeUndefined();
     });

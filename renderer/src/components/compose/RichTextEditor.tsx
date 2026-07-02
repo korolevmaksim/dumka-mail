@@ -14,6 +14,8 @@ export interface RichTextEditorHandle {
   insertText: (text: string) => void;
   replaceHtml: (html: string) => void;
   getSelectedText: () => string;
+  getSelectionRange: () => Range | null;
+  restoreSelectionRange: (range: Range) => void;
 }
 
 interface RichTextEditorProps {
@@ -109,6 +111,26 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
       editor.focus();
     },
     getSelectedText: () => window.getSelection()?.toString() || '',
+    getSelectionRange: () => {
+      const editor = editorRef.current;
+      const selection = window.getSelection();
+      if (!editor || !selection || selection.rangeCount === 0) return null;
+      const range = selection.getRangeAt(0);
+      const commonAncestor = range.commonAncestorContainer;
+      const anchorNode = commonAncestor.nodeType === Node.ELEMENT_NODE ? commonAncestor : commonAncestor.parentNode;
+      if (!(anchorNode instanceof Node) || !editor.contains(anchorNode)) {
+        return null;
+      }
+      return range.cloneRange();
+    },
+    restoreSelectionRange: (range: Range) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    },
   }));
 
   const handleImageFiles = async (files: FileList | File[]) => {

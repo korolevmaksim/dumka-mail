@@ -5,6 +5,7 @@ import { formatAIUserError } from '../../../shared/aiErrors';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 import { MailTriagePlanner } from '../../../shared/triagePlanner';
+import { buildAITriageContext, buildAITriageInstruction, buildAITriagePlanFromResponse } from '../../../shared/aiTriage';
 
 interface UseAIStateProps {
   settings: AppSettings;
@@ -83,6 +84,10 @@ export function useAIState({
   }, [aiProviderDesc]);
 
   const loadAIConversations = useCallback(async () => {
+    if (!settings.ai.savePromptHistory) {
+      setAiConversations([]);
+      return;
+    }
     if (!activeAccount) return;
     if (activeAccount.id === 'unified') {
       const allConvs: AIConversation[] = [];
@@ -96,7 +101,7 @@ export function useAIState({
       const list = await window.electronAPI.listConversations(activeAccount.email);
       setAiConversations(list);
     }
-  }, [activeAccount, accounts]);
+  }, [activeAccount, accounts, settings.ai.savePromptHistory]);
 
   useEffect(() => {
     loadAIConversations();
@@ -111,6 +116,12 @@ export function useAIState({
     setActiveAIConversation(conv);
     const msgs = await window.electronAPI.getConversationMessages(conv.id);
     setActiveAIMessages(msgs);
+  };
+
+  const persistAIConversation = async (conv: AIConversation, messages: AIChatMessage[]) => {
+    if (!settings.ai.savePromptHistory) return;
+    await window.electronAPI.saveConversation(conv, messages);
+    loadAIConversations();
   };
 
   const sendAIMessage = async (text: string) => {
@@ -162,8 +173,7 @@ export function useAIState({
 
       const finalMsgs = [...newMsgs, assistantMsg];
       setActiveAIMessages(finalMsgs);
-      await window.electronAPI.saveConversation(conv, finalMsgs);
-      loadAIConversations();
+      await persistAIConversation(conv, finalMsgs);
 
       setSpeedProof((prev: SpeedProof) => ({
         ...prev,
@@ -374,8 +384,7 @@ export function useAIState({
       const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text };
       const finalMsgs = [...pending, assistantMsg];
       setActiveAIMessages(finalMsgs);
-      await window.electronAPI.saveConversation(conv, finalMsgs);
-      loadAIConversations();
+      await persistAIConversation(conv, finalMsgs);
 
       setSpeedProof((prev: SpeedProof) => ({
         ...prev,
@@ -437,7 +446,7 @@ export function useAIState({
     const intent = isAutomationSplit ? 'automationCleanup' : 'mailboxTriage';
     const now = new Date();
     
-    const plan = MailTriagePlanner.build(
+    const fallbackPlan = MailTriagePlanner.build(
       activeAccount.id === 'unified' ? 'unified' : activeAccount.email,
       activeSplit,
       visibleThreads,
@@ -445,6 +454,35 @@ export function useAIState({
       intent,
       8
     );
+
+    let plan = fallbackPlan;
+    let usedAI = false;
+    const canUseAI = aiProvider !== 'disabled' && aiProviderDesc?.preference !== 'disabled';
+
+    try {
+      if (canUseAI) {
+        const response = await window.electronAPI.completeAI({
+          action: 'triage',
+          context: buildAITriageContext(visibleThreads),
+          conversationHistory: [],
+          userInstruction: buildAITriageInstruction(intent),
+        }, aiProvider, aiModel || undefined);
+
+        plan = buildAITriagePlanFromResponse({
+          accountId: fallbackPlan.accountId,
+          sourceTitle: fallbackPlan.sourceTitle,
+          generatedAt: now.toISOString(),
+          sourceThreadCount: fallbackPlan.sourceThreadCount,
+          intent,
+          automationRulePreview: fallbackPlan.automationRulePreview || null,
+          responseText: response.text,
+          threads: visibleThreads,
+        });
+        usedAI = true;
+      }
+    } catch (error) {
+      console.warn('AI triage failed; using deterministic fallback:', error);
+    }
 
     const defaultSelected = new Set(
       plan.items
@@ -454,7 +492,7 @@ export function useAIState({
     setSelectedTriageThreadIds(defaultSelected);
     setTriagePlan(plan);
     setAiPanelLoading(false);
-    emitToast({ type: 'success', message: `Triage plan ready for ${plan.items.length} messages.` });
+    emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} triage plan ready for ${plan.items.length} messages.` });
   };
 
   return {

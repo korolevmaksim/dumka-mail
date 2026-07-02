@@ -1,3 +1,5 @@
+import type { AppLanguage } from './i18n';
+
 export type AccountID = string;
 export type ThreadID = string;
 export type MessageID = string;
@@ -36,7 +38,7 @@ export interface ComposeSignatureSettings {
 }
 
 export type MailLabel = 'INBOX' | 'UNREAD' | 'SENT' | 'IMPORTANT' | 'CATEGORY_PRIMARY' | 'CATEGORY_UPDATES' | 'CATEGORY_PROMOTIONS' | string;
-export type MailboxView = 'inbox' | 'sent' | 'trash' | 'spam' | 'muted';
+export type MailboxView = 'inbox' | 'drafts' | 'sent' | 'trash' | 'spam' | 'muted';
 
 export interface MailThread {
   id: ThreadID;
@@ -260,6 +262,7 @@ export interface Draft {
   attachments: AttachmentMetadata[];
   replyMessageId?: string | null;
   replyReferences?: string | null;
+  sendAt?: string | null;
   updatedAt: string;
 }
 
@@ -300,7 +303,9 @@ export type ActionKind =
   | 'updateCalendarEvent'
   | 'deleteCalendarEvent'
   | 'applyAIDraftPreview'
-  | 'insertSnippet';
+  | 'insertSnippet'
+  | 'forwardThread'
+  | 'autoReply';
 export type ActionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'pending_sync';
 
 /** Human presentation for an action-log kind. `icon` is a lucide-react icon name
@@ -337,6 +342,8 @@ export const ACTION_KIND_META: Record<ActionKind, ActionKindMeta> = {
   deleteCalendarEvent: { title: 'Calendar event deleted', icon: 'Trash2' },
   applyAIDraftPreview: { title: 'Applied AI draft', icon: 'Sparkles' },
   insertSnippet: { title: 'Inserted snippet', icon: 'Braces' },
+  forwardThread: { title: 'Forwarded thread', icon: 'Forward' },
+  autoReply: { title: 'Auto replied', icon: 'Reply' },
 };
 
 export interface MailActionLog {
@@ -347,6 +354,7 @@ export interface MailActionLog {
   kind: ActionKind;
   status: ActionStatus;
   createdAt: string;
+  scheduledAt?: string | null;
   completedAt?: string | null;
   failureMessage?: string | null;
   payloadJson?: string | null;
@@ -487,6 +495,7 @@ export interface ProfileSettings {
 }
 
 export interface GeneralSettings {
+  language: AppLanguage;
   startupBehavior: 'inbox' | 'lastSelectedAccount' | 'commandPalette';
   defaultSplitInbox: string;
   showBottomShortcutBar: boolean;
@@ -542,6 +551,31 @@ export interface InboxSettings {
   };
 }
 
+export type MailRuleActionType = 'archive' | 'applyLabel' | 'moveToLabel' | 'forward' | 'autoReply';
+
+export interface MailRuleAction {
+  id: string;
+  type: MailRuleActionType;
+  labelId?: string;
+  forwardTo?: string;
+  replyBody?: string;
+}
+
+export interface MailAutomationRule {
+  id: string;
+  title: string;
+  isEnabled: boolean;
+  accountId?: string;
+  matchMode: 'all' | 'any';
+  conditions: MailCategoryRule[];
+  actions: MailRuleAction[];
+}
+
+export interface MailRulesSettings {
+  enabled: boolean;
+  rules: MailAutomationRule[];
+}
+
 export interface ComposeSettings {
   defaultSignature: string;
   defaultSignatureHtml: string;
@@ -577,12 +611,21 @@ export interface ShortcutSettings {
   reminderShortcutEnabled: boolean;
 }
 
+export interface SnippetTemplate {
+  id: string;
+  title: string;
+  trigger: string;
+  body: string;
+  includeSignature: boolean;
+}
+
 export interface SnippetSettings {
   enabled: boolean;
   expandWithTab: boolean;
   includeSignature: boolean;
   defaultSnippetTrigger: string;
   defaultSnippet: string;
+  templates: SnippetTemplate[];
 }
 
 export interface MailNotificationSettings {
@@ -712,6 +755,7 @@ export interface AppSettings {
   calendar: CalendarSettings;
   shortcuts: ShortcutSettings;
   snippets: SnippetSettings;
+  mailRules: MailRulesSettings;
   notifications: MailNotificationSettings;
   ai: AISettings;
   privacy: PrivacySettings;

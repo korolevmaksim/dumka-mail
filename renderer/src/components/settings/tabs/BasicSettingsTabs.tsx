@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
-import { Plus, RefreshCw } from 'lucide-react';
+import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { SettingsAccountAvatar } from '../../AccountAvatar';
 import { Toggle } from '../SettingsControls';
 import { emitToast } from '../../../lib/toastBus';
 import { sanitizeGmailSignatureHtml } from '../../../../../shared/textNormalizer';
-import type { ComposeSignatureSettings } from '../../../../../shared/types';
+import { createSnippetTemplateId } from '../../../../../shared/snippets';
+import { APP_LANGUAGES, createTranslator } from '../../../../../shared/i18n';
+import type { AppLanguage, TranslationKey } from '../../../../../shared/i18n';
+import type { ComposeSignatureSettings, PrivacySettings, SnippetTemplate } from '../../../../../shared/types';
+import type { AutoUpdateStatus } from '../../../../../shared/autoUpdate';
 
 export function AccountsTab() {
   const store = useAppStore();
@@ -157,19 +161,53 @@ export function ProfileTab() {
 
 export function GeneralTab() {
   const store = useAppStore();
+  const t = createTranslator(store.settings.general.language);
+  const generalToggleItems: Array<{ key: keyof typeof store.settings.general; title: TranslationKey; desc: TranslationKey }> = [
+    { key: 'showBottomShortcutBar', title: 'settings.general.showBottomShortcutBar.title', desc: 'settings.general.showBottomShortcutBar.description' },
+    { key: 'showRightContextPanel', title: 'settings.general.showRightContextPanel.title', desc: 'settings.general.showRightContextPanel.description' },
+    { key: 'openLinksInBackground', title: 'settings.general.openLinksInBackground.title', desc: 'settings.general.openLinksInBackground.description' },
+    { key: 'confirmBeforeQuitting', title: 'settings.general.confirmBeforeQuitting.title', desc: 'settings.general.confirmBeforeQuitting.description' },
+    { key: 'keepDraftsAcrossLaunches', title: 'settings.general.keepDraftsAcrossLaunches.title', desc: 'settings.general.keepDraftsAcrossLaunches.description' },
+  ];
+  const languageLabels: Record<AppLanguage, TranslationKey> = {
+    system: 'settings.general.language.system',
+    en: 'settings.general.language.english',
+    pseudo: 'settings.general.language.pseudo',
+  };
 
   return (
     <div className="flex flex-col gap-4 max-w-[600px]">
       <div>
-        <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">General Preferences</h2>
-        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Configure startup behavior, links, and workspace defaults.</p>
+        <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">{t('settings.general.title')}</h2>
+        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{t('settings.general.description')}</p>
       </div>
 
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Startup Behavior</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Choose screen displayed on application launch</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.language.title')}</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.language.description')}</span>
+          </div>
+          <select
+            value={store.settings.general.language}
+            onChange={(e) => {
+              const val = e.target.value as AppLanguage;
+              store.updateSettings(s => { s.general.language = val; });
+            }}
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          >
+            {APP_LANGUAGES.map(language => (
+              <option key={language} value={language}>{t(languageLabels[language])}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.startup.title')}</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.startup.description')}</span>
           </div>
           <select
             value={store.settings.general.startupBehavior}
@@ -179,9 +217,9 @@ export function GeneralTab() {
             }}
             className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
-            <option value="inbox">Focus Inbox Split</option>
-            <option value="lastSelectedAccount">Last Selected Account</option>
-            <option value="commandPalette">Launch Command Palette</option>
+            <option value="inbox">{t('settings.general.startup.inbox')}</option>
+            <option value="lastSelectedAccount">{t('settings.general.startup.lastSelectedAccount')}</option>
+            <option value="commandPalette">{t('settings.general.startup.commandPalette')}</option>
           </select>
         </div>
 
@@ -189,8 +227,8 @@ export function GeneralTab() {
 
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Default Inbox Split</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Active category category on startup</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.defaultSplit.title')}</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.defaultSplit.description')}</span>
           </div>
           <select
             value={store.settings.general.defaultSplitInbox}
@@ -208,20 +246,14 @@ export function GeneralTab() {
 
         <div className="w-full h-[1px] bg-[var(--border)]" />
 
-        {[
-          { key: 'showBottomShortcutBar', title: 'Show Bottom Shortcut Bar', desc: 'Display quick reference labels at bottom' },
-          { key: 'showRightContextPanel', title: 'Show Right Context Panel', desc: 'Display diagnostics, health and action ledger sidebar' },
-          { key: 'openLinksInBackground', title: 'Open Links in Background', desc: 'Prevent browser focus stealing' },
-          { key: 'confirmBeforeQuitting', title: 'Confirm Before Quitting', desc: 'Prompt before closing process' },
-          { key: 'keepDraftsAcrossLaunches', title: 'Restore Drafts on Launch', desc: 'Save un-sent composer details locally' },
-        ].map(item => (
+        {generalToggleItems.map(item => (
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
-              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t(item.title)}</span>
+              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t(item.desc)}</span>
             </div>
             <Toggle
-              checked={(store.settings.general as any)[item.key]}
+              checked={Boolean(store.settings.general[item.key])}
               onChange={(val) => store.updateSettings(s => { (s.general as any)[item.key] = val; })}
             />
           </div>
@@ -540,6 +572,33 @@ export function ShortcutsTab() {
 
 export function SnippetsTab() {
   const store = useAppStore();
+  const updateTemplate = (id: string, updater: (template: SnippetTemplate) => SnippetTemplate) => {
+    store.updateSettings(s => {
+      s.snippets.templates = s.snippets.templates.map(template => (
+        template.id === id ? updater(template) : template
+      ));
+    });
+  };
+  const addTemplate = () => {
+    store.updateSettings(s => {
+      const title = `Snippet ${s.snippets.templates.length + 1}`;
+      s.snippets.templates = [
+        ...s.snippets.templates,
+        {
+          id: createSnippetTemplateId(title, s.snippets.templates),
+          title,
+          trigger: '',
+          body: '',
+          includeSignature: s.snippets.includeSignature,
+        },
+      ];
+    });
+  };
+  const deleteTemplate = (id: string) => {
+    store.updateSettings(s => {
+      s.snippets.templates = s.snippets.templates.filter(template => template.id !== id);
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4 max-w-[600px] select-text">
@@ -593,6 +652,73 @@ export function SnippetsTab() {
             }}
           />
         </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Template Library</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Named snippets available from the composer menu.</span>
+          </div>
+          <button
+            type="button"
+            onClick={addTemplate}
+            className="flex h-7 items-center gap-1.5 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </button>
+        </div>
+
+        {store.settings.snippets.templates.length === 0 ? (
+          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] italic">No saved snippet templates.</span>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {store.settings.snippets.templates.map(template => (
+              <div key={template.id} className="flex flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    aria-label="Snippet template title"
+                    value={template.title}
+                    onChange={(event) => updateTemplate(template.id, current => ({ ...current, title: event.target.value }))}
+                    className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] outline-none"
+                  />
+                  <button
+                    type="button"
+                    title="Delete template"
+                    aria-label={`Delete snippet template ${template.title || template.id}`}
+                    onClick={() => deleteTemplate(template.id)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--border)] hover:text-[var(--danger)]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  aria-label="Snippet template trigger"
+                  placeholder="Trigger, e.g. ;followup"
+                  value={template.trigger}
+                  onChange={(event) => updateTemplate(template.id, current => ({ ...current, trigger: event.target.value }))}
+                  className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                />
+                <textarea
+                  aria-label="Snippet template body"
+                  value={template.body}
+                  onChange={(event) => updateTemplate(template.id, current => ({ ...current, body: event.target.value }))}
+                  className="min-h-[72px] resize-y rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 font-mono text-[calc(11px*var(--font-scale))] leading-normal text-[var(--text-primary)] outline-none"
+                />
+                <div className="flex items-center justify-between">
+                  <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">Include signature</span>
+                  <Toggle
+                    checked={template.includeSignature}
+                    onChange={(value) => updateTemplate(template.id, current => ({ ...current, includeSignature: value }))}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -666,36 +792,149 @@ export function NotificationsTab() {
   );
 }
 
+function autoUpdateStatusText(status: AutoUpdateStatus | null, t: (key: TranslationKey) => string): string {
+  if (!status) return t('settings.updates.loadingStatus');
+  if (status.errorMessage) return `${status.message} ${status.errorMessage}`;
+  return status.message;
+}
+
+function canCheckForUpdates(status: AutoUpdateStatus | null): boolean {
+  return Boolean(status?.isSupported && status.isPackaged && status.isConfigured && status.state !== 'checking' && status.state !== 'downloaded');
+}
+
 export function PrivacyTab() {
   const store = useAppStore();
+  const t = createTranslator(store.settings.general.language);
+  const [autoUpdateStatus, setAutoUpdateStatus] = useState<AutoUpdateStatus | null>(null);
+  const [autoUpdateBusy, setAutoUpdateBusy] = useState(false);
+  const privacyItems: Array<{
+    key: keyof PrivacySettings;
+    titleKey: TranslationKey;
+    descriptionKey: TranslationKey;
+  }> = [
+    {
+      key: 'loadRemoteImages',
+      titleKey: 'settings.privacy.loadRemoteImages.title',
+      descriptionKey: 'settings.privacy.loadRemoteImages.description',
+    },
+    {
+      key: 'includeBodiesInSearchIndex',
+      titleKey: 'settings.privacy.includeBodiesInSearchIndex.title',
+      descriptionKey: 'settings.privacy.includeBodiesInSearchIndex.description',
+    },
+    {
+      key: 'redactLogs',
+      titleKey: 'settings.privacy.redactLogs.title',
+      descriptionKey: 'settings.privacy.redactLogs.description',
+    },
+    {
+      key: 'useKeychainForSecrets',
+      titleKey: 'settings.privacy.useKeychainForSecrets.title',
+      descriptionKey: 'settings.privacy.useKeychainForSecrets.description',
+    },
+    {
+      key: 'clearCacheOnDisconnect',
+      titleKey: 'settings.privacy.clearCacheOnDisconnect.title',
+      descriptionKey: 'settings.privacy.clearCacheOnDisconnect.description',
+    },
+    {
+      key: 'diagnosticsEnabled',
+      titleKey: 'settings.privacy.diagnosticsEnabled.title',
+      descriptionKey: 'settings.privacy.diagnosticsEnabled.description',
+    },
+  ];
+
+  useEffect(() => {
+    let mounted = true;
+    window.electronAPI.getAutoUpdateStatus()
+      .then(status => {
+        if (mounted) setAutoUpdateStatus(status);
+      })
+      .catch(err => {
+        console.error('Failed to load auto-update status:', err);
+      });
+    const unsubscribe = window.electronAPI.onAutoUpdateStatus(status => {
+      if (mounted) setAutoUpdateStatus(status);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const checkForUpdates = async () => {
+    setAutoUpdateBusy(true);
+    try {
+      setAutoUpdateStatus(await window.electronAPI.checkForAppUpdates());
+    } catch (err) {
+      console.error('Failed to check for app updates:', err);
+    } finally {
+      setAutoUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    setAutoUpdateBusy(true);
+    try {
+      setAutoUpdateStatus(await window.electronAPI.installDownloadedAppUpdate());
+    } catch (err) {
+      console.error('Failed to install downloaded update:', err);
+      setAutoUpdateBusy(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4 max-w-[600px]">
       <div>
-        <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">Privacy & Security</h2>
-        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Manage log redactions, keychain credentials, local indices, and image loader.</p>
+        <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">{t('settings.privacy.title')}</h2>
+        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{t('settings.privacy.description')}</p>
       </div>
 
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
-        {[
-          { key: 'loadRemoteImages', title: 'Load Remote Images', desc: 'Enable fetching external assets in HTML viewer' },
-          { key: 'includeBodiesInSearchIndex', title: 'Index Email Message Bodies', desc: 'Perform offline SQL FTS indexing on content text' },
-          { key: 'redactLogs', title: 'Redact Logs', desc: 'Omit usernames/tokens in debugging terminal outputs' },
-          { key: 'useKeychainForSecrets', title: 'Use System Keychain for Secrets', desc: 'Encrypt oauth tokens and API credentials' },
-          { key: 'clearCacheOnDisconnect', title: 'Purge SQLite Cache on Disconnect', desc: 'Evict local SQLite records when account is removed' },
-          { key: 'diagnosticsEnabled', title: 'Enable Anonymous Diagnostics', desc: 'Share telemetry logs to improve triage classifications' },
-        ].map(item => (
+        {privacyItems.map(item => (
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
-              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t(item.titleKey)}</span>
+              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t(item.descriptionKey)}</span>
             </div>
             <Toggle
-              checked={(store.settings.privacy as any)[item.key]}
-              onChange={(val) => store.updateSettings(s => { s.privacy[item.key as keyof typeof s.privacy] = val; })}
+              checked={store.settings.privacy[item.key]}
+              onChange={(val) => store.updateSettings(s => { s.privacy[item.key] = val; })}
             />
           </div>
         ))}
+      </div>
+
+      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.updates.title')}</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{autoUpdateStatusText(autoUpdateStatus, t)}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {autoUpdateStatus?.state === 'downloaded' && (
+              <button
+                type="button"
+                onClick={installUpdate}
+                disabled={autoUpdateBusy}
+                className="px-3 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(10px*var(--font-scale))] disabled:opacity-50"
+              >
+                {t('settings.updates.restart')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={checkForUpdates}
+              disabled={autoUpdateBusy || !canCheckForUpdates(autoUpdateStatus)}
+              className="px-3 py-1 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--panel-bg)] disabled:opacity-50"
+            >
+              {autoUpdateStatus?.state === 'checking' || autoUpdateBusy ? t('settings.updates.checking') : t('settings.updates.check')}
+            </button>
+          </div>
+        </div>
+        {autoUpdateStatus?.feedURL && (
+          <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{autoUpdateStatus.feedURL}</span>
+        )}
       </div>
     </div>
   );

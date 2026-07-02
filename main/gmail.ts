@@ -49,6 +49,15 @@ export async function getAccessToken(email: string): Promise<string> {
   return data.access_token;
 }
 
+export function buildGoogleTokenRevokeRequest(refreshToken: string): { url: string; body: string } {
+  const params = new URLSearchParams();
+  params.set('token', refreshToken);
+  return {
+    url: 'https://oauth2.googleapis.com/revoke',
+    body: params.toString()
+  };
+}
+
 // Bounded Concurrency Task Loader (size = 8)
 async function poolConcurrentTasks<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
@@ -334,6 +343,24 @@ async function syncThreadsForQuery(
 }
 
 export const GmailSyncService = {
+  async revokeRefreshToken(email: string): Promise<'missing' | 'revoked'> {
+    const refreshToken = await getRefreshToken(email);
+    if (!refreshToken) return 'missing';
+
+    const request = buildGoogleTokenRevokeRequest(refreshToken);
+    const res = await fetchWithTimeout(request.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: request.body
+    });
+
+    if (!res.ok) {
+      throw new Error(`Google token revoke failed for ${email}: HTTP ${res.status}`);
+    }
+
+    return 'revoked';
+  },
+
   async listLabels(email: string): Promise<MailLabelDefinition[]> {
     const accessToken = await getAccessToken(email);
     const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/labels', {

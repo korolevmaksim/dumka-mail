@@ -7,6 +7,7 @@ import {
   Bold,
   Braces,
   CalendarPlus,
+  Clock,
   Eraser,
   Image,
   Italic,
@@ -29,18 +30,21 @@ import { emitToast } from '../../lib/toastBus';
 import { formatAIUserError } from '../../../../shared/aiErrors';
 import {
   buildInitialDraftBodyWithSignature,
+  escapeHtml,
   htmlFragmentToPlainText,
   renderComposeSignaturePlain,
   replaceComposeSignatureForAccount,
 } from '../../../../shared/draftHtml';
-import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
-import type { AttachmentMetadata, EmailAddressSuggestion } from '../../../../shared/types';
+import { createSnippetTemplateId, renderDefaultSnippetHtml, renderSnippetTemplateHtml } from '../../../../shared/snippets';
+import type { AttachmentMetadata, EmailAddressSuggestion, SnippetTemplate } from '../../../../shared/types';
 import { availabilitySlotsHtml, findAvailabilitySlots, findAvailabilitySlotsFromBusyIntervals, freeBusyWarningMessage, type CalendarAvailabilitySlot } from '../../../../shared/calendarAvailability';
 import { fileToBase64, inlineImageHtml, textOrHtmlToFragment } from '../../lib/composeHtmlHelpers';
 import { RecipientField } from '../compose/RecipientField';
 import { ComposeSchedulingMenu } from '../compose/ComposeSchedulingMenu';
 import { ComposeTemplatesMenu } from '../compose/ComposeTemplatesMenu';
+import { LinkPopover } from '../compose/LinkPopover';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
+import { SnoozeMenu } from '../SnoozeMenu';
 
 type ComposeCommand = 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'insertUnorderedList' | 'insertOrderedList' | 'justifyLeft' | 'justifyCenter' | 'justifyRight' | 'removeFormat';
 
@@ -56,6 +60,7 @@ function ToolbarButton({ title, onClick, children }: ToolbarButtonProps) {
       type="button"
       title={title}
       onClick={onClick}
+      onMouseDown={(event) => event.preventDefault()}
       className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
     >
       {children}
@@ -75,6 +80,10 @@ export function FloatingComposeDrawer() {
   const [aiInstruction, setAiInstruction] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [emailSuggestions, setEmailSuggestions] = useState<EmailAddressSuggestion[]>([]);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkSelectedText, setLinkSelectedText] = useState('');
+  const [linkSelectionRange, setLinkSelectionRange] = useState<Range | null>(null);
+  const [reminderOpen, setReminderOpen] = useState(false);
 
   const activeDraft = store.activeDraft;
 
@@ -114,6 +123,10 @@ export function FloatingComposeDrawer() {
 
   const isReply = Boolean(activeDraft.threadId);
   const canSwitchAccount = store.accounts.length > 1 && !isReply;
+  const reminderThread = activeDraft.threadId
+    ? store.threads.find(thread => thread.id === activeDraft.threadId && thread.accountId === activeDraft.accountId) ||
+      (store.openedThread?.id === activeDraft.threadId && store.openedThread.accountId === activeDraft.accountId ? store.openedThread : null)
+    : null;
 
   const updateRecipients = (field: 'to' | 'cc' | 'bcc', recipients: typeof activeDraft.to) => {
     store.updateDraft({ [field]: recipients });
@@ -123,15 +136,32 @@ export function FloatingComposeDrawer() {
     editorRef.current?.execute(command);
   };
 
-  const insertLink = () => {
-    const selected = editorRef.current?.getSelectedText() || '';
-    const url = window.prompt('Link URL');
-    if (!url) return;
+  const closeLinkPopover = () => {
+    setLinkOpen(false);
+    setLinkSelectedText('');
+    setLinkSelectionRange(null);
+  };
+
+  const openLinkPopover = () => {
+    setLinkSelectedText(editorRef.current?.getSelectedText() || '');
+    setLinkSelectionRange(editorRef.current?.getSelectionRange() || null);
+    setLinkOpen(true);
+  };
+
+  const insertLink = (url: string) => {
+    const selected = linkSelectedText.trim();
     if (!selected) {
-      editorRef.current?.insertHtml(`<a href="${url}" target="_blank" style="color:#5383E6;text-decoration:underline;">${url}</a>`);
+      const safeUrl = escapeHtml(url);
+      editorRef.current?.insertHtml(`<a href="${safeUrl}" target="_blank" rel="noreferrer" style="color:#5383E6;text-decoration:underline;">${safeUrl}</a>`);
+      closeLinkPopover();
       return;
     }
+
+    if (linkSelectionRange) {
+      editorRef.current?.restoreSelectionRange(linkSelectionRange);
+    }
     editorRef.current?.execute('createLink', url);
+    closeLinkPopover();
   };
 
   const addInlineImageAttachment = (attachment: AttachmentMetadata) => {
@@ -182,6 +212,25 @@ export function FloatingComposeDrawer() {
     );
     if (!snippet) {
       emitToast({ type: 'info', message: 'No default snippet configured.' });
+      return;
+    }
+    editorRef.current?.insertHtml(snippet);
+    setTemplatesOpen(false);
+  };
+
+  const insertSnippetTemplate = (template: SnippetTemplate) => {
+    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const snippet = renderSnippetTemplateHtml(
+      alreadyHasSignature
+        ? { ...template, includeSignature: false }
+        : template,
+      store.settings.snippets,
+      store.settings.compose,
+      store.settings.profile,
+      activeDraft.accountId,
+    );
+    if (!snippet) {
+      emitToast({ type: 'info', message: 'Snippet template is empty.' });
       return;
     }
     editorRef.current?.insertHtml(snippet);
@@ -303,15 +352,24 @@ export function FloatingComposeDrawer() {
       emitToast({ type: 'warning', message: 'Write a body before saving a snippet.' });
       return;
     }
+    const titleSeed = activeDraft.subject.trim() || 'New snippet';
     await store.updateSettings(s => {
       s.snippets.enabled = true;
-      s.snippets.defaultSnippet = body;
-      if (!s.snippets.defaultSnippetTrigger.trim()) {
-        s.snippets.defaultSnippetTrigger = ';snippet';
-      }
+      const title = titleSeed;
+      const id = createSnippetTemplateId(title, s.snippets.templates);
+      s.snippets.templates = [
+        ...s.snippets.templates,
+        {
+          id,
+          title,
+          trigger: '',
+          body,
+          includeSignature: s.snippets.includeSignature,
+        },
+      ];
     });
     setTemplatesOpen(false);
-    emitToast({ type: 'success', message: 'Saved as the default snippet.' });
+    emitToast({ type: 'success', message: 'Saved as a snippet template.' });
   };
 
   const runAICompose = async (mode: 'draft' | 'improve') => {
@@ -547,7 +605,16 @@ export function FloatingComposeDrawer() {
           <ToolbarButton title="Strikethrough" onClick={() => execute('strikeThrough')}><Strikethrough className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Bullet list" onClick={() => execute('insertUnorderedList')}><List className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Numbered list" onClick={() => execute('insertOrderedList')}><ListOrdered className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Link" onClick={insertLink}><Link className="h-4 w-4" /></ToolbarButton>
+          <div className="relative">
+            <ToolbarButton title="Link" onClick={openLinkPopover}><Link className="h-4 w-4" /></ToolbarButton>
+            {linkOpen && (
+              <LinkPopover
+                selectedText={linkSelectedText}
+                onSubmit={insertLink}
+                onCancel={closeLinkPopover}
+              />
+            )}
+          </div>
           <ToolbarButton title="Align left" onClick={() => execute('justifyLeft')}><AlignLeft className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Align center" onClick={() => execute('justifyCenter')}><AlignCenter className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Align right" onClick={() => execute('justifyRight')}><AlignRight className="h-4 w-4" /></ToolbarButton>
@@ -569,12 +636,26 @@ export function FloatingComposeDrawer() {
           <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Insert inline image" onClick={() => void insertInlineImageFromDialog()}><Image className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="AI compose" onClick={() => setAiOpen(value => !value)}><Sparkles className="h-4 w-4 text-[var(--ai-accent)]" /></ToolbarButton>
+          {reminderThread && (
+            <div className="relative">
+              <ToolbarButton title="Remind me" onClick={() => setReminderOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
+              {reminderOpen && (
+                <SnoozeMenu
+                  align="right"
+                  targetSubject={reminderThread.subject}
+                  onPick={(date) => store.snoozeThread(reminderThread, date)}
+                  onClose={() => setReminderOpen(false)}
+                />
+              )}
+            </div>
+          )}
           <ToolbarButton title="Scheduling links" onClick={() => setSchedulingOpen(value => !value)}><CalendarPlus className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Templates and snippets" onClick={() => setTemplatesOpen(value => !value)}><Braces className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-4 w-4" /></ToolbarButton>
 
           {schedulingOpen && (
             <ComposeSchedulingMenu
+              onScheduleSend={(date) => void store.scheduleDraftSend(date)}
               onInsertGoogleMeet={() => void insertSchedulingLink('googleMeet')}
               onInsertAvailability={() => void insertAvailability()}
               onInsertCalendly={() => void insertSchedulingLink('calendly')}
@@ -584,7 +665,9 @@ export function FloatingComposeDrawer() {
 
           {templatesOpen && (
             <ComposeTemplatesMenu
+              templates={store.settings.snippets.templates}
               onInsertDefaultSnippet={insertDefaultSnippet}
+              onInsertTemplate={insertSnippetTemplate}
               onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
             />
           )}

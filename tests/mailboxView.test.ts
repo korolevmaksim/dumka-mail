@@ -43,6 +43,10 @@ describe('mailboxView', () => {
     expect(isThreadInMailbox(sent, 'inbox')).toBe(false);
   });
 
+  it('does not treat drafts as thread-backed mailbox content', () => {
+    expect(isThreadInMailbox(thread({ labelIds: ['DRAFT'] }), 'drafts')).toBe(false);
+  });
+
   it('shows trash and spam threads only in their system mailbox views', () => {
     const trashed = thread({ labelIds: ['TRASH'] });
     const spam = thread({ labelIds: ['SPAM'] });

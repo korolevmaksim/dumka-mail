@@ -1,12 +1,93 @@
 import { execFile } from 'child_process';
+import { app, safeStorage } from 'electron';
+import fs from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 const SERVICE_NAME = 'dumka-mail';
 const LEGACY_SERVICE_NAMES = ['dumka-mail-agy'];
+const SAFE_STORAGE_FILENAME = 'secure-tokens.json';
 
-// Memory fallback for tests or non-macOS systems
+// Memory fallback for tests or systems where OS-backed encryption is unavailable.
 const memoryStore = new Map<string, string>();
+
+interface SafeStorageFile {
+  version: 1;
+  entries: Record<string, string>;
+}
+
+function safeStoragePath(): string {
+  return path.join(app.getPath('userData'), SAFE_STORAGE_FILENAME);
+}
+
+function safeStorageIsAvailable(): boolean {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function readSafeStorageFile(): SafeStorageFile {
+  try {
+    const raw = fs.readFileSync(safeStoragePath(), 'utf8');
+    const parsed = JSON.parse(raw) as Partial<SafeStorageFile>;
+    return {
+      version: 1,
+      entries: parsed && typeof parsed.entries === 'object' && parsed.entries
+        ? Object.fromEntries(
+            Object.entries(parsed.entries).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+          )
+        : {},
+    };
+  } catch {
+    return { version: 1, entries: {} };
+  }
+}
+
+function writeSafeStorageFile(file: SafeStorageFile): void {
+  const target = safeStoragePath();
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temp = `${target}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(file, null, 2), { mode: 0o600 });
+  fs.renameSync(temp, target);
+  try {
+    fs.chmodSync(target, 0o600);
+  } catch {
+    // chmod is best-effort on Windows.
+  }
+}
+
+function saveSafeStorageToken(key: string, token: string): boolean {
+  if (!safeStorageIsAvailable()) return false;
+
+  const file = readSafeStorageFile();
+  file.entries[key] = safeStorage.encryptString(token).toString('base64');
+  writeSafeStorageFile(file);
+  return true;
+}
+
+function getSafeStorageToken(key: string): string | null {
+  if (!safeStorageIsAvailable()) return null;
+
+  const encrypted = readSafeStorageFile().entries[key];
+  if (!encrypted) return null;
+
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+  } catch (error) {
+    console.error(`Safe storage decrypt failed for ${key}:`, error);
+    return null;
+  }
+}
+
+function deleteSafeStorageToken(key: string): void {
+  const file = readSafeStorageFile();
+  if (!(key in file.entries)) return;
+  delete file.entries[key];
+  writeSafeStorageFile(file);
+}
 
 async function saveTokenForService(email: string, token: string, serviceName: string): Promise<void> {
   // -a: account name, -s: service name, -w: password, -U: update if exists
@@ -32,6 +113,14 @@ async function getTokenForService(email: string, serviceName: string): Promise<s
 
 export async function saveRefreshToken(email: string, token: string): Promise<void> {
   if (process.platform !== 'darwin') {
+    try {
+      if (saveSafeStorageToken(email, token)) {
+        memoryStore.set(email, token);
+        return;
+      }
+    } catch (error) {
+      console.error(`Safe storage save failed for ${email}, using memory fallback:`, error);
+    }
     memoryStore.set(email, token);
     return;
   }
@@ -46,7 +135,18 @@ export async function saveRefreshToken(email: string, token: string): Promise<vo
 
 export async function getRefreshToken(email: string): Promise<string | null> {
   if (process.platform !== 'darwin') {
-    return memoryStore.get(email) || null;
+    const memoryToken = memoryStore.get(email);
+    if (memoryToken) return memoryToken;
+    try {
+      const token = getSafeStorageToken(email);
+      if (token) {
+        memoryStore.set(email, token);
+        return token;
+      }
+    } catch (error) {
+      console.error(`Safe storage get failed for ${email}:`, error);
+    }
+    return null;
   }
 
   try {
@@ -81,6 +181,11 @@ export async function getRefreshToken(email: string): Promise<string | null> {
 export async function deleteRefreshToken(email: string): Promise<void> {
   memoryStore.delete(email);
   if (process.platform !== 'darwin') {
+    try {
+      deleteSafeStorageToken(email);
+    } catch (error) {
+      console.error(`Safe storage delete failed for ${email}:`, error);
+    }
     return;
   }
 

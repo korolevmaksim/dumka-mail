@@ -135,10 +135,10 @@ describe('resolveSingleKey', () => {
     expect(resolveSingleKey('k', noVim)).toBe('none');
   });
 
-  it('maps ? to the command palette only when enabled', () => {
-    expect(resolveSingleKey('?', full)).toBe('palette');
+  it('maps ? to the shortcut guide', () => {
+    expect(resolveSingleKey('?', full)).toBe('shortcutGuide');
     const noPalette = deriveShortcuts(make({ commandPaletteEnabled: false }));
-    expect(resolveSingleKey('?', noPalette)).toBe('none');
+    expect(resolveSingleKey('?', noPalette)).toBe('shortcutGuide');
   });
 
   it('maps / to search', () => {

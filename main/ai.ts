@@ -144,6 +144,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
         if (openAITools.length > 0) {
           body.tools = openAITools;
         }
+        const openAIReasoningEffort = env['OPENAI_REASONING_EFFORT'];
+        if (openAIReasoningEffort && openAIReasoningEffort !== 'disabled') {
+          body.reasoning_effort = openAIReasoningEffort;
+        }
 
         const res = await fetch(endpoint, {
           method: 'POST',
@@ -443,11 +447,6 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           const openRouterReasoningEffort = env['OPENROUTER_REASONING_EFFORT'];
           if (openRouterReasoningEffort && openRouterReasoningEffort !== 'disabled') {
             body.reasoning = { effort: openRouterReasoningEffort };
-          }
-        } else if (preference === 'openAI') {
-          const openAIReasoningEffort = env['OPENAI_REASONING_EFFORT'];
-          if (openAIReasoningEffort && openAIReasoningEffort !== 'disabled') {
-            body.reasoning_effort = openAIReasoningEffort;
           }
         }
 

@@ -31,8 +31,15 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package:mac": "npm run build && electron-builder --mac --dir",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:preflight:mac": "node scripts/release-preflight.mjs mac-signed",
+    "package:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir",
+    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
+    "dist:mac:signed": "npm run release:preflight:mac && npm run build && electron-builder --config build/electron-builder.signed.cjs --mac",
+    "package:win": "npm run build && electron-builder --win --dir",
+    "dist:win": "npm run build && electron-builder --win",
+    "package:linux": "npm run build && electron-builder --linux --dir",
+    "dist:linux": "npm run build && electron-builder --linux",
     "install-app": "./install.sh"
   },
   "build": {
@@ -53,13 +60,25 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.icns",
-      "identity": null,
       "target": [
         "dir"
       ]
     },
     "dmg": {
       "title": "Dumka Mail"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "category": "Office",
+      "icon": "assets/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
   },
   "dependencies": {

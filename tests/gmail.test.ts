@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapMessage } from '../main/gmail';
+import { buildGoogleTokenRevokeRequest, mapMessage } from '../main/gmail';
 
 function b64url(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64url');
@@ -103,5 +103,15 @@ describe('mapMessage', () => {
 
     expect(message.bodyPlain).toBe('snippet');
     expect(message.bodyHtml).toBe('');
+  });
+});
+
+describe('Google token revocation', () => {
+  it('builds an x-www-form-urlencoded refresh-token revoke request without leaking the token into the URL', () => {
+    const request = buildGoogleTokenRevokeRequest('refresh-token-with/slash+plus');
+
+    expect(request.url).toBe('https://oauth2.googleapis.com/revoke');
+    expect(request.url).not.toContain('refresh-token');
+    expect(request.body).toBe('token=refresh-token-with%2Fslash%2Bplus');
   });
 });

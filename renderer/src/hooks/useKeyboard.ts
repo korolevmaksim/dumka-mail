@@ -11,6 +11,7 @@ interface KeyboardOptions {
   onSearchFocus: () => void;
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (open: boolean) => void;
+  onOpenShortcutGuide: () => void;
   onOpenReminder: (thread: MailThread) => void;
   onEscape: () => void;
 }
@@ -69,6 +70,15 @@ export function useKeyboard(options: KeyboardOptions) {
       if (isMetaOrCtrl && (e.code === 'KeyK' || e.key === 'k')) {
         e.preventDefault();
         currentOptions.setCommandPaletteOpen(!currentOptions.commandPaletteOpen);
+        return;
+      }
+
+      const sc = deriveShortcuts(currentStore.settings.shortcuts);
+
+      // ?: open keyboard shortcut discovery. Shift is allowed because '?' is Shift+/.
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === '?' && sc.singleKey) {
+        e.preventDefault();
+        currentOptions.onOpenShortcutGuide();
         return;
       }
 
@@ -161,7 +171,6 @@ export function useKeyboard(options: KeyboardOptions) {
 
       // Mode-aware resolution (KC-C1): Apple Mail disables single keys;
       // superhuman/gmail force vim navigation.
-      const sc = deriveShortcuts(currentStore.settings.shortcuts);
       const visible = currentStore.visibleThreads;
       const currentIdx = visible.findIndex(t => t.id === currentStore.focusedThreadId);
       const focusedThread = currentIdx !== -1 ? visible[currentIdx] : null;

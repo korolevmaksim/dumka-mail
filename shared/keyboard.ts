@@ -69,7 +69,7 @@ export type MailKeyAction =
   | 'remind'
   | 'undo'
   | 'search'
-  | 'palette'
+  | 'shortcutGuide'
   | 'next'
   | 'prev'
   | 'none';
@@ -84,7 +84,7 @@ export type MailKeyAction =
  *
  * Bindings (superhuman / gmail; all are `'none'` in appleMail because
  * `singleKey` is false there):
- *   ?  → palette   (only when commandPalette enabled)
+ *   ?  → shortcut guide
  *   /  → search
  *   c  → compose   (only when composeKey enabled)
  *   r  → reply
@@ -108,7 +108,7 @@ export function resolveSingleKey(key: string, r: ResolvedShortcuts): MailKeyActi
   // lower-casing letters — they are not letters, so casing is irrelevant, but
   // keeping them first makes the precedence explicit.
   if (key === '?') {
-    return r.commandPalette ? 'palette' : 'none';
+    return 'shortcutGuide';
   }
   if (key === '/') {
     return 'search';

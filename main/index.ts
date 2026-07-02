@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Notification, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Notification, screen, type NotificationAction } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -23,15 +23,20 @@ import {
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
 import { GoogleWorkspaceService } from './googleWorkspace';
-import { getRefreshToken, saveRefreshToken } from './keychain';
+import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { AgenticService } from './agentic';
 import { MCPManager } from './mcpManager';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
+import { checkForAppUpdates, getAutoUpdateStatus, initializeAutoUpdates, installDownloadedAppUpdate } from './autoUpdate';
 import { shouldNotifyForMessage } from '../shared/mailSecurity';
-import type { CalendarAttendeeResponse, CalendarInvite, MailMessage, MailNotificationSettings, MailThread, SyncState } from '../shared/types';
+import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoReply';
+import { evaluateMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
+import { escapeHtml } from '../shared/draftHtml';
+import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
+import type { ActionKind, CalendarAttendeeResponse, CalendarInvite, MailMessage, MailNotificationSettings, MailRuleAction, MailRulesSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenThread: { accountId: string; threadId: string } | null = null;
@@ -49,6 +54,10 @@ const DEFAULT_NOTIFICATION_SETTINGS: MailNotificationSettings = {
   quietHoursEnabled: false,
   quietHoursStart: '22:00',
   quietHoursEnd: '08:00'
+};
+const DEFAULT_MAIL_RULES_SETTINGS: MailRulesSettings = {
+  enabled: false,
+  rules: []
 };
 
 interface RestoredWindowState {
@@ -122,9 +131,209 @@ function readNotificationSettings(): MailNotificationSettings {
   }
 }
 
+function readIncludeBodiesInSearchIndex(): boolean {
+  try {
+    const rawSettings = SettingsRepo.get('appSettings');
+    if (!rawSettings) return true;
+    const parsed = JSON.parse(rawSettings);
+    return parsed?.privacy?.includeBodiesInSearchIndex !== false;
+  } catch (err) {
+    console.error('Failed to read search indexing privacy setting:', err);
+    return true;
+  }
+}
+
+function readMailRulesSettings(): MailRulesSettings {
+  try {
+    const rawSettings = SettingsRepo.get('appSettings');
+    if (!rawSettings) return DEFAULT_MAIL_RULES_SETTINGS;
+    const parsed = JSON.parse(rawSettings);
+    return normalizeMailRulesSettings(parsed?.mailRules);
+  } catch (err) {
+    console.error('Failed to read mail rule settings:', err);
+    return DEFAULT_MAIL_RULES_SETTINGS;
+  }
+}
+
+function buildForwardDraftFromThread(email: string, thread: MailThread, forwardTo: string) {
+  const messages = MessagesRepo.listForThread(email, thread.id);
+  const lastMessage = messages[messages.length - 1] || null;
+  const from = lastMessage?.senderEmail || thread.senderEmail;
+  const subject = thread.subject || '(no subject)';
+  const body = (lastMessage?.bodyPlain || lastMessage?.snippet || thread.snippet || '').trim();
+  const forwardedBody = [
+    'Forwarded by Dumka Mail rule.',
+    '',
+    `From: ${from}`,
+    `Subject: ${subject}`,
+    '',
+    body || thread.snippet || '(no preview available)',
+  ].join('\n');
+  const htmlBody = [
+    '<p>Forwarded by Dumka Mail rule.</p>',
+    '<hr>',
+    `<p><strong>From:</strong> ${escapeHtml(from)}<br><strong>Subject:</strong> ${escapeHtml(subject)}</p>`,
+    `<blockquote>${escapeHtml(body || thread.snippet || '(no preview available)').replace(/\n/g, '<br>')}</blockquote>`,
+  ].join('');
+
+  return {
+    to: [{ name: '', email: forwardTo }],
+    cc: [],
+    bcc: [],
+    subject: subject.startsWith('Fwd:') ? subject : `Fwd: ${subject}`,
+    bodyPlain: forwardedBody,
+    bodyHtml: htmlBody,
+  };
+}
+
+function latestIncomingMessageForThread(accountId: string, threadId: string): MailMessage | null {
+  const self = accountId.trim().toLowerCase();
+  const messages = MessagesRepo.listForThread(accountId, threadId);
+  return [...messages].reverse().find(message => message.senderEmail.trim().toLowerCase() !== self) || null;
+}
+
+function buildAutoReplyDraftFromRule(accountId: string, threadId: string, replyBody: string) {
+  const message = latestIncomingMessageForThread(accountId, threadId);
+  if (!message) {
+    throw new Error('Auto-reply skipped: no incoming message found.');
+  }
+
+  const safety = shouldAutoReplyToMessage(message, accountId, replyBody);
+  if (!safety.allowed) {
+    throw new Error(`Auto-reply skipped: ${safety.reason || 'unsafe message'}.`);
+  }
+
+  return buildAutoReplyDraft(message, accountId, replyBody);
+}
+
 function getNotificationIconPath(): string | undefined {
   const iconPath = path.join(__dirname, '../../assets/icon.png');
   return fs.existsSync(iconPath) ? iconPath : undefined;
+}
+
+function openThreadFromNotification(accountId: string, threadId: string) {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.webContents.send('api:openThread', { accountId, threadId });
+    return;
+  }
+
+  pendingOpenThread = { accountId, threadId };
+  createWindow();
+}
+
+function dismissNotification(notification: Notification) {
+  activeNotifications.delete(notification);
+  notification.close();
+}
+
+function notificationButtonActions(kind: MailNotificationKind): NotificationAction[] {
+  return notificationActionsFor(kind).map(action => ({
+    type: 'button',
+    text: action.title,
+  }));
+}
+
+function refreshRemindersDue(accountId: string, threadId: string) {
+  mainWindow?.webContents.send('api:remindersDue', [{ accountId, threadId }]);
+}
+
+async function runNotificationLabelAction(
+  accountId: string,
+  threadId: string,
+  kind: Extract<ActionKind, 'markDone' | 'markRead'>,
+  addLabelIds: string[],
+  removeLabelIds: string[],
+) {
+  const now = new Date().toISOString();
+  const log = {
+    id: crypto.randomUUID(),
+    accountId,
+    threadId,
+    kind,
+    status: 'running' as const,
+    createdAt: now,
+    payloadJson: JSON.stringify({ source: 'notification' }),
+  };
+
+  ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds);
+  ActionLogRepo.save(log);
+
+  try {
+    await runRemoteLabelAction(accountId, threadId, addLabelIds, removeLabelIds, kind);
+    ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
+  } catch (err: any) {
+    if (isNetworkError(err)) {
+      ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
+      return;
+    }
+
+    ThreadsRepo.updateLabels(accountId, threadId, removeLabelIds, addLabelIds);
+    ActionLogRepo.save({
+      ...log,
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      failureMessage: err?.message || String(err),
+    });
+  }
+}
+
+async function handleNotificationAction(
+  kind: MailNotificationKind,
+  actionIndex: number,
+  accountId: string,
+  threadId: string,
+) {
+  const action = notificationActionAt(kind, actionIndex);
+  if (!action) return;
+
+  if (action.id === 'open') {
+    openThreadFromNotification(accountId, threadId);
+    return;
+  }
+
+  if (action.id === 'archive') {
+    await runNotificationLabelAction(accountId, threadId, 'markDone', [], ['INBOX']);
+    return;
+  }
+
+  if (action.id === 'markRead') {
+    await runNotificationLabelAction(accountId, threadId, 'markRead', [], ['UNREAD']);
+    return;
+  }
+
+  if (action.id === 'clearReminder') {
+    RemindersRepo.delete(accountId, threadId);
+    ActionLogRepo.save({
+      id: crypto.randomUUID(),
+      accountId,
+      threadId,
+      kind: 'clearReminder',
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      payloadJson: JSON.stringify({ source: 'notification' }),
+    });
+    refreshRemindersDue(accountId, threadId);
+    return;
+  }
+
+  if (action.id === 'snoozeTomorrow') {
+    const reminderAt = nextMorningIso();
+    RemindersRepo.save(accountId, threadId, reminderAt);
+    ActionLogRepo.save({
+      id: crypto.randomUUID(),
+      accountId,
+      threadId,
+      kind: 'setReminder',
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      payloadJson: JSON.stringify({ source: 'notification', reminderAt }),
+    });
+    refreshRemindersDue(accountId, threadId);
+  }
 }
 
 function notifyOfNewMessages(messages: MailMessage[]) {
@@ -151,27 +360,22 @@ function notifyOfNewMessages(messages: MailMessage[]) {
         silent: !settings.sound,
         icon,
         id: `new-mail:${message.accountId}:${message.id}`,
-        groupId: message.accountId
+        groupId: message.accountId,
+        actions: notificationButtonActions('newMail')
       });
 
       activeNotifications.add(notification);
 
       notification.on('click', () => {
-        activeNotifications.delete(notification);
-        if (mainWindow) {
-          if (mainWindow.isMinimized()) mainWindow.restore();
-          mainWindow.focus();
-          mainWindow.webContents.send('api:openThread', {
-            accountId: message.accountId,
-            threadId: message.threadId
-          });
-        } else {
-          pendingOpenThread = {
-            accountId: message.accountId,
-            threadId: message.threadId
-          };
-          createWindow();
-        }
+        dismissNotification(notification);
+        openThreadFromNotification(message.accountId, message.threadId);
+      });
+
+      notification.on('action', (details) => {
+        dismissNotification(notification);
+        void handleNotificationAction('newMail', details.actionIndex, message.accountId, message.threadId).catch(err => {
+          console.error('Failed to handle new mail notification action:', err);
+        });
       });
 
       notification.on('close', () => {
@@ -186,6 +390,61 @@ function notifyOfNewMessages(messages: MailMessage[]) {
       notification.show();
     } catch (err) {
       console.error('Failed to show push notification:', err);
+    }
+  }
+}
+
+function notifyOfDueReminders(threads: MailThread[]) {
+  if (threads.length === 0) return;
+
+  const settings = readNotificationSettings();
+  if (!settings.desktopNotifications || !settings.reminderNotifications || isInQuietHours(settings)) return;
+
+  if (!Notification.isSupported()) {
+    console.warn('Native reminder notifications are not supported in this Electron runtime.');
+    return;
+  }
+
+  const icon = getNotificationIconPath();
+  for (const thread of threads) {
+    try {
+      const notification = new Notification({
+        title: 'Reminder',
+        subtitle: thread.subject || '(No Subject)',
+        body: thread.snippet || thread.senderEmail || '',
+        silent: !settings.sound,
+        icon,
+        id: `reminder:${thread.accountId}:${thread.id}`,
+        groupId: thread.accountId,
+        actions: notificationButtonActions('reminder')
+      });
+
+      activeNotifications.add(notification);
+
+      notification.on('click', () => {
+        dismissNotification(notification);
+        openThreadFromNotification(thread.accountId, thread.id);
+      });
+
+      notification.on('action', (details) => {
+        dismissNotification(notification);
+        void handleNotificationAction('reminder', details.actionIndex, thread.accountId, thread.id).catch(err => {
+          console.error('Failed to handle reminder notification action:', err);
+        });
+      });
+
+      notification.on('close', () => {
+        activeNotifications.delete(notification);
+      });
+
+      notification.on('failed', (_, error) => {
+        activeNotifications.delete(notification);
+        console.error('Reminder notification failed to show:', error);
+      });
+
+      notification.show();
+    } catch (err) {
+      console.error('Failed to show reminder notification:', err);
     }
   }
 }
@@ -367,9 +626,11 @@ app.whenReady().then(() => {
 
   // Install the native application menu
   installApplicationMenu(() => mainWindow);
+  initializeAutoUpdates(() => mainWindow);
   
   // Start background sync worker loop
   startBackgroundSyncWorker();
+  startReminderNotificationWorker();
   startBackgroundMailboxSyncWorker();
   startBackgroundAgenticWorker();
 
@@ -403,10 +664,16 @@ app.on('window-all-closed', () => {
 
 async function saveThreadsToDatabase(threads: MailThread[]) {
   await databaseWorkerClient.saveThreads(threads);
+  void runMailRulesForThreads(threads).catch(err => {
+    console.error('Failed to apply mail rules:', err);
+  });
 }
 
 async function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }) {
-  const { newMessages } = await databaseWorkerClient.saveMessages(messages, options);
+  const { newMessages } = await databaseWorkerClient.saveMessages(messages, {
+    ...options,
+    indexBodies: readIncludeBodiesInSearchIndex()
+  });
 
   if (options?.notifyOfNew && newMessages.length > 0) {
     notifyOfNewMessages(newMessages);
@@ -443,7 +710,7 @@ function registerSecureHandler(channel: string, listener: (event: Electron.IpcMa
 registerSecureHandler('db:listAccounts', () => AccountsRepo.list());
 registerSecureHandler('db:getAccount', (_, id) => AccountsRepo.get(id));
 registerSecureHandler('db:saveAccount', (_, account) => AccountsRepo.save(account));
-registerSecureHandler('db:deleteAccount', (_, id) => AccountsRepo.delete(id));
+registerSecureHandler('db:deleteAccount', (_, id, options?: { purgeCache?: boolean }) => AccountsRepo.delete(id, options));
 
 registerSecureHandler('db:listThreads', (_, accountId) => ThreadsRepo.list(accountId));
 registerSecureHandler('db:saveThreads', (_, threads) => saveThreadsToDatabase(threads));
@@ -488,9 +755,11 @@ registerSecureHandler('db:setSetting', (_, key, value) => {
   const result = SettingsRepo.set(key, value);
   if (key === 'appSettings') {
     try {
-      MCPManager.initialize(JSON.parse(value));
+      const parsed = JSON.parse(value);
+      MCPManager.initialize(parsed);
+      SearchRepo.setBodyIndexEnabled(parsed?.privacy?.includeBodiesInSearchIndex !== false);
     } catch (err) {
-      console.error('Failed to reload MCPManager after settings update:', err);
+      console.error('Failed to apply settings update side effects:', err);
     }
   }
   return result;
@@ -527,6 +796,24 @@ registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
 registerSecureHandler('api:verifyTokenExists', async (_, email) => {
   const token = await getRefreshToken(email);
   return token !== null;
+});
+
+registerSecureHandler('api:disconnectAccount', async (_, email, options?: { purgeCache?: boolean; revokeToken?: boolean }) => {
+  const normalizedEmail = normalizeOAuthEmail(email);
+  let revokeStatus: 'skipped' | 'missing' | 'revoked' | 'failed' = 'skipped';
+
+  if (options?.revokeToken !== false) {
+    try {
+      revokeStatus = await GmailSyncService.revokeRefreshToken(normalizedEmail);
+    } catch (err) {
+      revokeStatus = 'failed';
+      console.warn(`Google token revoke failed for ${normalizedEmail}; deleting local token anyway:`, err);
+    }
+  }
+
+  await deleteRefreshToken(normalizedEmail);
+  AccountsRepo.delete(normalizedEmail, { purgeCache: options?.purgeCache !== false });
+  return { revokeStatus };
 });
 
 registerSecureHandler('db:getGoogleIntegrationStatus', (_, accountId) => AccountIntegrationsRepo.get(accountId));
@@ -765,6 +1052,129 @@ async function runRemoteLabelAction(email: string, threadId: string, addLabelIds
   await GmailSyncService.modifyLabels(email, threadId, addLabelIds, removeLabelIds);
 }
 
+function labelMutationForRuleAction(action: MailRuleAction): { kind: 'markDone' | 'applyLabel' | 'moveToLabel'; addLabelIds: string[]; removeLabelIds: string[] } | null {
+  if (action.type === 'archive') {
+    return { kind: 'markDone', addLabelIds: [], removeLabelIds: ['INBOX'] };
+  }
+  if (action.type === 'applyLabel' && action.labelId) {
+    return { kind: 'applyLabel', addLabelIds: [action.labelId], removeLabelIds: [] };
+  }
+  if (action.type === 'moveToLabel' && action.labelId) {
+    return { kind: 'moveToLabel', addLabelIds: [action.labelId], removeLabelIds: ['INBOX'] };
+  }
+  return null;
+}
+
+async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
+  if (ActionLogRepo.get(effect.actionId)) return;
+
+  const now = new Date().toISOString();
+  const payloadJson = JSON.stringify({
+    ruleId: effect.rule.id,
+    ruleTitle: effect.rule.title,
+    action: effect.action,
+  });
+
+  if (effect.action.type === 'forward') {
+    if (!effect.action.forwardTo) return;
+    const log = {
+      id: effect.actionId,
+      accountId: thread.accountId,
+      threadId: thread.id,
+      kind: 'forwardThread' as const,
+      status: 'running' as const,
+      createdAt: now,
+      payloadJson,
+    };
+    ActionLogRepo.save(log);
+
+    try {
+      await GmailSyncService.sendDraft(
+        thread.accountId,
+        buildForwardDraftFromThread(thread.accountId, thread, effect.action.forwardTo),
+      );
+      ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
+    } catch (err: any) {
+      if (isNetworkError(err)) {
+        ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
+        return;
+      }
+      ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
+    }
+    return;
+  }
+
+  if (effect.action.type === 'autoReply') {
+    const replyBody = effect.action.replyBody?.trim();
+    if (!replyBody) return;
+    const log = {
+      id: effect.actionId,
+      accountId: thread.accountId,
+      threadId: thread.id,
+      kind: 'autoReply' as const,
+      status: 'running' as const,
+      createdAt: now,
+      payloadJson,
+    };
+    ActionLogRepo.save(log);
+
+    try {
+      await GmailSyncService.sendDraft(
+        thread.accountId,
+        buildAutoReplyDraftFromRule(thread.accountId, thread.id, replyBody),
+      );
+      ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
+    } catch (err: any) {
+      if (isNetworkError(err)) {
+        ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
+        return;
+      }
+      ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
+    }
+    return;
+  }
+
+  const mutation = labelMutationForRuleAction(effect.action);
+  if (!mutation) return;
+
+  ThreadsRepo.updateLabels(thread.accountId, thread.id, mutation.addLabelIds, mutation.removeLabelIds);
+  const log = {
+    id: effect.actionId,
+    accountId: thread.accountId,
+    threadId: thread.id,
+    kind: mutation.kind,
+    status: 'running' as const,
+    createdAt: now,
+    payloadJson,
+  };
+  ActionLogRepo.save(log);
+
+  try {
+    await runRemoteLabelAction(thread.accountId, thread.id, mutation.addLabelIds, mutation.removeLabelIds, mutation.kind);
+    ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
+  } catch (err: any) {
+    if (isNetworkError(err)) {
+      ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
+      return;
+    }
+    ThreadsRepo.updateLabels(thread.accountId, thread.id, mutation.removeLabelIds, mutation.addLabelIds);
+    ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
+  }
+}
+
+async function runMailRulesForThreads(threads: MailThread[]) {
+  if (threads.length === 0) return;
+
+  const settings = readMailRulesSettings();
+  if (!settings.enabled || settings.rules.length === 0) return;
+
+  for (const thread of threads) {
+    for (const effect of evaluateMailRules(thread, settings)) {
+      await applyMailRuleEffect(thread, effect);
+    }
+  }
+}
+
 registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string, actionKind?: string, payloadJson?: string) => {
   // 1. Optimistically write to local SQLite database first for instant persistence
   ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
@@ -894,6 +1304,9 @@ registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
 registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
 registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
 registerSecureHandler('api:setMenuCommandState', (_, state) => updateApplicationMenuCommandState(state));
+registerSecureHandler('api:getAutoUpdateStatus', () => getAutoUpdateStatus());
+registerSecureHandler('api:checkForAppUpdates', () => checkForAppUpdates());
+registerSecureHandler('api:installDownloadedAppUpdate', () => installDownloadedAppUpdate());
 registerSecureHandler('api:findInPage', (event, text, options) => {
   event.sender.findInPage(text, options);
 });
@@ -928,6 +1341,7 @@ function isNetworkError(err: any): boolean {
 let syncWorkerActive = false;
 let mailboxSyncWorkerActive = false;
 let agenticWorkerActive = false;
+let reminderWorkerActive = false;
 const activeBackfillAccounts = new Set<string>();
 
 function startBackgroundSyncWorker() {
@@ -983,11 +1397,29 @@ function startBackgroundSyncWorker() {
           } else if (action.kind === 'send') {
             if (action.draftId) {
               const draft = DraftsRepo.get(action.draftId);
-              if (draft) {
-                await GmailSyncService.sendDraft(action.accountId, draft);
-                DraftsRepo.delete(action.draftId);
-              }
+              if (!draft) throw new Error('Draft not found for pending send.');
+              await GmailSyncService.sendDraft(action.accountId, draft);
+              DraftsRepo.delete(action.draftId);
             }
+          } else if (action.kind === 'forwardThread') {
+            const payloadAction = payload.action as MailRuleAction | undefined;
+            const forwardTo = payloadAction?.forwardTo;
+            const thread = action.threadId ? ThreadsRepo.get(action.accountId, action.threadId) : null;
+            if (!forwardTo) throw new Error('Forward rule action is missing forwardTo.');
+            if (!thread) throw new Error('Thread not found for pending forward rule.');
+            await GmailSyncService.sendDraft(
+              action.accountId,
+              buildForwardDraftFromThread(action.accountId, thread, forwardTo),
+            );
+          } else if (action.kind === 'autoReply') {
+            const payloadAction = payload.action as MailRuleAction | undefined;
+            const replyBody = payloadAction?.replyBody?.trim();
+            if (!replyBody) throw new Error('Auto-reply rule action is missing replyBody.');
+            if (!action.threadId) throw new Error('Thread id is missing for pending auto-reply rule.');
+            await GmailSyncService.sendDraft(
+              action.accountId,
+              buildAutoReplyDraftFromRule(action.accountId, action.threadId, replyBody),
+            );
           }
 
           action.status = 'completed';
@@ -1050,6 +1482,35 @@ function startBackgroundSyncWorker() {
       syncWorkerActive = false;
     }
   }, 15000);
+}
+
+function startReminderNotificationWorker() {
+  const run = async () => {
+    if (reminderWorkerActive) return;
+    reminderWorkerActive = true;
+
+    try {
+      const dueThreads = RemindersRepo.listDue(new Date().toISOString(), 25);
+      if (dueThreads.length === 0) return;
+
+      for (const thread of dueThreads) {
+        RemindersRepo.delete(thread.accountId, thread.id);
+      }
+
+      notifyOfDueReminders(dueThreads);
+      mainWindow?.webContents.send('api:remindersDue', dueThreads.map(thread => ({
+        accountId: thread.accountId,
+        threadId: thread.id
+      })));
+    } catch (err) {
+      console.error('[Reminder Worker] Failed to process due reminders:', err);
+    } finally {
+      reminderWorkerActive = false;
+    }
+  };
+
+  setInterval(run, 15000);
+  void run();
 }
 
 function nextSyncState(accountId: string, base: SyncState | null, historyId: string, lastFullSyncAt?: string | null): SyncState {

@@ -1,9 +1,10 @@
 import type { MailboxView } from './types';
 
-export const MAILBOX_VIEW_ORDER: MailboxView[] = ['inbox', 'sent', 'trash', 'spam', 'muted'];
+export const MAILBOX_VIEW_ORDER: MailboxView[] = ['inbox', 'drafts', 'sent', 'trash', 'spam', 'muted'];
 
 export const MAILBOX_VIEW_LABELS: Record<MailboxView, string> = {
   inbox: 'Inbox',
+  drafts: 'Drafts',
   sent: 'Sent',
   trash: 'Trash',
   spam: 'Spam',

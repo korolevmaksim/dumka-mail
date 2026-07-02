@@ -153,3 +153,43 @@ describe('completeAI OpenRouter payload', () => {
     expect(body.reasoning).toEqual({ effort: 'high' });
   });
 });
+
+describe('completeAI OpenAI payload', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends OpenAI reasoning effort in the standard chat completions body', async () => {
+    mockDescriptor = {
+      preference: 'openAI',
+      displayName: 'OpenAI',
+      model: 'gpt-5.4-mini',
+      transport: 'chat.completions',
+      status: 'Configured',
+      capabilities: { canTriage: true, canSummarize: true, canDraft: true },
+    };
+    mockAIConfig = {
+      OPENAI_API_KEY: 'fixture-openai-key',
+      OPENAI_MODEL: 'gpt-5.4-mini',
+      OPENAI_REASONING_EFFORT: 'medium',
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      choices: [
+        { message: { content: 'ok' } }
+      ],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeAI({
+      action: 'chat',
+      context: 'No thread open.',
+      conversationHistory: [],
+      userInstruction: 'Reply with ok',
+    }, 'openAI');
+
+    const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(firstCall[1].body));
+    expect(body.reasoning_effort).toBe('medium');
+  });
+});

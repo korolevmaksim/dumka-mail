@@ -37,6 +37,8 @@ export function isThreadInMailbox(
   options: MailboxFilterOptions = {},
 ): boolean {
   switch (mailboxView) {
+    case 'drafts':
+      return false;
     case 'sent':
       return threadHasLabel(thread, 'SENT');
     case 'trash':

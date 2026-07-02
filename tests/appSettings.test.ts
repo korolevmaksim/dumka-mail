@@ -2,6 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, mergeSettings, SETTINGS_SCHEMA_VERSION } from '../renderer/src/stores/AppStore';
 
 describe('AppSettings AI prompt shortcuts', () => {
+  it('ships with system language as the default interface locale', () => {
+    expect(DEFAULT_SETTINGS.general.language).toBe('system');
+  });
+
+  it('normalizes invalid persisted interface language values', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+      general: {
+        language: 'unsupported',
+      },
+    });
+
+    expect(merged.general.language).toBe('system');
+  });
+
+  it('preserves supported persisted interface language values', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      general: {
+        language: 'pseudo',
+      },
+    });
+
+    expect(merged.general.language).toBe('pseudo');
+  });
+
   it('ships with a thread-scoped request explanation shortcut', () => {
     expect(DEFAULT_SETTINGS.ai.promptShortcuts).toEqual([
       expect.objectContaining({
@@ -49,5 +75,45 @@ describe('AppSettings AI prompt shortcuts', () => {
         requiresThread: false,
       },
     ]);
+  });
+
+  it('adds disabled mail rules defaults when migrating older settings', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+    });
+
+    expect(merged.mailRules).toEqual({
+      enabled: false,
+      rules: [],
+    });
+  });
+
+  it('preserves valid user-configured mail rules', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      mailRules: {
+        enabled: true,
+        rules: [{
+          id: 'receipts',
+          title: 'Receipts',
+          isEnabled: true,
+          accountId: 'me@example.com',
+          matchMode: 'all',
+          conditions: [{
+            id: 'condition-1',
+            field: 'senderDomain',
+            operation: 'equals',
+            value: 'vendor.com',
+            isNegated: false,
+            accountId: 'me@example.com',
+          }],
+          actions: [{ id: 'archive', type: 'archive' }],
+        }],
+      },
+    });
+
+    expect(merged.mailRules.enabled).toBe(true);
+    expect(merged.mailRules.rules).toHaveLength(1);
+    expect(merged.mailRules.rules[0].actions[0].type).toBe('archive');
   });
 });

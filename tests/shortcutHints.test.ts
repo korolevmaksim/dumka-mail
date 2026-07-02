@@ -33,7 +33,7 @@ const pairs = (hints: ShortcutHint[]) => hints.map((h) => `${h.keys} ${h.label}`
 const keysOf = (hints: ShortcutHint[]) => hints.map((h) => h.keys);
 
 describe('hintsForContext — list', () => {
-  it('uses single-key shortcuts in superhuman mode and includes vim + open + command', () => {
+  it('uses single-key shortcuts in superhuman mode and includes vim + open + discovery', () => {
     const hints = hintsForContext('list', superhuman);
     expect(pairs(hints)).toEqual([
       'Z undo',
@@ -50,7 +50,8 @@ describe('hintsForContext — list', () => {
       '⌘J ask AI',
       'J/K move', // vim effective in superhuman mode
       '↩/O open', // list context (thread not open)
-      '? command', // palette enabled, single-key form
+      '⌘K commands',
+      '? shortcuts',
     ]);
   });
 
@@ -71,7 +72,7 @@ describe('hintsForContext — list', () => {
       '⌘J ask AI',
       // no J/K — vim is not effective when single-key shortcuts are disabled
       '↩ open',
-      '⌘K command',
+      '⌘K commands',
     ]);
   });
 
@@ -81,10 +82,11 @@ describe('hintsForContext — list', () => {
     expect(pairs(hints)).toContain('J/K move');
   });
 
-  it('omits the command hint when the command palette is disabled', () => {
+  it('omits the commands hint when the command palette is disabled', () => {
     const hints = hintsForContext('list', { ...superhuman, commandPaletteEnabled: false });
-    expect(keysOf(hints)).not.toContain('?');
-    expect(pairs(hints).some((p) => p.endsWith('command'))).toBe(false);
+    expect(keysOf(hints)).not.toContain('⌘K');
+    expect(keysOf(hints)).toContain('?');
+    expect(pairs(hints).some((p) => p.endsWith('commands'))).toBe(false);
   });
 
   it('falls back to ⌘N compose when the compose shortcut is disabled', () => {
@@ -145,7 +147,8 @@ describe('hintsForContext — search', () => {
       '↩/O open',
       '⌘J ask AI',
       'J/K move',
-      '? command',
+      '⌘K commands',
+      '? shortcuts',
     ]);
   });
 
@@ -155,7 +158,7 @@ describe('hintsForContext — search', () => {
       'esc close',
       '↩ open',
       '⌘J ask AI',
-      '⌘K command',
+      '⌘K commands',
     ]);
   });
 });
@@ -172,10 +175,10 @@ describe('resolveHintLayout', () => {
   it('never drops the protected command-palette hint and appends a +N more chip', () => {
     const hints = hintsForContext('list', superhuman);
     const layout = resolveHintLayout(hints, 0);
-    // Only the priority-0 command hint survives.
+    // Only the priority-0 command-palette hint survives.
     expect(layout.displayHints).toHaveLength(2);
     const [survivor, overflow] = layout.displayHints;
-    expect(survivor).toEqual({ keys: '?', label: 'command' });
+    expect(survivor).toEqual({ keys: '⌘K', label: 'commands' });
     expect(overflow).toEqual({ keys: `+${hints.length - 1}`, label: 'more' });
     expect(layout.overflowCount).toBe(hints.length - 1);
   });
@@ -226,7 +229,7 @@ describe('resolveHintLayout', () => {
 describe('opensCommandPalette', () => {
   it('detects command-palette hints and the overflow chip', () => {
     expect(opensCommandPalette({ keys: '⌘K', label: 'command' })).toBe(true);
-    expect(opensCommandPalette({ keys: '?', label: 'command' })).toBe(true);
+    expect(opensCommandPalette({ keys: '?', label: 'shortcuts' })).toBe(false);
     expect(opensCommandPalette({ keys: '⌘K', label: 'commands' })).toBe(true);
     expect(opensCommandPalette({ keys: '+3', label: 'more' })).toBe(true);
   });

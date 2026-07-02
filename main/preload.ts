@@ -21,13 +21,14 @@ import {
   AIProviderPreference
 } from '../shared/types';
 import { AIRequest } from './ai';
+import type { AutoUpdateStatus } from '../shared/autoUpdate';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Accounts
   listAccounts: () => ipcRenderer.invoke('db:listAccounts'),
   getAccount: (id: string) => ipcRenderer.invoke('db:getAccount', id),
   saveAccount: (account: Account) => ipcRenderer.invoke('db:saveAccount', account),
-  deleteAccount: (id: string) => ipcRenderer.invoke('db:deleteAccount', id),
+  deleteAccount: (id: string, options?: { purgeCache?: boolean }) => ipcRenderer.invoke('db:deleteAccount', id, options),
 
   // Threads
   listThreads: (accountId: string) => ipcRenderer.invoke('db:listThreads', accountId),
@@ -80,6 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // OAuth onboarding
   onboardAccount: (emailHint?: string) => ipcRenderer.invoke('api:onboardAccount', emailHint),
   verifyTokenExists: (email: string) => ipcRenderer.invoke('api:verifyTokenExists', email),
+  disconnectAccount: (email: string, options?: { purgeCache?: boolean; revokeToken?: boolean }) => ipcRenderer.invoke('api:disconnectAccount', email, options),
   authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => ipcRenderer.invoke('api:authorizeGoogleIntegration', email, integration),
 
   // Gmail sync & mutations
@@ -129,6 +131,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),
   verifyMCPServer: (config: any) => ipcRenderer.invoke('api:verifyMCPServer', config),
   setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => ipcRenderer.invoke('api:setMenuCommandState', state),
+  getAutoUpdateStatus: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:getAutoUpdateStatus'),
+  checkForAppUpdates: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:checkForAppUpdates'),
+  installDownloadedAppUpdate: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:installDownloadedAppUpdate'),
 
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('db:getSetting', key),
@@ -149,6 +154,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('api:openThread', listener);
     return () => {
       ipcRenderer.off('api:openThread', listener);
+    };
+  },
+  onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => {
+    const listener = (_: any, data: any) => callback(Array.isArray(data) ? data : []);
+    ipcRenderer.on('api:remindersDue', listener);
+    return () => {
+      ipcRenderer.off('api:remindersDue', listener);
+    };
+  },
+  onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => {
+    const listener = (_: any, status: AutoUpdateStatus) => callback(status);
+    ipcRenderer.on('api:autoUpdateStatus', listener);
+    return () => {
+      ipcRenderer.off('api:autoUpdateStatus', listener);
     };
   },
   getPendingOpenThread: () => ipcRenderer.invoke('api:getPendingOpenThread'),

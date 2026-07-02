@@ -4,6 +4,7 @@ import {
   Bold,
   Braces,
   Calendar,
+  Clock,
   ExternalLink,
   Italic,
   Link,
@@ -20,8 +21,13 @@ import {
 import { useAppStore } from '../../stores/AppStore';
 import { emitToast } from '../../lib/toastBus';
 import { escapeHtml } from '../../../../shared/draftHtml';
-import { renderDefaultSnippetHtml } from '../../../../shared/snippets';
+import { createSnippetTemplateId, renderDefaultSnippetHtml, renderSnippetTemplateHtml } from '../../../../shared/snippets';
+import type { SnippetTemplate } from '../../../../shared/types';
+import { SnoozeMenu } from '../SnoozeMenu';
+import { ComposeTemplatesMenu } from '../compose/ComposeTemplatesMenu';
+import { LinkPopover } from '../compose/LinkPopover';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
+import { SendLaterMenu } from '../compose/SendLaterMenu';
 
 interface ToolbarButtonProps {
   title: string;
@@ -36,6 +42,7 @@ function ToolbarButton({ title, onClick, children, active = false }: ToolbarButt
       type="button"
       title={title}
       onClick={onClick}
+      onMouseDown={(event) => event.preventDefault()}
       className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
         active
           ? 'bg-[var(--hover-row)] text-[var(--accent)]'
@@ -57,6 +64,12 @@ export function InlineReplyComposer() {
   const composerRef = useRef<HTMLDivElement>(null);
   const lastDraftIdRef = useRef<string | null>(null);
   const [quotedTextExpanded, setQuotedTextExpanded] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkSelectedText, setLinkSelectedText] = useState('');
+  const [linkSelectionRange, setLinkSelectionRange] = useState<Range | null>(null);
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [sendLaterOpen, setSendLaterOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   useEffect(() => {
     const draft = store.activeDraft;
@@ -82,23 +95,41 @@ export function InlineReplyComposer() {
   const toEmails = recipientList(activeDraft.to);
   const ccEmails = recipientList(activeDraft.cc);
   const hasQuotedReply = Boolean(activeDraft.bodyHtml?.includes('data-dumka-quoted-reply="true"'));
+  const reminderThread = activeDraft.threadId
+    ? store.threads.find(thread => thread.id === activeDraft.threadId && thread.accountId === activeDraft.accountId) ||
+      (store.openedThread?.id === activeDraft.threadId && store.openedThread.accountId === activeDraft.accountId ? store.openedThread : null)
+    : null;
 
   const execute = (command: string, value?: string) => {
     editorRef.current?.execute(command, value);
   };
 
-  const insertLink = () => {
-    const selected = editorRef.current?.getSelectedText() || '';
-    const url = window.prompt('Link URL');
-    if (!url) return;
+  const closeLinkPopover = () => {
+    setLinkOpen(false);
+    setLinkSelectedText('');
+    setLinkSelectionRange(null);
+  };
 
+  const openLinkPopover = () => {
+    setLinkSelectedText(editorRef.current?.getSelectedText() || '');
+    setLinkSelectionRange(editorRef.current?.getSelectionRange() || null);
+    setLinkOpen(true);
+  };
+
+  const insertLink = (url: string) => {
+    const selected = linkSelectedText.trim();
     if (!selected) {
       const safeUrl = escapeHtml(url);
       editorRef.current?.insertHtml(`<a href="${safeUrl}" target="_blank" rel="noreferrer" style="color:#5383E6;text-decoration:underline;">${safeUrl}</a>`);
+      closeLinkPopover();
       return;
     }
 
+    if (linkSelectionRange) {
+      editorRef.current?.restoreSelectionRange(linkSelectionRange);
+    }
     editorRef.current?.execute('createLink', url);
+    closeLinkPopover();
   };
 
   const insertDefaultSnippet = () => {
@@ -116,6 +147,51 @@ export function InlineReplyComposer() {
       return;
     }
     editorRef.current?.insertHtml(snippet);
+    setTemplatesOpen(false);
+  };
+
+  const insertSnippetTemplate = (template: SnippetTemplate) => {
+    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const snippet = renderSnippetTemplateHtml(
+      alreadyHasSignature
+        ? { ...template, includeSignature: false }
+        : template,
+      store.settings.snippets,
+      store.settings.compose,
+      store.settings.profile,
+      activeDraft.accountId,
+    );
+    if (!snippet) {
+      emitToast({ type: 'info', message: 'Snippet template is empty.' });
+      return;
+    }
+    editorRef.current?.insertHtml(snippet);
+    setTemplatesOpen(false);
+  };
+
+  const saveCurrentBodyAsSnippet = async () => {
+    const body = activeDraft.bodyPlain.trim();
+    if (!body) {
+      emitToast({ type: 'warning', message: 'Write a body before saving a snippet.' });
+      return;
+    }
+    const titleSeed = activeDraft.subject.trim() || 'New snippet';
+    await store.updateSettings(s => {
+      s.snippets.enabled = true;
+      const id = createSnippetTemplateId(titleSeed, s.snippets.templates);
+      s.snippets.templates = [
+        ...s.snippets.templates,
+        {
+          id,
+          title: titleSeed,
+          trigger: '',
+          body,
+          includeSignature: s.snippets.includeSignature,
+        },
+      ];
+    });
+    setTemplatesOpen(false);
+    emitToast({ type: 'success', message: 'Saved as a snippet template.' });
   };
 
   const insertSchedulingLink = async () => {
@@ -151,7 +227,7 @@ export function InlineReplyComposer() {
   return (
     <div
       ref={composerRef}
-      className="mt-6 flex shrink-0 flex-col overflow-hidden rounded-[8px] border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-[0_10px_32px_rgba(0,0,0,0.08)]"
+      className="print-hidden mt-6 flex shrink-0 flex-col overflow-hidden rounded-[8px] border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-[0_10px_32px_rgba(0,0,0,0.08)]"
     >
       <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--rail-bg)] px-4 py-3 select-none">
         <div className="flex min-w-0 items-center gap-3">
@@ -247,15 +323,57 @@ export function InlineReplyComposer() {
           <ToolbarButton title="Underline" onClick={() => execute('underline')}><Underline className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Bullet list" onClick={() => execute('insertUnorderedList')}><List className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Numbered list" onClick={() => execute('insertOrderedList')}><ListOrdered className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Link" onClick={insertLink}><Link className="h-4 w-4" /></ToolbarButton>
+          <div className="relative">
+            <ToolbarButton title="Link" onClick={openLinkPopover}><Link className="h-4 w-4" /></ToolbarButton>
+            {linkOpen && (
+              <LinkPopover
+                selectedText={linkSelectedText}
+                onSubmit={insertLink}
+                onCancel={closeLinkPopover}
+              />
+            )}
+          </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
           <ToolbarButton title="AI assistant" onClick={() => store.setAiPanelOpen(!store.aiPanelOpen)}>
             <Sparkles className="h-4 w-4 text-[var(--ai-accent)]" />
           </ToolbarButton>
+          <div className="relative">
+            <ToolbarButton title="Send later" active={Boolean(activeDraft.sendAt)} onClick={() => setSendLaterOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
+            {sendLaterOpen && (
+              <SendLaterMenu
+                onSchedule={(date) => void store.scheduleDraftSend(date)}
+                onClose={() => setSendLaterOpen(false)}
+                align="right"
+              />
+            )}
+          </div>
+          {reminderThread && (
+            <div className="relative">
+              <ToolbarButton title="Remind me" active={Boolean(reminderThread.reminderAt)} onClick={() => setReminderOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
+              {reminderOpen && (
+                <SnoozeMenu
+                  align="right"
+                  targetSubject={reminderThread.subject}
+                  onPick={(date) => store.snoozeThread(reminderThread, date)}
+                  onClose={() => setReminderOpen(false)}
+                />
+              )}
+            </div>
+          )}
           <ToolbarButton title="Scheduling link" onClick={() => void insertSchedulingLink()}><Calendar className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Insert default snippet" onClick={insertDefaultSnippet}><Braces className="h-4 w-4" /></ToolbarButton>
+          <div className="relative">
+            <ToolbarButton title="Templates and snippets" active={templatesOpen} onClick={() => setTemplatesOpen(value => !value)}><Braces className="h-4 w-4" /></ToolbarButton>
+            {templatesOpen && (
+              <ComposeTemplatesMenu
+                templates={store.settings.snippets.templates}
+                onInsertDefaultSnippet={insertDefaultSnippet}
+                onInsertTemplate={insertSnippetTemplate}
+                onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
+              />
+            )}
+          </div>
           <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-4 w-4" /></ToolbarButton>
         </div>

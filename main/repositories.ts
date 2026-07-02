@@ -91,10 +91,12 @@ export const AccountsRepo = {
     `).run(account.id, account.email, account.displayName, account.colorHex, account.createdAt, account.avatarUrl || null);
   },
 
-  delete(id: string) {
+  delete(id: string, options: { purgeCache?: boolean } = {}) {
     const db = getDatabase();
+    const purgeCache = options.purgeCache !== false;
     db.transaction(() => {
       db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+      if (!purgeCache) return;
       db.prepare('DELETE FROM threads WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM messages WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM labels WHERE account_id = ?').run(id);
@@ -221,6 +223,22 @@ export const LabelsRepo = {
   }
 };
 
+function mapThreadRow(r: any): MailThread {
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    subject: r.subject,
+    snippet: r.snippet,
+    lastMessageAt: r.last_message_at,
+    senderNames: JSON.parse(r.sender_names_json),
+    senderEmail: r.sender_email,
+    labelIds: JSON.parse(r.label_ids_json),
+    hasAttachments: r.has_attachments === 1,
+    isUnread: r.is_unread === 1,
+    reminderAt: r.reminder_at
+  };
+}
+
 // === Threads Repository ===
 export const ThreadsRepo = {
   list(accountId: string): MailThread[] {
@@ -233,19 +251,19 @@ export const ThreadsRepo = {
       ORDER BY t.last_message_at DESC
     `).all(accountId) as any[];
 
-    return rows.map(r => ({
-      id: r.id,
-      accountId: r.account_id,
-      subject: r.subject,
-      snippet: r.snippet,
-      lastMessageAt: r.last_message_at,
-      senderNames: JSON.parse(r.sender_names_json),
-      senderEmail: r.sender_email,
-      labelIds: JSON.parse(r.label_ids_json),
-      hasAttachments: r.has_attachments === 1,
-      isUnread: r.is_unread === 1,
-      reminderAt: r.reminder_at
-    }));
+    return rows.map(mapThreadRow);
+  },
+
+  get(accountId: string, threadId: string): MailThread | null {
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT t.*, r.reminder_at
+      FROM threads t
+      LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE t.account_id = ? AND t.id = ?
+    `).get(accountId, threadId) as any;
+
+    return row ? mapThreadRow(row) : null;
   },
 
   save(threads: MailThread[]) {
@@ -364,8 +382,9 @@ export const MessagesRepo = {
     return rows.map(mapMessageRow);
   },
 
-  save(messages: MailMessage[]) {
+  save(messages: MailMessage[], options: { indexBodies?: boolean } = {}) {
     const db = getDatabase();
+    const indexBodies = options.indexBodies !== false;
     const insertMsg = db.prepare(`
       INSERT INTO messages (
         id, thread_id, account_id, sender_name, sender_email, subject, snippet, received_at,
@@ -434,7 +453,7 @@ export const MessagesRepo = {
           m.subject,
           `${m.senderName} <${m.senderEmail}>`,
           m.snippet,
-          m.bodyPlain || ''
+          indexBodies ? (m.bodyPlain || '') : ''
         );
       }
     })();
@@ -898,6 +917,24 @@ export const SearchRepo = {
       threadId: r.thread_id,
       messageId: r.message_id
     }));
+  },
+
+  setBodyIndexEnabled(enabled: boolean, accountId?: string) {
+    const db = getDatabase();
+    const nextBodySql = enabled
+      ? `COALESCE((
+          SELECT messages.body_plain
+          FROM messages
+          WHERE messages.account_id = mail_search.account_id
+            AND messages.id = mail_search.message_id
+        ), '')`
+      : `''`;
+
+    if (accountId) {
+      db.prepare(`UPDATE mail_search SET body_plain = ${nextBodySql} WHERE account_id = ?`).run(accountId);
+      return;
+    }
+    db.prepare(`UPDATE mail_search SET body_plain = ${nextBodySql}`).run();
   }
 };
 
@@ -1212,6 +1249,20 @@ export const RemindersRepo = {
     `).run(accountId, threadId, reminderAt);
   },
 
+  listDue(nowIso: string, limit = 25): MailThread[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT t.*, r.reminder_at
+      FROM thread_reminders r
+      INNER JOIN threads t ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE r.reminder_at <= ?
+      ORDER BY r.reminder_at ASC
+      LIMIT ?
+    `).all(nowIso, limit) as any[];
+
+    return rows.map(mapThreadRow);
+  },
+
   delete(accountId: string, threadId: string) {
     const db = getDatabase();
     db.prepare(`
@@ -1270,6 +1321,25 @@ export const SyncStateRepo = {
 
 // === Action Log Repository ===
 export const ActionLogRepo = {
+  get(id: string): MailActionLog | null {
+    const db = getDatabase();
+    const r = db.prepare('SELECT * FROM mail_action_log WHERE id = ?').get(id) as any;
+    if (!r) return null;
+    return {
+      id: r.id,
+      accountId: r.account_id,
+      threadId: r.thread_id,
+      draftId: r.draft_id,
+      kind: r.kind,
+      status: r.status,
+      createdAt: r.created_at,
+      scheduledAt: r.scheduled_at,
+      completedAt: r.completed_at,
+      failureMessage: r.failure_message,
+      payloadJson: r.payload_json
+    };
+  },
+
   list(accountId: string): MailActionLog[] {
     const db = getDatabase();
     const rows = db.prepare(`
@@ -1287,19 +1357,21 @@ export const ActionLogRepo = {
       kind: r.kind,
       status: r.status,
       createdAt: r.created_at,
+      scheduledAt: r.scheduled_at,
       completedAt: r.completed_at,
       failureMessage: r.failure_message,
       payloadJson: r.payload_json
     }));
   },
 
-  listPending(): MailActionLog[] {
+  listPending(nowIso = new Date().toISOString()): MailActionLog[] {
     const db = getDatabase();
     const rows = db.prepare(`
       SELECT * FROM mail_action_log
       WHERE status = 'pending_sync'
-      ORDER BY created_at ASC
-    `).all() as any[];
+        AND (scheduled_at IS NULL OR scheduled_at <= ?)
+      ORDER BY COALESCE(scheduled_at, created_at) ASC
+    `).all(nowIso) as any[];
 
     return rows.map(r => ({
       id: r.id,
@@ -1309,6 +1381,7 @@ export const ActionLogRepo = {
       kind: r.kind,
       status: r.status,
       createdAt: r.created_at,
+      scheduledAt: r.scheduled_at,
       completedAt: r.completed_at,
       failureMessage: r.failure_message,
       payloadJson: r.payload_json
@@ -1319,10 +1392,11 @@ export const ActionLogRepo = {
     const db = getDatabase();
     db.prepare(`
       INSERT INTO mail_action_log (
-        id, account_id, thread_id, draft_id, kind, status, created_at, completed_at, failure_message, payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, account_id, thread_id, draft_id, kind, status, created_at, scheduled_at, completed_at, failure_message, payload_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status,
+        scheduled_at=excluded.scheduled_at,
         completed_at=excluded.completed_at,
         failure_message=excluded.failure_message,
         payload_json=excluded.payload_json
@@ -1334,6 +1408,7 @@ export const ActionLogRepo = {
       log.kind,
       log.status,
       log.createdAt,
+      log.scheduledAt || null,
       log.completedAt || null,
       log.failureMessage || null,
       log.payloadJson || null
@@ -1359,6 +1434,7 @@ export const DraftsRepo = {
       attachments: JSON.parse(r.attachments_json),
       replyMessageId: r.reply_message_id,
       replyReferences: r.reply_references,
+      sendAt: r.send_at,
       updatedAt: r.updated_at
     }));
   },
@@ -1380,6 +1456,7 @@ export const DraftsRepo = {
       attachments: JSON.parse(row.attachments_json),
       replyMessageId: row.reply_message_id,
       replyReferences: row.reply_references,
+      sendAt: row.send_at,
       updatedAt: row.updated_at
     };
   },
@@ -1389,8 +1466,8 @@ export const DraftsRepo = {
     db.prepare(`
       INSERT INTO drafts (
         id, account_id, thread_id, to_json, cc_json, bcc_json, subject, body_plain_text,
-        body_html, attachments_json, reply_message_id, reply_references, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        body_html, attachments_json, reply_message_id, reply_references, send_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         thread_id=excluded.thread_id,
         to_json=excluded.to_json,
@@ -1402,6 +1479,7 @@ export const DraftsRepo = {
         attachments_json=excluded.attachments_json,
         reply_message_id=excluded.reply_message_id,
         reply_references=excluded.reply_references,
+        send_at=excluded.send_at,
         updated_at=excluded.updated_at
     `).run(
       draft.id,
@@ -1416,6 +1494,7 @@ export const DraftsRepo = {
       JSON.stringify(draft.attachments),
       draft.replyMessageId || null,
       draft.replyReferences || null,
+      draft.sendAt || null,
       draft.updatedAt
     );
   },

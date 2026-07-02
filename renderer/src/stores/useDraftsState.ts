@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, MailThread, MailMessage, Draft, AppSettings } from '../../../shared/types';
+import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionLog } from '../../../shared/types';
 import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
 import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
@@ -30,8 +30,20 @@ export function useDraftsState({
   const pendingSendTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingSendIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pendingDraftRef = useRef<Draft | null>(null);
+  const shouldPersistDrafts = settings.general.keepDraftsAcrossLaunches;
+
+  const persistDraft = (draft: Draft, context: string): Promise<void> => {
+    if (!shouldPersistDrafts) return Promise.resolve();
+    return window.electronAPI.saveDraft(draft).catch(e => {
+      console.error(`saveDraft (${context}) failed`, e);
+    });
+  };
 
   const loadDrafts = useCallback(async () => {
+    if (!settings.general.keepDraftsAcrossLaunches) {
+      setDraftsList([]);
+      return;
+    }
     if (!activeAccount) return;
     if (activeAccount.id === 'unified') {
       const allDrafts: Draft[] = [];
@@ -44,11 +56,47 @@ export function useDraftsState({
       const list = await window.electronAPI.listDrafts(activeAccount.email);
       setDraftsList(list);
     }
-  }, [activeAccount, accounts]);
+  }, [activeAccount, accounts, settings.general.keepDraftsAcrossLaunches]);
 
   useEffect(() => {
     loadDrafts();
   }, [loadDrafts]);
+
+  useEffect(() => {
+    if (settings.general.keepDraftsAcrossLaunches) return;
+
+    let cancelled = false;
+    const purgePersistedDrafts = async () => {
+      if (!activeAccount) {
+        setDraftsList([]);
+        return;
+      }
+
+      const accountEmails = activeAccount.id === 'unified'
+        ? accounts.map(account => account.email)
+        : [activeAccount.email];
+      const deletedDraftIds = new Set<string>();
+
+      for (const email of accountEmails) {
+        const drafts = await window.electronAPI.listDrafts(email);
+        for (const draft of drafts) {
+          if (deletedDraftIds.has(draft.id)) continue;
+          deletedDraftIds.add(draft.id);
+          await window.electronAPI.deleteDraft(draft.id);
+        }
+      }
+
+      if (!cancelled) setDraftsList([]);
+    };
+
+    purgePersistedDrafts().catch(e => {
+      console.error('Failed to clear persisted drafts after disabling draft restore:', e);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAccount, accounts, settings.general.keepDraftsAcrossLaunches]);
 
   useEffect(() => {
     if (activeDraft && !activeDraft.threadId) {
@@ -110,7 +158,7 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
 
-    await window.electronAPI.saveDraft(draft);
+    await persistDraft(draft, 'manual');
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
@@ -138,7 +186,7 @@ export function useDraftsState({
       replyReferences: seed.replyReferences || null,
       updatedAt: new Date().toISOString()
     };
-    window.electronAPI.saveDraft(draft).catch(e => console.error('saveDraft (reply) failed', e));
+    persistDraft(draft, 'reply');
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
@@ -169,7 +217,7 @@ export function useDraftsState({
       replyReferences: seed.replyReferences || null,
       updatedAt: new Date().toISOString()
     };
-    window.electronAPI.saveDraft(draft).catch(e => console.error('saveDraft (agent reply) failed', e));
+    persistDraft(draft, 'agent reply');
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
@@ -193,7 +241,7 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
     openThread(null);
-    window.electronAPI.saveDraft(draft).catch(e => console.error('saveDraft (forward) failed', e));
+    persistDraft(draft, 'forward');
     setActiveDraft(draft);
     setComposeLayout('floating');
     loadDrafts();
@@ -203,7 +251,7 @@ export function useDraftsState({
     if (!activeDraft) return;
     const updated: Draft = { ...activeDraft, ...patch, updatedAt: new Date().toISOString() };
     setActiveDraft(updated);
-    window.electronAPI.saveDraft(updated).catch(e => console.error('saveDraft failed', e));
+    persistDraft(updated, 'update');
   };
 
   const updateDraftBody = (body: string, bodyHtml?: string | null) => {
@@ -215,7 +263,7 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
     setActiveDraft(updated);
-    window.electronAPI.saveDraft(updated).catch(e => console.error('saveDraft (body) failed', e));
+    persistDraft(updated, 'body');
   };
 
   const addAttachmentToDraft = async () => {
@@ -227,7 +275,7 @@ export function useDraftsState({
       attachments: [...(activeDraft.attachments || []), attachment],
       updatedAt: new Date().toISOString()
     };
-    await window.electronAPI.saveDraft(updatedDraft);
+    await persistDraft(updatedDraft, 'attachment');
     setActiveDraft(updatedDraft);
     loadDrafts();
   };
@@ -239,7 +287,7 @@ export function useDraftsState({
       attachments: (activeDraft.attachments || []).filter(a => a.id !== attId),
       updatedAt: new Date().toISOString()
     };
-    await window.electronAPI.saveDraft(updatedDraft);
+    await persistDraft(updatedDraft, 'remove attachment');
     setActiveDraft(updatedDraft);
     loadDrafts();
   };
@@ -256,23 +304,70 @@ export function useDraftsState({
     loadDrafts();
   };
 
+  const validateDraftForSend = (draftToValidate: Draft): string | null => {
+    const attachmentBytes = (draftToValidate.attachments || []).reduce((sum, att) => sum + (att.sizeBytes || 0), 0);
+    const validation = validateDraft({
+      to: draftToValidate.to,
+      cc: draftToValidate.cc,
+      bcc: draftToValidate.bcc,
+      subject: draftToValidate.subject,
+      body: draftToValidate.bodyPlain || htmlFragmentToPlainText(draftToValidate.bodyHtml || ''),
+      attachmentBytes,
+    });
+
+    return validation.valid ? null : validation.errors[0] || 'Fix draft before sending.';
+  };
+
+  const scheduleDraftSend = async (date: Date) => {
+    if (!activeDraft || !activeAccount) return;
+    if (pendingSend) return;
+
+    const sendAt = date.toISOString();
+    if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) {
+      emitToast({ type: 'warning', message: 'Choose a future send time.' });
+      return;
+    }
+
+    const validationError = validateDraftForSend(activeDraft);
+    if (validationError) {
+      emitToast({ type: 'warning', message: validationError });
+      return;
+    }
+
+    const scheduledDraft: Draft = {
+      ...activeDraft,
+      sendAt,
+      bodyHtml: compileDraftBodyHtml(activeDraft.bodyPlain, settings.compose, activeDraft.accountId, activeDraft.bodyHtml),
+      updatedAt: new Date().toISOString(),
+    };
+    const log: MailActionLog = {
+      id: crypto.randomUUID(),
+      accountId: scheduledDraft.accountId,
+      threadId: scheduledDraft.threadId || openedThread?.id || null,
+      draftId: scheduledDraft.id,
+      kind: 'send',
+      status: 'pending_sync',
+      createdAt: new Date().toISOString(),
+      scheduledAt: sendAt,
+      payloadJson: JSON.stringify({ sendAt }),
+    };
+
+    await window.electronAPI.saveDraft(scheduledDraft);
+    await window.electronAPI.saveActionLog(log);
+    setActiveDraft(null);
+    pendingDraftRef.current = null;
+    loadDrafts();
+    emitToast({ type: 'success', message: `Message scheduled for ${date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.` });
+  };
+
   const sendDraftWithUndo = async () => {
     if (!activeDraft || !activeAccount) return;
     if (pendingSend) return;
 
     const draftToSend = activeDraft;
-    const attachmentBytes = (draftToSend.attachments || []).reduce((sum, att) => sum + (att.sizeBytes || 0), 0);
-    const validation = validateDraft({
-      to: draftToSend.to,
-      cc: draftToSend.cc,
-      bcc: draftToSend.bcc,
-      subject: draftToSend.subject,
-      body: draftToSend.bodyPlain || htmlFragmentToPlainText(draftToSend.bodyHtml || ''),
-      attachmentBytes,
-    });
-
-    if (!validation.valid) {
-      emitToast({ type: 'warning', message: validation.errors[0] || 'Fix draft before sending.' });
+    const validationError = validateDraftForSend(draftToSend);
+    if (validationError) {
+      emitToast({ type: 'warning', message: validationError });
       return;
     }
 
@@ -290,8 +385,10 @@ export function useDraftsState({
         await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (actionId: string) => {
           const draftForSend = {
             ...draft,
+            sendAt: null,
             bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose, draft.accountId, draft.bodyHtml)
           };
+          await window.electronAPI.saveDraft(draftForSend);
           const res = await window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId);
           if (res && !res.offline) {
             await window.electronAPI.deleteDraft(draft.id);
@@ -351,6 +448,7 @@ export function useDraftsState({
     addAttachmentToDraft,
     removeAttachmentFromDraft,
     discardDraft,
+    scheduleDraftSend,
     sendDraftWithUndo,
     cancelPendingSend
   };

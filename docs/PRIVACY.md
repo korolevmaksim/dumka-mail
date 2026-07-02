@@ -11,8 +11,8 @@ The app stores mailbox metadata, cached messages, message headers, drafts, remin
 Runtime credentials are not stored in the repository.
 
 - Google OAuth client config is read from `~/.config/dumka-mail/google-oauth-client.json`.
-- Optional AI provider credentials can be configured from Settings -> AI Configuration and are read from the macOS Keychain or `~/.config/dumka-mail/ai.env`.
-- OAuth refresh tokens are stored in the macOS Keychain when available.
+- Optional AI provider credentials can be configured from Settings -> AI Configuration and are read from OS-backed credential storage or `~/.config/dumka-mail/ai.env`.
+- OAuth refresh tokens are stored in the macOS Keychain on macOS. On Windows/Linux they are stored with Electron safeStorage under the app user-data directory when OS encryption is available; otherwise the app falls back to memory-only storage for that runtime.
 - AI provider keys are stored outside SQLite when Keychain storage is enabled.
 
 ## Network requests

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, CustomClassifierRule, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
-import { parseSearchQuery } from '../../../shared/search';
-import { SplitInboxRouter } from '../../../shared/classifier';
+import { matchesSearchDateRange, parseSearchQuery } from '../../../shared/search';
+import { categorize } from '../../../shared/categoryEngine';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { threadMatchesLabelSearchQuery } from '../../../shared/labels';
 import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
@@ -21,11 +21,45 @@ export interface SpeedProof {
 const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
 
 interface UseMailStateProps {
-  customClassifierRules: CustomClassifierRule[];
   tabCategories: TabCategory[];
+  categorySettings: AppSettings['inbox']['categories'];
+  inboxSettings: AppSettings['inbox'];
+  privacySettings: AppSettings['privacy'];
   labelDefinitions: MailLabelDefinition[];
   mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
+}
+
+const MAILBOX_SEARCH_ALIASES: Record<string, MailboxView> = {
+  inbox: 'inbox',
+  sent: 'sent',
+  trash: 'trash',
+  spam: 'spam',
+  muted: 'muted',
+};
+
+function normalizeSearchToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function threadMatchesInSearch(
+  thread: MailThread,
+  value: string,
+  now: Date,
+  tabCategories: TabCategory[],
+  getThreadCategory: (thread: MailThread) => string,
+  mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>,
+): boolean {
+  const normalized = normalizeSearchToken(value);
+  const mailbox = MAILBOX_SEARCH_ALIASES[normalized];
+  if (mailbox) {
+    return isThreadInMailbox(thread, mailbox, now, { mutedLabelIdsByAccount });
+  }
+
+  const categoryId = getThreadCategory(thread);
+  const category = tabCategories.find(item => item.id === categoryId);
+  return normalizeSearchToken(categoryId) === normalized ||
+    Boolean(category && normalizeSearchToken(category.displayName) === normalized);
 }
 
 function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
@@ -45,8 +79,10 @@ function threadStateKey(thread: Pick<MailThread, 'accountId' | 'id'> | null): st
 }
 
 export function useMailState({
-  customClassifierRules,
   tabCategories,
+  categorySettings,
+  inboxSettings,
+  privacySettings,
   labelDefinitions,
   mutedLabelIdsByAccount,
   applyGmailSignatureSyncResult,
@@ -54,7 +90,7 @@ export function useMailState({
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
   const [mailboxView, setMailboxViewState] = useState<MailboxView>('inbox');
-  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
+  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccount, setActiveAccountState] = useState<Account | null>(null);
   
@@ -167,51 +203,9 @@ export function useMailState({
   }, []);
 
 
-  const getThreadCategory = useCallback((t: MailThread): string => {
-    for (const rule of customClassifierRules) {
-      if (!rule.active) continue;
-
-      if (rule.accountId && rule.accountId !== 'global' && t.accountId !== rule.accountId) {
-        continue;
-      }
-
-      const category = tabCategories.find(c => c.id === rule.targetCategory);
-      if (!category || !category.active) continue;
-
-      if (category.accountId && category.accountId !== 'global' && t.accountId !== category.accountId) {
-        continue;
-      }
-
-      let match = false;
-      const val = rule.value.toLowerCase().trim();
-      if (!val) continue;
-
-      if (rule.field === 'from') {
-        const fromStr = `${t.senderNames.join(' ')} ${t.senderEmail}`.toLowerCase();
-        if (rule.condition === 'contains') match = fromStr.includes(val);
-        else if (rule.condition === 'equals') match = t.senderEmail.toLowerCase() === val;
-        else if (rule.condition === 'startsWith') match = t.senderEmail.toLowerCase().startsWith(val);
-        else if (rule.condition === 'endsWith') match = t.senderEmail.toLowerCase().endsWith(val);
-      } else if (rule.field === 'subject') {
-        const subjectStr = t.subject.toLowerCase();
-        if (rule.condition === 'contains') match = subjectStr.includes(val);
-        else if (rule.condition === 'equals') match = subjectStr === val;
-        else if (rule.condition === 'startsWith') match = subjectStr.startsWith(val);
-        else if (rule.condition === 'endsWith') match = subjectStr.endsWith(val);
-      }
-
-      if (match) {
-        return rule.targetCategory;
-      }
-    }
-
-    const systemSplit = SplitInboxRouter.split(t);
-    const systemTab = tabCategories.find(c => c.id === systemSplit);
-    if (systemTab && systemTab.active) {
-      return systemSplit;
-    }
-    return 'other';
-  }, [customClassifierRules, tabCategories]);
+  const getThreadCategory = useCallback((t: MailThread): string => (
+    categorize(t, categorySettings.builtIn, categorySettings.custom, 'other')
+  ), [categorySettings]);
 
   // Load accounts initially
   const loadAccounts = useCallback(async () => {
@@ -274,7 +268,7 @@ export function useMailState({
         if (openedThreadKeyRef.current !== nextThreadKey) return;
         acceptOpenedThreadMessages(nextThreadKey, msgs);
 
-        if (thread.isUnread) {
+        if (thread.isUnread && inboxSettings.autoMarkReadOnOpen) {
           setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, isUnread: false } : t));
           window.electronAPI.modifyLabels(thread.accountId, thread.id, [], ['UNREAD']).catch(err => {
             console.error('Failed to mark thread as read from notification:', err);
@@ -300,7 +294,7 @@ export function useMailState({
     })();
 
     return unsubscribe;
-  }, [accounts, getThreadCategory, setActiveAccount]);
+  }, [accounts, getThreadCategory, inboxSettings.autoMarkReadOnOpen, setActiveAccount]);
 
   // Main threads load & sync loop
   const loadThreadsFromDB = useCallback(async () => {
@@ -347,6 +341,13 @@ export function useMailState({
     loadThreadsFromDB();
   }, [loadThreadsFromDB]);
 
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onRemindersDue(() => {
+      loadThreadsFromDB();
+    });
+    return unsubscribe;
+  }, [loadThreadsFromDB]);
+
   const {
     syncHealth,
     syncStatusText,
@@ -363,6 +364,7 @@ export function useMailState({
   } = useMailSync({
     accounts,
     activeAccount,
+    clearCacheOnDisconnect: privacySettings.clearCacheOnDisconnect,
     loadAccounts,
     setActiveAccountState,
     loadThreadsFromDB,
@@ -500,6 +502,12 @@ export function useMailState({
         if (parsed.label) {
           filtered = filtered.filter(t => threadMatchesLabelSearchQuery(t, parsed.label!, labelDefinitions));
         }
+        if (parsed.inSplit) {
+          filtered = filtered.filter(t => threadMatchesInSearch(t, parsed.inSplit!, now, tabCategories, getThreadCategory, mutedLabelIdsByAccount));
+        }
+        if (parsed.after || parsed.before) {
+          filtered = filtered.filter(t => matchesSearchDateRange(t.lastMessageAt, parsed.after, parsed.before));
+        }
       } else if (mailboxView !== 'inbox') {
         filtered = threads.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
       } else {
@@ -523,7 +531,7 @@ export function useMailState({
   // Recalculate Split Tabs counters
   useEffect(() => {
     const counts: Record<string, number> = {};
-    const nextMailboxCounts: Record<MailboxView, number> = { inbox: 0, sent: 0, trash: 0, spam: 0, muted: 0 };
+    const nextMailboxCounts: Record<MailboxView, number> = { inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 };
     const now = new Date();
     for (const c of tabCategories) {
       counts[c.id] = 0;
@@ -597,7 +605,7 @@ export function useMailState({
       })();
     }
 
-    if (thread.isUnread && openedThreadKeyRef.current === nextThreadKey) {
+    if (thread.isUnread && inboxSettings.autoMarkReadOnOpen && openedThreadKeyRef.current === nextThreadKey) {
       executeMailAction('markRead', thread.id);
     }
   };
@@ -653,9 +661,9 @@ export function useMailState({
           : t
       )));
       if (mailboxView === 'inbox' && openedThread?.id === targetThreadId) {
-        openThread(nextThread);
+        openThread(inboxSettings.openNextThreadAfterDone ? nextThread : null);
       }
-      if (mailboxView === 'inbox' && nextThread) {
+      if (mailboxView === 'inbox' && nextThread && inboxSettings.openNextThreadAfterDone) {
         setFocusedThreadId(nextThread.id);
       } else if (mailboxView === 'inbox') {
         setFocusedThreadId(null);
@@ -919,7 +927,7 @@ export function useMailState({
       )));
       if (mailboxView === 'inbox' && openedThread && threadIds.includes(openedThread.id)) {
         const remainingVisible = visibleThreads.filter(t => !threadIds.includes(t.id));
-        if (remainingVisible.length > 0) {
+        if (inboxSettings.openNextThreadAfterDone && remainingVisible.length > 0) {
           openThread(remainingVisible[0]);
         } else {
           openThread(null);

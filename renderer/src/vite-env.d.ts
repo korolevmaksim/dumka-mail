@@ -33,13 +33,14 @@ import {
   ThreadAgentInsights
 } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
+import type { AutoUpdateStatus } from '../../shared/autoUpdate';
 
 export interface IElectronAPI {
   // Accounts
   listAccounts: () => Promise<Account[]>;
   getAccount: (id: string) => Promise<Account | null>;
   saveAccount: (account: Account) => Promise<void>;
-  deleteAccount: (id: string) => Promise<void>;
+  deleteAccount: (id: string, options?: { purgeCache?: boolean }) => Promise<void>;
 
   // Threads
   listThreads: (accountId: string) => Promise<MailThread[]>;
@@ -90,6 +91,7 @@ export interface IElectronAPI {
   // OAuth onboarding
   onboardAccount: (emailHint?: string) => Promise<OnboardAccountResult>;
   verifyTokenExists: (email: string) => Promise<boolean>;
+  disconnectAccount: (email: string, options?: { purgeCache?: boolean; revokeToken?: boolean }) => Promise<{ revokeStatus: 'skipped' | 'missing' | 'revoked' | 'failed' }>;
   authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => Promise<GoogleIntegrationStatus>;
 
   // Gmail sync & mutations
@@ -139,6 +141,9 @@ export interface IElectronAPI {
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;
   verifyMCPServer: (config: MCPServerConfig) => Promise<{ success: boolean; toolsCount?: number; error?: string }>;
   setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => Promise<void>;
+  getAutoUpdateStatus: () => Promise<AutoUpdateStatus>;
+  checkForAppUpdates: () => Promise<AutoUpdateStatus>;
+  installDownloadedAppUpdate: () => Promise<AutoUpdateStatus>;
 
   // Settings
   getSetting: (key: string) => Promise<string | null>;
@@ -149,6 +154,8 @@ export interface IElectronAPI {
   stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => Promise<void>;
   onFoundInPageResult: (callback: (result: any) => void) => () => void;
   onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
+  onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => () => void;
+  onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
   onExecuteCommand: (callback: (cmdId: string) => void) => () => void;
 }

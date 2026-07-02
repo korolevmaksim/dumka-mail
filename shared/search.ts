@@ -10,6 +10,45 @@ export interface ParsedSearchQuery {
   before?: string; // YYYY-MM-DD
 }
 
+export function searchDateBoundaryMs(value: string, boundary: 'start' | 'end'): number | null {
+  const trimmed = value.trim();
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (dateOnly) {
+    const year = Number(dateOnly[1]);
+    const month = Number(dateOnly[2]) - 1;
+    const day = Number(dateOnly[3]);
+    const date = new Date(year, month, day, boundary === 'start' ? 0 : 23, boundary === 'start' ? 0 : 59, boundary === 'start' ? 0 : 59, boundary === 'start' ? 0 : 999);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+    return date.getTime();
+  }
+
+  const timestamp = Date.parse(trimmed);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+export function matchesSearchDateRange(receivedAt: string, after?: string, before?: string): boolean {
+  const receivedMs = Date.parse(receivedAt);
+  if (!Number.isFinite(receivedMs)) return false;
+
+  if (after) {
+    const afterMs = searchDateBoundaryMs(after, 'start');
+    if (afterMs !== null && receivedMs < afterMs) return false;
+  }
+
+  if (before) {
+    const beforeMs = searchDateBoundaryMs(before, 'end');
+    if (beforeMs !== null && receivedMs > beforeMs) return false;
+  }
+
+  return true;
+}
+
 // Known operator prefixes that accept a value after the colon.
 // When the user types "from: value" (space after colon), the parser
 // consumes the next token as the operator's value.

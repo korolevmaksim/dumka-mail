@@ -148,6 +148,7 @@ export function runMigrations(db: Database.Database) {
         attachments_json TEXT NOT NULL DEFAULT '[]',
         reply_message_id TEXT,
         reply_references TEXT,
+        send_at TEXT,
         updated_at TEXT NOT NULL
     );
 
@@ -196,6 +197,7 @@ export function runMigrations(db: Database.Database) {
         kind TEXT NOT NULL,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        scheduled_at TEXT,
         completed_at TEXT,
         failure_message TEXT
     );
@@ -288,6 +290,8 @@ export function runMigrations(db: Database.Database) {
     { table: 'drafts', column: 'body_html', definition: 'body_html TEXT' },
     { table: 'drafts', column: 'reply_message_id', definition: 'reply_message_id TEXT' },
     { table: 'drafts', column: 'reply_references', definition: 'reply_references TEXT' },
+    { table: 'drafts', column: 'send_at', definition: 'send_at TEXT' },
+    { table: 'mail_action_log', column: 'scheduled_at', definition: 'scheduled_at TEXT' },
     { table: 'mail_action_log', column: 'payload_json', definition: 'payload_json TEXT' },
     { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
     { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },

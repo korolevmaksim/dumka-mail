@@ -3,6 +3,7 @@ import { useAppStore } from '../../../stores/AppStore';
 import { Trash2, GripVertical, Pencil } from 'lucide-react';
 import { emitToast } from '../../../lib/toastBus';
 import type { TabCategory } from '../../../../../shared/types';
+import { MailRulesSettingsSection } from './MailRulesSettingsSection';
 import {
   GLOBAL_CLASSIFICATION_SCOPE,
   accountDetail,
@@ -573,6 +574,8 @@ export function ClassificationSettingsTab() {
           </div>
         ))}
       </div>
+
+      <MailRulesSettingsSection selectedScope={normalizedSelectedScope} />
     </div>
   );
 }

@@ -36,6 +36,9 @@ import {
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { getDefaultEmbeddingSettings } from '../../../shared/embeddingProviders';
+import { DEFAULT_MAIL_RULES_SETTINGS, normalizeMailRulesSettings } from '../../../shared/mailRules';
+import { normalizeSnippetTemplates } from '../../../shared/snippets';
+import { normalizeAppLanguage } from '../../../shared/i18n';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
 import { useMailState } from './useMailState';
@@ -60,7 +63,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 9;
+export const SETTINGS_SCHEMA_VERSION = 12;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -71,6 +74,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   },
   general: {
+    language: 'system',
     startupBehavior: 'inbox',
     defaultSplitInbox: 'important',
     showBottomShortcutBar: true,
@@ -139,8 +143,25 @@ export const DEFAULT_SETTINGS: AppSettings = {
     expandWithTab: true,
     includeSignature: true,
     defaultSnippetTrigger: ';thanks',
-    defaultSnippet: 'Thanks'
+    defaultSnippet: 'Thanks',
+    templates: [
+      {
+        id: 'follow-up',
+        title: 'Follow up',
+        trigger: ';followup',
+        body: 'Hi {first_name},\n\nFollowing up on this.',
+        includeSignature: true,
+      },
+      {
+        id: 'availability',
+        title: 'Share availability',
+        trigger: ';avail',
+        body: 'Hi {first_name},\n\nHere are a few times that work for me:',
+        includeSignature: true,
+      },
+    ],
   },
+  mailRules: DEFAULT_MAIL_RULES_SETTINGS,
   notifications: {
     desktopNotifications: true,
     sound: false,
@@ -264,6 +285,9 @@ export function mergeSettings(parsed: any): AppSettings {
           requiresThread: shortcut.requiresThread !== false,
         }))
     : DEFAULT_SETTINGS.ai.promptShortcuts.map(shortcut => ({ ...shortcut }));
+  merged.snippets.templates = normalizeSnippetTemplates(merged.snippets.templates);
+  merged.mailRules = normalizeMailRulesSettings(merged.mailRules);
+  merged.general.language = normalizeAppLanguage(merged.general.language);
 
   if (parsedSchemaVersion < 6) {
     merged.notifications.notifyImportantOnly = false;
@@ -376,6 +400,7 @@ interface AppStoreContextType {
   startForward: (message: MailMessage) => void;
   updateDraft: (patch: Partial<Draft>) => void;
   updateDraftBody: (body: string, bodyHtml?: string | null) => void;
+  scheduleDraftSend: (date: Date) => Promise<void>;
   sendDraftWithUndo: () => Promise<void>;
   pendingSend: boolean;
   pendingSendSeconds: number;
@@ -491,8 +516,10 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [labelDefinitions]);
   
   const mailState = useMailState({
-    customClassifierRules: settingsState.customClassifierRules,
     tabCategories: settingsState.tabCategories,
+    categorySettings: settingsState.settings.inbox.categories,
+    inboxSettings: settingsState.settings.inbox,
+    privacySettings: settingsState.settings.privacy,
     labelDefinitions,
     mutedLabelIdsByAccount,
     applyGmailSignatureSyncResult,

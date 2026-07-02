@@ -92,7 +92,10 @@ function mailListHints(s: ShortcutSettings, isThreadOpen: boolean): ShortcutHint
     hints.push({ keys: singleKey ? '↩/O' : '↩', label: 'open' })
   }
   if (s.commandPaletteEnabled) {
-    hints.push({ keys: singleKey ? '?' : '⌘K', label: 'command' })
+    hints.push({ keys: '⌘K', label: 'commands' })
+  }
+  if (singleKey) {
+    hints.push({ keys: '?', label: 'shortcuts' })
   }
 
   return hints
@@ -130,7 +133,10 @@ function searchHints(s: ShortcutSettings): ShortcutHint[] {
     hints.push({ keys: 'J/K', label: 'move' })
   }
   if (s.commandPaletteEnabled) {
-    hints.push({ keys: singleKey ? '?' : '⌘K', label: 'command' })
+    hints.push({ keys: '⌘K', label: 'commands' })
+  }
+  if (singleKey) {
+    hints.push({ keys: '?', label: 'shortcuts' })
   }
   return hints
 }
@@ -275,7 +281,7 @@ export function resolveHintLayout(
  */
 export function opensCommandPalette(hint: ShortcutHint): boolean {
   return (
-    ((hint.keys === '⌘K' || hint.keys === '⌘K/?' || hint.keys === '?') &&
+    ((hint.keys === '⌘K' || hint.keys === '⌘K/?') &&
       (hint.label === 'command' || hint.label === 'commands')) ||
     (hint.keys.startsWith('+') && hint.label === 'more')
   )

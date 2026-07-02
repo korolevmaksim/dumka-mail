@@ -323,3 +323,43 @@ body {
   margin: 0.5em 0 0.85em;
   border-radius: 6px;
 }
+
+@media print {
+  @page {
+    margin: 0.5in;
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    overflow: visible !important;
+    user-select: text !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #thread-reader-pane,
+  #thread-reader-pane * {
+    visibility: visible !important;
+  }
+
+  #thread-reader-pane {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+
+  #thread-reader-pane .print-hidden,
+  #thread-reader-pane .print-hidden * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}

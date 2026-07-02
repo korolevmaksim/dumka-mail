@@ -85,9 +85,8 @@ export function shortcutGuideSections(s: ShortcutSettings): ShortcutGuideSection
     : null
   const summarizeShortcut = shortcutLabel(['⌘⇧S', singleKey ? 'S' : null])
   const undoShortcut = shortcutLabel(['⌘Z', singleKey ? 'Z' : null])
-  const commandPaletteShortcut = s.commandPaletteEnabled
-    ? shortcutLabel(['⌘K', singleKey ? '?' : null])
-    : null
+  const commandPaletteShortcut = s.commandPaletteEnabled ? '⌘K' : null
+  const shortcutGuideShortcut = singleKey ? '?' : null
   const replyShortcut = shortcutLabel(['⌘R', singleKey ? 'R' : null])
   const replyAllShortcut = shortcutLabel(['⌘⇧R', singleKey ? 'A' : null])
   const forwardShortcut = shortcutLabel(['⌘⇧F', singleKey ? 'F' : null])
@@ -112,6 +111,7 @@ export function shortcutGuideSections(s: ShortcutSettings): ShortcutGuideSection
         item('Refresh Gmail', '⌘⇧N'),
         item('Continue Older Mail', '⌘⇧I'),
         item('Command Palette', commandPaletteShortcut),
+        item('Keyboard Shortcuts', shortcutGuideShortcut),
         item('Settings', '⌘,'),
         { label: 'Select Account Tab', keys: '⌘1...⌘9' },
         { label: 'Dismiss / Close', keys: 'Esc' },
