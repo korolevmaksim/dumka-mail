@@ -623,9 +623,14 @@ export function useMailState({
     const targetThreadId = threadId || openedThread?.id || focusedThreadId || null;
     if (!targetThreadId && kind !== 'send') return;
 
+    const payload = payloadJson ? JSON.parse(payloadJson) : {};
+    const payloadAccountId = typeof payload.accountId === 'string' ? payload.accountId : null;
     const actionId = crypto.randomUUID();
-    const thread = targetThreadId ? threads.find(t => t.id === targetThreadId) : null;
-    const targetAccountId = thread ? thread.accountId : activeAccount.email;
+    const thread = targetThreadId
+      ? threads.find(t => t.id === targetThreadId && (!payloadAccountId || t.accountId === payloadAccountId))
+        || threads.find(t => t.id === targetThreadId)
+      : null;
+    const targetAccountId = payloadAccountId || (thread ? thread.accountId : activeAccount.email);
     
     const log: MailActionLog = {
       id: actionId,
@@ -651,7 +656,6 @@ export function useMailState({
       }
     }
 
-    const payload = payloadJson ? JSON.parse(payloadJson) : {};
     const payloadLabelId = typeof payload.labelId === 'string' ? payload.labelId : null;
 
     if (kind === 'markDone') {
@@ -668,19 +672,21 @@ export function useMailState({
       } else if (mailboxView === 'inbox') {
         setFocusedThreadId(null);
       }
-    } else if (kind === 'autoMarkRead') {
+    } else if (kind === 'autoMarkRead' || kind === 'setReminder') {
       const fallbackReminder = new Date();
       fallbackReminder.setDate(fallbackReminder.getDate() + 1);
       fallbackReminder.setHours(9, 0, 0, 0);
       const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
       setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, reminderAt } : t));
-      if (openedThread?.id === targetThreadId) {
-        openThread(nextThread);
-      }
-      if (nextThread) {
-        setFocusedThreadId(nextThread.id);
-      } else {
-        setFocusedThreadId(null);
+      if (kind === 'autoMarkRead') {
+        if (openedThread?.id === targetThreadId) {
+          openThread(nextThread);
+        }
+        if (nextThread) {
+          setFocusedThreadId(nextThread.id);
+        } else {
+          setFocusedThreadId(null);
+        }
       }
     } else if (kind === 'markRead') {
       setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, isUnread: false } : t));
@@ -814,6 +820,12 @@ export function useMailState({
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [payloadLabelId], kind === 'moveToLabel' ? ['INBOX'] : [], actionId, kind, payloadJson || undefined);
           } else if (kind === 'removeLabel' && targetThreadId && payloadLabelId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], [payloadLabelId], actionId, kind, payloadJson || undefined);
+          } else if (kind === 'setReminder' && targetThreadId) {
+            const fallbackReminder = new Date();
+            fallbackReminder.setDate(fallbackReminder.getDate() + 1);
+            fallbackReminder.setHours(9, 0, 0, 0);
+            const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
+            await window.electronAPI.saveReminder(targetAccountId, targetThreadId, reminderAt);
           }
         }
 

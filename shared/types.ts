@@ -466,6 +466,78 @@ export interface MailTriagePlan {
   selectedThreadIds?: string[];
 }
 
+export type DailyBriefingCategory = 'needsReply' | 'waitingOnMe' | 'fyi' | 'riskOrNoise';
+
+export type DailyBriefingAction = 'openThread' | 'draftReply' | 'setReminder' | 'archive' | 'applyLabel';
+
+export interface DailyBriefingSourceCitation {
+  accountId: AccountID;
+  threadId: ThreadID;
+  messageId: MessageID;
+  subject: string;
+  sender: string;
+  senderEmail: string;
+  snippet: string;
+  receivedAt: string;
+  evidence: string;
+}
+
+export interface DailyBriefingItem {
+  id: string;
+  accountId: AccountID;
+  threadId: ThreadID;
+  category: DailyBriefingCategory;
+  title: string;
+  summary: string;
+  reason: string;
+  priority: number;
+  source: DailyBriefingSourceCitation;
+  suggestedActions: DailyBriefingAction[];
+  semanticScore?: number | null;
+  riskLevel?: MailSecurityRiskLevel | null;
+  trackerCount: number;
+  phishingLinkCount: number;
+  isUnread: boolean;
+  receivedAt: string;
+}
+
+export interface DailyBriefingSettings {
+  enabled: boolean;
+  lookbackHours: number;
+  maxItems: number;
+  includeRead: boolean;
+  includeFyi: boolean;
+  includeRiskAndNoise: boolean;
+  useSemanticSearch: boolean;
+  defaultReminderHour: number;
+}
+
+export interface DailyBriefingBuildOptions extends Partial<DailyBriefingSettings> {
+  nowIso?: string;
+}
+
+export interface DailyBriefingCoverage {
+  accountId: AccountID;
+  generatedAt: string;
+  lookbackHours: number;
+  candidateThreadCount: number;
+  includedItemCount: number;
+  semanticSearchEnabled: boolean;
+  semanticMatches: number;
+  bodyContextIncluded: boolean;
+  warnings: string[];
+}
+
+export interface DailyBriefing {
+  id: string;
+  accountId: AccountID;
+  title: string;
+  generatedAt: string;
+  items: DailyBriefingItem[];
+  coverage: DailyBriefingCoverage;
+  settings: DailyBriefingSettings;
+}
+
 export interface TabCategory {
   id: string;
   displayName: string;
@@ -698,6 +770,7 @@ export interface AISettings {
   externalToolsEnabled: boolean;
   embeddings: AIEmbeddingSettings;
   agentRules: AgentRulesSettings;
+  dailyBriefing: DailyBriefingSettings;
   suggestDrafts: boolean;
   suggestAutoArchive: boolean;
   suggestLabels: boolean;

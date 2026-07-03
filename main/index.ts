@@ -1275,6 +1275,7 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
 registerSecureHandler('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
 registerSecureHandler('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
 registerSecureHandler('api:getThreadAgentInsights', (_, accountId, threadId) => AgenticService.getThreadInsights(accountId, threadId));
+registerSecureHandler('api:buildDailyBriefing', (_, accountId, options) => AgenticService.buildDailyBriefing(accountId, options));
 registerSecureHandler('api:dismissAgentDraftSuggestion', (_, id) => AgenticService.dismissDraftSuggestion(id));
 registerSecureHandler('api:markAgentDraftSuggestionApplied', (_, id) => AgenticService.markDraftSuggestionApplied(id));
 registerSecureHandler('api:testEmbeddingConfig', (_, settings) => AgenticService.testEmbeddingConfig(settings));

@@ -3,8 +3,9 @@ import { useAppStore } from '../../../stores/AppStore';
 import { CheckCircle, RefreshCw, Check, AlertCircle } from 'lucide-react';
 import { Toggle } from '../SettingsControls';
 import { emitToast } from '../../../lib/toastBus';
-import { AI_SECRET_STORED_PLACEHOLDER } from '../../../../../shared/types';
+import { AI_SECRET_STORED_PLACEHOLDER, type AIProviderPreference } from '../../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider } from '../../../../../shared/aiProviders';
+import { isAIProviderPreference, resolveAIProviderPreference } from '../../../../../shared/aiProviderPreference';
 import { AIPromptShortcutsPanel } from '../AIPromptShortcutsPanel';
 import { EmbeddingSettingsPanel } from '../EmbeddingSettingsPanel';
 import { AgentRulesPanel } from '../AgentRulesPanel';
@@ -23,6 +24,7 @@ export function AISettingsTab() {
   const [formKeys, setFormKeys] = useState<FormKeys>({});
   const [verifyStatus, setVerifyStatus] = useState<VerifyStatus>({});
   const [savedStatus, setSavedStatus] = useState(false);
+  const providerPreference = resolveAIProviderPreference(store.settings.ai.provider, store.customEnv.PMC_AI_PROVIDER);
 
   useEffect(() => {
     setFormKeys({
@@ -56,13 +58,25 @@ export function AISettingsTab() {
       COHERE_API_KEY: store.customEnv['COHERE_API_KEY'] || '',
       VOYAGE_API_KEY: store.customEnv['VOYAGE_API_KEY'] || '',
       DASHSCOPE_API_KEY: store.customEnv['DASHSCOPE_API_KEY'] || '',
-      PMC_AI_PROVIDER: store.customEnv['PMC_AI_PROVIDER'] || 'automatic'
+      PMC_AI_PROVIDER: providerPreference
     });
-  }, [store.customEnv]);
+  }, [store.customEnv, providerPreference]);
 
   const handleUpdateSetting = async (key: string, value: string) => {
     setFormKeys(prev => ({ ...prev, [key]: value }));
     await store.saveAIConfig({ [key]: value });
+  };
+
+  const handleProviderPreferenceChange = async (value: string) => {
+    if (!isAIProviderPreference(value)) return;
+
+    const provider = value as AIProviderPreference;
+    setFormKeys(prev => ({ ...prev, PMC_AI_PROVIDER: provider }));
+    store.setAiProvider(provider);
+    await store.updateSettings(s => {
+      s.ai.provider = provider;
+    });
+    await store.saveAIConfig({ PMC_AI_PROVIDER: provider });
   };
 
   const handleSecretBlur = async (key: string, value: string) => {
@@ -258,6 +272,13 @@ export function AISettingsTab() {
     );
   };
 
+  const briefingSettings = store.settings.ai.dailyBriefing;
+  const updateBriefingSetting = (key: keyof typeof briefingSettings, value: any) => {
+    void store.updateSettings(s => {
+      (s.ai.dailyBriefing as any)[key] = value;
+    });
+  };
+
   return (
     <div className="flex flex-col gap-5 max-w-[600px] select-text">
       <div>
@@ -272,13 +293,8 @@ export function AISettingsTab() {
             <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Active model orchestration driver</span>
           </div>
           <select
-            value={formKeys.PMC_AI_PROVIDER || 'automatic'}
-            onChange={(e) => {
-              const val = e.target.value;
-              setFormKeys(prev => ({ ...prev, PMC_AI_PROVIDER: val }));
-              store.updateSettings(s => { s.ai.provider = val as any; });
-              store.setAiProvider(val as any);
-            }}
+            value={providerPreference}
+            onChange={(e) => void handleProviderPreferenceChange(e.target.value)}
             className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             <option value="automatic">Automatic</option>
@@ -370,6 +386,68 @@ export function AISettingsTab() {
             />
           </div>
         ))}
+      </div>
+
+      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Private Daily Briefing</span>
+          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Local cited inbox briefing with optional semantic-search boost.</span>
+        </div>
+
+        {[
+          { key: 'enabled', title: 'Enable Daily Briefing', desc: 'Show briefing controls in the AI Assistant' },
+          { key: 'includeFyi', title: 'Include FYI', desc: 'Include informational unread messages' },
+          { key: 'includeRiskAndNoise', title: 'Include Risk & Noise', desc: 'Include suspicious, tracking, newsletter, and automation candidates' },
+          { key: 'includeRead', title: 'Include Read Mail', desc: 'Include recent read messages when they match briefing scope' },
+          { key: 'useSemanticSearch', title: 'Use Semantic Boost', desc: 'Use local semantic index when semantic search is enabled' },
+        ].map(item => (
+          <div key={item.key} className="flex items-center justify-between py-0.5">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
+              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+            </div>
+            <Toggle
+              checked={Boolean((briefingSettings as any)[item.key])}
+              onChange={(val) => updateBriefingSetting(item.key as keyof typeof briefingSettings, val)}
+            />
+          </div>
+        ))}
+
+        <div className="grid grid-cols-3 gap-2 pt-1">
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Lookback Hours</span>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              value={briefingSettings.lookbackHours}
+              onChange={(event) => updateBriefingSetting('lookbackHours', Number(event.target.value))}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Max Items</span>
+            <input
+              type="number"
+              min={3}
+              max={40}
+              value={briefingSettings.maxItems}
+              onChange={(event) => updateBriefingSetting('maxItems', Number(event.target.value))}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Reminder Hour</span>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={briefingSettings.defaultReminderHour}
+              onChange={(event) => updateBriefingSetting('defaultReminderHour', Number(event.target.value))}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            />
+          </label>
+        </div>
       </div>
 
       <AgentRulesPanel />

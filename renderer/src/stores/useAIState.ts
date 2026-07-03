@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings, AIPromptShortcut } from '../../../shared/types';
+import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 import { MailTriagePlanner } from '../../../shared/triagePlanner';
 import { buildAITriageContext, buildAITriageInstruction, buildAITriagePlanFromResponse } from '../../../shared/aiTriage';
+import { normalizeDailyBriefingSettings } from '../../../shared/dailyBriefing';
 
 interface UseAIStateProps {
   settings: AppSettings;
@@ -19,6 +20,38 @@ interface UseAIStateProps {
   setThreads: React.Dispatch<React.SetStateAction<MailThread[]>>;
   executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any) => Promise<void>;
   setSpeedProof: React.Dispatch<React.SetStateAction<SpeedProof>>;
+}
+
+function mergeDailyBriefings(accountId: string, briefings: DailyBriefing[], settings: AppSettings['ai']['dailyBriefing']): DailyBriefing {
+  const normalizedSettings = normalizeDailyBriefingSettings(settings);
+  const generatedAt = new Date().toISOString();
+  const items = briefings
+    .flatMap(briefing => briefing.items)
+    .sort((a, b) => {
+      if (a.priority === b.priority) return new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime();
+      return b.priority - a.priority;
+    })
+    .slice(0, normalizedSettings.maxItems);
+
+  return {
+    id: `daily:${accountId}:${generatedAt}`,
+    accountId,
+    title: accountId === 'unified' ? 'Unified Daily Briefing' : 'Daily Briefing',
+    generatedAt,
+    items,
+    settings: normalizedSettings,
+    coverage: {
+      accountId,
+      generatedAt,
+      lookbackHours: normalizedSettings.lookbackHours,
+      candidateThreadCount: briefings.reduce((sum, briefing) => sum + briefing.coverage.candidateThreadCount, 0),
+      includedItemCount: items.length,
+      semanticSearchEnabled: briefings.some(briefing => briefing.coverage.semanticSearchEnabled),
+      semanticMatches: briefings.reduce((sum, briefing) => sum + briefing.coverage.semanticMatches, 0),
+      bodyContextIncluded: briefings.some(briefing => briefing.coverage.bodyContextIncluded),
+      warnings: briefings.flatMap(briefing => briefing.coverage.warnings),
+    },
+  };
 }
 
 export function useAIState({
@@ -41,6 +74,8 @@ export function useAIState({
   const [activeAIConversation, setActiveAIConversation] = useState<AIConversation | null>(null);
   const [activeAIMessages, setActiveAIMessages] = useState<AIChatMessage[]>([]);
   const [triagePlan, setTriagePlan] = useState<MailTriagePlan | null>(null);
+  const [dailyBriefing, setDailyBriefing] = useState<DailyBriefing | null>(null);
+  const [dailyBriefingLoading, setDailyBriefingLoading] = useState<boolean>(false);
   const [aiPanelLoading, setAiPanelLoading] = useState<boolean>(false);
   const [aiModel, setAiModel] = useState<string>('');
   
@@ -501,6 +536,74 @@ export function useAIState({
     emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} triage plan ready for ${plan.items.length} messages.` });
   };
 
+  const runDailyBriefing = async (options: DailyBriefingBuildOptions = {}) => {
+    setAiPanelOpen(true);
+    if (!activeAccount) {
+      setDailyBriefing(null);
+      emitToast({ type: 'warning', message: 'Connect an account before building a daily briefing.' });
+      return;
+    }
+    if (!settings.ai.dailyBriefing.enabled) {
+      setDailyBriefing(null);
+      emitToast({ type: 'info', message: 'Daily Briefing is disabled in AI settings.' });
+      return;
+    }
+
+    setDailyBriefingLoading(true);
+    const start = performance.now();
+    try {
+      const briefingSettings = normalizeDailyBriefingSettings({ ...settings.ai.dailyBriefing, ...options });
+      const requestOptions: DailyBriefingBuildOptions = {
+        ...briefingSettings,
+        nowIso: options.nowIso || new Date().toISOString(),
+      };
+      const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
+      const briefings = await Promise.all(
+        targetAccounts
+          .filter(account => account.email)
+          .map(account => window.electronAPI.buildDailyBriefing(account.email, requestOptions))
+      );
+
+      const briefing = activeAccount.id === 'unified'
+        ? mergeDailyBriefings('unified', briefings, briefingSettings)
+        : briefings[0] || null;
+
+      setDailyBriefing(briefing);
+      setSpeedProof((prev: SpeedProof) => ({
+        ...prev,
+        aiMs: Math.round(performance.now() - start)
+      }));
+      emitToast({
+        type: briefing && briefing.items.length > 0 ? 'success' : 'info',
+        message: briefing && briefing.items.length > 0
+          ? `Daily briefing ready with ${briefing.items.length} item${briefing.items.length === 1 ? '' : 's'}.`
+          : 'Daily briefing found no current items.',
+      });
+    } catch (error) {
+      console.error('Daily briefing failed:', error);
+      setDailyBriefing(null);
+      emitToast({ type: 'error', message: formatAIUserError(error) });
+    } finally {
+      setDailyBriefingLoading(false);
+    }
+  };
+
+  const dismissDailyBriefingItem = (itemOrThreadId: DailyBriefingItem | string) => {
+    const threadId = typeof itemOrThreadId === 'string' ? itemOrThreadId : itemOrThreadId.threadId;
+    setDailyBriefing(prev => {
+      if (!prev) return null;
+      const items = prev.items.filter(item => item.threadId !== threadId);
+      return {
+        ...prev,
+        items,
+        coverage: {
+          ...prev.coverage,
+          includedItemCount: items.length,
+        },
+      };
+    });
+  };
+
   return {
     aiPanelOpen,
     setAiPanelOpen,
@@ -512,6 +615,9 @@ export function useAIState({
     activeAIMessages,
     triagePlan,
     setTriagePlan,
+    dailyBriefing,
+    setDailyBriefing,
+    dailyBriefingLoading,
     aiPanelLoading,
     aiModel,
     setAiModel,
@@ -525,6 +631,8 @@ export function useAIState({
     runAIAction,
     runAIPromptShortcut,
     runAITriagePlan,
+    runDailyBriefing,
+    dismissDailyBriefingItem,
     toggleTriagePlanItemSelection,
     selectAllApplicableTriagePlanItems,
     clearTriagePlanSelection,

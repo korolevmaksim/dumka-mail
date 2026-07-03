@@ -17,6 +17,8 @@ import {
   shouldGenerateAgentDraft,
 } from '../shared/mailSecurity';
 import { buildThreadContext, htmlToText } from '../shared/aiContext';
+import { normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
+import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { cosineSimilarity, normalizeEmbeddingText, stableTextHash } from '../shared/semantic';
 import type {
@@ -25,6 +27,9 @@ import type {
   AIEmbeddingSettings,
   AIProviderPreference,
   AISettings,
+  DailyBriefing,
+  DailyBriefingBuildOptions,
+  DailyBriefingSettings,
   Draft,
   EmbeddingIndexJobStatus,
   EmbeddingIndexReindexOptions,
@@ -44,6 +49,7 @@ interface RuntimeAgentSettings {
   semanticSearchEnabled: boolean;
   embeddings: AIEmbeddingSettings;
   agentRules: AgentRulesSettings;
+  dailyBriefing: DailyBriefingSettings;
   suggestDrafts: boolean;
   replyTone: AISettings['replyTone'];
   personalizationNotes: string;
@@ -90,6 +96,7 @@ function readAgentSettings(): RuntimeAgentSettings {
       semanticSearchEnabled: parsed?.ai?.semanticSearchEnabled === true,
       embeddings: normalizeEmbeddingSettings(parsed?.ai?.embeddings),
       agentRules: normalizeAgentRules(parsed?.ai?.agentRules),
+      dailyBriefing: normalizeDailyBriefingSettings(parsed?.ai?.dailyBriefing),
       suggestDrafts: parsed?.ai?.suggestDrafts === true,
       replyTone: parsed?.ai?.replyTone || 'direct',
       personalizationNotes: parsed?.ai?.personalizationNotes || '',
@@ -102,6 +109,7 @@ function readAgentSettings(): RuntimeAgentSettings {
       semanticSearchEnabled: false,
       embeddings: normalizeEmbeddingSettings(null),
       agentRules: DEFAULT_AGENT_RULES,
+      dailyBriefing: normalizeDailyBriefingSettings(null),
       suggestDrafts: false,
       replyTone: 'direct',
       personalizationNotes: '',
@@ -213,6 +221,7 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
     externalToolsEnabled: false,
     embeddings: settings.embeddings,
     agentRules: settings.agentRules,
+    dailyBriefing: settings.dailyBriefing,
     suggestDrafts: settings.suggestDrafts,
     suggestAutoArchive: true,
     suggestLabels: true,
@@ -562,6 +571,37 @@ async function processThreadInternal(accountId: string, threadId: string): Promi
   await generateDraftForThread(thread, messages);
 }
 
+async function searchSemanticInternal(accountId: string, query: string, limit = 60): Promise<SemanticSearchResult[]> {
+  const trimmed = normalizeEmbeddingText(query, 1000);
+  if (!trimmed) return [];
+  const settings = readAgentSettings();
+  if (!settings.semanticSearchEnabled) return [];
+
+  await indexRecentMessages(accountId, 80);
+  const queryEmbedding = await createEmbeddings([trimmed], {
+    settings: settings.embeddings,
+    purpose: 'query',
+  });
+  const rows = MailEmbeddingsRepo.listForAccount(accountId, queryEmbedding.model, 12000);
+  return rows
+    .map(row => ({
+      row,
+      score: cosineSimilarity(queryEmbedding.embeddings[0], row.vector),
+    }))
+    .filter(item => item.score > 0.14)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, Math.min(200, limit)))
+    .map(item => ({
+      threadId: item.row.threadId,
+      messageId: item.row.messageId,
+      score: Number(item.score.toFixed(4)),
+      subject: item.row.subject,
+      sender: item.row.sender,
+      snippet: item.row.snippet,
+      receivedAt: item.row.receivedAt,
+    }));
+}
+
 export const AgenticService = {
   async processThread(accountId: string, threadId: string): Promise<void> {
     await processThreadInternal(accountId, threadId);
@@ -641,34 +681,20 @@ export const AgenticService = {
   },
 
   async searchSemantic(accountId: string, query: string, limit = 60): Promise<SemanticSearchResult[]> {
-    const trimmed = normalizeEmbeddingText(query, 1000);
-    if (!trimmed) return [];
-    const settings = readAgentSettings();
-    if (!settings.semanticSearchEnabled) return [];
+    return searchSemanticInternal(accountId, query, limit);
+  },
 
-    await indexRecentMessages(accountId, 80);
-    const queryEmbedding = await createEmbeddings([trimmed], {
-      settings: settings.embeddings,
-      purpose: 'query',
+  async buildDailyBriefing(accountId: string, options?: DailyBriefingBuildOptions): Promise<DailyBriefing> {
+    const runtimeSettings = readAgentSettings();
+    return buildDailyBriefingForAccount({
+      accountId,
+      options,
+      runtimeSettings: {
+        semanticSearchEnabled: runtimeSettings.semanticSearchEnabled,
+        dailyBriefing: runtimeSettings.dailyBriefing,
+      },
+      searchSemantic: searchSemanticInternal,
     });
-    const rows = MailEmbeddingsRepo.listForAccount(accountId, queryEmbedding.model, 12000);
-    return rows
-      .map(row => ({
-        row,
-        score: cosineSimilarity(queryEmbedding.embeddings[0], row.vector),
-      }))
-      .filter(item => item.score > 0.14)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, Math.max(1, Math.min(200, limit)))
-      .map(item => ({
-        threadId: item.row.threadId,
-        messageId: item.row.messageId,
-        score: Number(item.score.toFixed(4)),
-        subject: item.row.subject,
-        sender: item.row.sender,
-        snippet: item.row.snippet,
-        receivedAt: item.row.receivedAt,
-      }));
   },
 
   async testEmbeddingConfig(settings: AIEmbeddingSettings): Promise<{ model: string; dimensions: number; provider: AIEmbeddingSettings['provider'] }> {

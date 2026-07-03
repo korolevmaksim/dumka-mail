@@ -27,6 +27,9 @@ import {
   MailTriageActionPreview,
   MailTriagePlanItem,
   MailTriagePlan,
+  DailyBriefing,
+  DailyBriefingBuildOptions,
+  DailyBriefingItem,
   AIAction,
   MCPServerConfig,
   MailTriageQueueReadiness,
@@ -36,6 +39,7 @@ import {
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { getDefaultEmbeddingSettings } from '../../../shared/embeddingProviders';
+import { DEFAULT_DAILY_BRIEFING_SETTINGS } from '../../../shared/dailyBriefing';
 import { DEFAULT_MAIL_RULES_SETTINGS, normalizeMailRulesSettings } from '../../../shared/mailRules';
 import { normalizeSnippetTemplates } from '../../../shared/snippets';
 import { normalizeAppLanguage } from '../../../shared/i18n';
@@ -63,7 +67,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 12;
+export const SETTINGS_SCHEMA_VERSION = 13;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -206,6 +210,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       blockBulkAndAutomated: true,
       maxDraftSourceWords: 6000
     },
+    dailyBriefing: { ...DEFAULT_DAILY_BRIEFING_SETTINGS },
     suggestDrafts: true,
     suggestAutoArchive: true,
     suggestLabels: true,
@@ -397,7 +402,7 @@ interface AppStoreContextType {
   startNewDraft: (accountId?: string | null, seed?: Partial<Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject'>>) => Draft | null;
   saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
   startReply: (message: MailMessage, replyAll?: boolean) => void;
-  startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => void;
+  startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => Draft | null;
   startForward: (message: MailMessage) => void;
   updateDraft: (patch: Partial<Draft>) => void;
   updateDraftBody: (body: string, bodyHtml?: string | null) => void;
@@ -430,8 +435,13 @@ interface AppStoreContextType {
   runAIAction: (action: AIAction) => Promise<void>;
   runAIPromptShortcut: (shortcut: AIPromptShortcut) => Promise<void>;
   runAITriagePlan: () => Promise<void>;
+  runDailyBriefing: (options?: DailyBriefingBuildOptions) => Promise<void>;
+  dismissDailyBriefingItem: (itemOrThreadId: DailyBriefingItem | string) => void;
   triagePlan: MailTriagePlan | null;
   setTriagePlan: (plan: MailTriagePlan | null) => void;
+  dailyBriefing: DailyBriefing | null;
+  setDailyBriefing: (briefing: DailyBriefing | null) => void;
+  dailyBriefingLoading: boolean;
   aiPanelLoading: boolean;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;

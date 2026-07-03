@@ -3,12 +3,14 @@ import { useAppStore } from '../../stores/AppStore';
 import {
   Sparkles, Pin, PinOff, Plus, X, Send,
   ListChecks, Text, PenLine, Wand2, Languages,
-  SlidersHorizontal, ChevronDown,
+  SlidersHorizontal, ChevronDown, SunMedium,
   type LucideIcon
 } from 'lucide-react';
 import { AI_ACTIONS, type AIProviderPreference } from '../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider, resolveConfiguredProviderModel } from '../../../../shared/aiProviders';
+import { isAIProviderPreference } from '../../../../shared/aiProviderPreference';
 import { AITriagePlanCard } from '../AITriagePlanCard';
+import { DailyBriefingCard } from '../DailyBriefingCard';
 import { SearchableSelect } from '../common/SearchableSelect';
 import { compileMarkdownToHtmlFragment } from '../../../../shared/markdown';
 import { AIPromptShortcutStrip } from './AIPromptShortcutStrip';
@@ -229,8 +231,15 @@ export function AICopilotPanel() {
     await store.saveAIConfig(config);
   };
 
-  const updateProvider = (provider: string) => {
-    store.setAiProvider(provider as AIProviderPreference);
+  const updateProvider = async (providerValue: string) => {
+    if (!isAIProviderPreference(providerValue)) return;
+
+    const provider = providerValue as AIProviderPreference;
+    store.setAiProvider(provider);
+    await store.updateSettings(settings => {
+      settings.ai.provider = provider;
+    });
+    await store.saveAIConfig({ PMC_AI_PROVIDER: provider });
     if (isConfigurableAIProvider(provider)) {
       store.setAiModel(resolveConfiguredProviderModel(provider, store.customEnv));
     }
@@ -377,7 +386,7 @@ export function AICopilotPanel() {
                 <span className="shrink-0 text-[var(--text-secondary)]">Provider</span>
                 <select
                   value={store.aiProvider}
-                  onChange={(e) => updateProvider(e.target.value)}
+                  onChange={(e) => void updateProvider(e.target.value)}
                   className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
                 >
                   <option value="automatic">Automatic</option>
@@ -426,8 +435,24 @@ export function AICopilotPanel() {
         )}
       </div>
 
-      {/* AI action buttons (AI-C1) */}
-      <div className="grid grid-cols-2 gap-1.5 px-3 py-2.5 border-b border-[var(--border)] bg-[var(--app-bg)]">
+      <div className="flex flex-col gap-1.5 px-3 py-2.5 border-b border-[var(--border)] bg-[var(--app-bg)]">
+        <button
+          type="button"
+          disabled={!store.activeAccount || store.dailyBriefingLoading || !store.settings.ai.dailyBriefing.enabled}
+          onClick={() => void store.runDailyBriefing()}
+          title={!store.activeAccount
+            ? 'Connect an account first'
+            : !store.settings.ai.dailyBriefing.enabled
+              ? 'Enable Daily Briefing in AI settings'
+              : 'Build a private daily briefing from local mail'}
+          className="flex items-center justify-center gap-1.5 rounded-lg border border-[var(--ai-accent)]/35 bg-[var(--ai-accent)]/10 px-2 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] transition-colors hover:border-[var(--ai-accent)] hover:bg-[var(--ai-accent)]/15 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
+        >
+          <SunMedium className={`h-3.5 w-3.5 text-[var(--ai-accent)] ${store.dailyBriefingLoading ? 'animate-spin' : ''}`} />
+          <span className="truncate">{store.dailyBriefingLoading ? 'Building Daily Briefing' : 'Daily Briefing'}</span>
+        </button>
+
+        {/* AI action buttons (AI-C1) */}
+        <div className="grid grid-cols-2 gap-1.5">
         {AI_ACTIONS.map((a) => {
           const Icon = AI_ICON[a.icon] || Sparkles;
           const queueUnavailable = a.id === 'queue' && (!store.activeAccount || store.visibleThreads.length === 0);
@@ -454,6 +479,7 @@ export function AICopilotPanel() {
             </button>
           );
         })}
+        </div>
       </div>
 
       <AIPromptShortcutStrip />
@@ -465,12 +491,16 @@ export function AICopilotPanel() {
           <AITriagePlanCard />
         )}
 
-        {store.activeAIMessages.length === 0 ? (
+        {store.dailyBriefing && (
+          <DailyBriefingCard />
+        )}
+
+        {store.activeAIMessages.length === 0 && !store.triagePlan && !store.dailyBriefing ? (
           <div className="flex flex-col items-center justify-center flex-1 text-center py-20 text-[var(--text-secondary)] opacity-50 select-none">
             <Sparkles className="w-8 h-8 mb-2 text-[var(--ai-accent)]" />
             <p>Start a conversation. AI can review open threads or help draft replies.</p>
           </div>
-        ) : (
+        ) : store.activeAIMessages.length > 0 ? (
           store.activeAIMessages.map((m) => (
             <div
               key={m.id}
@@ -488,7 +518,7 @@ export function AICopilotPanel() {
               <AIMessageContent role={m.role} text={m.text} />
             </div>
           ))
-        )}
+        ) : null}
 
         {store.aiPanelLoading && (
           <div className="flex items-center gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] self-start animate-pulse p-2">

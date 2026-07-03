@@ -192,8 +192,8 @@ export function useDraftsState({
     loadDrafts();
   };
 
-  const startReplyWithBody = (message: MailMessage, bodyPlain: string, replyAll = false) => {
-    if (!activeAccount) return;
+  const startReplyWithBody = (message: MailMessage, bodyPlain: string, replyAll = false): Draft | null => {
+    if (!activeAccount) return null;
     const selfEmail = activeAccount.id === 'unified'
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
@@ -221,6 +221,7 @@ export function useDraftsState({
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
+    return draft;
   };
 
   const startForward = (message: MailMessage) => {

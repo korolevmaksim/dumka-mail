@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { htmlToText, redactSecrets, buildThreadContext } from '../shared/aiContext';
+import { DEFAULT_DAILY_BRIEFING_SETTINGS } from '../shared/dailyBriefing';
 import { AISettings, MailMessage, MailThread } from '../shared/types';
 
 // --- Fixtures -------------------------------------------------------------
@@ -51,6 +52,7 @@ function makeAISettings(allowMailBodyContext: boolean): AISettings {
     allowMailBodyContext,
     savePromptHistory: false,
     proactiveDraftsEnabled: false,
+    dailyBriefing: { ...DEFAULT_DAILY_BRIEFING_SETTINGS },
     semanticSearchEnabled: false,
     externalToolsEnabled: false,
     embeddings: {

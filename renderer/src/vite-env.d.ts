@@ -24,6 +24,8 @@ import {
   AIConversation,
   AIChatMessage,
   AIEmbeddingSettings,
+  DailyBriefing,
+  DailyBriefingBuildOptions,
   EmbeddingIndexReindexOptions,
   EmbeddingIndexStatus,
   AIProviderPreference,
@@ -126,6 +128,7 @@ export interface IElectronAPI {
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;
   completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string }>;
   getThreadAgentInsights: (accountId: string, threadId: string) => Promise<ThreadAgentInsights>;
+  buildDailyBriefing: (accountId: string, options?: DailyBriefingBuildOptions) => Promise<DailyBriefing>;
   dismissAgentDraftSuggestion: (id: string) => Promise<void>;
   markAgentDraftSuggestionApplied: (id: string) => Promise<void>;
   testEmbeddingConfig: (settings: AIEmbeddingSettings) => Promise<{ model: string; dimensions: number; provider: AIEmbeddingSettings['provider'] }>;
