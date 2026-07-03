@@ -20,6 +20,7 @@ This project is early alpha software. It is useful for local development and exp
 - Compose, reply, forward, send later, draft mailbox restore, signatures, snippet templates, attachments, insert-link editing, print, and sent mail sync.
 - Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
+- Opt-in MCP and web-search tools for interactive AI assistant chats, with secrets stored through OS-backed credential storage.
 - Agentic mail layer with opt-in proactive draft previews, AI-assisted triage, notification filtering and actions, one-click unsubscribe support, local security snapshots, tracker stripping, and phishing-link warnings.
 - Keyboard shortcut discovery overlay, fuzzy command palette matching, virtualized mailbox lists, and accessible thread/draft list semantics.
 - I18n foundation with persisted interface language settings, an English catalog, and pseudo-locale QA for localized surfaces.
@@ -48,6 +49,8 @@ Place the Google OAuth client JSON here:
 ```
 
 Configure optional AI providers from Settings -> AI Configuration. The app stores provider keys in OS-backed storage when available and keeps non-secret provider settings in a local config file outside the repository.
+
+Configure optional MCP and built-in search tools from Settings -> MCP & Search. Tool use is disabled for AI requests by default and must be explicitly enabled for interactive assistant chats.
 
 Advanced users can pre-seed AI settings with a dotenv-style file at `~/.config/dumka-mail/ai.env`. The old `openai.env` filename is still read as a legacy fallback.
 

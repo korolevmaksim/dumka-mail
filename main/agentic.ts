@@ -210,6 +210,7 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
     savePromptHistory: false,
     proactiveDraftsEnabled: settings.proactiveDraftsEnabled,
     semanticSearchEnabled: settings.semanticSearchEnabled,
+    externalToolsEnabled: false,
     embeddings: settings.embeddings,
     agentRules: settings.agentRules,
     suggestDrafts: settings.suggestDrafts,

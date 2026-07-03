@@ -24,11 +24,12 @@ export function MCPAndSearchSettingsPanel() {
   // Form states for editing custom MCP server
   const [editingServer, setEditingServer] = useState<MCPServerConfig | null>(null);
   const [serverName, setServerName] = useState('');
-  const [serverType, setServerType] = useState<'stdio' | 'sse'>('stdio');
+  const [serverType, setServerType] = useState<'stdio' | 'streamableHttp' | 'sse'>('stdio');
   const [serverCommand, setServerCommand] = useState('');
   const [serverArgs, setServerArgs] = useState('');
   const [serverUrl, setServerUrl] = useState('');
   const [serverEnv, setServerEnv] = useState<{ key: string; value: string }[]>([]);
+  const [serverHeaders, setServerHeaders] = useState<{ key: string; value: string }[]>([]);
   const [serverEnabled, setServerEnabled] = useState(true);
 
   // Status map for custom MCP servers verification
@@ -68,6 +69,7 @@ export function MCPAndSearchSettingsPanel() {
     setServerArgs('');
     setServerUrl('');
     setServerEnv([]);
+    setServerHeaders([]);
     setServerEnabled(true);
   };
 
@@ -87,6 +89,14 @@ export function MCPAndSearchSettingsPanel() {
       }
     }
     setServerEnv(envList);
+
+    const headerList: { key: string; value: string; }[] = [];
+    if (server.headers) {
+      for (const [key, value] of Object.entries(server.headers)) {
+        headerList.push({ key, value: String(value) });
+      }
+    }
+    setServerHeaders(headerList);
   };
 
   const handleAddEnvRow = () => {
@@ -105,6 +115,22 @@ export function MCPAndSearchSettingsPanel() {
     setServerEnv(prev => prev.map((row, i) => i === index ? { ...row, value: val } : row));
   };
 
+  const handleAddHeaderRow = () => {
+    setServerHeaders(prev => [...prev, { key: '', value: '' }]);
+  };
+
+  const handleRemoveHeaderRow = (index: number) => {
+    setServerHeaders(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleHeaderKeyChange = (index: number, val: string) => {
+    setServerHeaders(prev => prev.map((row, i) => i === index ? { ...row, key: val } : row));
+  };
+
+  const handleHeaderValChange = (index: number, val: string) => {
+    setServerHeaders(prev => prev.map((row, i) => i === index ? { ...row, value: val } : row));
+  };
+
   const handleSaveServer = async () => {
     if (!editingServer) return;
     if (!serverName.trim()) return;
@@ -113,6 +139,12 @@ export function MCPAndSearchSettingsPanel() {
     for (const row of serverEnv) {
       if (row.key.trim()) {
         envMap[row.key.trim()] = row.value;
+      }
+    }
+    const headerMap: Record<string, string> = {};
+    for (const row of serverHeaders) {
+      if (row.key.trim()) {
+        headerMap[row.key.trim()] = row.value;
       }
     }
 
@@ -128,7 +160,8 @@ export function MCPAndSearchSettingsPanel() {
             env: envMap
           }
         : {
-            url: serverUrl.trim()
+            url: serverUrl.trim(),
+            headers: headerMap
           })
     };
 
@@ -195,6 +228,21 @@ export function MCPAndSearchSettingsPanel() {
         <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           Enable search tools or custom Model Context Protocol (MCP) servers to give the AI assistant advanced execution capabilities.
         </p>
+      </div>
+
+      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex items-center justify-between gap-4">
+        <div>
+          <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Allow AI Assistant Tool Use</span>
+          <p className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] mt-0.5">
+            Enables approved MCP and search tools only for interactive assistant chats.
+          </p>
+        </div>
+        <Toggle
+          checked={store.settings.ai.externalToolsEnabled}
+          onChange={val => store.updateSettings(s => {
+            s.ai.externalToolsEnabled = val;
+          })}
+        />
       </div>
 
       {/* 1. SEARCH PROVIDERS */}
@@ -318,7 +366,8 @@ export function MCPAndSearchSettingsPanel() {
                 className="bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
               >
                 <option value="stdio">Local (Stdio CLI process)</option>
-                <option value="sse">Remote (SSE Server URL)</option>
+                <option value="streamableHttp">Remote (Streamable HTTP)</option>
+                <option value="sse">Remote (Legacy SSE)</option>
               </select>
             </div>
 
@@ -365,11 +414,11 @@ export function MCPAndSearchSettingsPanel() {
                       />
                       <span className="text-[var(--text-secondary)]">=</span>
                       <input
-                        type="text"
+                        type="password"
                         placeholder="value"
                         value={row.value}
                         onChange={e => handleEnvValChange(idx, e.target.value)}
-                        className="flex-1 bg-[var(--rail-bg)] border border(--border) rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                       />
                       <button onClick={() => handleRemoveEnvRow(idx)} className="text-[var(--danger)] hover:opacity-85">
                         <Trash2 className="w-3.5 h-3.5" />
@@ -379,16 +428,51 @@ export function MCPAndSearchSettingsPanel() {
                 </div>
               </>
             ) : (
-              <div className="flex flex-col gap-1">
-                <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">SSE URL</label>
-                <input
-                  type="text"
-                  placeholder="e.g. http://localhost:3000/sse"
-                  value={serverUrl}
-                  onChange={e => setServerUrl(e.target.value)}
-                  className="bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
-                />
-              </div>
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Server URL</label>
+                  <input
+                    type="text"
+                    placeholder={serverType === 'sse' ? 'e.g. http://localhost:3000/sse' : 'e.g. http://localhost:3000/mcp'}
+                    value={serverUrl}
+                    onChange={e => setServerUrl(e.target.value)}
+                    className="bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Custom HTTP Headers</label>
+                    <button
+                      onClick={handleAddHeaderRow}
+                      className="text-[calc(9px*var(--font-scale))] text-[var(--accent)] hover:underline"
+                    >
+                      + Add Header
+                    </button>
+                  </div>
+                  {serverHeaders.map((row, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Header"
+                        value={row.key}
+                        onChange={e => handleHeaderKeyChange(idx, e.target.value)}
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                      />
+                      <span className="text-[var(--text-secondary)]">=</span>
+                      <input
+                        type="password"
+                        placeholder="value"
+                        value={row.value}
+                        onChange={e => handleHeaderValChange(idx, e.target.value)}
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                      />
+                      <button onClick={() => handleRemoveHeaderRow(idx)} className="text-[var(--danger)] hover:opacity-85">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
 
             <div className="flex items-center justify-between mt-1">

@@ -13,11 +13,11 @@ Runtime credentials are not stored in the repository.
 - Google OAuth client config is read from `~/.config/dumka-mail/google-oauth-client.json`.
 - Optional AI provider credentials can be configured from Settings -> AI Configuration and are read from OS-backed credential storage or `~/.config/dumka-mail/ai.env`.
 - OAuth refresh tokens are stored in the macOS Keychain on macOS. On Windows/Linux they are stored with Electron safeStorage under the app user-data directory when OS encryption is available; otherwise the app falls back to memory-only storage for that runtime.
-- AI provider keys are stored outside SQLite when Keychain storage is enabled.
+- AI provider keys, built-in search provider keys, and custom MCP server environment/header values are stored outside SQLite when Keychain storage is enabled. SQLite stores only placeholders for those secrets.
 
 ## Network requests
 
-The app talks directly to Gmail and to the AI provider selected by the user. If the user enables Calendar or Contacts in settings, the app also talks directly to Google Calendar and Google People APIs for the selected account. Mail content is only sent to an AI provider when the user enables AI features and allows the relevant context to be included. Proactive draft generation and semantic-search embeddings are disabled by default because they can use paid provider tokens. Semantic search uses the embeddings provider configured in Settings, supports local and cloud providers, and stores vectors locally. The local vector index is keyed by provider, model, endpoint, and dimensions; changing those settings does not reuse incompatible vectors, and Settings exposes controls to reindex or delete old vector rows.
+The app talks directly to Gmail and to the AI provider selected by the user. If the user enables Calendar or Contacts in settings, the app also talks directly to Google Calendar and Google People APIs for the selected account. Mail content is only sent to an AI provider when the user enables AI features and allows the relevant context to be included. Proactive draft generation and semantic-search embeddings are disabled by default because they can use paid provider tokens. Semantic search uses the embeddings provider configured in Settings, supports local and cloud providers, and stores vectors locally. The local vector index is keyed by provider, model, endpoint, and dimensions; changing those settings does not reuse incompatible vectors, and Settings exposes controls to reindex or delete old vector rows. MCP and external search tools are disabled for AI requests by default; when the user opts in, they are available only to interactive assistant requests, not background triage or proactive draft jobs.
 
 ## Google scopes
 

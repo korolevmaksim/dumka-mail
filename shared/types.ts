@@ -695,6 +695,7 @@ export interface AISettings {
   savePromptHistory: boolean;
   proactiveDraftsEnabled: boolean;
   semanticSearchEnabled: boolean;
+  externalToolsEnabled: boolean;
   embeddings: AIEmbeddingSettings;
   agentRules: AgentRulesSettings;
   suggestDrafts: boolean;
@@ -727,12 +728,15 @@ export interface AppearanceSettings {
 export interface MCPServerConfig {
   id: string;
   name: string;
-  type: 'stdio' | 'sse';
+  type: 'stdio' | 'streamableHttp' | 'sse';
   enabled: boolean;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
   url?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 export interface SearchProviderConfig {

@@ -52,6 +52,7 @@ function makeAISettings(allowMailBodyContext: boolean): AISettings {
     savePromptHistory: false,
     proactiveDraftsEnabled: false,
     semanticSearchEnabled: false,
+    externalToolsEnabled: false,
     embeddings: {
       provider: 'openAI',
       model: 'text-embedding-3-small',

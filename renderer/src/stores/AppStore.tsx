@@ -199,6 +199,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     savePromptHistory: false,
     proactiveDraftsEnabled: false,
     semanticSearchEnabled: false,
+    externalToolsEnabled: false,
     embeddings: getDefaultEmbeddingSettings(),
     agentRules: {
       proactiveDraftTrigger: 'directOrActionRequest',

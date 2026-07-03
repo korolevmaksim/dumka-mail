@@ -27,6 +27,7 @@ vi.mock('../main/aiConfig', () => ({
 
 vi.mock('../main/mcpManager', () => ({
   MCPManager: {
+    whenReady: vi.fn(async () => {}),
     getActiveTools: vi.fn(() => []),
     executeTool: vi.fn(),
   },

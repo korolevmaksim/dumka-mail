@@ -27,6 +27,8 @@ import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychai
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { AgenticService } from './agentic';
 import { MCPManager } from './mcpManager';
+import { prepareAppSettingsForStorage, resolveAppSettingsSecrets, resolveMCPServerConfigSecrets } from './mcpSettings';
+import { parseStoredAppSettings, settingsAffectMCPRuntime, settingsAffectSearchBodyIndexing } from './settingsSideEffects';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
@@ -618,7 +620,7 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Initialize SQLite database and run migrations
   initializeDatabase();
 
@@ -638,7 +640,12 @@ app.whenReady().then(() => {
   try {
     const raw = SettingsRepo.get('appSettings');
     if (raw) {
-      MCPManager.initialize(JSON.parse(raw));
+      const sanitized = await prepareAppSettingsForStorage(raw);
+      if (sanitized !== raw) {
+        SettingsRepo.set('appSettings', sanitized);
+      }
+      const resolved = await resolveAppSettingsSecrets(JSON.parse(sanitized));
+      await MCPManager.initialize(resolved as any);
     }
   } catch (err) {
     console.error('Failed to initialize MCPManager on startup:', err);
@@ -751,21 +758,44 @@ registerSecureHandler('db:deleteConversation', (_, id) => AIConversationsRepo.de
 registerSecureHandler('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
 
 registerSecureHandler('db:getSetting', (_, key) => SettingsRepo.get(key));
-registerSecureHandler('db:setSetting', (_, key, value) => {
-  const result = SettingsRepo.set(key, value);
-  if (key === 'appSettings') {
-    try {
-      const parsed = JSON.parse(value);
-      MCPManager.initialize(parsed);
-      SearchRepo.setBodyIndexEnabled(parsed?.privacy?.includeBodiesInSearchIndex !== false);
-    } catch (err) {
-      console.error('Failed to apply settings update side effects:', err);
-    }
+registerSecureHandler('db:setSetting', async (_, key, value) => {
+  if (key !== 'appSettings') {
+    return SettingsRepo.set(key, value);
   }
+
+  const previousValue = SettingsRepo.get('appSettings');
+  const previousSettings = parseStoredAppSettings(previousValue);
+  const nextSettings = parseStoredAppSettings(value);
+  const shouldRefreshMCP = settingsAffectMCPRuntime(previousSettings, nextSettings);
+  const shouldRefreshSearchBodyIndex = settingsAffectSearchBodyIndexing(previousSettings, nextSettings);
+  const storedValue = shouldRefreshMCP
+    ? await prepareAppSettingsForStorage(value)
+    : value;
+  const result = SettingsRepo.set(key, storedValue);
+
+  try {
+    const parsed = JSON.parse(storedValue);
+    if (shouldRefreshSearchBodyIndex) {
+      SearchRepo.setBodyIndexEnabled(parsed?.privacy?.includeBodiesInSearchIndex !== false);
+    }
+    if (shouldRefreshMCP) {
+      void resolveAppSettingsSecrets(parsed)
+        .then(resolved => MCPManager.initialize(resolved as any))
+        .catch(err => {
+          console.error('Failed to refresh MCPManager after settings update:', err);
+        });
+    }
+  } catch (err) {
+    console.error('Failed to apply settings update side effects:', err);
+  }
+
   return result;
 });
 
-registerSecureHandler('api:verifyMCPServer', (_, config) => MCPManager.verifyServer(config));
+registerSecureHandler('api:verifyMCPServer', async (_, config) => {
+  const resolved = await resolveMCPServerConfigSecrets(config);
+  return MCPManager.verifyServer(resolved);
+});
 
 // === Bind IPC API / Service Channels ===
 registerSecureHandler('api:onboardAccount', async (_, emailHint) => {

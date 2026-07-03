@@ -18,7 +18,8 @@ import {
   AIChatMessage,
   EmbeddingIndexReindexOptions,
   EmbeddingIndexStatus,
-  AIProviderPreference
+  AIProviderPreference,
+  MCPServerConfig
 } from '../shared/types';
 import { AIRequest } from './ai';
 import type { AutoUpdateStatus } from '../shared/autoUpdate';
@@ -129,7 +130,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),
   saveAIConfig: (config: Record<string, string>) => ipcRenderer.invoke('api:saveAIConfig', config),
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),
-  verifyMCPServer: (config: any) => ipcRenderer.invoke('api:verifyMCPServer', config),
+  verifyMCPServer: (config: MCPServerConfig) => ipcRenderer.invoke('api:verifyMCPServer', config),
   setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => ipcRenderer.invoke('api:setMenuCommandState', state),
   getAutoUpdateStatus: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:getAutoUpdateStatus'),
   checkForAppUpdates: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:checkForAppUpdates'),

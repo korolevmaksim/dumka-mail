@@ -162,7 +162,10 @@ export function useAIState({
           ? buildThreadContext(openedThread, openedThreadMessages, settings.ai)
           : 'No thread open.',
         conversationHistory: newMsgs,
-        userInstruction: text
+        userInstruction: text,
+        toolPolicy: {
+          enabled: settings.ai.externalToolsEnabled,
+        },
       }, aiProvider, aiModel || undefined);
 
       const assistantMsg: AIChatMessage = {
@@ -378,7 +381,10 @@ export function useAIState({
         action: 'chat',
         context,
         conversationHistory: pending,
-        userInstruction: `${instruction}${notes}`
+        userInstruction: `${instruction}${notes}`,
+        toolPolicy: {
+          enabled: settings.ai.externalToolsEnabled,
+        },
       }, aiProvider, aiModel || undefined);
 
       const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text };

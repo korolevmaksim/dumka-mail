@@ -1,7 +1,7 @@
 import { AIChatMessage, AIEmbeddingSettings, AIProviderPreference } from '../shared/types';
 import { getAIProviderConfig } from '../shared/aiProviders';
 import { buildEmbeddingIndexKey, getEmbeddingProviderConfig, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
-import { MCPManager } from './mcpManager';
+import { MCPManager, MCPToolSchema } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
 
 export { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer };
@@ -11,6 +11,10 @@ export interface AIRequest {
   context: string;
   conversationHistory: AIChatMessage[];
   userInstruction: string;
+  toolPolicy?: {
+    enabled: boolean;
+    allowedToolNames?: string[];
+  };
 }
 
 export interface AIResponse {
@@ -72,6 +76,24 @@ function supportsGeminiThinkingLevel(model: string): boolean {
   return /^gemini-3(?:[.-]|$)/.test(normalized);
 }
 
+function resolveRequestTools(request: AIRequest): MCPToolSchema[] {
+  if (!request.toolPolicy?.enabled) return [];
+
+  const tools = MCPManager.getActiveTools();
+  const allowedNames = request.toolPolicy.allowedToolNames;
+  if (!allowedNames || allowedNames.length === 0) return tools;
+
+  const allowlist = new Set(allowedNames);
+  return tools.filter(tool => allowlist.has(tool.name));
+}
+
+async function executeAllowedTool(name: string, args: any, activeTools: MCPToolSchema[]): Promise<any> {
+  if (!activeTools.some(tool => tool.name === name)) {
+    return { error: `Tool "${name}" is not approved for this request.` };
+  }
+  return await MCPManager.executeTool(name, args);
+}
+
 export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
   const descriptor = await getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
@@ -81,7 +103,8 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
   const env = await loadAIConfigAsync();
   const promptText = buildPrompt(request);
   const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output.';
-  const activeTools = MCPManager.getActiveTools();
+  await MCPManager.whenReady();
+  const activeTools = resolveRequestTools(request);
   const resolvedModel = resolveRealModel(descriptor.model);
 
   switch (descriptor.preference) {
@@ -171,10 +194,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           for (const tc of message.tool_calls) {
             const name = tc.function.name;
             const args = JSON.parse(tc.function.arguments || '{}');
-            console.log(`[AI] OpenAI requested tool "${name}" with args:`, args);
+            console.log(`[AI] OpenAI requested tool "${name}".`);
             let result;
             try {
-              result = await MCPManager.executeTool(name, args);
+              result = await executeAllowedTool(name, args, activeTools);
             } catch (err: any) {
               console.error(`[AI] Tool execution failed:`, err);
               result = { error: err.message || String(err) };
@@ -262,10 +285,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             if (block.type === 'tool_use') {
               const name = block.name;
               const input = block.input;
-              console.log(`[AI] Anthropic requested tool "${name}" with args:`, input);
+              console.log(`[AI] Anthropic requested tool "${name}".`);
               let result;
               try {
-                result = await MCPManager.executeTool(name, input);
+                result = await executeAllowedTool(name, input, activeTools);
               } catch (err: any) {
                 console.error(`[AI] Tool execution failed:`, err);
                 result = { error: err.message || String(err) };
@@ -356,10 +379,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             if (p.functionCall) {
               const name = p.functionCall.name;
               const args = p.functionCall.args || {};
-              console.log(`[AI] Gemini requested tool "${name}" with args:`, args);
+              console.log(`[AI] Gemini requested tool "${name}".`);
               let result;
               try {
-                result = await MCPManager.executeTool(name, args);
+                result = await executeAllowedTool(name, args, activeTools);
               } catch (err: any) {
                 console.error(`[AI] Tool execution failed:`, err);
                 result = { error: err.message || String(err) };
@@ -477,10 +500,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           for (const tc of message.tool_calls) {
             const name = tc.function.name;
             const args = JSON.parse(tc.function.arguments || '{}');
-            console.log(`[AI] Chat completions requested tool "${name}" with args:`, args);
+            console.log(`[AI] Chat completions requested tool "${name}".`);
             let result;
             try {
-              result = await MCPManager.executeTool(name, args);
+              result = await executeAllowedTool(name, args, activeTools);
             } catch (err: any) {
               console.error(`[AI] Tool execution failed:`, err);
               result = { error: err.message || String(err) };
