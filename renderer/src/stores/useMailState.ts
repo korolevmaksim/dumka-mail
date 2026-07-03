@@ -1,10 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { startTransition, useState, useEffect, useCallback, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
-import { matchesSearchDateRange, parseSearchQuery } from '../../../shared/search';
+import { parseSearchQuery } from '../../../shared/search';
 import { categorize } from '../../../shared/categoryEngine';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
-import { threadMatchesLabelSearchQuery } from '../../../shared/labels';
 import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
@@ -14,6 +13,8 @@ import {
   collectSemanticMatchesWithTimeout,
   type ThreadSearchMatch,
 } from './mailSearchHelpers';
+import { filterVisibleThreadsCooperatively } from './mailThreadFilter';
+import type { MailSearchStatus } from './mailSearchStatus';
 
 export interface SpeedProof {
   cacheReadyMs?: number;
@@ -24,6 +25,7 @@ export interface SpeedProof {
 }
 
 const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
+const SEARCH_COMPLETE_VISIBLE_MS = 1_200;
 
 interface UseMailStateProps {
   tabCategories: TabCategory[];
@@ -33,38 +35,6 @@ interface UseMailStateProps {
   labelDefinitions: MailLabelDefinition[];
   mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
-}
-
-const MAILBOX_SEARCH_ALIASES: Record<string, MailboxView> = {
-  inbox: 'inbox',
-  sent: 'sent',
-  trash: 'trash',
-  spam: 'spam',
-  muted: 'muted',
-};
-
-function normalizeSearchToken(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s_-]+/g, '');
-}
-
-function threadMatchesInSearch(
-  thread: MailThread,
-  value: string,
-  now: Date,
-  tabCategories: TabCategory[],
-  getThreadCategory: (thread: MailThread) => string,
-  mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>,
-): boolean {
-  const normalized = normalizeSearchToken(value);
-  const mailbox = MAILBOX_SEARCH_ALIASES[normalized];
-  if (mailbox) {
-    return isThreadInMailbox(thread, mailbox, now, { mutedLabelIdsByAccount });
-  }
-
-  const categoryId = getThreadCategory(thread);
-  const category = tabCategories.find(item => item.id === categoryId);
-  return normalizeSearchToken(categoryId) === normalized ||
-    Boolean(category && normalizeSearchToken(category.displayName) === normalized);
 }
 
 function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
@@ -112,6 +82,8 @@ export function useMailState({
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchCoverage] = useState<string>('Local Cache');
+  const [searchStatus, setSearchStatusState] = useState<MailSearchStatus>('idle');
+  const searchStatusResetRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   
   const [actionLog, setActionLog] = useState<MailActionLog[]>([]);
   
@@ -121,6 +93,27 @@ export function useMailState({
 
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
+
+  const updateSearchStatus = useCallback((status: MailSearchStatus) => {
+    if (searchStatusResetRef.current !== null) {
+      globalThis.clearTimeout(searchStatusResetRef.current);
+      searchStatusResetRef.current = null;
+    }
+
+    setSearchStatusState(status);
+    if (status === 'complete') {
+      searchStatusResetRef.current = globalThis.setTimeout(() => {
+        setSearchStatusState(current => current === 'complete' ? 'idle' : current);
+        searchStatusResetRef.current = null;
+      }, SEARCH_COMPLETE_VISIBLE_MS);
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (searchStatusResetRef.current !== null) {
+      globalThis.clearTimeout(searchStatusResetRef.current);
+    }
+  }, []);
 
   const resetOpenedThreadMessages = () => {
     setOpenedThreadMessagesState([]);
@@ -444,68 +437,62 @@ export function useMailState({
     loadActionLog();
   }, [loadActionLog]);
 
+  const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
+    startTransition(() => {
+      setVisibleThreads(filtered);
+      setFocusedThreadId(prev => {
+        if (prev && filtered.some(thread => thread.id === prev)) return prev;
+        return filtered.length > 0 ? filtered[0].id : null;
+      });
+    });
+  }, []);
+
   // Visible Threads filtering based on Search Query and Split Tabs
   useEffect(() => {
     if (threads.length === 0 || !activeAccount) {
-      setVisibleThreads([]);
+      publishVisibleThreads([]);
+      updateSearchStatus('idle');
       return;
     }
 
     let cancelled = false;
+    const isCancelled = () => cancelled;
 
     const filterThreads = async () => {
-      if (!activeAccount) return;
-      let filtered = threads;
+      const start = performance.now();
       const now = new Date();
+      const trimmedQuery = searchQuery.trim();
+      const parsed = trimmedQuery ? parseSearchQuery(searchQuery) : null;
+      const textQuery = parsed ? parsed.textTerms.join(' ').trim() : '';
+      const accountIds = activeAccount.id === 'unified'
+        ? accounts.map(acc => acc.email)
+        : [activeAccount.email];
 
-      if (searchQuery.trim()) {
-        const parsed = parseSearchQuery(searchQuery);
-        const start = performance.now();
-        const textQuery = parsed.textTerms.join(' ').trim();
+      updateSearchStatus('searching');
 
-        const applyMatches = (matches: ThreadSearchMatch[]) => {
-          const matchThreadIds = new Set(matches.map(m => m.threadId));
-          let nextFiltered = textQuery ? threads.filter(t => matchThreadIds.has(t.id)) : threads;
+      const applyMatches = async (matches: ThreadSearchMatch[]): Promise<boolean> => {
+        const nextFiltered = await filterVisibleThreadsCooperatively({
+          threads,
+          searchQuery,
+          matches,
+          activeSplit,
+          mailboxView,
+          now,
+          tabCategories,
+          labelDefinitions,
+          mutedLabelIdsByAccount,
+          getThreadCategory,
+          isCancelled,
+        });
 
-          if (mailboxView !== 'inbox') {
-            nextFiltered = nextFiltered.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
-          }
+        if (!nextFiltered || cancelled) return false;
+        publishVisibleThreads(nextFiltered);
+        return true;
+      };
 
-          if (parsed.from) {
-            nextFiltered = nextFiltered.filter(t => t.senderEmail.includes(parsed.from!) || t.senderNames.some(n => n.toLowerCase().includes(parsed.from!)));
-          }
-          if (parsed.domain) {
-            nextFiltered = nextFiltered.filter(t => t.senderEmail.endsWith(`@${parsed.domain}`) || t.senderEmail.endsWith(`.${parsed.domain}`));
-          }
-          if (parsed.hasAttachment !== undefined) {
-            nextFiltered = nextFiltered.filter(t => t.hasAttachments === parsed.hasAttachment);
-          }
-          if (parsed.isUnread !== undefined) {
-            nextFiltered = nextFiltered.filter(t => t.isUnread === parsed.isUnread);
-          }
-          if (parsed.label) {
-            nextFiltered = nextFiltered.filter(t => threadMatchesLabelSearchQuery(t, parsed.label!, labelDefinitions));
-          }
-          if (parsed.inSplit) {
-            nextFiltered = nextFiltered.filter(t => threadMatchesInSearch(t, parsed.inSplit!, now, tabCategories, getThreadCategory, mutedLabelIdsByAccount));
-          }
-          if (parsed.after || parsed.before) {
-            nextFiltered = nextFiltered.filter(t => matchesSearchDateRange(t.lastMessageAt, parsed.after, parsed.before));
-          }
-
-          if (cancelled) return;
-          setVisibleThreads(nextFiltered);
-          setFocusedThreadId(prev => {
-            if (prev && nextFiltered.some(t => t.id === prev)) return prev;
-            return nextFiltered.length > 0 ? nextFiltered[0].id : null;
-          });
-        };
-
+      try {
         let ftsMatches: ThreadSearchMatch[] = [];
         if (textQuery) {
-          const accountIds = activeAccount.id === 'unified'
-            ? accounts.map(acc => acc.email)
-            : [activeAccount.email];
           try {
             ftsMatches = await collectFtsMatches(accountIds, textQuery, window.electronAPI.searchFTS);
           } catch (err) {
@@ -515,46 +502,48 @@ export function useMailState({
         }
 
         if (cancelled) return;
+
+        const didApplyFts = await applyMatches(ftsMatches);
+        if (!didApplyFts || cancelled) return;
+
         setSpeedProof((prev: SpeedProof) => ({
           ...prev,
           searchMs: Math.round(performance.now() - start)
         }));
 
-        applyMatches(ftsMatches);
-
         if (textQuery) {
-          const accountIds = activeAccount.id === 'unified'
-            ? accounts.map(acc => acc.email)
-            : [activeAccount.email];
-          void collectSemanticMatchesWithTimeout(accountIds, textQuery, window.electronAPI.searchSemantic)
-            .then(semanticMatches => {
-              if (cancelled || semanticMatches.length === 0) return;
-              applyMatches([...ftsMatches, ...semanticMatches]);
-            });
+          const semanticMatches = await collectSemanticMatchesWithTimeout(accountIds, textQuery, window.electronAPI.searchSemantic);
+          if (cancelled) return;
+          if (semanticMatches.length > 0) {
+            const didApplySemantic = await applyMatches([...ftsMatches, ...semanticMatches]);
+            if (!didApplySemantic || cancelled) return;
+          }
         }
-        return;
-      } else if (mailboxView !== 'inbox') {
-        filtered = threads.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
-      } else {
-        filtered = threads.filter(t => {
-          if (!isThreadInMailbox(t, 'inbox', now, { mutedLabelIdsByAccount })) return false;
-          return getThreadCategory(t) === activeSplit;
-        });
+
+        if (!cancelled) updateSearchStatus('complete');
+      } catch (err) {
+        console.error('Mail search filtering failed:', err);
+        if (!cancelled) updateSearchStatus('complete');
       }
-
-      setVisibleThreads(filtered);
-
-      setFocusedThreadId(prev => {
-        if (prev && filtered.some(t => t.id === prev)) return prev;
-        return filtered.length > 0 ? filtered[0].id : null;
-      });
     };
 
-    filterThreads();
+    void filterThreads();
     return () => {
       cancelled = true;
     };
-  }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory, labelDefinitions, mutedLabelIdsByAccount]);
+  }, [
+    threads,
+    searchQuery,
+    activeSplit,
+    mailboxView,
+    activeAccount,
+    accounts,
+    getThreadCategory,
+    labelDefinitions,
+    mutedLabelIdsByAccount,
+    publishVisibleThreads,
+    updateSearchStatus,
+  ]);
 
   // Recalculate Split Tabs counters
   useEffect(() => {
@@ -1096,6 +1085,7 @@ export function useMailState({
     threadAgentInsights,
     agentInsightsLoading,
     searchQuery,
+    searchStatus,
     searchCoverage,
     actionLog,
     syncHealth,

@@ -1,12 +1,13 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
-import { Search, X } from 'lucide-react';
+import { Check, LoaderCircle, Search, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
+import { getSearchIndicatorState } from './searchIndicator';
 
 export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
-  const { searchQuery, setSearchQuery, settingsOpen, setSettingsOpen } = store;
+  const { searchQuery, searchStatus, setSearchQuery, settingsOpen, setSettingsOpen } = store;
   const [draftQuery, setDraftQuery] = useState(searchQuery);
   const committedQueryRef = useRef(searchQuery);
   const commitRef = useRef<(value: string) => void>(() => undefined);
@@ -45,6 +46,11 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
 
   const parsedSearch = parseSearchQuery(draftQuery);
   const showSearchIntelligence = draftQuery.trim().length > 0;
+  const searchIndicator = getSearchIndicatorState({
+    draftQuery,
+    committedQuery: searchQuery,
+    searchStatus,
+  });
   
   const appendOperator = (op: string) => {
     const current = draftQuery.trim();
@@ -114,8 +120,22 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
             onBlur={() => {
               commitController.flush(draftQuery);
             }}
-            className="flex-1 bg-transparent border-0 outline-none text-[calc(12px*var(--font-scale))] py-1.5 text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
+            className="min-w-0 flex-1 bg-transparent border-0 outline-none text-[calc(12px*var(--font-scale))] py-1.5 text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
           />
+          {searchIndicator.kind !== 'none' && (
+            <span
+              aria-live="polite"
+              title={searchIndicator.label}
+              className="flex shrink-0 items-center gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]"
+            >
+              {searchIndicator.kind === 'searching' ? (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5 text-emerald-500" />
+              )}
+              <span>{searchIndicator.label}</span>
+            </span>
+          )}
           {draftQuery && (
             <button onClick={() => commitSearchImmediately('')} className="cursor-pointer">
               <X className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
