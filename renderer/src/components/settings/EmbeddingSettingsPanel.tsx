@@ -368,8 +368,8 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
             <div className="text-[var(--text-primary)] font-semibold">{formatCount(indexStatus?.pendingMessages || 0)}</div>
           </div>
           <div className="bg-[var(--app-bg)] border border-[var(--border)] rounded p-2">
-            <div className="text-[var(--text-secondary)]">Stale</div>
-            <div className="text-[var(--text-primary)] font-semibold">{formatCount(indexStatus?.staleMessages || 0)}</div>
+            <div className="text-[var(--text-secondary)]">Total</div>
+            <div className="text-[var(--text-primary)] font-semibold">{formatCount(indexStatus?.totalMessages || 0)}</div>
           </div>
           <div className="bg-[var(--app-bg)] border border-[var(--border)] rounded p-2">
             <div className="text-[var(--text-secondary)]">Old Rows</div>

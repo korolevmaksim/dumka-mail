@@ -481,6 +481,16 @@ export const MessagesRepo = {
     return rows.map(mapMessageRow);
   },
 
+  countForEmbedding(accountId: string, limit = 100000): number {
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM messages
+      WHERE account_id = ?
+    `).get(accountId) as { count: number } | undefined;
+    return Math.min(Number(row?.count || 0), Math.max(1, Math.min(200000, limit)));
+  },
+
   listRecentBySender(accountId: string, senderEmail: string, beforeReceivedAt: string, limit = 8): MailMessage[] {
     const db = getDatabase();
     const rows = db.prepare(`

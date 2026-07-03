@@ -374,31 +374,19 @@ async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<Emb
     };
   }
 
-  const candidates = buildEmbeddingCandidates(MessagesRepo.listForEmbedding(accountId, EMBEDDING_FULL_INDEX_LIMIT));
-  const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
-
-  let indexedMessages = 0;
-  let pendingMessages = 0;
-  let staleMessages = 0;
-
-  for (const candidate of candidates) {
-    const indexedHash = indexedHashes[candidate.message.id];
-    if (!indexedHash) {
-      pendingMessages += 1;
-    } else if (indexedHash !== candidate.textHash) {
-      staleMessages += 1;
-    } else {
-      indexedMessages += 1;
-    }
-  }
+  // This status is read when AI Config mounts, so keep it aggregate-only.
+  // Explicit reindex actions still perform the full hash audit before indexing.
+  const totalMessages = MessagesRepo.countForEmbedding(accountId, EMBEDDING_FULL_INDEX_LIMIT);
+  const indexedMessages = Math.min(modelStats.find(item => item.model === model)?.count || 0, totalMessages);
+  const pendingMessages = Math.max(0, totalMessages - indexedMessages);
 
   return {
     accountId,
     currentModel: model,
-    totalMessages: candidates.length,
+    totalMessages,
     indexedMessages,
     pendingMessages,
-    staleMessages,
+    staleMessages: 0,
     otherIndexedMessages,
     models,
     job: embeddingJobSnapshot(job),
