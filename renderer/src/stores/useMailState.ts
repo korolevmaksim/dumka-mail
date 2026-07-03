@@ -9,6 +9,11 @@ import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shar
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
+import {
+  collectFtsMatches,
+  collectSemanticMatchesWithTimeout,
+  type ThreadSearchMatch,
+} from './mailSearchHelpers';
 
 export interface SpeedProof {
   cacheReadyMs?: number;
@@ -446,6 +451,8 @@ export function useMailState({
       return;
     }
 
+    let cancelled = false;
+
     const filterThreads = async () => {
       if (!activeAccount) return;
       let filtered = threads;
@@ -455,59 +462,77 @@ export function useMailState({
         const parsed = parseSearchQuery(searchQuery);
         const start = performance.now();
         const textQuery = parsed.textTerms.join(' ').trim();
-        
-        let ftsMatches: { threadId: string; messageId: string }[] = [];
+
+        const applyMatches = (matches: ThreadSearchMatch[]) => {
+          const matchThreadIds = new Set(matches.map(m => m.threadId));
+          let nextFiltered = textQuery ? threads.filter(t => matchThreadIds.has(t.id)) : threads;
+
+          if (mailboxView !== 'inbox') {
+            nextFiltered = nextFiltered.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
+          }
+
+          if (parsed.from) {
+            nextFiltered = nextFiltered.filter(t => t.senderEmail.includes(parsed.from!) || t.senderNames.some(n => n.toLowerCase().includes(parsed.from!)));
+          }
+          if (parsed.domain) {
+            nextFiltered = nextFiltered.filter(t => t.senderEmail.endsWith(`@${parsed.domain}`) || t.senderEmail.endsWith(`.${parsed.domain}`));
+          }
+          if (parsed.hasAttachment !== undefined) {
+            nextFiltered = nextFiltered.filter(t => t.hasAttachments === parsed.hasAttachment);
+          }
+          if (parsed.isUnread !== undefined) {
+            nextFiltered = nextFiltered.filter(t => t.isUnread === parsed.isUnread);
+          }
+          if (parsed.label) {
+            nextFiltered = nextFiltered.filter(t => threadMatchesLabelSearchQuery(t, parsed.label!, labelDefinitions));
+          }
+          if (parsed.inSplit) {
+            nextFiltered = nextFiltered.filter(t => threadMatchesInSearch(t, parsed.inSplit!, now, tabCategories, getThreadCategory, mutedLabelIdsByAccount));
+          }
+          if (parsed.after || parsed.before) {
+            nextFiltered = nextFiltered.filter(t => matchesSearchDateRange(t.lastMessageAt, parsed.after, parsed.before));
+          }
+
+          if (cancelled) return;
+          setVisibleThreads(nextFiltered);
+          setFocusedThreadId(prev => {
+            if (prev && nextFiltered.some(t => t.id === prev)) return prev;
+            return nextFiltered.length > 0 ? nextFiltered[0].id : null;
+          });
+        };
+
+        let ftsMatches: ThreadSearchMatch[] = [];
         if (textQuery) {
-          if (activeAccount.id === 'unified') {
-            for (const acc of accounts) {
-              const [fts, semantic] = await Promise.all([
-                window.electronAPI.searchFTS(acc.email, textQuery),
-                window.electronAPI.searchSemantic(acc.email, textQuery, 80),
-              ]);
-              ftsMatches.push(...fts, ...semantic.map(match => ({ threadId: match.threadId, messageId: match.messageId })));
-            }
-          } else {
-            const [fts, semantic] = await Promise.all([
-              window.electronAPI.searchFTS(activeAccount.email, textQuery),
-              window.electronAPI.searchSemantic(activeAccount.email, textQuery, 80),
-            ]);
-            ftsMatches = [...fts, ...semantic.map(match => ({ threadId: match.threadId, messageId: match.messageId }))];
+          const accountIds = activeAccount.id === 'unified'
+            ? accounts.map(acc => acc.email)
+            : [activeAccount.email];
+          try {
+            ftsMatches = await collectFtsMatches(accountIds, textQuery, window.electronAPI.searchFTS);
+          } catch (err) {
+            console.error('Local mail search failed:', err);
+            ftsMatches = [];
           }
         }
-        
+
+        if (cancelled) return;
         setSpeedProof((prev: SpeedProof) => ({
           ...prev,
           searchMs: Math.round(performance.now() - start)
         }));
 
-        const matchThreadIds = new Set(ftsMatches.map(m => m.threadId));
-        filtered = textQuery ? threads.filter(t => matchThreadIds.has(t.id)) : threads;
+        applyMatches(ftsMatches);
 
-        if (mailboxView !== 'inbox') {
-          filtered = filtered.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
+        if (textQuery) {
+          const accountIds = activeAccount.id === 'unified'
+            ? accounts.map(acc => acc.email)
+            : [activeAccount.email];
+          void collectSemanticMatchesWithTimeout(accountIds, textQuery, window.electronAPI.searchSemantic)
+            .then(semanticMatches => {
+              if (cancelled || semanticMatches.length === 0) return;
+              applyMatches([...ftsMatches, ...semanticMatches]);
+            });
         }
-
-        if (parsed.from) {
-          filtered = filtered.filter(t => t.senderEmail.includes(parsed.from!) || t.senderNames.some(n => n.toLowerCase().includes(parsed.from!)));
-        }
-        if (parsed.domain) {
-          filtered = filtered.filter(t => t.senderEmail.endsWith(`@${parsed.domain}`) || t.senderEmail.endsWith(`.${parsed.domain}`));
-        }
-        if (parsed.hasAttachment !== undefined) {
-          filtered = filtered.filter(t => t.hasAttachments === parsed.hasAttachment);
-        }
-        if (parsed.isUnread !== undefined) {
-          filtered = filtered.filter(t => t.isUnread === parsed.isUnread);
-        }
-        if (parsed.label) {
-          filtered = filtered.filter(t => threadMatchesLabelSearchQuery(t, parsed.label!, labelDefinitions));
-        }
-        if (parsed.inSplit) {
-          filtered = filtered.filter(t => threadMatchesInSearch(t, parsed.inSplit!, now, tabCategories, getThreadCategory, mutedLabelIdsByAccount));
-        }
-        if (parsed.after || parsed.before) {
-          filtered = filtered.filter(t => matchesSearchDateRange(t.lastMessageAt, parsed.after, parsed.before));
-        }
+        return;
       } else if (mailboxView !== 'inbox') {
         filtered = threads.filter(t => isThreadInMailbox(t, mailboxView, now, { mutedLabelIdsByAccount }));
       } else {
@@ -526,6 +551,9 @@ export function useMailState({
     };
 
     filterThreads();
+    return () => {
+      cancelled = true;
+    };
   }, [threads, searchQuery, activeSplit, mailboxView, activeAccount, accounts, getThreadCategory, labelDefinitions, mutedLabelIdsByAccount]);
 
   // Recalculate Split Tabs counters

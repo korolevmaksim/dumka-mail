@@ -1,18 +1,55 @@
-import { forwardRef } from 'react';
+import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import { Search, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
+import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
 
 export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
+  const { searchQuery, setSearchQuery, settingsOpen, setSettingsOpen } = store;
+  const [draftQuery, setDraftQuery] = useState(searchQuery);
+  const committedQueryRef = useRef(searchQuery);
+  const commitRef = useRef<(value: string) => void>(() => undefined);
+  const controllerRef = useRef<SearchCommitController | null>(null);
+  if (controllerRef.current === null) {
+    controllerRef.current = createSearchCommitController((value) => commitRef.current(value));
+  }
+  const commitController = controllerRef.current;
 
-  const parsedSearch = parseSearchQuery(store.searchQuery);
-  const showSearchIntelligence = store.searchQuery.trim().length > 0;
+  committedQueryRef.current = searchQuery;
+  commitRef.current = (value: string) => {
+    if (value !== committedQueryRef.current) {
+      setSearchQuery(value);
+    }
+  };
+
+  useEffect(() => {
+    commitController.cancel();
+    setDraftQuery(searchQuery);
+  }, [commitController, searchQuery]);
+
+  useEffect(() => () => {
+    commitController.cancel();
+  }, [commitController]);
+
+  const commitSearchImmediately = useCallback((value: string) => {
+    commitController.cancel();
+    setDraftQuery(value);
+    commitRef.current(value);
+  }, [commitController]);
+
+  const scheduleSearchCommit = useCallback((value: string) => {
+    setDraftQuery(value);
+    commitController.schedule(value);
+  }, [commitController]);
+
+  const parsedSearch = parseSearchQuery(draftQuery);
+  const showSearchIntelligence = draftQuery.trim().length > 0;
   
   const appendOperator = (op: string) => {
-    const current = store.searchQuery.trim();
+    const current = draftQuery.trim();
     const rebuilt = current ? `${current} ${op}` : op;
-    store.setSearchQuery(rebuilt);
+    commitSearchImmediately(rebuilt);
     if (ref && 'current' in ref && ref.current) {
       ref.current.focus();
     }
@@ -38,7 +75,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
       : parsedSearch.textTerms;
     rebuiltParts.push(...terms);
     
-    store.setSearchQuery(rebuiltParts.join(' '));
+    commitSearchImmediately(rebuiltParts.join(' '));
   };
 
   return (
@@ -56,17 +93,31 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
             ref={ref}
             type="text"
             placeholder="Search mail: from: domain: has:attachment is:unread"
-            value={store.searchQuery}
+            value={draftQuery}
             onChange={(e) => {
-              store.setSearchQuery(e.target.value);
-              if (e.target.value) {
-                store.setSettingsOpen(false);
+              const nextQuery = e.target.value;
+              scheduleSearchCommit(nextQuery);
+              if (nextQuery && settingsOpen) {
+                setSettingsOpen(false);
               }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitController.flush(draftQuery);
+              } else if (e.key === 'Escape' && draftQuery) {
+                e.preventDefault();
+                e.stopPropagation();
+                commitSearchImmediately('');
+              }
+            }}
+            onBlur={() => {
+              commitController.flush(draftQuery);
             }}
             className="flex-1 bg-transparent border-0 outline-none text-[calc(12px*var(--font-scale))] py-1.5 text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
           />
-          {store.searchQuery && (
-            <button onClick={() => store.setSearchQuery('')} className="cursor-pointer">
+          {draftQuery && (
+            <button onClick={() => commitSearchImmediately('')} className="cursor-pointer">
               <X className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
             </button>
           )}

@@ -28,6 +28,8 @@ export interface EmbeddingResponse {
 
 export type EmbeddingPurpose = 'document' | 'query' | 'test';
 
+const EMBEDDING_FETCH_TIMEOUT_MS = 15000;
+
 function buildPrompt(request: AIRequest): string {
   const historyStr = request.conversationHistory.length > 0
     ? request.conversationHistory.map(m => `${m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : 'System'}: ${m.text}`).join('\n')
@@ -543,6 +545,31 @@ function buildOllamaEmbedUrl(baseURL: string): string {
   return `${trimmed}/api/embed`;
 }
 
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
+  const controller = new AbortController();
+  let settled = false;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  return new Promise<Response>((resolve, reject) => {
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      fn();
+    };
+
+    timeout = setTimeout(() => {
+      controller.abort();
+      finish(() => reject(new Error(`${label} embeddings request timed out after ${timeoutMs}ms.`)));
+    }, timeoutMs);
+
+    fetch(url, { ...init, signal: controller.signal }).then(
+      response => finish(() => resolve(response)),
+      error => finish(() => reject(error)),
+    );
+  });
+}
+
 function assertEmbeddingCount(embeddings: number[][], inputLength: number): number[][] {
   if (embeddings.length !== inputLength) {
     throw new Error('Embedding response count did not match request count.');
@@ -614,7 +641,7 @@ export async function createEmbeddings(
     const endpoint = `${settings.baseURL.replace(/\/+$/, '')}/${modelPath}:batchEmbedContents?key=${encodeURIComponent(apiKey)}`;
     const taskType = purpose === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT';
     const isGeminiEmbedding2 = settings.model.includes('gemini-embedding-2');
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -631,7 +658,7 @@ export async function createEmbeddings(
           } : {}),
         })),
       }),
-    });
+    }, EMBEDDING_FETCH_TIMEOUT_MS, providerConfig.displayName);
 
     if (!res.ok) {
       throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
@@ -643,11 +670,11 @@ export async function createEmbeddings(
   if (providerConfig.transport === 'ollama') {
     const body: Record<string, unknown> = { model: settings.model, input };
     if (dimensions) body.dimensions = dimensions;
-    const res = await fetch(buildOllamaEmbedUrl(settings.baseURL), {
+    const res = await fetchWithTimeout(buildOllamaEmbedUrl(settings.baseURL), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }, EMBEDDING_FETCH_TIMEOUT_MS, providerConfig.displayName);
 
     if (!res.ok) {
       throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
@@ -667,14 +694,14 @@ export async function createEmbeddings(
       embedding_types: ['float'],
     };
     if (dimensions) body.output_dimension = dimensions;
-    const res = await fetch(`${settings.baseURL.replace(/\/+$/, '')}/embed`, {
+    const res = await fetchWithTimeout(`${settings.baseURL.replace(/\/+$/, '')}/embed`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-    });
+    }, EMBEDDING_FETCH_TIMEOUT_MS, providerConfig.displayName);
 
     if (!res.ok) {
       throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
@@ -691,14 +718,14 @@ export async function createEmbeddings(
       output_dtype: 'float',
     };
     if (dimensions) body.output_dimension = dimensions;
-    const res = await fetch(buildEmbeddingsUrl(settings.baseURL), {
+    const res = await fetchWithTimeout(buildEmbeddingsUrl(settings.baseURL), {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-    });
+    }, EMBEDDING_FETCH_TIMEOUT_MS, providerConfig.displayName);
 
     if (!res.ok) {
       throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);
@@ -714,14 +741,14 @@ export async function createEmbeddings(
   };
   if (dimensions) body.dimensions = dimensions;
 
-  const res = await fetch(buildEmbeddingsUrl(settings.baseURL), {
+  const res = await fetchWithTimeout(buildEmbeddingsUrl(settings.baseURL), {
     method: 'POST',
     headers: {
       ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
-  });
+  }, EMBEDDING_FETCH_TIMEOUT_MS, providerConfig.displayName);
 
   if (!res.ok) {
     throw new Error(`${providerConfig.displayName} embeddings HTTP ${res.status}: ${await res.text()}`);

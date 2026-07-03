@@ -481,6 +481,21 @@ export const MessagesRepo = {
     return rows.map(mapMessageRow);
   },
 
+  listForEmbeddingPage(accountId: string, limit = 500, offset = 0): MailMessage[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM messages
+      WHERE account_id = ?
+      ORDER BY received_at DESC
+      LIMIT ? OFFSET ?
+    `).all(
+      accountId,
+      Math.max(1, Math.min(2000, limit)),
+      Math.max(0, offset)
+    ) as any[];
+    return rows.map(mapMessageRow);
+  },
+
   countForEmbedding(accountId: string, limit = 100000): number {
     const db = getDatabase();
     const row = db.prepare(`
@@ -1141,14 +1156,37 @@ export const MailEmbeddingsRepo = {
     return Object.fromEntries(rows.map(row => [row.message_id, row.text_hash]));
   },
 
+  indexedHashesForMessageIds(accountId: string, model: string, messageIds: string[]): Record<string, string> {
+    const ids = [...new Set(messageIds)].filter(Boolean).slice(0, 2000);
+    if (ids.length === 0) return {};
+
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT message_id, text_hash
+      FROM mail_embeddings
+      WHERE account_id = ? AND model = ? AND message_id IN (${placeholders})
+    `).all(accountId, model, ...ids) as { message_id: string; text_hash: string }[];
+    return Object.fromEntries(rows.map(row => [row.message_id, row.text_hash]));
+  },
+
   listForAccount(accountId: string, model: string, limit = 10000): MailEmbeddingRow[] {
+    return this.listForAccountPage(accountId, model, Math.max(1, Math.min(50000, limit)), 0);
+  },
+
+  listForAccountPage(accountId: string, model: string, limit = 1000, offset = 0): MailEmbeddingRow[] {
     const db = getDatabase();
     const rows = db.prepare(`
       SELECT * FROM mail_embeddings
       WHERE account_id = ? AND model = ?
       ORDER BY received_at DESC
-      LIMIT ?
-    `).all(accountId, model, Math.max(1, Math.min(50000, limit))) as any[];
+      LIMIT ? OFFSET ?
+    `).all(
+      accountId,
+      model,
+      Math.max(1, Math.min(5000, limit)),
+      Math.max(0, offset)
+    ) as any[];
     return rows.map(mapMailEmbeddingRow);
   },
 

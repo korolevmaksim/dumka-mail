@@ -53,4 +53,31 @@ describe('embedding runtime adapters', () => {
     expect(request.output_dimensionality).toBeUndefined();
     expect(request.taskType).toBeUndefined();
   });
+
+  it('times out embedding provider requests instead of waiting forever', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+    const pending = createEmbeddings(['slow local endpoint'], {
+      purpose: 'query',
+      settings: {
+        provider: 'openAICompatible',
+        model: 'nomic-embed-text',
+        baseURL: 'http://localhost:1234/v1',
+        dimensions: null,
+      },
+    }).then(
+      () => 'resolved',
+      error => error instanceof Error ? error.message : String(error),
+    );
+
+    await vi.advanceTimersByTimeAsync(15001);
+    const result = await Promise.race([
+      pending,
+      Promise.resolve('still-pending'),
+    ]);
+
+    expect(result).toContain('timed out');
+    vi.useRealTimers();
+  });
 });

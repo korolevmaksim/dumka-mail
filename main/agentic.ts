@@ -78,6 +78,11 @@ const activeRecentEmbeddingAccounts = new Set<string>();
 const embeddingIndexJobs = new Map<string, EmbeddingIndexJobStatus>();
 const EMBEDDING_BATCH_SIZE = 16;
 const EMBEDDING_FULL_INDEX_LIMIT = 100000;
+const EMBEDDING_REINDEX_PAGE_SIZE = 256;
+const EMBEDDING_SEARCH_PAGE_SIZE = 500;
+const EMBEDDING_SEARCH_SCAN_LIMIT = 12000;
+const EMBEDDING_SEARCH_TIME_BUDGET_MS = 1200;
+const EMBEDDING_MAX_RETRY_ATTEMPTS = 3;
 
 interface EmbeddingCandidate {
   message: MailMessage;
@@ -181,6 +186,17 @@ async function pauseBetweenEmbeddingBatches(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0));
 }
 
+async function pauseBeforeRetry(attempt: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 350 * attempt));
+}
+
+function isRetryableEmbeddingError(err: unknown): boolean {
+  const message = toErrorMessage(err).toLowerCase();
+  return message.includes('timed out') ||
+    message.includes('fetch failed') ||
+    /\bhttp\s+(408|409|425|429|5\d\d)\b/.test(message);
+}
+
 async function saveEmbeddingBatch(settings: AIEmbeddingSettings, batch: EmbeddingCandidate[]): Promise<number> {
   const response = await createEmbeddings(batch.map(item => item.text), {
     settings,
@@ -206,6 +222,23 @@ async function saveEmbeddingBatch(settings: AIEmbeddingSettings, batch: Embeddin
   })));
 
   return batch.length;
+}
+
+async function saveEmbeddingBatchWithRetry(settings: AIEmbeddingSettings, batch: EmbeddingCandidate[]): Promise<number> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= EMBEDDING_MAX_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await saveEmbeddingBatch(settings, batch);
+    } catch (err) {
+      lastError = err;
+      if (attempt >= EMBEDDING_MAX_RETRY_ATTEMPTS || !isRetryableEmbeddingError(err)) {
+        throw err;
+      }
+      await pauseBeforeRetry(attempt);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function embeddingJobSnapshot(job: EmbeddingIndexJobStatus | undefined): EmbeddingIndexJobStatus | null {
@@ -330,19 +363,21 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
   try {
     const settings = readAgentSettings(accountId).embeddings;
     const model = currentEmbeddingModel(settings);
-    const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
-    const candidates = selectPendingEmbeddingCandidates(
-      buildEmbeddingCandidates(MessagesRepo.listRecent(accountId, maxMessages * 3)),
-      indexedHashes
-    )
+    const recentCandidates = buildEmbeddingCandidates(MessagesRepo.listRecent(accountId, maxMessages * 3))
       .slice(0, maxMessages);
+    const indexedHashes = MailEmbeddingsRepo.indexedHashesForMessageIds(
+      accountId,
+      model,
+      recentCandidates.map(item => item.message.id)
+    );
+    const candidates = selectPendingEmbeddingCandidates(recentCandidates, indexedHashes);
 
     if (candidates.length === 0) return 0;
 
     let indexed = 0;
     for (let index = 0; index < candidates.length; index += EMBEDDING_BATCH_SIZE) {
       const batch = candidates.slice(index, index + EMBEDDING_BATCH_SIZE);
-      indexed += await saveEmbeddingBatch(settings, batch);
+      indexed += await saveEmbeddingBatchWithRetry(settings, batch);
       await pauseBetweenEmbeddingBatches();
     }
 
@@ -353,6 +388,12 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
   } finally {
     activeRecentEmbeddingAccounts.delete(accountId);
   }
+}
+
+function scheduleRecentMessageIndex(accountId: string, maxMessages = 40): void {
+  setTimeout(() => {
+    void indexRecentMessages(accountId, maxMessages);
+  }, 0);
 }
 
 async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<EmbeddingIndexStatus> {
@@ -372,11 +413,11 @@ async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<Emb
 
   if (job?.state === 'running') {
     const currentIndexedCount = modelStats.find(item => item.model === model)?.count || 0;
-    const jobPendingMessages = Math.max(0, job.total - job.processed);
+    const jobPendingMessages = Math.max(0, job.total - currentIndexedCount);
     return {
       accountId,
       currentModel: model,
-      totalMessages: Math.max(currentIndexedCount + jobPendingMessages, job.total),
+      totalMessages: job.total,
       indexedMessages: currentIndexedCount,
       pendingMessages: jobPendingMessages,
       staleMessages: 0,
@@ -409,26 +450,52 @@ async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<Emb
 
 async function runEmbeddingReindexJob(
   job: EmbeddingIndexJobStatus,
-  settings: AIEmbeddingSettings,
-  candidates: EmbeddingCandidate[]
+  settings: AIEmbeddingSettings
 ): Promise<void> {
+  const model = currentEmbeddingModel(settings);
+  let offset = 0;
   try {
-    for (let index = 0; index < candidates.length; index += EMBEDDING_BATCH_SIZE) {
-      if (job.cancelRequested) break;
+    await pauseBetweenEmbeddingBatches();
 
-      const batch = candidates.slice(index, index + EMBEDDING_BATCH_SIZE);
-      try {
-        job.indexed += await saveEmbeddingBatch(settings, batch);
-        job.processed += batch.length;
-      } catch (err) {
-        job.failed += batch.length;
-        job.processed += batch.length;
-        throw err;
+    while (!job.cancelRequested && offset < Math.min(job.total, EMBEDDING_FULL_INDEX_LIMIT)) {
+      const remaining = Math.min(job.total, EMBEDDING_FULL_INDEX_LIMIT) - offset;
+      const pageLimit = Math.min(EMBEDDING_REINDEX_PAGE_SIZE, remaining);
+      const messages = MessagesRepo.listForEmbeddingPage(job.accountId, pageLimit, offset);
+      if (messages.length === 0) break;
+
+      const candidates = buildEmbeddingCandidates(messages);
+      const indexedHashes = MailEmbeddingsRepo.indexedHashesForMessageIds(
+        job.accountId,
+        model,
+        candidates.map(item => item.message.id)
+      );
+      const pendingCandidates = selectPendingEmbeddingCandidates(candidates, indexedHashes);
+
+      for (let index = 0; index < pendingCandidates.length; index += EMBEDDING_BATCH_SIZE) {
+        if (job.cancelRequested) break;
+
+        const batch = pendingCandidates.slice(index, index + EMBEDDING_BATCH_SIZE);
+        try {
+          job.indexed += await saveEmbeddingBatchWithRetry(settings, batch);
+        } catch (err) {
+          job.failed += batch.length;
+          throw err;
+        }
+        job.updatedAt = nowISO();
+        await pauseBetweenEmbeddingBatches();
       }
+
+      offset += messages.length;
+      job.processed = Math.min(job.total, offset);
       job.updatedAt = nowISO();
       await pauseBetweenEmbeddingBatches();
+
+      if (messages.length < pageLimit) break;
     }
 
+    if (!job.cancelRequested) {
+      job.processed = job.total;
+    }
     job.state = job.cancelRequested ? 'cancelled' : 'completed';
   } catch (err) {
     job.state = 'failed';
@@ -464,28 +531,28 @@ async function startEmbeddingReindexForAccount(
     MailEmbeddingsRepo.deleteOtherModels(accountId, model);
   }
 
-  const candidates = buildEmbeddingCandidates(MessagesRepo.listForEmbedding(accountId, EMBEDDING_FULL_INDEX_LIMIT));
-  const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
-  const pendingCandidates = selectPendingEmbeddingCandidates(candidates, indexedHashes);
+  const totalMessages = MessagesRepo.countForEmbedding(accountId, EMBEDDING_FULL_INDEX_LIMIT);
   const startedAt = nowISO();
   const job: EmbeddingIndexJobStatus = {
-    state: pendingCandidates.length > 0 ? 'running' : 'completed',
+    state: totalMessages > 0 ? 'running' : 'completed',
     accountId,
     model,
-    total: pendingCandidates.length,
+    total: totalMessages,
     processed: 0,
     indexed: 0,
     failed: 0,
     startedAt,
     updatedAt: startedAt,
-    completedAt: pendingCandidates.length > 0 ? null : startedAt,
+    completedAt: totalMessages > 0 ? null : startedAt,
     error: null,
     cancelRequested: false,
   };
   embeddingIndexJobs.set(accountId, job);
 
-  if (pendingCandidates.length > 0) {
-    void runEmbeddingReindexJob(job, embeddingSettings, pendingCandidates);
+  if (totalMessages > 0) {
+    setTimeout(() => {
+      void runEmbeddingReindexJob(job, embeddingSettings);
+    }, 0);
   }
 
   return getEmbeddingIndexStatusForAccount(accountId);
@@ -578,20 +645,42 @@ async function searchSemanticInternal(accountId: string, query: string, limit = 
   const settings = readAgentSettings(accountId);
   if (!settings.semanticSearchEnabled) return [];
 
-  await indexRecentMessages(accountId, 80);
+  scheduleRecentMessageIndex(accountId, 80);
   const queryEmbedding = await createEmbeddings([trimmed], {
     settings: settings.embeddings,
     purpose: 'query',
   });
-  const rows = MailEmbeddingsRepo.listForAccount(accountId, queryEmbedding.model, 12000);
-  return rows
-    .map(row => ({
-      row,
-      score: cosineSimilarity(queryEmbedding.embeddings[0], row.vector),
-    }))
-    .filter(item => item.score > 0.14)
+  const requestedLimit = Math.max(1, Math.min(200, limit));
+  const scoredRows: Array<{ row: ReturnType<typeof MailEmbeddingsRepo.listForAccountPage>[number]; score: number }> = [];
+  const deadline = Date.now() + EMBEDDING_SEARCH_TIME_BUDGET_MS;
+
+  for (let offset = 0; offset < EMBEDDING_SEARCH_SCAN_LIMIT; offset += EMBEDDING_SEARCH_PAGE_SIZE) {
+    if (Date.now() > deadline) break;
+    const rows = MailEmbeddingsRepo.listForAccountPage(
+      accountId,
+      queryEmbedding.model,
+      Math.min(EMBEDDING_SEARCH_PAGE_SIZE, EMBEDDING_SEARCH_SCAN_LIMIT - offset),
+      offset
+    );
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      const score = cosineSimilarity(queryEmbedding.embeddings[0], row.vector);
+      if (score > 0.14) scoredRows.push({ row, score });
+    }
+
+    if (scoredRows.length > requestedLimit * 4) {
+      scoredRows.sort((a, b) => b.score - a.score);
+      scoredRows.splice(requestedLimit * 2);
+    }
+
+    if (rows.length < EMBEDDING_SEARCH_PAGE_SIZE) break;
+    await pauseBetweenEmbeddingBatches();
+  }
+
+  return scoredRows
     .sort((a, b) => b.score - a.score)
-    .slice(0, Math.max(1, Math.min(200, limit)))
+    .slice(0, requestedLimit)
     .map(item => ({
       threadId: item.row.threadId,
       messageId: item.row.messageId,
