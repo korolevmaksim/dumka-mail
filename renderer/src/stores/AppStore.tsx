@@ -219,7 +219,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     suggestAutoArchive: true,
     suggestLabels: true,
     translationEnabled: true,
-    personalizationNotes: ''
+    personalizationNotes: '',
+    embeddingsByAccount: {},
+    semanticSearchEnabledByAccount: {}
   },
   privacy: {
     loadRemoteImages: true,

@@ -856,6 +856,8 @@ export interface AISettings {
   suggestLabels: boolean;
   translationEnabled: boolean;
   personalizationNotes: string;
+  embeddingsByAccount?: Record<string, AIEmbeddingSettings>;
+  semanticSearchEnabledByAccount?: Record<string, boolean>;
 }
 
 export interface PrivacySettings {

@@ -85,16 +85,29 @@ interface EmbeddingCandidate {
   textHash: string;
 }
 
-function readAgentSettings(): RuntimeAgentSettings {
+function readAgentSettings(accountId?: string): RuntimeAgentSettings {
   try {
     const raw = SettingsRepo.get('appSettings');
     const parsed = raw ? JSON.parse(raw) : {};
+    let embeddings = normalizeEmbeddingSettings(parsed?.ai?.embeddings);
+    let semanticSearchEnabled = parsed?.ai?.semanticSearchEnabled === true;
+
+    if (accountId) {
+      const normId = accountId.trim().toLowerCase();
+      if (parsed?.ai?.embeddingsByAccount?.[normId]) {
+        embeddings = normalizeEmbeddingSettings(parsed.ai.embeddingsByAccount[normId]);
+      }
+      if (parsed?.ai?.semanticSearchEnabledByAccount && normId in parsed.ai.semanticSearchEnabledByAccount) {
+        semanticSearchEnabled = parsed.ai.semanticSearchEnabledByAccount[normId] === true;
+      }
+    }
+
     return {
       provider: parsed?.ai?.provider || 'automatic',
       allowMailBodyContext: parsed?.ai?.allowMailBodyContext === true,
       proactiveDraftsEnabled: parsed?.ai?.proactiveDraftsEnabled === true,
-      semanticSearchEnabled: parsed?.ai?.semanticSearchEnabled === true,
-      embeddings: normalizeEmbeddingSettings(parsed?.ai?.embeddings),
+      semanticSearchEnabled,
+      embeddings,
       agentRules: normalizeAgentRules(parsed?.ai?.agentRules),
       dailyBriefing: normalizeDailyBriefingSettings(parsed?.ai?.dailyBriefing),
       suggestDrafts: parsed?.ai?.suggestDrafts === true,
@@ -231,7 +244,7 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
 }
 
 async function generateDraftForThread(thread: MailThread, messages: MailMessage[]): Promise<AgentDraftSuggestion | null> {
-  const settings = readAgentSettings();
+  const settings = readAgentSettings(thread.accountId);
   if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return null;
 
   const latest = latestMessage(messages);
@@ -315,7 +328,7 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
   activeRecentEmbeddingAccounts.add(accountId);
 
   try {
-    const settings = readAgentSettings().embeddings;
+    const settings = readAgentSettings(accountId).embeddings;
     const model = currentEmbeddingModel(settings);
     const indexedHashes = MailEmbeddingsRepo.indexedHashes(accountId, model);
     const candidates = selectPendingEmbeddingCandidates(
@@ -343,7 +356,7 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
 }
 
 async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<EmbeddingIndexStatus> {
-  const settings = readAgentSettings();
+  const settings = readAgentSettings(accountId);
   const model = currentEmbeddingModel(settings.embeddings);
   const modelStats = MailEmbeddingsRepo.modelStats(accountId);
   const models = modelStats.map(item => ({
@@ -437,7 +450,7 @@ async function startEmbeddingReindexForAccount(
     return getEmbeddingIndexStatusForAccount(accountId);
   }
 
-  const settings = readAgentSettings();
+  const settings = readAgentSettings(accountId);
   if (!settings.semanticSearchEnabled) {
     throw new Error('Semantic search is disabled. Enable it before indexing mail.');
   }
@@ -506,7 +519,7 @@ async function deleteOtherEmbeddingIndexesForAccount(accountId: string): Promise
     throw new Error('Stop the active embedding index job before deleting indexes.');
   }
 
-  const model = currentEmbeddingModel(readAgentSettings().embeddings);
+  const model = currentEmbeddingModel(readAgentSettings(accountId).embeddings);
   const deleted = MailEmbeddingsRepo.deleteOtherModels(accountId, model);
   return {
     deleted,
@@ -562,7 +575,7 @@ async function processThreadInternal(accountId: string, threadId: string): Promi
 async function searchSemanticInternal(accountId: string, query: string, limit = 60): Promise<SemanticSearchResult[]> {
   const trimmed = normalizeEmbeddingText(query, 1000);
   if (!trimmed) return [];
-  const settings = readAgentSettings();
+  const settings = readAgentSettings(accountId);
   if (!settings.semanticSearchEnabled) return [];
 
   await indexRecentMessages(accountId, 80);
@@ -619,7 +632,7 @@ export const AgenticService = {
         await processThreadInternal(account.email, thread.id);
       }
 
-      if (readAgentSettings().semanticSearchEnabled) {
+      if (readAgentSettings(account.email).semanticSearchEnabled) {
         await indexRecentMessages(account.email, 30);
       }
     }
@@ -673,7 +686,7 @@ export const AgenticService = {
   },
 
   async buildDailyBriefing(accountId: string, options?: DailyBriefingBuildOptions): Promise<DailyBriefing> {
-    const runtimeSettings = readAgentSettings();
+    const runtimeSettings = readAgentSettings(accountId);
     return buildDailyBriefingForAccount({
       accountId,
       options,

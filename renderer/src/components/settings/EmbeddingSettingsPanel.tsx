@@ -52,7 +52,33 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   const [indexStatus, setIndexStatus] = useState<EmbeddingIndexStatus | null>(null);
   const [indexError, setIndexError] = useState<string | null>(null);
   const [indexBusy, setIndexBusy] = useState<IndexAction | null>(null);
-  const embeddingSettings = normalizeEmbeddingSettings(store.settings.ai.embeddings);
+  const [localAccountId, setLocalAccountId] = useState<string>('');
+
+  const targetAccountId = useMemo(() => {
+    if (store.activeAccount && store.activeAccount.id !== 'unified') return store.activeAccount.email;
+    return store.accounts[0]?.email || '';
+  }, [store.activeAccount, store.accounts]);
+
+  const activeAccountId = localAccountId || targetAccountId;
+
+  useEffect(() => {
+    if (targetAccountId && !localAccountId) {
+      setLocalAccountId(targetAccountId);
+    }
+  }, [targetAccountId]);
+
+  const embeddingSettings = useMemo(() => {
+    const accSettings = activeAccountId ? store.settings.ai.embeddingsByAccount?.[activeAccountId] : null;
+    return normalizeEmbeddingSettings(accSettings || store.settings.ai.embeddings);
+  }, [activeAccountId, store.settings.ai.embeddings, store.settings.ai.embeddingsByAccount]);
+
+  const semanticSearchEnabled = useMemo(() => {
+    if (activeAccountId && store.settings.ai.semanticSearchEnabledByAccount && activeAccountId in store.settings.ai.semanticSearchEnabledByAccount) {
+      return store.settings.ai.semanticSearchEnabledByAccount[activeAccountId] === true;
+    }
+    return store.settings.ai.semanticSearchEnabled === true;
+  }, [activeAccountId, store.settings.ai.semanticSearchEnabled, store.settings.ai.semanticSearchEnabledByAccount]);
+
   const providerConfig = getEmbeddingProviderConfig(embeddingSettings.provider);
   const presets = getEmbeddingModelPresets(embeddingSettings.provider);
   const selectedPreset = presets.find(preset => preset.id === embeddingSettings.model);
@@ -67,10 +93,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   const modelIsPreset = presets.some(preset => preset.id === embeddingSettings.model);
   const keyName = providerConfig.apiKeyEnv;
   const keyValue = keyName ? formKeys[keyName] || '' : '';
-  const targetAccountId = useMemo(() => {
-    if (store.activeAccount && store.activeAccount.id !== 'unified') return store.activeAccount.email;
-    return store.accounts[0]?.email || '';
-  }, [store.activeAccount, store.accounts]);
+
   const currentModelStats = indexStatus?.models.find(model => model.isCurrent) || null;
   const isIndexRunning = indexStatus?.job?.state === 'running';
   const jobProgress = indexStatus?.job && indexStatus.job.total > 0
@@ -81,9 +104,14 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
     : 0;
 
   const updateEmbeddings = (patch: Partial<AIEmbeddingSettings>) => {
+    if (!activeAccountId) return;
     store.updateSettings(settings => {
-      settings.ai.embeddings = normalizeEmbeddingSettings({
-        ...settings.ai.embeddings,
+      if (!settings.ai.embeddingsByAccount) {
+        settings.ai.embeddingsByAccount = {};
+      }
+      const current = settings.ai.embeddingsByAccount[activeAccountId] || settings.ai.embeddings;
+      settings.ai.embeddingsByAccount[activeAccountId] = normalizeEmbeddingSettings({
+        ...current,
         ...patch,
       });
     });
@@ -114,18 +142,18 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   };
 
   const refreshIndexStatus = useCallback(async () => {
-    if (!targetAccountId) {
+    if (!activeAccountId) {
       setIndexStatus(null);
       return;
     }
 
     setIndexError(null);
     try {
-      setIndexStatus(await window.electronAPI.getEmbeddingIndexStatus(targetAccountId));
+      setIndexStatus(await window.electronAPI.getEmbeddingIndexStatus(activeAccountId));
     } catch (err: any) {
       setIndexError(err?.message || String(err));
     }
-  }, [targetAccountId]);
+  }, [activeAccountId]);
 
   useEffect(() => {
     void refreshIndexStatus();
@@ -135,7 +163,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
     embeddingSettings.model,
     embeddingSettings.baseURL,
     embeddingSettings.dimensions,
-    store.settings.ai.semanticSearchEnabled,
+    semanticSearchEnabled,
   ]);
 
   useEffect(() => {
@@ -147,7 +175,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   }, [isIndexRunning, refreshIndexStatus]);
 
   const runIndexAction = async (action: IndexAction, options?: EmbeddingIndexReindexOptions) => {
-    if (!targetAccountId) {
+    if (!activeAccountId) {
       emitToast({ type: 'warning', message: 'Connect a mail account before indexing.' });
       return;
     }
@@ -161,28 +189,28 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
       }
 
       if (action === 'cancel') {
-        setIndexStatus(await window.electronAPI.cancelEmbeddingReindex(targetAccountId));
+        setIndexStatus(await window.electronAPI.cancelEmbeddingReindex(activeAccountId));
         return;
       }
 
       if (action === 'deleteCurrent') {
         const currentModel = indexStatus?.currentModel;
         if (!currentModel) return;
-        const result = await window.electronAPI.deleteEmbeddingIndex(targetAccountId, currentModel);
+        const result = await window.electronAPI.deleteEmbeddingIndex(activeAccountId, currentModel);
         setIndexStatus(result.status);
         emitToast({ type: 'success', message: `Deleted ${formatCount(result.deleted)} current index rows.` });
         return;
       }
 
       if (action === 'deleteOld') {
-        const result = await window.electronAPI.deleteOtherEmbeddingIndexes(targetAccountId);
+        const result = await window.electronAPI.deleteOtherEmbeddingIndexes(activeAccountId);
         setIndexStatus(result.status);
         emitToast({ type: 'success', message: `Deleted ${formatCount(result.deleted)} old index rows.` });
         return;
       }
 
       if (!(await ensureProviderReady())) return;
-      setIndexStatus(await window.electronAPI.startEmbeddingReindex(targetAccountId, options));
+      setIndexStatus(await window.electronAPI.startEmbeddingReindex(activeAccountId, options));
     } catch (err: any) {
       const message = err?.message || String(err);
       setIndexError(message);
@@ -207,20 +235,48 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
     }
   };
 
-  const semanticSearchDisabled = !store.settings.ai.semanticSearchEnabled;
-  const controlsDisabled = !targetAccountId || Boolean(indexBusy) || isIndexRunning || semanticSearchDisabled;
+  const semanticSearchDisabled = !semanticSearchEnabled;
+  const controlsDisabled = !activeAccountId || Boolean(indexBusy) || isIndexRunning || semanticSearchDisabled;
   const currentIndexRows = currentModelStats?.count || 0;
 
   return (
     <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
+      {store.accounts.length > 1 && (
+        <div className="flex items-center justify-between border-b border-[var(--border)] pb-3 mb-1">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Configure Account</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Select email account to configure embeddings</span>
+          </div>
+          <select
+            value={activeAccountId}
+            onChange={(event) => setLocalAccountId(event.target.value)}
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          >
+            {store.accounts.map(acc => (
+              <option key={acc.email} value={acc.email}>
+                {acc.displayName || acc.email}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Semantic Search Embeddings</span>
           <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Provider, model, dimensions, and local endpoint for semantic indexing</span>
         </div>
         <Toggle
-          checked={store.settings.ai.semanticSearchEnabled}
-          onChange={(value) => store.updateSettings(settings => { settings.ai.semanticSearchEnabled = value; })}
+          checked={semanticSearchEnabled}
+          onChange={(value) => {
+            if (!activeAccountId) return;
+            store.updateSettings(settings => {
+              if (!settings.ai.semanticSearchEnabledByAccount) {
+                settings.ai.semanticSearchEnabledByAccount = {};
+              }
+              settings.ai.semanticSearchEnabledByAccount[activeAccountId] = value;
+            });
+          }}
         />
       </div>
 
@@ -336,14 +392,14 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
           <div className="min-w-0 flex flex-col gap-0.5">
             <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Embedding Index</span>
             <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] truncate" title={indexStatus?.currentModel || ''}>
-              {targetAccountId ? `Account: ${targetAccountId}` : 'No account selected'}
+              {activeAccountId ? `Account: ${activeAccountId}` : 'No account selected'}
               {indexStatus?.currentModel ? ` • ${compactModelKey(indexStatus.currentModel)}` : ''}
             </span>
           </div>
           <button
             type="button"
             onClick={() => void runIndexAction('refresh')}
-            disabled={!targetAccountId || Boolean(indexBusy)}
+            disabled={!activeAccountId || Boolean(indexBusy)}
             className="flex items-center gap-1 px-2 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           >
             <RefreshCw className={`w-3 h-3 ${indexBusy === 'refresh' ? 'animate-spin' : ''}`} />
@@ -431,7 +487,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
               <button
                 type="button"
                 onClick={() => void runIndexAction('deleteCurrent')}
-                disabled={!targetAccountId || Boolean(indexBusy) || currentIndexRows === 0}
+                disabled={!activeAccountId || Boolean(indexBusy) || currentIndexRows === 0}
                 className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--danger)] hover:text-[var(--danger)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               >
                 <Trash2 className="w-3 h-3" />
@@ -440,7 +496,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
               <button
                 type="button"
                 onClick={() => void runIndexAction('deleteOld')}
-                disabled={!targetAccountId || Boolean(indexBusy) || (indexStatus?.otherIndexedMessages || 0) === 0}
+                disabled={!activeAccountId || Boolean(indexBusy) || (indexStatus?.otherIndexedMessages || 0) === 0}
                 className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--danger)] hover:text-[var(--danger)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               >
                 <Trash2 className="w-3 h-3" />
