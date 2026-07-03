@@ -407,7 +407,7 @@ export interface AIActionMeta {
 }
 
 export const AI_ACTIONS: AIActionMeta[] = [
-  { id: 'queue', label: 'Triage Queue', icon: 'ListChecks', requiresThread: false },
+  { id: 'queue', label: 'Review Queue', icon: 'ListChecks', requiresThread: false },
   { id: 'summarize', label: 'Summarize', icon: 'Text', requiresThread: true },
   { id: 'draftReply', label: 'Draft Reply', icon: 'PenLine', requiresThread: true },
   { id: 'rewrite', label: 'Rewrite', icon: 'Wand2', requiresThread: true },
@@ -464,6 +464,86 @@ export interface MailTriagePlan {
   intent: 'mailboxTriage' | 'automationCleanup';
   automationRulePreview?: AutomationRulePreview | null;
   selectedThreadIds?: string[];
+}
+
+export type AgentPlanSource = 'triageQueue' | 'dailyBriefing' | 'command';
+export type AgentPlanActionKind = 'openThread' | 'markRead' | 'archive' | 'draftReply' | 'setReminder' | 'applyLabel';
+export type AgentPlanRiskLevel = 'low' | 'medium' | 'high';
+export type AgentPlanApprovalState = 'proposed' | 'approved' | 'applied' | 'rejected' | 'blocked';
+export type AgentPlanSelectionPolicy = 'autoSelected' | 'explicitOptIn' | 'manualOnly';
+
+export interface AgentPlanCitation {
+  accountId: AccountID;
+  threadId: ThreadID;
+  messageId?: MessageID | null;
+  subject: string;
+  sender: string;
+  senderEmail?: string | null;
+  snippet: string;
+  evidence: string;
+  receivedAt?: string | null;
+}
+
+export interface AgentPlanItem {
+  id: string;
+  accountId: AccountID;
+  threadId: ThreadID;
+  subject: string;
+  sender: string;
+  action: AgentPlanActionKind;
+  title: string;
+  reason: string;
+  citation: AgentPlanCitation;
+  riskLevel: AgentPlanRiskLevel;
+  confidence: number;
+  selectionPolicy: AgentPlanSelectionPolicy;
+  approvalState: AgentPlanApprovalState;
+  sourceItemId?: string | null;
+  payload?: {
+    labelId?: string | null;
+    reminderAt?: string | null;
+    sourceMessageId?: string | null;
+    category?: string | null;
+  };
+}
+
+export interface AgentPlanCoverage {
+  sourceThreadCount: number;
+  proposedActionCount: number;
+  aiAssisted: boolean;
+  privacyMode: 'localCache' | 'aiAssisted';
+  bodyContextIncluded: boolean;
+  warnings: string[];
+}
+
+export interface AgentPlan {
+  id: string;
+  title: string;
+  source: AgentPlanSource;
+  sourceTitle: string;
+  generatedAt: string;
+  accountId: AccountID;
+  items: AgentPlanItem[];
+  coverage: AgentPlanCoverage;
+}
+
+export interface AgentPlanActionPreview {
+  itemId: string;
+  action: AgentPlanActionKind;
+  isSelected: boolean;
+  eligibility: 'ready' | 'requiresReconnect' | 'threadMissing' | 'labelMissing' | 'focusOnly';
+  scope: 'gmail' | 'local' | 'focus';
+  selectionPolicy: AgentPlanSelectionPolicy;
+  riskLevel: AgentPlanRiskLevel;
+}
+
+export interface AgentPlanQueueReadiness {
+  summary: string;
+  level: 'ready' | 'warning';
+  executableActionCount: number;
+  blockedActionCount: number;
+  canApplySelected: boolean;
+  applyButtonTitle: string;
 }
 
 export type DailyBriefingCategory = 'needsReply' | 'waitingOnMe' | 'fyi' | 'riskOrNoise';

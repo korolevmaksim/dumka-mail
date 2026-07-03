@@ -27,6 +27,10 @@ import {
   MailTriageActionPreview,
   MailTriagePlanItem,
   MailTriagePlan,
+  AgentPlan,
+  AgentPlanItem,
+  AgentPlanActionPreview,
+  AgentPlanQueueReadiness,
   DailyBriefing,
   DailyBriefingBuildOptions,
   DailyBriefingItem,
@@ -437,8 +441,11 @@ interface AppStoreContextType {
   runAITriagePlan: () => Promise<void>;
   runDailyBriefing: (options?: DailyBriefingBuildOptions) => Promise<void>;
   dismissDailyBriefingItem: (itemOrThreadId: DailyBriefingItem | string) => void;
+  addDailyBriefingItemToAgentPlan: (item: DailyBriefingItem, labelId?: string | null) => void;
   triagePlan: MailTriagePlan | null;
   setTriagePlan: (plan: MailTriagePlan | null) => void;
+  agentPlan: AgentPlan | null;
+  setAgentPlan: (plan: AgentPlan | null) => void;
   dailyBriefing: DailyBriefing | null;
   setDailyBriefing: (briefing: DailyBriefing | null) => void;
   dailyBriefingLoading: boolean;
@@ -466,13 +473,22 @@ interface AppStoreContextType {
   executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam', threadIds: string[]) => Promise<void>;
   selectedTriageThreadIds: Set<string>;
   toggleTriagePlanItemSelection: (threadId: string) => void;
+  selectedAgentPlanItemIds: Set<string>;
+  toggleAgentPlanItemSelection: (itemId: string) => void;
 
   selectAllApplicableTriagePlanItems: () => void;
   clearTriagePlanSelection: () => void;
   applySelectedTriagePlanItems: () => Promise<void>;
   applyTriagePlanItem: (item: MailTriagePlanItem, queuedActionLog?: any) => Promise<void>;
+  selectAllApplicableAgentPlanItems: () => void;
+  clearAgentPlanSelection: () => void;
+  applySelectedAgentPlanItems: () => Promise<void>;
+  applyAgentPlanItem: (item: AgentPlanItem) => Promise<void>;
+  rejectAgentPlanItem: (itemId: string) => void;
   triageQueueReadiness: MailTriageQueueReadiness | null;
   triageActionPreview: (item: MailTriagePlanItem) => MailTriageActionPreview;
+  agentPlanQueueReadiness: AgentPlanQueueReadiness | null;
+  agentPlanActionPreview: (item: AgentPlanItem) => AgentPlanActionPreview;
 }
 
 const AppStoreContext = createContext<AppStoreContextType | null>(null);
@@ -555,6 +571,8 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     activeSplit: mailState.activeSplit,
     threads: mailState.threads,
     setThreads: mailState.setThreads,
+    openThread: mailState.openThread,
+    startReplyWithBody: draftsState.startReplyWithBody,
     executeMailAction: mailState.executeMailAction,
     setSpeedProof: mailState.setSpeedProof
   });

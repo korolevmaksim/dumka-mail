@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Archive, Bell, ExternalLink, MailPlus, RefreshCw, ShieldAlert, Sparkles, Tag, X } from 'lucide-react';
+import { Archive, Bell, ExternalLink, ListChecks, MailPlus, RefreshCw, ShieldAlert, Sparkles, Tag, X } from 'lucide-react';
 import type { DailyBriefingCategory, DailyBriefingItem, MailLabelDefinition, MailMessage } from '../../../shared/types';
 import { labelDisplayName } from '../../../shared/labels';
 import { useAppStore } from '../stores/AppStore';
@@ -140,6 +140,10 @@ export function DailyBriefingCard() {
     store.dismissDailyBriefingItem(item);
   };
 
+  const addToReviewQueue = (item: DailyBriefingItem, selectedLabelId?: string) => {
+    store.addDailyBriefingItemToAgentPlan(item, selectedLabelId || null);
+  };
+
   const formatTime = (iso: string) => {
     const date = new Date(iso);
     if (!Number.isFinite(date.getTime())) return '';
@@ -270,6 +274,14 @@ export function DailyBriefingCard() {
                         <Tag className="h-3.5 w-3.5" />
                       </button>
                     </div>
+                    <button
+                      type="button"
+                      title="Add proposed action to Agent Review Queue"
+                      onClick={() => addToReviewQueue(item, selectedLabel)}
+                      className="mt-1.5 flex w-full items-center justify-center gap-1 rounded border border-[var(--ai-accent)]/35 bg-[var(--ai-accent)]/10 px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--ai-accent)] hover:bg-[var(--ai-accent)]/15"
+                    >
+                      <ListChecks className="h-3 w-3 text-[var(--ai-accent)]" /> Add to Review
+                    </button>
                   </article>
                 );
               })}

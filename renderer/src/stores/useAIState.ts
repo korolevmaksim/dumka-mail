@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem } from '../../../shared/types';
+import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
 import { emitToast } from '../lib/toastBus';
@@ -7,6 +7,7 @@ import { SpeedProof } from './useMailState';
 import { MailTriagePlanner } from '../../../shared/triagePlanner';
 import { buildAITriageContext, buildAITriageInstruction, buildAITriagePlanFromResponse } from '../../../shared/aiTriage';
 import { normalizeDailyBriefingSettings } from '../../../shared/dailyBriefing';
+import { buildAgentPlanFromDailyBriefingItem, buildAgentPlanFromTriagePlan, mergeAgentPlanItem } from '../../../shared/agentPlan';
 
 interface UseAIStateProps {
   settings: AppSettings;
@@ -18,7 +19,9 @@ interface UseAIStateProps {
   activeSplit: string;
   threads: MailThread[];
   setThreads: React.Dispatch<React.SetStateAction<MailThread[]>>;
-  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any) => Promise<void>;
+  openThread: (thread: MailThread | null) => Promise<void>;
+  startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => any;
+  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<void>;
   setSpeedProof: React.Dispatch<React.SetStateAction<SpeedProof>>;
 }
 
@@ -64,6 +67,8 @@ export function useAIState({
   activeSplit,
   threads,
   setThreads,
+  openThread,
+  startReplyWithBody,
   executeMailAction,
   setSpeedProof,
 }: UseAIStateProps) {
@@ -74,12 +79,14 @@ export function useAIState({
   const [activeAIConversation, setActiveAIConversation] = useState<AIConversation | null>(null);
   const [activeAIMessages, setActiveAIMessages] = useState<AIChatMessage[]>([]);
   const [triagePlan, setTriagePlan] = useState<MailTriagePlan | null>(null);
+  const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
   const [dailyBriefing, setDailyBriefing] = useState<DailyBriefing | null>(null);
   const [dailyBriefingLoading, setDailyBriefingLoading] = useState<boolean>(false);
   const [aiPanelLoading, setAiPanelLoading] = useState<boolean>(false);
   const [aiModel, setAiModel] = useState<string>('');
   
   const [selectedTriageThreadIds, setSelectedTriageThreadIds] = useState<Set<string>>(new Set());
+  const [selectedAgentPlanItemIds, setSelectedAgentPlanItemIds] = useState<Set<string>>(new Set());
   const [activeAccountCredentialsValid, setActiveAccountCredentialsValid] = useState<boolean>(true);
 
   // Sync provider and model from settings on load/change
@@ -361,6 +368,222 @@ export function useAIState({
     setSelectedTriageThreadIds(new Set());
   };
 
+  const agentPlanActionPreview = useCallback((item: AgentPlanItem): AgentPlanActionPreview => {
+    const isSelected = selectedAgentPlanItemIds.has(item.id);
+    const threadExists = threads.some(thread => thread.accountId === item.accountId && thread.id === item.threadId);
+    const scope: AgentPlanActionPreview['scope'] =
+      item.action === 'markRead' || item.action === 'archive' || item.action === 'applyLabel'
+        ? 'gmail'
+        : item.action === 'openThread'
+          ? 'focus'
+          : 'local';
+
+    let eligibility: AgentPlanActionPreview['eligibility'] = 'ready';
+    if (!threadExists) {
+      eligibility = 'threadMissing';
+    } else if (item.action === 'applyLabel' && !item.payload?.labelId) {
+      eligibility = 'labelMissing';
+    } else if (scope === 'gmail' && !activeAccountCredentialsValid) {
+      eligibility = 'requiresReconnect';
+    } else if (scope === 'focus') {
+      eligibility = 'focusOnly';
+    }
+
+    return {
+      itemId: item.id,
+      action: item.action,
+      isSelected,
+      eligibility,
+      scope,
+      selectionPolicy: item.selectionPolicy,
+      riskLevel: item.riskLevel,
+    };
+  }, [activeAccountCredentialsValid, selectedAgentPlanItemIds, threads]);
+
+  const agentPlanQueueReadiness: AgentPlanQueueReadiness | null = (() => {
+    if (!agentPlan) return null;
+    const selected = agentPlan.items
+      .map(item => ({ item, preview: agentPlanActionPreview(item) }))
+      .filter(({ preview }) => selectedAgentPlanItemIds.has(preview.itemId));
+    if (selected.length === 0) return null;
+
+    const executable = selected.filter(({ preview }) => preview.eligibility === 'ready');
+    const blocked = selected.length - executable.length;
+    const gmailCount = executable.filter(({ preview }) => preview.scope === 'gmail').length;
+    const localCount = executable.filter(({ preview }) => preview.scope === 'local').length;
+    const focusCount = selected.filter(({ preview }) => preview.scope === 'focus').length;
+    const parts: string[] = [];
+    if (gmailCount > 0) parts.push(`${gmailCount} Gmail action${gmailCount === 1 ? '' : 's'} ready`);
+    if (localCount > 0) parts.push(`${localCount} local action${localCount === 1 ? '' : 's'} ready`);
+    if (focusCount > 0) parts.push(`${focusCount} focus-only`);
+    if (blocked > 0) parts.push(`${blocked} blocked`);
+
+    return {
+      summary: parts.join(' · '),
+      level: blocked > 0 ? 'warning' : 'ready',
+      executableActionCount: executable.length,
+      blockedActionCount: blocked,
+      canApplySelected: executable.length > 0,
+      applyButtonTitle: executable.length > 0 ? `Approve ${executable.length}` : 'Approve 0',
+    };
+  })();
+
+  const toggleAgentPlanItemSelection = (itemId: string) => {
+    setSelectedAgentPlanItemIds(prev => {
+      const copy = new Set(prev);
+      if (copy.has(itemId)) {
+        copy.delete(itemId);
+      } else {
+        copy.add(itemId);
+      }
+      return copy;
+    });
+  };
+
+  const selectAllApplicableAgentPlanItems = () => {
+    if (!agentPlan) return;
+    const applicableIds = agentPlan.items
+      .filter(item => item.action !== 'openThread')
+      .filter(item => agentPlanActionPreview(item).eligibility === 'ready')
+      .map(item => item.id);
+    setSelectedAgentPlanItemIds(new Set(applicableIds));
+  };
+
+  const clearAgentPlanSelection = () => {
+    setSelectedAgentPlanItemIds(new Set());
+  };
+
+  const rejectAgentPlanItem = (itemId: string) => {
+    setSelectedAgentPlanItemIds(prev => {
+      const copy = new Set(prev);
+      copy.delete(itemId);
+      return copy;
+    });
+    setAgentPlan(prev => {
+      if (!prev) return null;
+      const items = prev.items.filter(item => item.id !== itemId);
+      return {
+        ...prev,
+        items,
+        coverage: {
+          ...prev.coverage,
+          proposedActionCount: items.length,
+        },
+      };
+    });
+  };
+
+  const payloadForAgentPlanItem = (item: AgentPlanItem, extra: Record<string, unknown> = {}) => JSON.stringify({
+    source: 'agentReviewQueue',
+    planId: agentPlan?.id || null,
+    itemId: item.id,
+    action: item.action,
+    riskLevel: item.riskLevel,
+    confidence: item.confidence,
+    reason: item.reason,
+    citation: {
+      messageId: item.citation.messageId || null,
+      evidence: item.citation.evidence,
+    },
+    ...extra,
+  });
+
+  const latestMessageForAgentItem = async (item: AgentPlanItem): Promise<MailMessage | null> => {
+    const messages = await window.electronAPI.listMessagesForThread(item.accountId, item.threadId);
+    return (item.payload?.sourceMessageId
+      ? messages.find(message => message.id === item.payload?.sourceMessageId)
+      : null)
+      || [...messages].sort((a, b) => Date.parse(a.receivedAt) - Date.parse(b.receivedAt)).at(-1)
+      || null;
+  };
+
+  const applyAgentPlanItem = async (item: AgentPlanItem) => {
+    const thread = threads.find(thread => thread.accountId === item.accountId && thread.id === item.threadId);
+    if (!thread) {
+      emitToast({ type: 'warning', message: 'Source thread is no longer in the local cache.' });
+      return;
+    }
+
+    const preview = agentPlanActionPreview(item);
+    if (preview.eligibility === 'requiresReconnect') {
+      emitToast({ type: 'warning', message: 'Reconnect Gmail before approving this remote action.' });
+      return;
+    }
+    if (preview.eligibility === 'labelMissing') {
+      emitToast({ type: 'warning', message: 'Choose a label before approving this action.' });
+      return;
+    }
+
+    if (item.action === 'openThread') {
+      await openThread(thread);
+    } else if (item.action === 'markRead') {
+      await executeMailAction('markRead', item.threadId, null, undefined, payloadForAgentPlanItem(item));
+    } else if (item.action === 'archive') {
+      await executeMailAction('markDone', item.threadId, null, undefined, payloadForAgentPlanItem(item));
+    } else if (item.action === 'setReminder') {
+      const reminderAt = item.payload?.reminderAt || (() => {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(9, 0, 0, 0);
+        return tomorrow.toISOString();
+      })();
+      await executeMailAction('setReminder', item.threadId, null, undefined, payloadForAgentPlanItem(item, { reminderAt }));
+    } else if (item.action === 'applyLabel') {
+      await executeMailAction(
+        'applyLabel',
+        item.threadId,
+        null,
+        undefined,
+        payloadForAgentPlanItem(item, { labelId: item.payload?.labelId || null })
+      );
+    } else if (item.action === 'draftReply') {
+      const sourceMessage = await latestMessageForAgentItem(item);
+      if (!sourceMessage) {
+        emitToast({ type: 'warning', message: 'No source message found for this plan item.' });
+        return;
+      }
+      await openThread(thread);
+      const draft = startReplyWithBody(sourceMessage, '');
+      if (draft) {
+        await executeMailAction(
+          'applyAIDraftPreview',
+          item.threadId,
+          draft.id,
+          async () => null,
+          payloadForAgentPlanItem(item, { draftId: draft.id })
+        );
+      }
+    }
+
+    rejectAgentPlanItem(item.id);
+    emitToast({ type: 'success', message: 'Approved action applied.' });
+  };
+
+  const applySelectedAgentPlanItems = async () => {
+    if (!agentPlan || selectedAgentPlanItemIds.size === 0) return;
+    const executableItems = agentPlan.items.filter(item => (
+      selectedAgentPlanItemIds.has(item.id) && agentPlanActionPreview(item).eligibility === 'ready'
+    ));
+
+    for (const item of executableItems) {
+      await applyAgentPlanItem(item);
+    }
+    setSelectedAgentPlanItemIds(new Set());
+  };
+
+  const addDailyBriefingItemToAgentPlan = (item: DailyBriefingItem, labelId?: string | null) => {
+    if (!dailyBriefing) return;
+    const nextItem = buildAgentPlanFromDailyBriefingItem({ briefing: dailyBriefing, item, labelId }).items[0];
+    setAgentPlan(prev => mergeAgentPlanItem(prev, nextItem));
+    setSelectedAgentPlanItemIds(prev => {
+      const next = new Set(prev);
+      if (nextItem.selectionPolicy === 'autoSelected') next.add(nextItem.id);
+      return next;
+    });
+    setAiPanelOpen(true);
+    emitToast({ type: 'success', message: 'Added to Agent Review Queue.' });
+  };
+
   const runAIInstruction = async ({
     label,
     instruction,
@@ -532,8 +755,15 @@ export function useAIState({
     );
     setSelectedTriageThreadIds(defaultSelected);
     setTriagePlan(plan);
+    const reviewPlan = buildAgentPlanFromTriagePlan({ plan, threads: visibleThreads, aiAssisted: usedAI });
+    setAgentPlan(reviewPlan);
+    setSelectedAgentPlanItemIds(new Set(
+      reviewPlan.items
+        .filter(item => item.selectionPolicy === 'autoSelected')
+        .map(item => item.id)
+    ));
     setAiPanelLoading(false);
-    emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} triage plan ready for ${plan.items.length} messages.` });
+    emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewPlan.items.length} actions.` });
   };
 
   const runDailyBriefing = async (options: DailyBriefingBuildOptions = {}) => {
@@ -615,6 +845,8 @@ export function useAIState({
     activeAIMessages,
     triagePlan,
     setTriagePlan,
+    agentPlan,
+    setAgentPlan,
     dailyBriefing,
     setDailyBriefing,
     dailyBriefingLoading,
@@ -623,8 +855,11 @@ export function useAIState({
     setAiModel,
     selectedTriageThreadIds,
     setSelectedTriageThreadIds,
+    selectedAgentPlanItemIds,
     triageQueueReadiness,
     triageActionPreview,
+    agentPlanQueueReadiness,
+    agentPlanActionPreview,
     startNewAIConversation,
     selectAIConversation,
     sendAIMessage,
@@ -633,11 +868,18 @@ export function useAIState({
     runAITriagePlan,
     runDailyBriefing,
     dismissDailyBriefingItem,
+    addDailyBriefingItemToAgentPlan,
     toggleTriagePlanItemSelection,
+    toggleAgentPlanItemSelection,
     selectAllApplicableTriagePlanItems,
     clearTriagePlanSelection,
     applySelectedTriagePlanItems,
     applyTriagePlanItem,
+    selectAllApplicableAgentPlanItems,
+    clearAgentPlanSelection,
+    applySelectedAgentPlanItems,
+    applyAgentPlanItem,
+    rejectAgentPlanItem,
     loadAIConversations
   };
 }

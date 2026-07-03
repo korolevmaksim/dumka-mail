@@ -9,8 +9,8 @@ import {
 import { AI_ACTIONS, type AIProviderPreference } from '../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider, resolveConfiguredProviderModel } from '../../../../shared/aiProviders';
 import { isAIProviderPreference } from '../../../../shared/aiProviderPreference';
-import { AITriagePlanCard } from '../AITriagePlanCard';
 import { DailyBriefingCard } from '../DailyBriefingCard';
+import { AgentReviewQueueCard } from '../AgentReviewQueueCard';
 import { SearchableSelect } from '../common/SearchableSelect';
 import { compileMarkdownToHtmlFragment } from '../../../../shared/markdown';
 import { AIPromptShortcutStrip } from './AIPromptShortcutStrip';
@@ -486,16 +486,16 @@ export function AICopilotPanel() {
 
       {/* Chat Messages container */}
       <div ref={aiMessagesRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-[var(--app-bg)]">
-        {/* Triage / Summarize plan badge */}
-        {store.triagePlan && (
-          <AITriagePlanCard />
+        {/* Agent action approval queue */}
+        {store.agentPlan && (
+          <AgentReviewQueueCard />
         )}
 
         {store.dailyBriefing && (
           <DailyBriefingCard />
         )}
 
-        {store.activeAIMessages.length === 0 && !store.triagePlan && !store.dailyBriefing ? (
+        {store.activeAIMessages.length === 0 && !store.agentPlan && !store.dailyBriefing ? (
           <div className="flex flex-col items-center justify-center flex-1 text-center py-20 text-[var(--text-secondary)] opacity-50 select-none">
             <Sparkles className="w-8 h-8 mb-2 text-[var(--ai-accent)]" />
             <p>Start a conversation. AI can review open threads or help draft replies.</p>
