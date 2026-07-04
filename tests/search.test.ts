@@ -1,11 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { matchesSearchDateRange, parseSearchQuery, searchDateBoundaryMs } from '../shared/search';
+import { buildFtsMatchQuery, matchesSearchDateRange, parseSearchQuery, searchDateBoundaryMs, searchTextQuery } from '../shared/search';
 
 describe('Search Query Parser', () => {
-  it('parses basic query terms', () => {
+  it('keeps adjacent plain text terms as a phrase', () => {
     const query = 'hello world';
     const parsed = parseSearchQuery(query);
-    expect(parsed.textTerms).toEqual(['hello', 'world']);
+    expect(parsed.textTerms).toEqual(['hello world']);
+    expect(searchTextQuery(parsed)).toBe('hello world');
+  });
+
+  it('keeps text separated by operators as separate phrase fragments', () => {
+    const parsed = parseSearchQuery('alpha from:team@example.com beta gamma');
+    expect(parsed.from).toBe('team@example.com');
+    expect(parsed.textTerms).toEqual(['alpha', 'beta gamma']);
+    expect(searchTextQuery(parsed)).toBe('alpha beta gamma');
+  });
+
+  it('parses quoted phrase values', () => {
+    const parsed = parseSearchQuery('"Google workspace" from:"Maksim Korolyov"');
+    expect(parsed.textTerms).toEqual(['Google workspace']);
+    expect(parsed.from).toBe('maksim korolyov');
   });
 
   it('parses from: and domain: operators', () => {
@@ -91,5 +105,11 @@ describe('Search Query Parser', () => {
     expect(matchesSearchDateRange(new Date(2026, 2, 15, 12, 0, 0, 0).toISOString(), '2026-03-15', '2026-03-15')).toBe(true);
     expect(matchesSearchDateRange(new Date(2026, 2, 14, 23, 59, 59, 999).toISOString(), '2026-03-15', undefined)).toBe(false);
     expect(matchesSearchDateRange(new Date(2026, 2, 16, 0, 0, 0, 0).toISOString(), undefined, '2026-03-15')).toBe(false);
+  });
+
+  it('builds quoted FTS phrase queries for text search', () => {
+    expect(buildFtsMatchQuery(['Google workspace'])).toBe('"Google workspace"');
+    expect(buildFtsMatchQuery(['alpha', 'beta gamma'])).toBe('"alpha" "beta gamma"');
+    expect(buildFtsMatchQuery(['quoted "phrase"'])).toBe('"quoted ""phrase"""');
   });
 });

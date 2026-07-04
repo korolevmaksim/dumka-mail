@@ -82,12 +82,10 @@ export function useKeyboard(options: KeyboardOptions) {
         return;
       }
 
-      // Command + J: Toggle AI Panel
-      if (isMetaOrCtrl && (e.code === 'KeyJ' || e.key === 'j')) {
-        e.preventDefault();
-        currentStore.setAiPanelOpen(!currentStore.aiPanelOpen);
-        return;
-      }
+      // Command + J (Toggle AI Panel) is owned exclusively by the native menu
+      // accelerator (main/menu.ts -> 'view.toggleAiCopilot' -> App.tsx). Binding
+      // it here as well makes one keypress toggle the panel twice whenever the
+      // menu accelerator also fires (e.g. focus inside the mail iframe).
 
       // Command + Shift + E: Archive/Done fallback
       if (isMetaOrCtrl && e.shiftKey && (e.code === 'KeyE' || e.key === 'E')) {

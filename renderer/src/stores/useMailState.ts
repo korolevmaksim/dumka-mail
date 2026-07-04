@@ -1,7 +1,7 @@
 import { startTransition, useState, useEffect, useCallback, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
-import { parseSearchQuery } from '../../../shared/search';
+import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { categorize } from '../../../shared/categoryEngine';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
@@ -466,7 +466,8 @@ export function useMailState({
       const now = new Date();
       const trimmedQuery = searchQuery.trim();
       const parsed = trimmedQuery ? parseSearchQuery(searchQuery) : null;
-      const textQuery = parsed ? parsed.textTerms.join(' ').trim() : '';
+      const textQuery = parsed ? searchTextQuery(parsed) : '';
+      const ftsQuery = parsed ? buildFtsMatchQuery(parsed.textTerms) : '';
       const accountIds = activeAccount.id === 'unified'
         ? accounts.map(acc => acc.email)
         : [activeAccount.email];
@@ -495,9 +496,9 @@ export function useMailState({
 
       try {
         let ftsMatches: ThreadSearchMatch[] = [];
-        if (textQuery) {
+        if (ftsQuery) {
           try {
-            ftsMatches = await collectFtsMatches(accountIds, textQuery, window.electronAPI.searchFTS);
+            ftsMatches = await collectFtsMatches(accountIds, ftsQuery, window.electronAPI.searchFTS);
           } catch (err) {
             console.error('Local mail search failed:', err);
             ftsMatches = [];

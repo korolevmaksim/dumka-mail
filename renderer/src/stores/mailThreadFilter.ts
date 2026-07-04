@@ -2,7 +2,7 @@ import type { MailLabelDefinition, MailThread, TabCategory, MailboxView } from '
 import type { SplitInboxKind } from '../../../shared/classifier';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { threadMatchesLabelSearchQuery } from '../../../shared/labels';
-import { matchesSearchDateRange, parseSearchQuery } from '../../../shared/search';
+import { matchesSearchDateRange, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import type { ThreadSearchMatch } from './mailSearchHelpers';
 
 export const DEFAULT_THREAD_FILTER_SLICE_MS = 8;
@@ -86,7 +86,7 @@ export async function filterVisibleThreadsCooperatively({
   const trimmedQuery = searchQuery.trim();
   const hasSearch = trimmedQuery.length > 0;
   const parsed = hasSearch ? parseSearchQuery(searchQuery) : null;
-  const textQuery = parsed ? parsed.textTerms.join(' ').trim() : '';
+  const textQuery = parsed ? searchTextQuery(parsed) : '';
   const matchThreadIds = textQuery ? new Set(matches.map(match => match.threadId)) : null;
   const filtered: MailThread[] = [];
   const safeSliceMs = Math.max(1, sliceMs);

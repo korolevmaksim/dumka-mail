@@ -245,7 +245,14 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
           bubbles: true,
           cancelable: true
         });
-        window.dispatchEvent(event);
+        const consumed = !window.dispatchEvent(event);
+        // If an app shortcut handled the forwarded copy, consume the original
+        // event too; otherwise Electron treats it as unhandled and fires the
+        // matching menu accelerator as well, running the shortcut twice.
+        // Note: `consumed` reflects preventDefault from ANY window keydown
+        // listener — a future handler that consumes a key whose native default
+        // matters inside the email body (e.g. Cmd+C copy) would suppress it here.
+        if (consumed) e.preventDefault();
       };
 
       doc.addEventListener('keydown', handleIframeKeyDown);

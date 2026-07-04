@@ -57,11 +57,74 @@ const OPERATOR_PREFIXES = [
   'label:', 'in:', 'after:', 'before:'
 ];
 
+interface SearchToken {
+  value: string;
+}
+
+function tokenizeSearchQuery(query: string): SearchToken[] {
+  const tokens: SearchToken[] = [];
+  let buffer = '';
+  let inQuote = false;
+
+  const flush = () => {
+    const value = buffer.trim();
+    if (value) tokens.push({ value });
+    buffer = '';
+  };
+
+  for (let index = 0; index < query.length; index += 1) {
+    const char = query[index];
+
+    if (inQuote) {
+      if (char === '"') {
+        if (query[index + 1] === '"') {
+          buffer += '"';
+          index += 1;
+        } else {
+          inQuote = false;
+        }
+      } else {
+        buffer += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuote = true;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      flush();
+      continue;
+    }
+
+    buffer += char;
+  }
+
+  flush();
+  return tokens;
+}
+
+function isOperatorToken(value: string): boolean {
+  const colonIdx = value.indexOf(':');
+  if (colonIdx === -1) return false;
+  const prefix = value.substring(0, colonIdx + 1).toLowerCase();
+  return OPERATOR_PREFIXES.includes(prefix);
+}
+
+function flushTextPhrase(result: ParsedSearchQuery, parts: string[]): void {
+  const phrase = parts.join(' ').replace(/\s+/g, ' ').trim();
+  if (phrase) result.textTerms.push(phrase);
+  parts.length = 0;
+}
+
 export function parseSearchQuery(query: string): ParsedSearchQuery {
-  const parts = query.split(/\s+/).filter(Boolean);
+  const parts = tokenizeSearchQuery(query).map(token => token.value);
   const result: ParsedSearchQuery = {
     textTerms: []
   };
+  const textParts: string[] = [];
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -71,15 +134,14 @@ export function parseSearchQuery(query: string): ParsedSearchQuery {
     if (colonIdx !== -1) {
       const prefix = part.substring(0, colonIdx + 1).toLowerCase();
       if (OPERATOR_PREFIXES.includes(prefix)) {
+        flushTextPhrase(result, textParts);
+
         // Value is everything after the colon; if empty, take the next token
         let value = part.substring(colonIdx + 1);
         if (!value && i + 1 < parts.length) {
           // Only consume next token if it's not itself an operator
           const next = parts[i + 1];
-          const nextColon = next.indexOf(':');
-          const isNextOperator = nextColon !== -1 &&
-            OPERATOR_PREFIXES.includes(next.substring(0, nextColon + 1).toLowerCase());
-          if (!isNextOperator) {
+          if (!isOperatorToken(next)) {
             value = parts[++i];
           }
         }
@@ -91,10 +153,23 @@ export function parseSearchQuery(query: string): ParsedSearchQuery {
       }
     }
 
-    result.textTerms.push(part);
+    textParts.push(part);
   }
 
+  flushTextPhrase(result, textParts);
   return result;
+}
+
+export function searchTextQuery(parsed: ParsedSearchQuery): string {
+  return parsed.textTerms.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+export function buildFtsMatchQuery(textTerms: string[]): string {
+  return textTerms
+    .map(term => term.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map(term => `"${term.replace(/"/g, '""')}"`)
+    .join(' ');
 }
 
 function applyOperator(result: ParsedSearchQuery, prefix: string, value: string): void {
