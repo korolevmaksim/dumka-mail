@@ -9,7 +9,9 @@ import type {
   MailThread,
   MailTriagePlan,
   MailTriagePlanItem,
+  SenderCleanupStat,
   TriageRecommendation,
+  UnsubscribeCandidate,
 } from './types';
 
 function clampConfidence(value: number): number {
@@ -274,6 +276,92 @@ export function mergeAgentPlanItem(plan: AgentPlan | null, item: AgentPlanItem):
     coverage: {
       ...plan.coverage,
       proposedActionCount: nextItems.length,
+    },
+  };
+}
+
+function describeUnsubscribeMethod(candidate: UnsubscribeCandidate): string {
+  const method = candidate.recommendedMethod || candidate.methods[0] || null;
+  if (!method) return 'Unsubscribe via List-Unsubscribe header';
+  if (method.kind === 'mailto') return `Mail to ${method.email || method.url}`;
+  if (method.kind === 'httpPost' && method.isOneClick) return `One-click HTTP unsubscribe → ${method.url}`;
+  return `Open unsubscribe link → ${method.url}`;
+}
+
+export function buildCleanupArchiveItem({
+  stat,
+  thread,
+}: {
+  stat: SenderCleanupStat;
+  thread: MailThread;
+}): AgentPlanItem {
+  const sender = stat.senderName || stat.senderEmail;
+  const lastActivity = (thread.lastMessageAt || '').slice(0, 10);
+
+  return {
+    id: itemId('cleanup', thread.id, 'archive'),
+    accountId: thread.accountId,
+    threadId: thread.id,
+    subject: thread.subject,
+    sender,
+    action: 'archive',
+    title: 'Archive old thread',
+    reason: `Read thread from ${sender} with no activity since ${lastActivity}.`,
+    citation: {
+      accountId: thread.accountId,
+      threadId: thread.id,
+      messageId: null,
+      subject: thread.subject,
+      sender,
+      senderEmail: stat.senderEmail,
+      snippet: snippet(thread.snippet),
+      evidence: `Read thread from ${sender}, last activity ${lastActivity}; part of Cleanup archive-old batch.`,
+      receivedAt: thread.lastMessageAt,
+    },
+    riskLevel: 'low',
+    confidence: 90,
+    selectionPolicy: 'autoSelected',
+    approvalState: 'proposed',
+    sourceItemId: `cleanup:${stat.senderEmail}`,
+  };
+}
+
+export function buildCleanupUnsubscribeItem({
+  stat,
+  candidate,
+}: {
+  stat: SenderCleanupStat;
+  candidate: UnsubscribeCandidate;
+}): AgentPlanItem {
+  const sender = candidate.senderName || stat.senderName || stat.senderEmail;
+
+  return {
+    id: itemId('cleanup', candidate.threadId, 'unsubscribe', stat.senderEmail),
+    accountId: candidate.accountId,
+    threadId: candidate.threadId,
+    subject: `Unsubscribe from ${stat.senderEmail}`,
+    sender,
+    action: 'unsubscribe',
+    title: 'Unsubscribe from sender',
+    reason: `${stat.recent30dCount} message${stat.recent30dCount === 1 ? '' : 's'} in the last 30 days from ${stat.senderEmail}.`,
+    citation: {
+      accountId: candidate.accountId,
+      threadId: candidate.threadId,
+      messageId: candidate.messageId,
+      subject: `Unsubscribe from ${stat.senderEmail}`,
+      sender,
+      senderEmail: stat.senderEmail,
+      snippet: '',
+      evidence: describeUnsubscribeMethod(candidate),
+      receivedAt: stat.lastReceivedAt,
+    },
+    riskLevel: 'high',
+    confidence: 75,
+    selectionPolicy: 'manualOnly',
+    approvalState: 'proposed',
+    sourceItemId: `cleanup:${stat.senderEmail}`,
+    payload: {
+      sourceMessageId: candidate.messageId,
     },
   };
 }

@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAgentPlanFromDailyBriefingItem,
   buildAgentPlanFromTriagePlan,
+  buildCleanupArchiveItem,
   mergeAgentPlanItem,
 } from '../shared/agentPlan';
-import type { DailyBriefing, DailyBriefingItem, MailThread, MailTriagePlan } from '../shared/types';
+import type { DailyBriefing, DailyBriefingItem, MailThread, MailTriagePlan, SenderCleanupStat } from '../shared/types';
 
 const thread: MailThread = {
   id: 'thread-1',
@@ -155,5 +156,33 @@ describe('Agent Plan builders', () => {
     expect(merged.items).toHaveLength(1);
     expect(merged.items[0].reason).toBe('Updated reason');
     expect(merged.coverage.proposedActionCount).toBe(1);
+  });
+
+  it('merges cleanup items additively into an existing plan and dedups by id', () => {
+    const cleanupStat: SenderCleanupStat = {
+      accountId: 'me@example.com',
+      senderEmail: 'digest@example.com',
+      senderName: 'Digest Bot',
+      threadCount: 12,
+      messageCount: 20,
+      unreadCount: 15,
+      lastReceivedAt: '2026-07-03T08:00:00.000Z',
+      recent30dCount: 11,
+      hasUnsubscribeHeader: true,
+      trackerCount: 4,
+      maxRiskLevel: 'medium',
+      attachmentBytes: 0,
+    };
+    const archiveItem = buildCleanupArchiveItem({ stat: cleanupStat, thread });
+    const planWithBriefing = buildAgentPlanFromDailyBriefingItem({ briefing, item: briefingItem });
+
+    const merged = mergeAgentPlanItem(planWithBriefing, archiveItem);
+    expect(merged.items).toHaveLength(2);
+    expect(merged.items[0].id).toBe('agent:cleanup:archive:thread-1');
+    expect(merged.source).toBe('dailyBriefing');
+
+    const deduped = mergeAgentPlanItem(merged, archiveItem);
+    expect(deduped.items).toHaveLength(2);
+    expect(deduped.coverage.proposedActionCount).toBe(2);
   });
 });

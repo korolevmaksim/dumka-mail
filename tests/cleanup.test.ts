@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { buildCleanupArchiveItem, buildCleanupUnsubscribeItem } from '../shared/agentPlan';
 import { CLEANUP_ARCHIVE_BATCH_LIMIT, suggestCleanupAction } from '../shared/cleanup';
-import type { SenderCleanupStat } from '../shared/types';
+import type { MailThread, SenderCleanupStat, UnsubscribeCandidate } from '../shared/types';
 
 function stat(partial: Partial<SenderCleanupStat> = {}): SenderCleanupStat {
   return {
@@ -64,5 +65,105 @@ describe('suggestCleanupAction', () => {
 
   it('never divides by zero for senders with no messages', () => {
     expect(suggestCleanupAction(stat({ threadCount: 10, messageCount: 0, unreadCount: 0, recent30dCount: 0 }))).toBe('none');
+  });
+});
+
+const cleanupThread: MailThread = {
+  id: 'thread-1',
+  accountId: 'me@example.com',
+  subject: 'Weekly digest',
+  snippet: 'Here are the weekly product updates and links.',
+  lastMessageAt: '2026-05-20T08:00:00.000Z',
+  senderNames: ['Example News'],
+  senderEmail: 'news@example.com',
+  labelIds: ['INBOX'],
+  hasAttachments: false,
+  isUnread: false,
+  reminderAt: null,
+};
+
+function candidate(partial: Partial<UnsubscribeCandidate> = {}): UnsubscribeCandidate {
+  return {
+    accountId: 'me@example.com',
+    threadId: 'thread-9',
+    messageId: 'msg-9',
+    senderEmail: 'news@example.com',
+    senderName: 'Example News',
+    methods: [{ kind: 'httpPost', url: 'https://example.com/unsub', isOneClick: true }],
+    recommendedMethod: { kind: 'httpPost', url: 'https://example.com/unsub', isOneClick: true },
+    canOneClick: true,
+    ...partial,
+  };
+}
+
+describe('buildCleanupArchiveItem', () => {
+  it('builds a low-risk auto-selected archive proposal with batch evidence', () => {
+    const item = buildCleanupArchiveItem({ stat: stat(), thread: cleanupThread });
+
+    expect(item).toMatchObject({
+      id: 'agent:cleanup:archive:thread-1',
+      accountId: 'me@example.com',
+      threadId: 'thread-1',
+      action: 'archive',
+      title: 'Archive old thread',
+      riskLevel: 'low',
+      selectionPolicy: 'autoSelected',
+      approvalState: 'proposed',
+      sourceItemId: 'cleanup:news@example.com',
+    });
+    expect(item.citation.evidence).toBe(
+      'Read thread from Example News, last activity 2026-05-20; part of Cleanup archive-old batch.'
+    );
+    expect(item.citation.snippet).toBe('Here are the weekly product updates and links.');
+  });
+
+  it('produces a stable id so re-clicks dedup through mergeAgentPlanItem', () => {
+    const first = buildCleanupArchiveItem({ stat: stat(), thread: cleanupThread });
+    const second = buildCleanupArchiveItem({ stat: stat(), thread: cleanupThread });
+    expect(first.id).toBe(second.id);
+  });
+});
+
+describe('buildCleanupUnsubscribeItem', () => {
+  it('builds a high-risk manual-only unsubscribe proposal citing the one-click method', () => {
+    const item = buildCleanupUnsubscribeItem({ stat: stat(), candidate: candidate() });
+
+    expect(item).toMatchObject({
+      id: 'agent:cleanup:unsubscribe:news-example-com',
+      accountId: 'me@example.com',
+      threadId: 'thread-9',
+      action: 'unsubscribe',
+      title: 'Unsubscribe from sender',
+      riskLevel: 'high',
+      selectionPolicy: 'manualOnly',
+      approvalState: 'proposed',
+      payload: { sourceMessageId: 'msg-9' },
+    });
+    expect(item.citation.evidence).toBe('One-click HTTP unsubscribe → https://example.com/unsub');
+    expect(item.citation.messageId).toBe('msg-9');
+  });
+
+  it('describes mailto methods as a mail action', () => {
+    const item = buildCleanupUnsubscribeItem({
+      stat: stat(),
+      candidate: candidate({
+        methods: [{ kind: 'mailto', url: 'mailto:unsubscribe@example.com', isOneClick: false, email: 'unsubscribe@example.com' }],
+        recommendedMethod: { kind: 'mailto', url: 'mailto:unsubscribe@example.com', isOneClick: false, email: 'unsubscribe@example.com' },
+        canOneClick: false,
+      }),
+    });
+    expect(item.citation.evidence).toBe('Mail to unsubscribe@example.com');
+  });
+
+  it('falls back to a link description for plain http methods', () => {
+    const item = buildCleanupUnsubscribeItem({
+      stat: stat(),
+      candidate: candidate({
+        methods: [{ kind: 'httpGet', url: 'https://example.com/optout', isOneClick: false }],
+        recommendedMethod: null,
+        canOneClick: false,
+      }),
+    });
+    expect(item.citation.evidence).toBe('Open unsubscribe link → https://example.com/optout');
   });
 });
