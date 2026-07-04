@@ -245,6 +245,53 @@ export function parseUnsubscribeCandidate(message: MailMessage): UnsubscribeCand
   };
 }
 
+function isPrivateIpv4(host: string): boolean {
+  const octets = host.split('.').map(Number);
+  if (octets.length !== 4 || octets.some(octet => !Number.isInteger(octet) || octet < 0 || octet > 255)) return true;
+  const [a, b] = octets;
+  return a === 0 ||                        // 0.0.0.0/8 ("this network")
+    a === 10 ||                            // 10.0.0.0/8
+    a === 127 ||                           // 127.0.0.0/8 (loopback)
+    (a === 169 && b === 254) ||            // 169.254.0.0/16 (link-local, incl. cloud metadata)
+    (a === 172 && b >= 16 && b <= 31) ||   // 172.16.0.0/12
+    (a === 192 && b === 168) ||            // 192.168.0.0/16
+    (a === 100 && b >= 64 && b <= 127);    // 100.64.0.0/10 (CGNAT)
+}
+
+function isPrivateIpv6(literal: string): boolean {
+  const host = literal.split('%')[0].toLowerCase();
+  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true; // loopback
+  const firstGroup = (host.split(':')[0] || '').padStart(4, '0');
+  if (firstGroup.startsWith('fc') || firstGroup.startsWith('fd')) return true; // fc00::/7 (unique local)
+  const value = Number.parseInt(firstGroup, 16);
+  return Number.isFinite(value) && value >= 0xfe80 && value <= 0xfebf; // fe80::/10 (link-local)
+}
+
+/**
+ * Hostname-level screening for one-click unsubscribe destinations: rejects
+ * non-http(s) protocols and literal loopback/private/link-local addresses so
+ * a crafted List-Unsubscribe header cannot point an approved POST at internal
+ * infrastructure. DNS-resolution checks (a public hostname resolving to a
+ * private IP) are a deliberate non-goal here since execution is always
+ * user-approved per destination.
+ */
+export function isSafePublicHttpUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  if (host.startsWith('[') && host.endsWith(']')) return !isPrivateIpv6(host.slice(1, -1));
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return !isPrivateIpv4(host);
+  return true;
+}
+
 function quotedAttr(tag: string, attrName: string): string {
   const pattern = new RegExp(`\\b${attrName}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
   const match = tag.match(pattern);

@@ -139,7 +139,7 @@ export interface IElectronAPI {
   deleteEmbeddingIndex: (accountId: string, model: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   deleteOtherEmbeddingIndexes: (accountId: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
-  unsubscribeThread: (email: string, threadId: string, actionId?: string) => Promise<{ method: string; archived: boolean }>;
+  unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string) => Promise<{ method: string; archived: boolean }>;
   listCleanupSenderStats: (accountId: string) => Promise<SenderCleanupStat[]>;
   loadAIConfig: () => Promise<Record<string, string>>;
   saveAIConfig: (config: Record<string, string>) => Promise<void>;

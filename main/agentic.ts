@@ -13,6 +13,7 @@ import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
 import { GmailSyncService } from './gmail';
 import {
   analyzeMessageSecurity,
+  isSafePublicHttpUrl,
   parseUnsubscribeCandidate,
   shouldGenerateAgentDraft,
 } from '../shared/mailSecurity';
@@ -601,6 +602,9 @@ function chooseUnsubscribeCandidate(messages: MailMessage[]): UnsubscribeCandida
 
 async function performUnsubscribe(accountId: string, method: UnsubscribeMethod): Promise<string> {
   if (method.kind === 'httpPost') {
+    if (!isSafePublicHttpUrl(method.url)) {
+      throw new Error('Unsubscribe URL rejected: non-public address.');
+    }
     const res = await fetch(method.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -613,12 +617,14 @@ async function performUnsubscribe(accountId: string, method: UnsubscribeMethod):
   }
 
   if (method.kind === 'mailto' && method.email) {
+    // Cap header-derived content so a crafted List-Unsubscribe header cannot
+    // send arbitrary long text from the user's account.
     await GmailSyncService.sendDraft(accountId, {
       to: [{ name: '', email: method.email }],
       cc: [],
       bcc: [],
-      subject: method.subject || 'unsubscribe',
-      bodyPlain: method.body || 'unsubscribe',
+      subject: (method.subject || 'unsubscribe').slice(0, 200),
+      bodyPlain: (method.body || 'unsubscribe').slice(0, 200),
       bodyHtml: null,
       attachments: [],
     });
@@ -816,11 +822,24 @@ export const AgenticService = {
     };
   },
 
-  async unsubscribeThread(accountId: string, threadId: string): Promise<{ method: string; archived: boolean }> {
+  async unsubscribeThread(accountId: string, threadId: string, sourceMessageId?: string): Promise<{ method: string; archived: boolean }> {
     const messages = MessagesRepo.listForThread(accountId, threadId);
-    const candidate = chooseUnsubscribeCandidate(messages);
-    if (!candidate?.recommendedMethod) {
-      throw new Error('No safe unsubscribe method found for this thread.');
+    let candidate: UnsubscribeCandidate | null;
+    if (sourceMessageId) {
+      // Execute exactly the method the user reviewed: re-parse the reviewed
+      // message instead of re-resolving across the thread, so the destination
+      // cannot change between approval and execution (TOCTOU).
+      const reviewed = messages.find(message => message.id === sourceMessageId);
+      candidate = reviewed ? parseUnsubscribeCandidate(reviewed) : null;
+      if (!candidate?.recommendedMethod) {
+        throw new Error('Reviewed unsubscribe method no longer available.');
+      }
+    } else {
+      // Back-compat: toolbar callers pass no reviewed message and re-resolve.
+      candidate = chooseUnsubscribeCandidate(messages);
+      if (!candidate?.recommendedMethod) {
+        throw new Error('No safe unsubscribe method found for this thread.');
+      }
     }
 
     const method = await performUnsubscribe(accountId, candidate.recommendedMethod);

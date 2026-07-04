@@ -155,6 +155,9 @@ export function AgentReviewQueueCard() {
 
                   <div className="mt-1.5 rounded-md border border-[var(--border)]/60 bg-[var(--app-bg)] p-1.5 text-[calc(9px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
                     <p className="text-[var(--text-primary)]">{item.reason}</p>
+                    {item.citation.evidence && item.citation.evidence !== item.reason && (
+                      <p className="mt-0.5 break-all">{item.citation.evidence}</p>
+                    )}
                     {item.citation.snippet && (
                       <p className="mt-0.5 line-clamp-2">{item.citation.snippet}</p>
                     )}

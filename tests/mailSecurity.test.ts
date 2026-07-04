@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   analyzeMessageSecurity,
+  isSafePublicHttpUrl,
   parseUnsubscribeCandidate,
   shouldGenerateAgentDraft,
   shouldNotifyForMessage,
@@ -102,5 +103,52 @@ describe('mail security and agent heuristics', () => {
 
     expect(insight.riskLevel).toBe('high');
     expect(insight.warnings.some(warning => warning.kind === 'suspiciousLink')).toBe(true);
+  });
+});
+
+describe('isSafePublicHttpUrl', () => {
+  it('accepts a public https URL', () => {
+    expect(isSafePublicHttpUrl('https://news.example.com/unsubscribe?id=1')).toBe(true);
+  });
+
+  it('rejects non-http(s) protocols and unparseable values', () => {
+    expect(isSafePublicHttpUrl('ftp://example.com/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('file:///etc/passwd')).toBe(false);
+    expect(isSafePublicHttpUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafePublicHttpUrl('not a url')).toBe(false);
+    expect(isSafePublicHttpUrl('')).toBe(false);
+  });
+
+  it('rejects localhost and internal-suffix hostnames', () => {
+    expect(isSafePublicHttpUrl('http://localhost/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://localhost:8080/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('https://printer.local/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('https://vault.internal/unsub')).toBe(false);
+  });
+
+  it('rejects private and special-purpose IPv4 literals', () => {
+    expect(isSafePublicHttpUrl('http://0.0.0.0/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://10.1.2.3/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://127.0.0.1:8080/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+    expect(isSafePublicHttpUrl('http://172.16.0.1/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://172.31.255.255/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://192.168.0.213/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://100.64.7.7/unsub')).toBe(false);
+  });
+
+  it('accepts public IPv4 literals outside the screened ranges', () => {
+    expect(isSafePublicHttpUrl('http://8.8.8.8/unsub')).toBe(true);
+    expect(isSafePublicHttpUrl('http://172.32.0.1/unsub')).toBe(true);
+    expect(isSafePublicHttpUrl('http://100.128.0.1/unsub')).toBe(true);
+  });
+
+  it('rejects loopback, unique-local, and link-local IPv6 literals', () => {
+    expect(isSafePublicHttpUrl('http://[::1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[0:0:0:0:0:0:0:1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[fc00::1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[fd12:3456::1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[fe80::1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('https://[2001:db8::1]/unsub')).toBe(true);
   });
 });

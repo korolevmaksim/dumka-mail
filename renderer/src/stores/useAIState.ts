@@ -402,7 +402,14 @@ export function useAIState({
         'unsubscribeSender',
         item.threadId,
         null,
-        async (actionId: string) => window.electronAPI.unsubscribeThread(item.accountId, item.threadId, actionId),
+        // Forward the reviewed message id so the main process executes exactly
+        // the unsubscribe method that was shown at approval time.
+        async (actionId: string) => window.electronAPI.unsubscribeThread(
+          item.accountId,
+          item.threadId,
+          actionId,
+          item.payload?.sourceMessageId || undefined,
+        ),
         payloadForAgentPlanItem(item, { accountId: item.accountId })
       );
     } else if (item.action === 'draftReply') {

@@ -1307,7 +1307,7 @@ registerSecureHandler('api:searchSemantic', async (_, accountId, query, limit) =
     };
   }
 });
-registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, actionId?: string) => {
+registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, actionId?: string, sourceMessageId?: string) => {
   const id = actionId || crypto.randomUUID();
   const now = new Date().toISOString();
   ActionLogRepo.save({
@@ -1320,7 +1320,7 @@ registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, action
   });
 
   try {
-    const result = await AgenticService.unsubscribeThread(email, threadId);
+    const result = await AgenticService.unsubscribeThread(email, threadId, sourceMessageId);
     ActionLogRepo.save({
       id,
       accountId: email,

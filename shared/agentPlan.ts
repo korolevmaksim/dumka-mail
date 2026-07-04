@@ -280,10 +280,22 @@ export function mergeAgentPlanItem(plan: AgentPlan | null, item: AgentPlanItem):
   };
 }
 
+function truncateForDisplay(value: string, max = 120): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
 function describeUnsubscribeMethod(candidate: UnsubscribeCandidate): string {
   const method = candidate.recommendedMethod || candidate.methods[0] || null;
   if (!method) return 'Unsubscribe via List-Unsubscribe header';
-  if (method.kind === 'mailto') return `Mail to ${method.email || method.url}`;
+  if (method.kind === 'mailto') {
+    // Surface exactly what the outgoing mail will contain so the user reviews
+    // the full action, not just the destination address.
+    const details: string[] = [];
+    if (method.subject) details.push(`subject "${truncateForDisplay(method.subject)}"`);
+    if (method.body) details.push(`body "${truncateForDisplay(method.body)}"`);
+    const suffix = details.length > 0 ? ` — ${details.join(', ')}` : '';
+    return `Mail to ${method.email || method.url}${suffix}`;
+  }
   if (method.kind === 'httpPost' && method.isOneClick) return `One-click HTTP unsubscribe → ${method.url}`;
   return `Open unsubscribe link → ${method.url}`;
 }

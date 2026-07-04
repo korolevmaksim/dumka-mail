@@ -155,6 +155,25 @@ describe('buildCleanupUnsubscribeItem', () => {
     expect(item.citation.evidence).toBe('Mail to unsubscribe@example.com');
   });
 
+  it('surfaces mailto subject and body in the evidence, truncated for display', () => {
+    const longBody = `please remove me ${'x'.repeat(120)}`;
+    const method = {
+      kind: 'mailto' as const,
+      url: 'mailto:unsub@x.com?subject=unsubscribe',
+      isOneClick: false,
+      email: 'unsub@x.com',
+      subject: 'unsubscribe',
+      body: longBody,
+    };
+    const item = buildCleanupUnsubscribeItem({
+      stat: stat(),
+      candidate: candidate({ methods: [method], recommendedMethod: method, canOneClick: false }),
+    });
+    expect(item.citation.evidence).toBe(
+      `Mail to unsub@x.com — subject "unsubscribe", body "${longBody.slice(0, 120)}…"`
+    );
+  });
+
   it('falls back to a link description for plain http methods', () => {
     const item = buildCleanupUnsubscribeItem({
       stat: stat(),
