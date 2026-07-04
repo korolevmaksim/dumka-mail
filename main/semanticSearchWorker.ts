@@ -51,17 +51,19 @@ function supersedeKey(request: Extract<WorkerRequest, { type: 'semanticSearch' }
 
 async function handleSemanticSearch(
   request: Extract<WorkerRequest, { type: 'semanticSearch' }>
-): Promise<SemanticScanOutcome> {
+): Promise<SemanticScanOutcome & { totalIndexed: number }> {
   const staleKey = supersedeKey(request);
   activeSearchCount += 1;
   try {
-    return await runSemanticScan({
+    const totalIndexed = MailEmbeddingsRepo.countForAccount(request.accountId, request.model);
+    const outcome = await runSemanticScan({
       queryVector: Float32Array.from(request.queryVector),
       limit: request.limit,
       fetchPage: (limit, offset) => MailEmbeddingsRepo.scanForAccountPage(request.accountId, request.model, limit, offset),
       isStale: () => latestRequestIds.get(staleKey) !== request.requestId,
       yieldBetweenPages: yieldToEventLoop,
     });
+    return { ...outcome, totalIndexed };
   } finally {
     activeSearchCount -= 1;
   }

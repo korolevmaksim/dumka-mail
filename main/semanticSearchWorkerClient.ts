@@ -18,6 +18,8 @@ interface PendingRequest {
 export interface SemanticSearchScanOutcome {
   results: SemanticSearchResult[];
   aborted: boolean;
+  scanned: number;
+  totalIndexed: number;
 }
 
 function createError(error: { name: string; message: string; stack?: string }): Error {

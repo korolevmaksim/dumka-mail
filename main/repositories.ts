@@ -1231,6 +1231,15 @@ export const MailEmbeddingsRepo = {
     }));
   },
 
+  countForAccount(accountId: string, model: string): number {
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count FROM mail_embeddings
+      WHERE account_id = ? AND model = ?
+    `).get(accountId, model) as { count: number };
+    return row.count;
+  },
+
   modelStats(accountId: string): MailEmbeddingModelStats[] {
     const db = getDatabase();
     const rows = db.prepare(`
