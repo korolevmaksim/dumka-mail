@@ -2,8 +2,7 @@ import { cosineSimilarity } from '../shared/semantic';
 import type { SemanticSearchResult } from '../shared/types';
 
 export const EMBEDDING_SEARCH_PAGE_SIZE = 500;
-export const EMBEDDING_SEARCH_SCAN_LIMIT = 12000;
-export const EMBEDDING_SEARCH_TIME_BUDGET_MS = 1200;
+export const EMBEDDING_SEARCH_TIME_BUDGET_MS = 10000;
 export const EMBEDDING_SEARCH_SCORE_THRESHOLD = 0.14;
 
 export interface SemanticScanRow {
@@ -31,6 +30,7 @@ export interface SemanticScanOptions {
 export interface SemanticScanOutcome {
   results: SemanticSearchResult[];
   aborted: boolean;
+  scanned: number;
 }
 
 export async function runSemanticScan(options: SemanticScanOptions): Promise<SemanticScanOutcome> {
@@ -38,14 +38,15 @@ export async function runSemanticScan(options: SemanticScanOptions): Promise<Sem
   const isStale = options.isStale || (() => false);
   const yieldBetweenPages = options.yieldBetweenPages || (() => Promise.resolve());
   const pageSize = options.pageSize ?? EMBEDDING_SEARCH_PAGE_SIZE;
-  const scanLimit = options.scanLimit ?? EMBEDDING_SEARCH_SCAN_LIMIT;
+  const scanLimit = options.scanLimit ?? Number.POSITIVE_INFINITY;
   // cosineSimilarity only reads length and numeric indexes, so Float32Array works.
   const queryVector = options.queryVector as unknown as number[];
   const requestedLimit = Math.max(1, Math.min(200, options.limit));
   const scoredRows: Array<{ row: SemanticScanRow; score: number }> = [];
   const deadline = now() + (options.timeBudgetMs ?? EMBEDDING_SEARCH_TIME_BUDGET_MS);
+  let scanned = 0;
 
-  if (isStale()) return { results: [], aborted: true };
+  if (isStale()) return { results: [], aborted: true, scanned };
 
   for (let offset = 0; offset < scanLimit; offset += pageSize) {
     if (now() > deadline) break;
@@ -53,6 +54,7 @@ export async function runSemanticScan(options: SemanticScanOptions): Promise<Sem
     if (rows.length === 0) break;
 
     for (const row of rows) {
+      scanned += 1;
       const score = cosineSimilarity(queryVector, row.vector as unknown as number[]);
       if (score > EMBEDDING_SEARCH_SCORE_THRESHOLD) scoredRows.push({ row, score });
     }
@@ -64,7 +66,7 @@ export async function runSemanticScan(options: SemanticScanOptions): Promise<Sem
 
     if (rows.length < pageSize) break;
     await yieldBetweenPages();
-    if (isStale()) return { results: [], aborted: true };
+    if (isStale()) return { results: [], aborted: true, scanned };
   }
 
   const results = scoredRows
@@ -80,5 +82,5 @@ export async function runSemanticScan(options: SemanticScanOptions): Promise<Sem
       receivedAt: item.row.receivedAt,
     }));
 
-  return { results, aborted: false };
+  return { results, aborted: false, scanned };
 }

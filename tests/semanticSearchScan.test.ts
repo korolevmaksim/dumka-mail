@@ -81,7 +81,7 @@ describe('semantic search scan', () => {
   it('returns partial results when the time budget is exhausted', async () => {
     const fetchPage = pagedProvider([0.5, 0.6, 0.7].map((score, index) => rowWithScore(index, score)));
     let clockCalls = 0;
-    const now = () => (clockCalls++ < 2 ? 0 : 5000);
+    const now = () => (clockCalls++ < 2 ? 0 : 99999);
 
     const outcome = await runSemanticScan({ queryVector: QUERY, limit: 10, fetchPage, pageSize: 1, now });
 
@@ -106,7 +106,7 @@ describe('semantic search scan', () => {
     });
 
     expect(fetchPage).toHaveBeenCalledTimes(1);
-    expect(outcome).toEqual({ results: [], aborted: true });
+    expect(outcome).toEqual({ results: [], aborted: true, scanned: 1 });
   });
 
   it('aborts without fetching when the request is stale from the start', async () => {
@@ -120,7 +120,7 @@ describe('semantic search scan', () => {
     });
 
     expect(fetchPage).not.toHaveBeenCalled();
-    expect(outcome).toEqual({ results: [], aborted: true });
+    expect(outcome).toEqual({ results: [], aborted: true, scanned: 0 });
   });
 
   it('scores Float32Array row vectors against a Float32Array query', async () => {
@@ -148,5 +148,49 @@ describe('semantic search scan', () => {
 
     expect(outcome.results).toHaveLength(1);
     expect(outcome.results[0].messageId).toBe('message-1');
+  });
+
+  it('reports how many rows were scanned', async () => {
+    const fetchPage = pagedProvider([
+      rowWithScore(1, 0.5),
+      rowWithScore(2, 0.9),
+      rowWithScore(3, 0.05),
+    ]);
+
+    const outcome = await runSemanticScan({ queryVector: QUERY, limit: 10, fetchPage });
+
+    expect(outcome.scanned).toBe(3);
+  });
+
+  it('scans past 12000 rows when no scanLimit is given', async () => {
+    const rows = Array.from({ length: 12500 }, (_, i) => rowWithScore(i, 0.5));
+    const fetchPage = pagedProvider(rows);
+
+    const outcome = await runSemanticScan({ queryVector: QUERY, limit: 5, fetchPage });
+
+    expect(outcome.scanned).toBe(12500);
+    expect(outcome.aborted).toBe(false);
+  });
+
+  it('returns partial results with a scanned count when the deadline is hit', async () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => rowWithScore(i, 0.5));
+    const fetchPage = pagedProvider(rows);
+    let calls = 0;
+    const now = vi.fn(() => {
+      calls += 1;
+      // First call sets the deadline; second (page-loop check) is already past it.
+      return calls === 1 ? 0 : 999999;
+    });
+
+    const outcome = await runSemanticScan({
+      queryVector: QUERY,
+      limit: 5,
+      fetchPage,
+      now,
+      pageSize: 100,
+    });
+
+    expect(outcome.aborted).toBe(false);
+    expect(outcome.scanned).toBe(0); // deadline before the first page
   });
 });
