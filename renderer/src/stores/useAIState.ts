@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, MailTriagePlanItem, MailTriageActionPreview, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
+import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
 import { emitToast } from '../lib/toastBus';
@@ -18,7 +18,6 @@ interface UseAIStateProps {
   visibleThreads: MailThread[];
   activeSplit: string;
   threads: MailThread[];
-  setThreads: React.Dispatch<React.SetStateAction<MailThread[]>>;
   openThread: (thread: MailThread | null) => Promise<void>;
   startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => any;
   executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<void>;
@@ -66,7 +65,6 @@ export function useAIState({
   visibleThreads,
   activeSplit,
   threads,
-  setThreads,
   openThread,
   startReplyWithBody,
   executeMailAction,
@@ -84,8 +82,7 @@ export function useAIState({
   const [dailyBriefingLoading, setDailyBriefingLoading] = useState<boolean>(false);
   const [aiPanelLoading, setAiPanelLoading] = useState<boolean>(false);
   const [aiModel, setAiModel] = useState<string>('');
-  
-  const [selectedTriageThreadIds, setSelectedTriageThreadIds] = useState<Set<string>>(new Set());
+
   const [selectedAgentPlanItemIds, setSelectedAgentPlanItemIds] = useState<Set<string>>(new Set());
   const [activeAccountCredentialsValid, setActiveAccountCredentialsValid] = useState<boolean>(true);
 
@@ -230,142 +227,6 @@ export function useAIState({
     } finally {
       setAiPanelLoading(false);
     }
-  };
-
-  const triageActionPreview = useCallback((item: MailTriagePlanItem): MailTriageActionPreview => {
-    const isSelected = selectedTriageThreadIds.has(item.threadId);
-    let eligibility: MailTriageActionPreview['eligibility'] = 'ready';
-    const isLocalOnly = item.recommendation === 'setReminder';
-    
-    if (!isLocalOnly) {
-      if (!activeAccount) {
-        eligibility = 'remoteUnavailable';
-      } else if (!activeAccountCredentialsValid) {
-        eligibility = 'requiresReconnect';
-      }
-    } else {
-      eligibility = 'ready';
-    }
-
-    const scope: MailTriageActionPreview['scope'] = 
-      (item.recommendation === 'readNow' || item.recommendation === 'markDoneCandidate') ? 'gmail' :
-      (item.recommendation === 'setReminder') ? 'local' : 'focus';
-
-    const selectionPolicy: MailTriageActionPreview['selectionPolicy'] = 
-      (item.recommendation === 'readNow' || item.recommendation === 'setReminder') ? 'autoSelected' :
-      (item.recommendation === 'markDoneCandidate') ? 'explicitOptIn' : 'previewOnly';
-
-    return {
-      threadId: item.threadId,
-      recommendation: item.recommendation,
-      isSelected,
-      eligibility,
-      scope,
-      selectionPolicy
-    };
-  }, [selectedTriageThreadIds, activeAccount, activeAccountCredentialsValid]);
-
-  const triageQueueReadiness = (() => {
-    if (!triagePlan) return null;
-    const items = triagePlan.items.filter(item => {
-      const canApply = item.recommendation === 'readNow' || item.recommendation === 'setReminder' || item.recommendation === 'markDoneCandidate';
-      return canApply && selectedTriageThreadIds.has(item.threadId);
-    });
-    if (items.length === 0) return null;
-
-    const remoteGmailCount = items.filter(i => i.recommendation !== 'setReminder').length;
-    const localCount = items.filter(i => i.recommendation === 'setReminder').length;
-    const hasCredentialsError = !activeAccountCredentialsValid;
-    
-    const blockedRemoteCount = (remoteGmailCount > 0 && hasCredentialsError) ? remoteGmailCount : 0;
-    const executableRemoteCount = remoteGmailCount - blockedRemoteCount;
-
-    const parts: string[] = [];
-    if (remoteGmailCount > 0) {
-      parts.push(`${remoteGmailCount} Gmail action${remoteGmailCount === 1 ? '' : 's'} ${hasCredentialsError ? 'need reconnect' : 'ready'}`);
-    }
-    if (localCount > 0) {
-      parts.push(`${localCount} local action${localCount === 1 ? '' : 's'} ready`);
-    }
-
-    return {
-      summary: parts.join(' · '),
-      level: hasCredentialsError && remoteGmailCount > 0 ? 'warning' as const : 'ready' as const,
-      executableActionCount: executableRemoteCount + localCount,
-      blockedActionCount: blockedRemoteCount,
-      canApplySelected: (executableRemoteCount + localCount) > 0,
-      applyButtonTitle: (executableRemoteCount + localCount) > 0 ? `Apply ${executableRemoteCount + localCount}` : (blockedRemoteCount > 0 ? 'Reconnect' : 'Apply 0')
-    };
-  })();
-
-  const toggleTriagePlanItemSelection = (threadId: string) => {
-    setSelectedTriageThreadIds(prev => {
-      const copy = new Set(prev);
-      if (copy.has(threadId)) {
-        copy.delete(threadId);
-      } else {
-        copy.add(threadId);
-      }
-      return copy;
-    });
-  };
-
-  const selectAllApplicableTriagePlanItems = () => {
-    if (!triagePlan) return;
-    const applicableIds = triagePlan.items
-      .filter(i => i.recommendation === 'readNow' || i.recommendation === 'setReminder' || i.recommendation === 'markDoneCandidate')
-      .map(i => i.threadId);
-    setSelectedTriageThreadIds(new Set(applicableIds));
-  };
-
-  const clearTriagePlanSelection = () => {
-    setSelectedTriageThreadIds(new Set());
-  };
-
-  const applyTriagePlanItem = async (item: MailTriagePlanItem) => {
-    if (!activeAccount) return;
-    const thread = threads.find(t => t.id === item.threadId);
-    if (!thread) return;
-
-    if (item.recommendation === 'readNow') {
-      await executeMailAction('markRead', item.threadId);
-      setTriagePlan(prev => {
-        if (!prev) return null;
-        return { ...prev, items: prev.items.filter(i => i.threadId !== item.threadId) };
-      });
-    } else if (item.recommendation === 'markDoneCandidate') {
-      await executeMailAction('markDone', item.threadId);
-      setTriagePlan(prev => {
-        if (!prev) return null;
-        return { ...prev, items: prev.items.filter(i => i.threadId !== item.threadId) };
-      });
-    } else if (item.recommendation === 'setReminder') {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(9, 0, 0, 0);
-      await window.electronAPI.saveReminder(activeAccount.email, item.threadId, tomorrow.toISOString());
-      setThreads(prev => prev.map(t => t.id === item.threadId ? { ...t, reminderAt: tomorrow.toISOString() } : t));
-      
-      setTriagePlan(prev => {
-        if (!prev) return null;
-        return { ...prev, items: prev.items.filter(i => i.threadId !== item.threadId) };
-      });
-    }
-  };
-
-  const applySelectedTriagePlanItems = async () => {
-    if (!triagePlan || selectedTriageThreadIds.size === 0) return;
-    const executableItems = triagePlan.items.filter(i => {
-      const canApply = i.recommendation === 'readNow' || i.recommendation === 'setReminder' || i.recommendation === 'markDoneCandidate';
-      if (!canApply || !selectedTriageThreadIds.has(i.threadId)) return false;
-      if (i.recommendation !== 'setReminder' && !activeAccountCredentialsValid) return false;
-      return true;
-    });
-
-    for (const item of executableItems) {
-      await applyTriagePlanItem(item);
-    }
-    setSelectedTriageThreadIds(new Set());
   };
 
   const agentPlanActionPreview = useCallback((item: AgentPlanItem): AgentPlanActionPreview => {
@@ -748,20 +609,16 @@ export function useAIState({
       console.warn('AI triage failed; using deterministic fallback:', error);
     }
 
-    const defaultSelected = new Set(
-      plan.items
-        .filter(item => item.recommendation === 'readNow' || item.recommendation === 'setReminder')
-        .map(item => item.threadId)
-    );
-    setSelectedTriageThreadIds(defaultSelected);
     setTriagePlan(plan);
     const reviewPlan = buildAgentPlanFromTriagePlan({ plan, threads: visibleThreads, aiAssisted: usedAI });
-    setAgentPlan(reviewPlan);
-    setSelectedAgentPlanItemIds(new Set(
-      reviewPlan.items
-        .filter(item => item.selectionPolicy === 'autoSelected')
-        .map(item => item.id)
-    ));
+    setAgentPlan(prev => reviewPlan.items.reduce((acc, item) => mergeAgentPlanItem(acc, item), prev));
+    setSelectedAgentPlanItemIds(prev => {
+      const next = new Set(prev);
+      for (const item of reviewPlan.items) {
+        if (item.selectionPolicy === 'autoSelected') next.add(item.id);
+      }
+      return next;
+    });
     setAiPanelLoading(false);
     emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewPlan.items.length} actions.` });
   };
@@ -853,11 +710,7 @@ export function useAIState({
     aiPanelLoading,
     aiModel,
     setAiModel,
-    selectedTriageThreadIds,
-    setSelectedTriageThreadIds,
     selectedAgentPlanItemIds,
-    triageQueueReadiness,
-    triageActionPreview,
     agentPlanQueueReadiness,
     agentPlanActionPreview,
     startNewAIConversation,
@@ -869,12 +722,7 @@ export function useAIState({
     runDailyBriefing,
     dismissDailyBriefingItem,
     addDailyBriefingItemToAgentPlan,
-    toggleTriagePlanItemSelection,
     toggleAgentPlanItemSelection,
-    selectAllApplicableTriagePlanItems,
-    clearTriagePlanSelection,
-    applySelectedTriagePlanItems,
-    applyTriagePlanItem,
     selectAllApplicableAgentPlanItems,
     clearAgentPlanSelection,
     applySelectedAgentPlanItems,

@@ -923,26 +923,6 @@ export interface AppSettings {
   searchProviders?: SearchProvidersSettings;
 }
 
-// === Triage action preview structures ===
-
-export interface MailTriageActionPreview {
-  threadId: string;
-  recommendation: TriageRecommendation;
-  isSelected: boolean;
-  eligibility: 'ready' | 'requiresRemoteGmailCredential' | 'requiresReconnect' | 'remoteUnavailable' | 'remoteUnknown' | 'focusOnly';
-  scope: 'gmail' | 'local' | 'focus';
-  selectionPolicy: 'autoSelected' | 'explicitOptIn' | 'previewOnly';
-}
-
-export interface MailTriageQueueReadiness {
-  summary: string;
-  level: 'ready' | 'warning';
-  executableActionCount: number;
-  blockedActionCount: number;
-  canApplySelected: boolean;
-  applyButtonTitle: string;
-}
-
 export type AgentDraftStatus = 'ready' | 'applied' | 'dismissed' | 'failed';
 
 export interface AgentDraftSuggestion {

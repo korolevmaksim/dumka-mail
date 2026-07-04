@@ -24,8 +24,6 @@ import {
   CustomClassifierRule,
   TabCategory,
   AppSettings,
-  MailTriageActionPreview,
-  MailTriagePlanItem,
   MailTriagePlan,
   AgentPlan,
   AgentPlanItem,
@@ -36,7 +34,6 @@ import {
   DailyBriefingItem,
   AIAction,
   MCPServerConfig,
-  MailTriageQueueReadiness,
   GmailSignatureSyncResult,
   MailboxView,
   ThreadAgentInsights
@@ -477,22 +474,14 @@ interface AppStoreContextType {
   selectAllThreads: () => void;
   clearThreadSelection: () => void;
   executeBatchMailAction: (kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam', threadIds: string[]) => Promise<void>;
-  selectedTriageThreadIds: Set<string>;
-  toggleTriagePlanItemSelection: (threadId: string) => void;
   selectedAgentPlanItemIds: Set<string>;
   toggleAgentPlanItemSelection: (itemId: string) => void;
 
-  selectAllApplicableTriagePlanItems: () => void;
-  clearTriagePlanSelection: () => void;
-  applySelectedTriagePlanItems: () => Promise<void>;
-  applyTriagePlanItem: (item: MailTriagePlanItem, queuedActionLog?: any) => Promise<void>;
   selectAllApplicableAgentPlanItems: () => void;
   clearAgentPlanSelection: () => void;
   applySelectedAgentPlanItems: () => Promise<void>;
   applyAgentPlanItem: (item: AgentPlanItem) => Promise<void>;
   rejectAgentPlanItem: (itemId: string) => void;
-  triageQueueReadiness: MailTriageQueueReadiness | null;
-  triageActionPreview: (item: MailTriagePlanItem) => MailTriageActionPreview;
   agentPlanQueueReadiness: AgentPlanQueueReadiness | null;
   agentPlanActionPreview: (item: AgentPlanItem) => AgentPlanActionPreview;
 }
@@ -576,7 +565,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     visibleThreads: mailState.visibleThreads,
     activeSplit: mailState.activeSplit,
     threads: mailState.threads,
-    setThreads: mailState.setThreads,
     openThread: mailState.openThread,
     startReplyWithBody: draftsState.startReplyWithBody,
     executeMailAction: mailState.executeMailAction,

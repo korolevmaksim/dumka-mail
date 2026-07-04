@@ -5,7 +5,7 @@ import {
   buildCleanupArchiveItem,
   mergeAgentPlanItem,
 } from '../shared/agentPlan';
-import type { DailyBriefing, DailyBriefingItem, MailThread, MailTriagePlan, SenderCleanupStat } from '../shared/types';
+import type { AgentPlan, DailyBriefing, DailyBriefingItem, MailThread, MailTriagePlan, SenderCleanupStat } from '../shared/types';
 
 const thread: MailThread = {
   id: 'thread-1',
@@ -184,5 +184,24 @@ describe('Agent Plan builders', () => {
     const deduped = mergeAgentPlanItem(merged, archiveItem);
     expect(deduped.items).toHaveLength(2);
     expect(deduped.coverage.proposedActionCount).toBe(2);
+  });
+
+  it('preserves pre-existing items when a triage plan is folded in item-by-item (Bug A regression)', () => {
+    const briefingPlan = buildAgentPlanFromDailyBriefingItem({ briefing, item: briefingItem });
+    const triageReviewPlan = buildAgentPlanFromTriagePlan({
+      plan: triagePlan,
+      threads: [thread],
+      aiAssisted: false,
+    });
+
+    // This is exactly the fold runAITriagePlan must use instead of replacing the plan.
+    const merged = triageReviewPlan.items.reduce<AgentPlan | null>(
+      (acc, item) => mergeAgentPlanItem(acc, item),
+      briefingPlan,
+    );
+
+    expect(merged?.items.map(item => item.id)).toContain(briefingPlan.items[0].id);
+    expect(merged?.items).toHaveLength(2);
+    expect(merged?.coverage.proposedActionCount).toBe(2);
   });
 });
