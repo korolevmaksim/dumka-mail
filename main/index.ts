@@ -1291,7 +1291,12 @@ registerSecureHandler('api:searchSemantic', async (_, accountId, query, limit) =
     return await AgenticService.searchSemantic(accountId, query, limit);
   } catch (err) {
     console.warn('[Agentic] Semantic search unavailable:', err);
-    return [];
+    return {
+      status: 'error',
+      results: [],
+      coverage: null,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    };
   }
 });
 registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, actionId?: string) => {

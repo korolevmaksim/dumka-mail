@@ -1031,6 +1031,17 @@ export interface SemanticSearchResult {
   receivedAt: string;
 }
 
+export interface SemanticSearchCoverage { scanned: number; totalIndexed: number }
+
+export type SemanticSearchOutcomeStatus = 'ok' | 'disabled' | 'superseded' | 'error';
+
+export interface SemanticSearchOutcome {
+  status: SemanticSearchOutcomeStatus;
+  results: SemanticSearchResult[];
+  coverage: SemanticSearchCoverage | null;
+  errorMessage?: string;
+}
+
 export type EmbeddingIndexJobState = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface EmbeddingIndexModelStats {

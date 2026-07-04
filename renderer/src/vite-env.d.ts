@@ -31,7 +31,7 @@ import {
   AIProviderPreference,
   AIProviderDescriptor,
   MCPServerConfig,
-  SemanticSearchResult,
+  SemanticSearchOutcome,
   ThreadAgentInsights
 } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
@@ -137,7 +137,7 @@ export interface IElectronAPI {
   cancelEmbeddingReindex: (accountId: string) => Promise<EmbeddingIndexStatus>;
   deleteEmbeddingIndex: (accountId: string, model: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   deleteOtherEmbeddingIndexes: (accountId: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
-  searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchResult[]>;
+  searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
   unsubscribeThread: (email: string, threadId: string, actionId?: string) => Promise<{ method: string; archived: boolean }>;
   loadAIConfig: () => Promise<Record<string, string>>;
   saveAIConfig: (config: Record<string, string>) => Promise<void>;

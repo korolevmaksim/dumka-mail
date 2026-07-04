@@ -37,7 +37,7 @@ import type {
   EmbeddingIndexStatus,
   MailMessage,
   MailThread,
-  SemanticSearchResult,
+  SemanticSearchOutcome,
   ThreadAgentInsights,
   UnsubscribeCandidate,
   UnsubscribeMethod,
@@ -98,11 +98,15 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
 
     if (accountId) {
       const normId = accountId.trim().toLowerCase();
-      if (parsed?.ai?.embeddingsByAccount?.[normId]) {
-        embeddings = normalizeEmbeddingSettings(parsed.ai.embeddingsByAccount[normId]);
+      const embeddingsByAccount = parsed?.ai?.embeddingsByAccount;
+      if (embeddingsByAccount) {
+        const key = Object.keys(embeddingsByAccount).find(k => k.trim().toLowerCase() === normId);
+        if (key) embeddings = normalizeEmbeddingSettings(embeddingsByAccount[key]);
       }
-      if (parsed?.ai?.semanticSearchEnabledByAccount && normId in parsed.ai.semanticSearchEnabledByAccount) {
-        semanticSearchEnabled = parsed.ai.semanticSearchEnabledByAccount[normId] === true;
+      const enabledByAccount = parsed?.ai?.semanticSearchEnabledByAccount;
+      if (enabledByAccount) {
+        const key = Object.keys(enabledByAccount).find(k => k.trim().toLowerCase() === normId);
+        if (key) semanticSearchEnabled = enabledByAccount[key] === true;
       }
     }
 
@@ -639,11 +643,11 @@ async function searchSemanticInternal(
   query: string,
   limit = 60,
   scope: SemanticSearchScope = 'interactive'
-): Promise<SemanticSearchResult[]> {
+): Promise<SemanticSearchOutcome> {
   const trimmed = normalizeEmbeddingText(query, 1000);
-  if (!trimmed) return [];
+  if (!trimmed) return { status: 'disabled', results: [], coverage: null };
   const settings = readAgentSettings(accountId);
-  if (!settings.semanticSearchEnabled) return [];
+  if (!settings.semanticSearchEnabled) return { status: 'disabled', results: [], coverage: null };
 
   // Newer searches supersede older ones per account and caller scope; the worker
   // aborts stale scans. Scoping keeps independent callers (the interactive search
@@ -652,21 +656,47 @@ async function searchSemanticInternal(
   const requestId = (semanticSearchRequestIds.get(requestKey) || 0) + 1;
   semanticSearchRequestIds.set(requestKey, requestId);
 
-  const queryEmbedding = await createEmbeddings([trimmed], {
-    settings: settings.embeddings,
-    purpose: 'query',
-  });
-  if (semanticSearchRequestIds.get(requestKey) !== requestId) return [];
+  let queryEmbedding;
+  try {
+    queryEmbedding = await createEmbeddings([trimmed], {
+      settings: settings.embeddings,
+      purpose: 'query',
+    });
+  } catch (error) {
+    return {
+      status: 'error',
+      results: [],
+      coverage: null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (semanticSearchRequestIds.get(requestKey) !== requestId) {
+    return { status: 'superseded', results: [], coverage: null };
+  }
 
-  const { results, aborted } = await semanticSearchWorkerClient.search(
-    accountId,
-    queryEmbedding.model,
-    queryEmbedding.embeddings[0],
-    Math.max(1, Math.min(200, limit)),
-    requestId,
-    scope
-  );
-  return aborted ? [] : results;
+  try {
+    const scan = await semanticSearchWorkerClient.search(
+      accountId,
+      queryEmbedding.model,
+      queryEmbedding.embeddings[0],
+      Math.max(1, Math.min(200, limit)),
+      requestId,
+      scope
+    );
+    if (scan.aborted) return { status: 'superseded', results: [], coverage: null };
+    return {
+      status: 'ok',
+      results: scan.results,
+      coverage: { scanned: scan.scanned, totalIndexed: scan.totalIndexed },
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      results: [],
+      coverage: null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export const AgenticService = {
@@ -747,7 +777,7 @@ export const AgenticService = {
     return deleteOtherEmbeddingIndexesForAccount(accountId);
   },
 
-  async searchSemantic(accountId: string, query: string, limit = 60): Promise<SemanticSearchResult[]> {
+  async searchSemantic(accountId: string, query: string, limit = 60): Promise<SemanticSearchOutcome> {
     return searchSemanticInternal(accountId, query, limit);
   },
 
@@ -761,7 +791,8 @@ export const AgenticService = {
         dailyBriefing: runtimeSettings.dailyBriefing,
       },
       searchSemantic: (briefingAccountId, briefingQuery, briefingLimit) =>
-        searchSemanticInternal(briefingAccountId, briefingQuery, briefingLimit, 'briefing'),
+        searchSemanticInternal(briefingAccountId, briefingQuery, briefingLimit, 'briefing')
+          .then(outcome => outcome.results),
     });
   },
 

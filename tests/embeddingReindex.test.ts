@@ -68,7 +68,8 @@ const workerClientMocks = vi.hoisted(() => ({
       _limit: number,
       _requestId: number,
       _scope: string
-    ): Promise<{ results: SemanticSearchResult[]; aborted: boolean }> => ({ results: [], aborted: false })),
+    ): Promise<{ results: SemanticSearchResult[]; aborted: boolean; scanned: number; totalIndexed: number }> =>
+      ({ results: [], aborted: false, scanned: 0, totalIndexed: 0 })),
     shutdown: vi.fn(),
   },
 }));
@@ -117,9 +118,10 @@ describe('embedding reindex jobs', () => {
       embeddings: [[1, 0]],
     });
 
-    const results = await AgenticService.searchSemantic(searchAccountId, 'contract', 10);
+    const outcome = await AgenticService.searchSemantic(searchAccountId, 'contract', 10);
 
-    expect(results).toEqual([]);
+    expect(outcome.status).toBe('ok');
+    expect(outcome.results).toEqual([]);
     expect(workerClientMocks.semanticSearchWorkerClient.search)
       .toHaveBeenCalledWith(searchAccountId, currentModel, [1, 0], 10, expect.any(Number), 'interactive');
     expect(databaseMocks.MailEmbeddingsRepo.indexedHashes).not.toHaveBeenCalled();
@@ -145,14 +147,19 @@ describe('embedding reindex jobs', () => {
         receivedAt: '2026-07-01T00:00:00.000Z',
       }],
       aborted: false,
+      scanned: 1,
+      totalIndexed: 1,
     });
 
     const first = AgenticService.searchSemantic(searchAccountId, 'contract', 10);
     const second = await AgenticService.searchSemantic(searchAccountId, 'contract draft', 10);
     releaseFirstEmbedding();
 
-    expect(await first).toEqual([]);
-    expect(second).toHaveLength(1);
+    const firstOutcome = await first;
+    expect(firstOutcome.status).toBe('superseded');
+    expect(firstOutcome.results).toEqual([]);
+    expect(second.status).toBe('ok');
+    expect(second.results).toHaveLength(1);
     expect(workerClientMocks.semanticSearchWorkerClient.search).toHaveBeenCalledTimes(1);
   });
 
@@ -183,10 +190,11 @@ describe('embedding reindex jobs', () => {
       model: currentModel,
       embeddings: [[1, 0]],
     });
-    workerClientMocks.semanticSearchWorkerClient.search.mockResolvedValue({ results: [], aborted: true });
+    workerClientMocks.semanticSearchWorkerClient.search.mockResolvedValue({ results: [], aborted: true, scanned: 5, totalIndexed: 10 });
 
-    const results = await AgenticService.searchSemantic(searchAccountId, 'contract', 10);
+    const outcome = await AgenticService.searchSemantic(searchAccountId, 'contract', 10);
 
-    expect(results).toEqual([]);
+    expect(outcome.status).toBe('superseded');
+    expect(outcome.results).toEqual([]);
   });
 });

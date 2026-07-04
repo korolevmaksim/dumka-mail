@@ -1,4 +1,4 @@
-import type { SemanticSearchResult } from '../../../shared/types';
+import type { SemanticSearchOutcome } from '../../../shared/types';
 
 export interface ThreadSearchMatch {
   threadId: string;
@@ -6,7 +6,7 @@ export interface ThreadSearchMatch {
 }
 
 type SearchFTS = (accountId: string, query: string) => Promise<ThreadSearchMatch[]>;
-type SearchSemantic = (accountId: string, query: string, limit?: number) => Promise<SemanticSearchResult[]>;
+type SearchSemantic = (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
 
 const DEFAULT_SEMANTIC_UI_BUDGET_MS = 1200;
 
@@ -49,7 +49,7 @@ export async function collectSemanticMatchesWithTimeout(
   const semanticMatches = Promise.all(
     accountIds.map(accountId => searchSemantic(accountId, textQuery, 80))
   )
-    .then(batches => batches.flat().map(match => ({
+    .then(outcomes => outcomes.flatMap(outcome => outcome.results).map(match => ({
       threadId: match.threadId,
       messageId: match.messageId,
     })))

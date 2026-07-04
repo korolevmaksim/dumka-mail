@@ -122,4 +122,27 @@ describe('per-account settings resolution', () => {
     expect(otherStatus.semanticSearchEnabled).toBe(false);
     expect(otherStatus.currentModel).toContain('openAI:text-embedding-3-small');
   });
+
+  it('matches per-account overrides stored under mixed-case account keys', async () => {
+    vi.mocked(SettingsRepo.get).mockReturnValue(JSON.stringify({
+      ai: {
+        semanticSearchEnabled: false,
+        embeddings: { provider: 'openAI', model: 'text-embedding-3-small', baseURL: null, dimensions: null },
+        embeddingsByAccount: {
+          'Test@Example.com ': { provider: 'gemini', model: 'gemini-embedding-2', baseURL: null, dimensions: 768 },
+        },
+        semanticSearchEnabledByAccount: { 'Test@Example.com ': true },
+      },
+    }));
+
+    vi.mocked(MailEmbeddingsRepo.modelStats).mockReturnValue([
+      { model: 'gemini:gemini-embedding-2:dim=768:https://generativelanguage.googleapis.com/v1beta', count: 500, lastIndexedAt: '2026-07-03T09:00:00.000Z' },
+    ]);
+
+    // Settings resolved for the normalized account id must pick the gemini
+    // override and enabled=true despite the mixed-case, padded stored key.
+    const status = await AgenticService.getEmbeddingIndexStatus('test@example.com');
+    expect(status.semanticSearchEnabled).toBe(true);
+    expect(status.currentModel).toContain('gemini:gemini-embedding-2:dim=768:https://generativelanguage.googleapis.com/v1beta');
+  });
 });

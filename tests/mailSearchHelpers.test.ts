@@ -19,7 +19,7 @@ describe('mail search helpers', () => {
 
   it('returns no semantic matches when semantic search misses its UI budget', async () => {
     vi.useFakeTimers();
-    const searchSemantic = vi.fn(() => new Promise<any[]>(() => {}));
+    const searchSemantic = vi.fn(() => new Promise<never>(() => {}));
 
     const pending = collectSemanticMatchesWithTimeout(
       ['me@example.com'],
