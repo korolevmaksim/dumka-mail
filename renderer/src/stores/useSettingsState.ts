@@ -12,6 +12,7 @@ export function useSettingsState() {
   const [tabCategories, setTabCategoriesState] = useState<TabCategory[]>(DEFAULT_CATEGORIES);
   const [modelsCache, setModelsCache] = useState<Record<string, string[]>>({});
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [cleanupOpen, setCleanupOpen] = useState<boolean>(false);
   const [customEnv, setCustomEnv] = useState<Record<string, string>>({});
 
   const setEnablePreviewPane = (val: boolean) => {
@@ -484,6 +485,7 @@ export function useSettingsState() {
     tabCategories,
     modelsCache,
     settingsOpen,
+    cleanupOpen,
     customEnv,
     setSettingsState,
     setThemeState,
@@ -493,6 +495,7 @@ export function useSettingsState() {
     setTabCategoriesState,
     setModelsCache,
     setSettingsOpen,
+    setCleanupOpen,
     setCustomEnv,
     setEnablePreviewPane,
     setPreviewPaneWidth,

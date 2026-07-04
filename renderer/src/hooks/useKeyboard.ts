@@ -116,6 +116,7 @@ export function useKeyboard(options: KeyboardOptions) {
         if (currentStore.accounts[idx]) {
           currentStore.setActiveAccount(currentStore.accounts[idx]);
           currentStore.setSettingsOpen(false);
+          currentStore.setCleanupOpen(false);
         }
         return;
       }
@@ -131,6 +132,7 @@ export function useKeyboard(options: KeyboardOptions) {
           currentStore.setActiveAccount(UNIFIED_ACCOUNT);
         }
         currentStore.setSettingsOpen(false);
+        currentStore.setCleanupOpen(false);
         return;
       }
 
@@ -139,6 +141,7 @@ export function useKeyboard(options: KeyboardOptions) {
         e.preventDefault();
         currentStore.setMailboxView(nextMailboxView(currentStore.mailboxView, e.shiftKey ? -1 : 1));
         currentStore.setSettingsOpen(false);
+        currentStore.setCleanupOpen(false);
         return;
       }
 
@@ -155,6 +158,7 @@ export function useKeyboard(options: KeyboardOptions) {
           e.preventDefault();
           currentStore.setActiveSplit(activeTabs[idx].id);
           currentStore.setSettingsOpen(false);
+          currentStore.setCleanupOpen(false);
           return;
         }
       }
@@ -164,6 +168,7 @@ export function useKeyboard(options: KeyboardOptions) {
         e.preventDefault();
         currentOptions.onSearchFocus();
         currentStore.setSettingsOpen(false);
+        currentStore.setCleanupOpen(false);
         return;
       }
 

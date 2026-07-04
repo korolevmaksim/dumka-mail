@@ -456,6 +456,8 @@ interface AppStoreContextType {
   aiPanelLoading: boolean;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  cleanupOpen: boolean;
+  setCleanupOpen: (open: boolean) => void;
   aiModel: string;
   setAiModel: (model: string) => void;
   customEnv: Record<string, string>;

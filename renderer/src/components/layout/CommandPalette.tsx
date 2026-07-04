@@ -40,10 +40,12 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
     { id: 'toggle-unified-inbox', group: 'navigation', title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', keywords: ['unified', 'all accounts'], action: () => {
       store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
       store.setSettingsOpen(false);
+      store.setCleanupOpen(false);
     } },
     { id: 'switch-mailbox', group: 'navigation', title: 'Switch Mailbox', shortcut: 'G', keywords: ['inbox', 'sent', 'trash', 'spam'], action: () => {
       store.setMailboxView(nextMailboxView(store.mailboxView));
       store.setSettingsOpen(false);
+      store.setCleanupOpen(false);
     } },
     { id: 'undo-last-action', group: 'mail', title: 'Undo Last Action', shortcut: 'Z', keywords: ['undo'], action: () => store.undoLastAction() },
     { id: 'toggle-theme', group: 'settings', title: 'Toggle Theme', shortcut: 'Cmd+Shift+T', keywords: ['theme', 'dark', 'light'], action: () => {

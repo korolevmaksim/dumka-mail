@@ -239,6 +239,7 @@ function AppContent() {
           break;
         case 'view.settings':
           store.setSettingsOpen(!store.settingsOpen);
+          store.setCleanupOpen(false);
           break;
         case 'view.toggleTheme': {
           const nextTheme = store.theme === 'system' ? 'light' : (store.theme === 'light' ? 'dark' : 'system');
@@ -806,6 +807,7 @@ function AppContent() {
                             onClick={() => {
                               store.setMailboxView(mailbox.id);
                               store.setSettingsOpen(false);
+                              store.setCleanupOpen(false);
                               setMailboxMenuOpen(false);
                             }}
                             className={`flex w-full min-w-0 items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] ${
@@ -846,6 +848,7 @@ function AppContent() {
                           onClick={() => {
                             store.setActiveSplit(category.id);
                             store.setSettingsOpen(false);
+                            store.setCleanupOpen(false);
                           }}
                           className={`flex h-full items-center gap-1.5 border-b-2 px-3 text-tab transition-all cursor-grab ${
                             store.activeSplit === category.id

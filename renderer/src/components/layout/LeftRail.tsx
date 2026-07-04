@@ -1,4 +1,4 @@
-import { Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
+import { Eraser, Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { AccountAvatar } from '../AccountAvatar';
 
@@ -14,6 +14,7 @@ export function LeftRail() {
               onClick={() => {
                 store.setActiveAccount(UNIFIED_ACCOUNT);
                 store.setSettingsOpen(false);
+                store.setCleanupOpen(false);
               }}
               title="Unified Inbox"
               className={`relative flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
@@ -37,6 +38,7 @@ export function LeftRail() {
             onClick={() => {
               store.setActiveAccount(acc);
               store.setSettingsOpen(false);
+              store.setCleanupOpen(false);
             }}
             title={acc.email}
             className={`relative flex items-center justify-center w-10 h-10 rounded-xl font-semibold border text-white transition-[border-color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
@@ -80,7 +82,20 @@ export function LeftRail() {
            <Monitor className="w-4 h-4" />}
         </button>
         <button
-          onClick={() => store.setSettingsOpen(!store.settingsOpen)}
+          onClick={() => {
+            store.setCleanupOpen(!store.cleanupOpen);
+            store.setSettingsOpen(false);
+          }}
+          title="Privacy & Cleanup"
+          className={`cursor-pointer ${store.cleanupOpen ? 'text-[var(--accent)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+        >
+          <Eraser className="w-4.5 h-4.5" />
+        </button>
+        <button
+          onClick={() => {
+            store.setSettingsOpen(!store.settingsOpen);
+            store.setCleanupOpen(false);
+          }}
           title="Settings"
           className={`cursor-pointer ${store.settingsOpen ? 'text-[var(--accent)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
         >
