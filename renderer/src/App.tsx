@@ -13,6 +13,7 @@ import { MessageCard } from './components/MessageCard';
 import { AgenticThreadPanel } from './components/AgenticThreadPanel';
 import { ThreadLabelMoveMenu } from './components/ThreadLabelMoveMenu';
 import { SettingsPanel } from './components/settings/SettingsPanel';
+import { CleanupPanel } from './components/CleanupPanel';
 import { LeftRail } from './components/layout/LeftRail';
 import { AICopilotPanel } from './components/layout/AICopilotPanel';
 import { SearchCockpitBar } from './components/layout/SearchCockpitBar';
@@ -226,6 +227,7 @@ function AppContent() {
           const draft = store.startNewDraft();
           if (!draft) {
             store.setSettingsOpen(true);
+            store.setCleanupOpen(false);
             emitToast({ type: 'warning', message: 'Connect an account before composing.' });
             break;
           }
@@ -670,6 +672,8 @@ function AppContent() {
         setMailboxMenuOpen(false);
       } else if (store.settingsOpen) {
         store.setSettingsOpen(false);
+      } else if (store.cleanupOpen) {
+        store.setCleanupOpen(false);
       } else if (store.searchQuery) {
         store.setSearchQuery('');
       } else if (store.activeDraft) {
@@ -891,6 +895,7 @@ function AppContent() {
                     const draft = store.startNewDraft();
                     if (!draft) {
                       store.setSettingsOpen(true);
+                      store.setCleanupOpen(false);
                       emitToast({ type: 'warning', message: 'Connect an account before composing.' });
                       return;
                     }
@@ -914,6 +919,8 @@ function AppContent() {
             <div className="flex flex-1 overflow-hidden">
               {store.settingsOpen ? (
                 <SettingsPanel />
+              ) : store.cleanupOpen ? (
+                <CleanupPanel />
               ) : (
                 <>
                   {/* THREAD LIST CONTAINER */}

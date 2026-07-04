@@ -33,6 +33,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       const draft = store.startNewDraft();
       if (!draft) {
         store.setSettingsOpen(true);
+        store.setCleanupOpen(false);
         emitToast({ type: 'warning', message: 'Connect an account before composing.' });
         return;
       }

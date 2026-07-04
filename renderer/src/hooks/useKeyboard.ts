@@ -302,6 +302,7 @@ export function useKeyboard(options: KeyboardOptions) {
         const draft = currentStore.startNewDraft();
         if (!draft) {
           currentStore.setSettingsOpen(true);
+          currentStore.setCleanupOpen(false);
           emitToast({ type: 'warning', message: 'Connect an account before composing.' });
           return;
         }
