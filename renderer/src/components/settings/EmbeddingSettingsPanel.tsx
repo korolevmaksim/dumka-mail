@@ -46,6 +46,33 @@ function compactModelKey(model: string): string {
   return `${model.slice(0, 38)}...${model.slice(-22)}`;
 }
 
+/**
+ * Finds a per-account entry under any key variant: the exact normalized key
+ * first, then a trim().toLowerCase() scan of existing keys. Mirrors the
+ * read-side semantics of readAgentSettings in main/agentic.ts so the panel
+ * displays what the main process resolves.
+ */
+function resolveAccountEntry<T>(map: Record<string, T> | undefined, accountKey: string): T | undefined {
+  if (!map || !accountKey) return undefined;
+  if (accountKey in map) return map[accountKey];
+  const variant = Object.keys(map).find(key => key.trim().toLowerCase() === accountKey);
+  return variant === undefined ? undefined : map[variant];
+}
+
+/**
+ * Removes stale key variants that normalize to the same account key so
+ * stored settings converge on the canonical (trimmed, lowercased) key.
+ * Without this, main's insertion-order key scan would keep resolving an
+ * old variant entry and shadow newly written canonical values.
+ */
+function pruneAccountKeyVariants<T>(map: Record<string, T>, accountKey: string): void {
+  for (const key of Object.keys(map)) {
+    if (key !== accountKey && key.trim().toLowerCase() === accountKey) {
+      delete map[key];
+    }
+  }
+}
+
 export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: EmbeddingSettingsPanelProps) {
   const store = useAppStore();
   const [testStatus, setTestStatus] = useState<TestStatus>({ status: 'idle' });
@@ -60,6 +87,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   }, [store.activeAccount, store.accounts]);
 
   const activeAccountId = localAccountId || targetAccountId;
+  const accountKey = activeAccountId.trim().toLowerCase();
 
   useEffect(() => {
     if (targetAccountId && !localAccountId) {
@@ -68,16 +96,15 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   }, [targetAccountId]);
 
   const embeddingSettings = useMemo(() => {
-    const accSettings = activeAccountId ? store.settings.ai.embeddingsByAccount?.[activeAccountId] : null;
+    const accSettings = resolveAccountEntry(store.settings.ai.embeddingsByAccount, accountKey);
     return normalizeEmbeddingSettings(accSettings || store.settings.ai.embeddings);
-  }, [activeAccountId, store.settings.ai.embeddings, store.settings.ai.embeddingsByAccount]);
+  }, [accountKey, store.settings.ai.embeddings, store.settings.ai.embeddingsByAccount]);
 
   const semanticSearchEnabled = useMemo(() => {
-    if (activeAccountId && store.settings.ai.semanticSearchEnabledByAccount && activeAccountId in store.settings.ai.semanticSearchEnabledByAccount) {
-      return store.settings.ai.semanticSearchEnabledByAccount[activeAccountId] === true;
-    }
+    const accValue = resolveAccountEntry(store.settings.ai.semanticSearchEnabledByAccount, accountKey);
+    if (accValue !== undefined) return accValue === true;
     return store.settings.ai.semanticSearchEnabled === true;
-  }, [activeAccountId, store.settings.ai.semanticSearchEnabled, store.settings.ai.semanticSearchEnabledByAccount]);
+  }, [accountKey, store.settings.ai.semanticSearchEnabled, store.settings.ai.semanticSearchEnabledByAccount]);
 
   const providerConfig = getEmbeddingProviderConfig(embeddingSettings.provider);
   const presets = getEmbeddingModelPresets(embeddingSettings.provider);
@@ -104,13 +131,14 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
     : 0;
 
   const updateEmbeddings = (patch: Partial<AIEmbeddingSettings>) => {
-    if (!activeAccountId) return;
+    if (!accountKey) return;
     store.updateSettings(settings => {
       if (!settings.ai.embeddingsByAccount) {
         settings.ai.embeddingsByAccount = {};
       }
-      const current = settings.ai.embeddingsByAccount[activeAccountId] || settings.ai.embeddings;
-      settings.ai.embeddingsByAccount[activeAccountId] = normalizeEmbeddingSettings({
+      const current = resolveAccountEntry(settings.ai.embeddingsByAccount, accountKey) || settings.ai.embeddings;
+      pruneAccountKeyVariants(settings.ai.embeddingsByAccount, accountKey);
+      settings.ai.embeddingsByAccount[accountKey] = normalizeEmbeddingSettings({
         ...current,
         ...patch,
       });
@@ -269,12 +297,13 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
         <Toggle
           checked={semanticSearchEnabled}
           onChange={(value) => {
-            if (!activeAccountId) return;
+            if (!accountKey) return;
             store.updateSettings(settings => {
               if (!settings.ai.semanticSearchEnabledByAccount) {
                 settings.ai.semanticSearchEnabledByAccount = {};
               }
-              settings.ai.semanticSearchEnabledByAccount[activeAccountId] = value;
+              pruneAccountKeyVariants(settings.ai.semanticSearchEnabledByAccount, accountKey);
+              settings.ai.semanticSearchEnabledByAccount[accountKey] = value;
             });
           }}
         />
