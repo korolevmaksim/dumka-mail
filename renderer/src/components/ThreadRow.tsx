@@ -1,5 +1,5 @@
 import React from 'react';
-import { Paperclip, Clock, Check } from 'lucide-react';
+import { Paperclip, Clock, Check, Zap } from 'lucide-react';
 import { MailThread } from '../../../shared/types';
 import { primaryRowLabel } from '../../../shared/labels';
 import { normalizePreview } from '../../../shared/textNormalizer';
@@ -18,6 +18,7 @@ interface ThreadRowProps {
   showAvatars: boolean;
   isSelected: boolean;
   isSelectionModeActive: boolean;
+  isSemanticMatch?: boolean;
   positionInSet?: number;
   setSize?: number;
   onClick: () => void;
@@ -36,6 +37,7 @@ export function ThreadRow({
   showAvatars,
   isSelected,
   isSelectionModeActive,
+  isSemanticMatch,
   positionInSet,
   setSize,
   onClick,
@@ -167,6 +169,11 @@ export function ThreadRow({
         {/* Line 3: preview + glyphs */}
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-[calc(11px*var(--font-scale))] truncate text-[var(--text-tertiary)] flex-1">{preview}</span>
+          {isSemanticMatch && (
+            <span title="AI match" aria-label="AI match" className="text-[var(--text-secondary)] opacity-70 shrink-0">
+              <Zap aria-hidden="true" className="w-3 h-3" />
+            </span>
+          )}
           {thread.hasAttachments && <Paperclip aria-hidden="true" className="w-3 h-3 text-[var(--text-tertiary)] shrink-0" />}
           {thread.reminderAt && <Clock aria-hidden="true" className="w-3 h-3 text-[var(--accent)] shrink-0" />}
         </div>

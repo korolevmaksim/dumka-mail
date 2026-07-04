@@ -575,13 +575,28 @@ function AppContent() {
     mailboxViewport.height,
   ]);
 
+  type MailboxRow =
+    | { kind: 'header'; id: 'top' | 'all'; label: string }
+    | { kind: 'thread'; thread: MailThread; threadIndex: number };
+
+  const mailboxRows = useMemo<MailboxRow[]>(() => {
+    const rows: MailboxRow[] = [];
+    const topCount = store.searchTopCount;
+    store.visibleThreads.forEach((thread, threadIndex) => {
+      if (topCount > 0 && threadIndex === 0) rows.push({ kind: 'header', id: 'top', label: 'Top results' });
+      if (topCount > 0 && threadIndex === topCount) rows.push({ kind: 'header', id: 'all', label: 'All matches' });
+      rows.push({ kind: 'thread', thread, threadIndex });
+    });
+    return rows;
+  }, [store.visibleThreads, store.searchTopCount]);
+
   useEffect(() => {
     if (isDraftsMailbox || store.visibleThreads.length === 0 || mailboxViewport.height <= 0) return;
 
     const targetId = store.openedThread?.id || store.focusedThreadId;
     if (!targetId) return;
 
-    const targetIndex = store.visibleThreads.findIndex(thread => thread.id === targetId);
+    const targetIndex = mailboxRows.findIndex(row => row.kind === 'thread' && row.thread.id === targetId);
     if (targetIndex === -1) return;
 
     const element = mailboxListRef.current;
@@ -592,7 +607,7 @@ function AppContent() {
       rowHeight: threadRowHeight,
       viewportHeight: mailboxViewport.height,
       currentScrollTop: element.scrollTop,
-      itemCount: store.visibleThreads.length,
+      itemCount: mailboxRows.length,
       marginRows: 2,
     });
 
@@ -603,7 +618,7 @@ function AppContent() {
     isDraftsMailbox,
     store.focusedThreadId,
     store.openedThread?.id,
-    store.visibleThreads,
+    mailboxRows,
     threadRowHeight,
     mailboxViewport.height,
   ]);
@@ -730,15 +745,15 @@ function AppContent() {
   }`;
   const hasMailboxRows = visibleMailboxRowCount > 0;
   const virtualThreadWindow = useMemo(() => calculateVirtualWindow({
-    itemCount: store.visibleThreads.length,
+    itemCount: mailboxRows.length,
     rowHeight: threadRowHeight,
     viewportHeight: mailboxViewport.height || 600,
     scrollTop: mailboxViewport.scrollTop,
     overscan: 10,
-  }), [store.visibleThreads.length, threadRowHeight, mailboxViewport.height, mailboxViewport.scrollTop]);
-  const virtualThreads = useMemo(
-    () => store.visibleThreads.slice(virtualThreadWindow.startIndex, virtualThreadWindow.endIndex),
-    [store.visibleThreads, virtualThreadWindow.startIndex, virtualThreadWindow.endIndex],
+  }), [mailboxRows.length, threadRowHeight, mailboxViewport.height, mailboxViewport.scrollTop]);
+  const virtualRows = useMemo(
+    () => mailboxRows.slice(virtualThreadWindow.startIndex, virtualThreadWindow.endIndex),
+    [mailboxRows, virtualThreadWindow.startIndex, virtualThreadWindow.endIndex],
   );
 
   return (
@@ -959,8 +974,20 @@ function AppContent() {
                             className="absolute left-0 right-0 top-0 flex flex-col"
                             style={{ transform: `translateY(${virtualThreadWindow.offsetTop}px)` }}
                           >
-                            {virtualThreads.map((thread, relativeIndex) => {
-                              const absoluteIndex = virtualThreadWindow.startIndex + relativeIndex;
+                            {virtualRows.map((row) => {
+                              if (row.kind === 'header') {
+                                return (
+                                  <div
+                                    key={`section-${row.id}`}
+                                    role="presentation"
+                                    style={{ height: `${threadRowHeight}px` }}
+                                    className="flex items-end pb-1.5 px-3 text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]"
+                                  >
+                                    {row.label}
+                                  </div>
+                                );
+                              }
+                              const thread = row.thread;
                               return (
                                 <ThreadRow
                                   key={thread.id}
@@ -970,7 +997,8 @@ function AppContent() {
                                   showAvatars={store.settings.appearance.showAvatars}
                                   isSelected={store.selectedThreadIds.has(thread.id)}
                                   isSelectionModeActive={store.selectedThreadIds.size > 0}
-                                  positionInSet={absoluteIndex + 1}
+                                  isSemanticMatch={store.semanticMatchThreadIds.has(thread.id)}
+                                  positionInSet={row.threadIndex + 1}
                                   setSize={store.visibleThreads.length}
                                   onClick={() => store.openThread(thread)}
                                   onToggleSelect={(e) => handleThreadSelectToggle(e, thread.id)}
