@@ -940,6 +940,7 @@ export const SearchRepo = {
     const rows = db.prepare(`
       SELECT thread_id, message_id FROM mail_search
       WHERE account_id = ? AND mail_search MATCH ?
+      ORDER BY rank
       LIMIT 100
     `).all(accountId, ftsQuery) as any[];
 
