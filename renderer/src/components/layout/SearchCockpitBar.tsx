@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
-import { Check, LoaderCircle, Search, X } from 'lucide-react';
+import { AlertTriangle, Check, LoaderCircle, Search, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
 import { getSearchIndicatorState } from './searchIndicator';
@@ -130,6 +130,8 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
             >
               {searchIndicator.kind === 'searching' ? (
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              ) : searchIndicator.kind === 'error' ? (
+                <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />
               ) : (
                 <Check className="h-3.5 w-3.5 text-emerald-500" />
               )}
