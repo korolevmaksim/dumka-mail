@@ -445,6 +445,7 @@ interface AppStoreContextType {
   runDailyBriefing: (options?: DailyBriefingBuildOptions) => Promise<void>;
   dismissDailyBriefingItem: (itemOrThreadId: DailyBriefingItem | string) => void;
   addDailyBriefingItemToAgentPlan: (item: DailyBriefingItem, labelId?: string | null) => void;
+  addAgentPlanItems: (items: AgentPlanItem[]) => void;
   triagePlan: MailTriagePlan | null;
   setTriagePlan: (plan: MailTriagePlan | null) => void;
   agentPlan: AgentPlan | null;

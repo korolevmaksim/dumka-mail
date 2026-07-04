@@ -233,7 +233,7 @@ export function useAIState({
     const isSelected = selectedAgentPlanItemIds.has(item.id);
     const threadExists = threads.some(thread => thread.accountId === item.accountId && thread.id === item.threadId);
     const scope: AgentPlanActionPreview['scope'] =
-      item.action === 'markRead' || item.action === 'archive' || item.action === 'applyLabel'
+      item.action === 'markRead' || item.action === 'archive' || item.action === 'applyLabel' || item.action === 'unsubscribe'
         ? 'gmail'
         : item.action === 'openThread'
           ? 'focus'
@@ -397,6 +397,14 @@ export function useAIState({
         undefined,
         payloadForAgentPlanItem(item, { labelId: item.payload?.labelId || null })
       );
+    } else if (item.action === 'unsubscribe') {
+      await executeMailAction(
+        'unsubscribeSender',
+        item.threadId,
+        null,
+        async (actionId: string) => window.electronAPI.unsubscribeThread(item.accountId, item.threadId, actionId),
+        payloadForAgentPlanItem(item, { accountId: item.accountId })
+      );
     } else if (item.action === 'draftReply') {
       const sourceMessage = await latestMessageForAgentItem(item);
       if (!sourceMessage) {
@@ -443,6 +451,19 @@ export function useAIState({
     });
     setAiPanelOpen(true);
     emitToast({ type: 'success', message: 'Added to Agent Review Queue.' });
+  };
+
+  const addAgentPlanItems = (items: AgentPlanItem[]) => {
+    if (items.length === 0) return;
+    setAgentPlan(prev => items.reduce((acc, item) => mergeAgentPlanItem(acc, item), prev));
+    setSelectedAgentPlanItemIds(prev => {
+      const next = new Set(prev);
+      for (const item of items) {
+        if (item.selectionPolicy === 'autoSelected') next.add(item.id);
+      }
+      return next;
+    });
+    setAiPanelOpen(true);
   };
 
   const runAIInstruction = async ({
@@ -722,6 +743,7 @@ export function useAIState({
     runDailyBriefing,
     dismissDailyBriefingItem,
     addDailyBriefingItemToAgentPlan,
+    addAgentPlanItems,
     toggleAgentPlanItemSelection,
     selectAllApplicableAgentPlanItems,
     clearAgentPlanSelection,
