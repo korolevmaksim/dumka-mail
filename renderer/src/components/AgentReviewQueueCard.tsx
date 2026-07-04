@@ -52,8 +52,11 @@ export function AgentReviewQueueCard() {
 
   if (!plan) return null;
 
-  const allSelected = plan.items.length > 0 && plan.items
-    .filter(item => item.action !== 'openThread')
+  // Must mirror selectAllApplicableAgentPlanItems: focus-only and manualOnly
+  // items are never part of a bulk selection.
+  const bulkSelectableItems = plan.items
+    .filter(item => item.action !== 'openThread' && item.selectionPolicy !== 'manualOnly');
+  const allSelected = bulkSelectableItems.length > 0 && bulkSelectableItems
     .every(item => store.selectedAgentPlanItemIds.has(item.id));
 
   const toggleAll = () => {

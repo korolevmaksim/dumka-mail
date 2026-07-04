@@ -305,6 +305,9 @@ export function useAIState({
     if (!agentPlan) return;
     const applicableIds = agentPlan.items
       .filter(item => item.action !== 'openThread')
+      // manualOnly items (draft replies, unsubscribe) must be approved one by
+      // one and never get swept into a bulk selection.
+      .filter(item => item.selectionPolicy !== 'manualOnly')
       .filter(item => agentPlanActionPreview(item).eligibility === 'ready')
       .map(item => item.id);
     setSelectedAgentPlanItemIds(new Set(applicableIds));

@@ -35,12 +35,15 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function archiveCandidatesFor(stat: SenderCleanupStat, threads: MailThread[]): MailThread[] {
+function senderGroupKey(accountId: string, senderEmail: string): string {
+  return `${accountId}:${senderEmail}`;
+}
+
+function archiveCandidatesFrom(senderThreads: MailThread[] | undefined): MailThread[] {
+  if (!senderThreads || senderThreads.length === 0) return [];
   const cutoff = Date.now() - THIRTY_DAYS_MS;
-  return threads
+  return senderThreads
     .filter(thread =>
-      thread.accountId === stat.accountId &&
-      thread.senderEmail.toLowerCase() === stat.senderEmail &&
       !thread.isUnread &&
       thread.labelIds.some(label => label.toUpperCase() === 'INBOX') &&
       Date.parse(thread.lastMessageAt) < cutoff
@@ -88,8 +91,25 @@ export function CleanupPanel() {
     void loadStats();
   }, [loadStats]);
 
+  // One O(threads) grouping pass shared by every sender row instead of a full
+  // thread-list scan per row. Stats keys are lowercase (sender_key in SQL), so
+  // thread sender emails are lowercased to match.
+  const senderThreadGroups = useMemo(() => {
+    const groups = new Map<string, MailThread[]>();
+    for (const thread of store.threads) {
+      const key = senderGroupKey(thread.accountId, thread.senderEmail.toLowerCase());
+      const group = groups.get(key);
+      if (group) {
+        group.push(thread);
+      } else {
+        groups.set(key, [thread]);
+      }
+    }
+    return groups;
+  }, [store.threads]);
+
   const handleArchiveOld = (stat: SenderCleanupStat) => {
-    const candidates = archiveCandidatesFor(stat, store.threads);
+    const candidates = archiveCandidatesFrom(senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)));
     if (candidates.length === 0) {
       emitToast({ type: 'info', message: 'No read threads older than 30 days for this sender in the local cache.' });
       return;
@@ -105,8 +125,7 @@ export function CleanupPanel() {
     const busyKey = `${stat.accountId}:${stat.senderEmail}`;
     setUnsubscribeBusyKey(busyKey);
     try {
-      const senderThreads = store.threads
-        .filter(thread => thread.accountId === stat.accountId && thread.senderEmail.toLowerCase() === stat.senderEmail)
+      const senderThreads = [...(senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)) || [])]
         .sort((a, b) => Date.parse(b.lastMessageAt) - Date.parse(a.lastMessageAt))
         .slice(0, UNSUBSCRIBE_THREAD_PROBE_LIMIT);
 
@@ -204,7 +223,7 @@ export function CleanupPanel() {
                   No sender activity in the local cache yet.
                 </div>
               ) : accountStats.map(stat => {
-                const archiveCandidates = archiveCandidatesFor(stat, store.threads);
+                const archiveCandidates = archiveCandidatesFrom(senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)));
                 const suggestion = suggestCleanupAction(stat);
                 const busyKey = `${stat.accountId}:${stat.senderEmail}`;
 

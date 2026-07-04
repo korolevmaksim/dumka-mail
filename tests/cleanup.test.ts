@@ -129,7 +129,7 @@ describe('buildCleanupUnsubscribeItem', () => {
     const item = buildCleanupUnsubscribeItem({ stat: stat(), candidate: candidate() });
 
     expect(item).toMatchObject({
-      id: 'agent:cleanup:unsubscribe:news-example-com',
+      id: 'agent:cleanup:unsubscribe:me-example-com-news-example-com',
       accountId: 'me@example.com',
       threadId: 'thread-9',
       action: 'unsubscribe',

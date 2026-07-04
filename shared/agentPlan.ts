@@ -348,7 +348,9 @@ export function buildCleanupUnsubscribeItem({
   const sender = candidate.senderName || stat.senderName || stat.senderEmail;
 
   return {
-    id: itemId('cleanup', candidate.threadId, 'unsubscribe', stat.senderEmail),
+    // Account-qualified so identical sender emails in a unified multi-account
+    // view produce distinct queue items instead of colliding.
+    id: itemId('cleanup', candidate.threadId, 'unsubscribe', `${stat.accountId}:${stat.senderEmail}`),
     accountId: candidate.accountId,
     threadId: candidate.threadId,
     subject: `Unsubscribe from ${stat.senderEmail}`,
