@@ -1,4 +1,4 @@
-import type { MailActionLog, MailRuleAction, MailThread } from '../shared/types';
+import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
 
 export interface ReconcilerDeps {
   actionLog: {
@@ -178,4 +178,41 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       }
     }
   }
+}
+
+export const SEND_LIKE_KINDS: ReadonlySet<ActionKind> = new Set(['send', 'forwardThread', 'autoReply']);
+
+// A crash or quit can strand actions in 'running' — listPending never picks them
+// up again. Label-family Gmail calls are idempotent, so replaying is safe; a send
+// may already have left the outbox, so it is failed rather than risking a duplicate.
+export function recoverStaleRunningActions(deps: ReconcilerDeps): void {
+  const now = deps.now || (() => new Date());
+  for (const action of deps.actionLog.listRunning()) {
+    if (SEND_LIKE_KINDS.has(action.kind)) {
+      action.status = 'failed';
+      action.failureMessage = 'Interrupted while sending; not retried to avoid a duplicate send.';
+      action.completedAt = now().toISOString();
+    } else {
+      action.status = 'pending_sync';
+    }
+    deps.actionLog.save(action);
+  }
+}
+
+export function startBackgroundSyncWorker(deps: ReconcilerDeps, intervalMs = 15000): NodeJS.Timeout {
+  const logger = deps.logger || console;
+  recoverStaleRunningActions(deps);
+
+  let active = false;
+  return setInterval(async () => {
+    if (active) return;
+    active = true;
+    try {
+      await reconcilePendingActions(deps);
+    } catch (e) {
+      logger.error('[Sync Worker] Error in background sync loop:', e);
+    } finally {
+      active = false;
+    }
+  }, intervalMs);
 }

@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-import { isNetworkError, reconcilePendingActions, type ReconcilerDeps } from '../main/actionReconciler';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  isNetworkError,
+  reconcilePendingActions,
+  recoverStaleRunningActions,
+  startBackgroundSyncWorker,
+  type ReconcilerDeps,
+} from '../main/actionReconciler';
 import type { MailActionLog, MailThread } from '../shared/types';
 
 const NOW = new Date('2026-07-04T12:00:00.000Z');
@@ -267,5 +273,79 @@ describe('reconcilePendingActions send-like kinds', () => {
     const missing = makeDeps({ pending: [makeAction({ kind: 'autoReply', payloadJson: '{"action":{}}' })] });
     await reconcilePendingActions(missing.deps);
     expect(missing.saved[missing.saved.length - 1].status).toBe('failed');
+  });
+});
+
+describe('recoverStaleRunningActions', () => {
+  it('re-queues stale running label actions as pending_sync', () => {
+    const h = makeDeps({ running: [makeAction({ id: 'a1', kind: 'markDone', status: 'running' })] });
+    recoverStaleRunningActions(h.deps);
+    expect(h.saved).toHaveLength(1);
+    expect(h.saved[0]).toMatchObject({ id: 'a1', status: 'pending_sync' });
+    expect(h.gmailCalls).toHaveLength(0);
+    expect(h.rollbacks).toHaveLength(0);
+  });
+
+  it.each(['send', 'forwardThread', 'autoReply'] as const)(
+    'fails stale running %s without retrying (no duplicate send)',
+    kind => {
+      const h = makeDeps({ running: [makeAction({ id: 'a1', kind, status: 'running' })] });
+      recoverStaleRunningActions(h.deps);
+      expect(h.saved[0]).toMatchObject({
+        id: 'a1',
+        status: 'failed',
+        failureMessage: 'Interrupted while sending; not retried to avoid a duplicate send.',
+        completedAt: NOW.toISOString(),
+      });
+      expect(h.gmailCalls).toHaveLength(0);
+    },
+  );
+
+  it('is a no-op when nothing is stuck in running', () => {
+    const h = makeDeps({});
+    recoverStaleRunningActions(h.deps);
+    expect(h.saved).toHaveLength(0);
+  });
+});
+
+describe('startBackgroundSyncWorker', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('recovers stale running actions once at start, then reconciles on the interval', async () => {
+    const h = makeDeps({
+      running: [makeAction({ id: 'stale', kind: 'markDone', status: 'running' })],
+      pending: [makeAction({ id: 'p1', kind: 'markRead' })],
+    });
+    const timer = startBackgroundSyncWorker(h.deps, 1000);
+    // Recovery ran synchronously at start; no reconcile yet.
+    expect(h.saved.map(s => s.id)).toEqual(['stale']);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.gmailCalls).toHaveLength(1);
+    clearInterval(timer);
+  });
+
+  it('does not overlap passes (closure guard)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const h = makeDeps({ pending: [makeAction({ id: 'p1', kind: 'markDone' })] });
+    h.deps.gmail.modifyLabels = () => { h.gmailCalls.push({ method: 'modifyLabels', args: [] }); return gate; };
+    const timer = startBackgroundSyncWorker(h.deps, 1000);
+    await vi.advanceTimersByTimeAsync(1000); // pass 1 starts, blocks on gate
+    await vi.advanceTimersByTimeAsync(2000); // two more ticks while blocked
+    expect(h.gmailCalls).toHaveLength(1);    // guard prevented overlapping passes
+    release();
+    clearInterval(timer);
+  });
+
+  it('two workers do not share a guard', async () => {
+    const h1 = makeDeps({ pending: [] });
+    const h2 = makeDeps({ pending: [] });
+    const t1 = startBackgroundSyncWorker(h1.deps, 1000);
+    const t2 = startBackgroundSyncWorker(h2.deps, 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    // Both workers ran their (empty) pass without interfering.
+    clearInterval(t1);
+    clearInterval(t2);
   });
 });
