@@ -151,4 +151,14 @@ describe('isSafePublicHttpUrl', () => {
     expect(isSafePublicHttpUrl('http://[fe80::1]/unsub')).toBe(false);
     expect(isSafePublicHttpUrl('https://[2001:db8::1]/unsub')).toBe(true);
   });
+
+  it('classifies IPv4-mapped IPv6 literals by their embedded IPv4 address', () => {
+    // WHATWG URL normalizes [::ffff:127.0.0.1] to the hex form [::ffff:7f00:1].
+    expect(isSafePublicHttpUrl('http://[::ffff:127.0.0.1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[::ffff:7f00:1]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[::ffff:10.0.0.5]/unsub')).toBe(false);
+    expect(isSafePublicHttpUrl('http://[0:0:0:0:0:ffff:a9fe:a9fe]/unsub')).toBe(false); // 169.254.169.254
+    expect(isSafePublicHttpUrl('http://[::ffff:8.8.8.8]/unsub')).toBe(true);
+    expect(isSafePublicHttpUrl('http://[::ffff:808:808]/unsub')).toBe(true); // 8.8.8.8 hex form
+  });
 });

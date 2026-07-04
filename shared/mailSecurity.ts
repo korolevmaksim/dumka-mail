@@ -261,6 +261,25 @@ function isPrivateIpv4(host: string): boolean {
 function isPrivateIpv6(literal: string): boolean {
   const host = literal.split('%')[0].toLowerCase();
   if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true; // loopback
+
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d, or the ::ffff:hhhh:hhhh hex form WHATWG
+  // URL normalizes it to) inherits the embedded IPv4 address's classification.
+  // Unparseable mapped forms fail closed as private.
+  const mapped = host.match(/^(?:0:0:0:0:0|:):ffff:(.+)$/);
+  if (mapped) {
+    const tail = mapped[1];
+    if (tail.includes('.')) return isPrivateIpv4(tail);
+    const groups = tail.split(':');
+    if (groups.length === 2) {
+      const hi = Number.parseInt(groups[0], 16);
+      const lo = Number.parseInt(groups[1], 16);
+      if (Number.isFinite(hi) && Number.isFinite(lo)) {
+        return isPrivateIpv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+      }
+    }
+    return true;
+  }
+
   const firstGroup = (host.split(':')[0] || '').padStart(4, '0');
   if (firstGroup.startsWith('fc') || firstGroup.startsWith('fd')) return true; // fc00::/7 (unique local)
   const value = Number.parseInt(firstGroup, 16);

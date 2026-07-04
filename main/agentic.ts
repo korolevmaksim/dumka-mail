@@ -618,13 +618,15 @@ async function performUnsubscribe(accountId: string, method: UnsubscribeMethod):
 
   if (method.kind === 'mailto' && method.email) {
     // Cap header-derived content so a crafted List-Unsubscribe header cannot
-    // send arbitrary long text from the user's account.
+    // send arbitrary long text from the user's account. 120 matches the
+    // evidence-line display truncation: nothing is sent beyond what the user
+    // saw before approving.
     await GmailSyncService.sendDraft(accountId, {
       to: [{ name: '', email: method.email }],
       cc: [],
       bcc: [],
-      subject: (method.subject || 'unsubscribe').slice(0, 200),
-      bodyPlain: (method.body || 'unsubscribe').slice(0, 200),
+      subject: (method.subject || 'unsubscribe').slice(0, 120),
+      bodyPlain: (method.body || 'unsubscribe').slice(0, 120),
       bodyHtml: null,
       attachments: [],
     });
