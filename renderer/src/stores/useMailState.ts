@@ -11,6 +11,9 @@ import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import {
   collectFtsMatches,
   collectSemanticMatchesWithTimeout,
+  SEMANTIC_SEARCH_SETTLE_DELAY_MS,
+  shouldRunSemanticSearch,
+  waitUnlessCancelled,
   type ThreadSearchMatch,
 } from './mailSearchHelpers';
 import { filterVisibleThreadsCooperatively } from './mailThreadFilter';
@@ -511,7 +514,11 @@ export function useMailState({
           searchMs: Math.round(performance.now() - start)
         }));
 
-        if (textQuery) {
+        if (shouldRunSemanticSearch(textQuery)) {
+          // Fire semantic search only after the user has paused typing; a new
+          // searchQuery commit cancels this effect and skips the IPC call.
+          const settled = await waitUnlessCancelled(SEMANTIC_SEARCH_SETTLE_DELAY_MS, isCancelled);
+          if (!settled || cancelled) return;
           const semanticMatches = await collectSemanticMatchesWithTimeout(accountIds, textQuery, window.electronAPI.searchSemantic);
           if (cancelled) return;
           if (semanticMatches.length > 0) {

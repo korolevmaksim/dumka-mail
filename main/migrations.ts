@@ -256,6 +256,7 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_agent_drafts_thread ON agent_drafts(account_id, thread_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_message_security_thread ON message_security(account_id, thread_id);
     CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model ON mail_embeddings(account_id, model, indexed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model_received ON mail_embeddings(account_id, model, received_at DESC);
     CREATE INDEX IF NOT EXISTS idx_threads_account_last_message_at ON threads(account_id, last_message_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_account_thread_received_at ON messages(account_id, thread_id, received_at);
     CREATE INDEX IF NOT EXISTS idx_contacts_account_email ON contacts(account_id, email);
@@ -293,6 +294,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'drafts', column: 'send_at', definition: 'send_at TEXT' },
     { table: 'mail_action_log', column: 'scheduled_at', definition: 'scheduled_at TEXT' },
     { table: 'mail_action_log', column: 'payload_json', definition: 'payload_json TEXT' },
+    { table: 'mail_embeddings', column: 'vector_blob', definition: 'vector_blob BLOB' },
     { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
     { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },
     { table: 'calendar_events', column: 'source_message_id', definition: 'source_message_id TEXT' }

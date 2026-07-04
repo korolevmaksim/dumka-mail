@@ -57,6 +57,19 @@ export default defineConfig({
             }
           }
         }
+      },
+      {
+        entry: 'main/semanticSearchWorker.ts',
+        vite: {
+          build: {
+            sourcemap: true,
+            minify: false,
+            outDir: 'dist-electron/main',
+            rollupOptions: {
+              external: ['better-sqlite3']
+            }
+          }
+        }
       }
     ]),
     renderer()

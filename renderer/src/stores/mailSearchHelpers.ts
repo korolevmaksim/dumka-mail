@@ -10,10 +10,25 @@ type SearchSemantic = (accountId: string, query: string, limit?: number) => Prom
 
 const DEFAULT_SEMANTIC_UI_BUDGET_MS = 1200;
 
+export const SEMANTIC_SEARCH_MIN_QUERY_LENGTH = 3;
+export const SEMANTIC_SEARCH_SETTLE_DELAY_MS = 450;
+
 function timeoutAfter<T>(ms: number, fallback: T): Promise<T> {
   return new Promise(resolve => {
     globalThis.setTimeout(() => resolve(fallback), Math.max(1, ms));
   });
+}
+
+export function shouldRunSemanticSearch(textQuery: string): boolean {
+  return textQuery.trim().length >= SEMANTIC_SEARCH_MIN_QUERY_LENGTH;
+}
+
+export async function waitUnlessCancelled(ms: number, isCancelled: () => boolean): Promise<boolean> {
+  if (isCancelled()) return false;
+  await new Promise<void>(resolve => {
+    globalThis.setTimeout(resolve, Math.max(0, ms));
+  });
+  return !isCancelled();
 }
 
 export async function collectFtsMatches(

@@ -1,5 +1,10 @@
 import crypto from 'crypto';
 import { getDatabase } from './database';
+import {
+  decodeStoredEmbeddingVector,
+  decodeStoredEmbeddingVectorAsNumbers,
+  encodeEmbeddingVector,
+} from './embeddingVectorCodec';
 import { isValidEmail } from '../shared/compose';
 import {
   Account,
@@ -1139,6 +1144,16 @@ export interface MailEmbeddingRow {
   indexedAt: string;
 }
 
+export interface MailEmbeddingScanRow {
+  threadId: string;
+  messageId: string;
+  subject: string;
+  sender: string;
+  snippet: string;
+  receivedAt: string;
+  vector: Float32Array;
+}
+
 export interface MailEmbeddingModelStats {
   model: string;
   count: number;
@@ -1190,6 +1205,31 @@ export const MailEmbeddingsRepo = {
     return rows.map(mapMailEmbeddingRow);
   },
 
+  scanForAccountPage(accountId: string, model: string, limit = 1000, offset = 0): MailEmbeddingScanRow[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT thread_id, message_id, subject, sender, snippet, received_at, vector_blob, vector_json
+      FROM mail_embeddings
+      WHERE account_id = ? AND model = ?
+      ORDER BY received_at DESC
+      LIMIT ? OFFSET ?
+    `).all(
+      accountId,
+      model,
+      Math.max(1, Math.min(5000, limit)),
+      Math.max(0, offset)
+    ) as any[];
+    return rows.map(row => ({
+      threadId: row.thread_id,
+      messageId: row.message_id,
+      subject: row.subject,
+      sender: row.sender,
+      snippet: row.snippet,
+      receivedAt: row.received_at,
+      vector: decodeStoredEmbeddingVector(row.vector_blob, row.vector_json),
+    }));
+  },
+
   modelStats(accountId: string): MailEmbeddingModelStats[] {
     const db = getDatabase();
     const rows = db.prepare(`
@@ -1228,13 +1268,14 @@ export const MailEmbeddingsRepo = {
     const db = getDatabase();
     const insert = db.prepare(`
       INSERT INTO mail_embeddings (
-        account_id, message_id, thread_id, model, text_hash, vector_json,
+        account_id, message_id, thread_id, model, text_hash, vector_json, vector_blob,
         subject, sender, snippet, received_at, indexed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, message_id, model) DO UPDATE SET
         thread_id=excluded.thread_id,
         text_hash=excluded.text_hash,
         vector_json=excluded.vector_json,
+        vector_blob=excluded.vector_blob,
         subject=excluded.subject,
         sender=excluded.sender,
         snippet=excluded.snippet,
@@ -1249,7 +1290,8 @@ export const MailEmbeddingsRepo = {
           row.threadId,
           row.model,
           row.textHash,
-          JSON.stringify(row.vector),
+          '',
+          encodeEmbeddingVector(row.vector),
           row.subject,
           row.sender,
           row.snippet,
@@ -1258,6 +1300,53 @@ export const MailEmbeddingsRepo = {
         );
       }
     })();
+  },
+
+  // Converts legacy vector_json rows to vector_blob in place. Each call handles at
+  // most one batch inside its own transaction, so it is idempotent and crash-safe.
+  // Returns the number of rows visited; callers loop until it returns 0.
+  // Blanking vector_json makes the conversion one-way; see embeddingVectorCodec.ts
+  // for the rollback story (pre-blob builds need a manual reindex afterwards).
+  migrateVectorJsonBatch(batchSize = 200): number {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT rowid AS row_id, vector_json
+      FROM mail_embeddings
+      WHERE vector_blob IS NULL
+      LIMIT ?
+    `).all(Math.max(1, batchSize)) as Array<{ row_id: number; vector_json: string | null }>;
+    if (rows.length === 0) return 0;
+
+    // Re-check vector_blob IS NULL inside the UPDATE: the main process can
+    // re-embed one of the selected rows (or delete and reinsert, reusing its
+    // rowid) while this batch parses JSON, and a fresh blob must never be
+    // clobbered with the stale vector_json snapshot.
+    const writeBlob = db.prepare(`
+      UPDATE mail_embeddings SET vector_blob = ?, vector_json = '' WHERE rowid = ? AND vector_blob IS NULL
+    `);
+    const markUnconvertible = db.prepare(`
+      UPDATE mail_embeddings SET vector_blob = ? WHERE rowid = ? AND vector_blob IS NULL
+    `);
+    db.transaction(() => {
+      for (const row of rows) {
+        let blob: Buffer = Buffer.alloc(0);
+        try {
+          const parsed = JSON.parse(row.vector_json || '[]');
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            blob = encodeEmbeddingVector(parsed);
+          }
+        } catch {
+          // Unreadable vector_json: keep it for the JSON fallback path and only
+          // mark the row with an empty blob so the migration terminates.
+        }
+        if (blob.byteLength > 0) {
+          writeBlob.run(blob, row.row_id);
+        } else {
+          markUnconvertible.run(blob, row.row_id);
+        }
+      }
+    })();
+    return rows.length;
   }
 };
 
@@ -1268,7 +1357,7 @@ function mapMailEmbeddingRow(row: any): MailEmbeddingRow {
     threadId: row.thread_id,
     model: row.model,
     textHash: row.text_hash,
-    vector: JSON.parse(row.vector_json || '[]'),
+    vector: decodeStoredEmbeddingVectorAsNumbers(row.vector_blob, row.vector_json),
     subject: row.subject,
     sender: row.sender,
     snippet: row.snippet,

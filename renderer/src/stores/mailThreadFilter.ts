@@ -5,7 +5,7 @@ import { threadMatchesLabelSearchQuery } from '../../../shared/labels';
 import { matchesSearchDateRange, parseSearchQuery } from '../../../shared/search';
 import type { ThreadSearchMatch } from './mailSearchHelpers';
 
-export const DEFAULT_THREAD_FILTER_BATCH_SIZE = 100;
+export const DEFAULT_THREAD_FILTER_SLICE_MS = 8;
 
 const MAILBOX_SEARCH_ALIASES: Record<string, MailboxView> = {
   inbox: 'inbox',
@@ -62,7 +62,8 @@ export interface CooperativeThreadFilterInput {
   mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   getThreadCategory: (thread: MailThread) => string;
   yieldToUI?: () => Promise<void>;
-  batchSize?: number;
+  sliceMs?: number;
+  nowMs?: () => number;
   isCancelled?: () => boolean;
 }
 
@@ -78,7 +79,8 @@ export async function filterVisibleThreadsCooperatively({
   mutedLabelIdsByAccount,
   getThreadCategory,
   yieldToUI = defaultYieldToUI,
-  batchSize = DEFAULT_THREAD_FILTER_BATCH_SIZE,
+  sliceMs = DEFAULT_THREAD_FILTER_SLICE_MS,
+  nowMs = () => performance.now(),
   isCancelled = () => false,
 }: CooperativeThreadFilterInput): Promise<MailThread[] | null> {
   const trimmedQuery = searchQuery.trim();
@@ -87,7 +89,7 @@ export async function filterVisibleThreadsCooperatively({
   const textQuery = parsed ? parsed.textTerms.join(' ').trim() : '';
   const matchThreadIds = textQuery ? new Set(matches.map(match => match.threadId)) : null;
   const filtered: MailThread[] = [];
-  const safeBatchSize = Math.max(1, batchSize);
+  const safeSliceMs = Math.max(1, sliceMs);
   const matchesSearchThread = (thread: MailThread): boolean => {
     if (!parsed) return false;
     if (matchThreadIds && !matchThreadIds.has(thread.id)) return false;
@@ -114,6 +116,7 @@ export async function filterVisibleThreadsCooperatively({
       getThreadCategory(thread) === activeSplit;
   };
 
+  let sliceStartedAt = nowMs();
   for (let index = 0; index < threads.length; index += 1) {
     if (isCancelled()) return null;
 
@@ -122,9 +125,10 @@ export async function filterVisibleThreadsCooperatively({
       filtered.push(thread);
     }
 
-    if ((index + 1) % safeBatchSize === 0 && index + 1 < threads.length) {
+    if (index + 1 < threads.length && nowMs() - sliceStartedAt >= safeSliceMs) {
       await yieldToUI();
       if (isCancelled()) return null;
+      sliceStartedAt = nowMs();
     }
   }
 

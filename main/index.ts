@@ -32,6 +32,7 @@ import { parseStoredAppSettings, settingsAffectMCPRuntime, settingsAffectSearchB
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
+import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import { checkForAppUpdates, getAutoUpdateStatus, initializeAutoUpdates, installDownloadedAppUpdate } from './autoUpdate';
 import { shouldNotifyForMessage } from '../shared/mailSecurity';
 import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoReply';
@@ -661,6 +662,7 @@ app.whenReady().then(async () => {
 app.on('will-quit', () => {
   MCPManager.shutdown();
   databaseWorkerClient.shutdown();
+  semanticSearchWorkerClient.shutdown();
 });
 
 app.on('window-all-closed', () => {

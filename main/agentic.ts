@@ -20,7 +20,8 @@ import { buildThreadContext, htmlToText } from '../shared/aiContext';
 import { normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
 import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
-import { cosineSimilarity, normalizeEmbeddingText, stableTextHash } from '../shared/semantic';
+import { normalizeEmbeddingText, stableTextHash } from '../shared/semantic';
+import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import type {
   AgentDraftSuggestion,
   AgentRulesSettings,
@@ -76,12 +77,10 @@ function normalizeAgentRules(input: Partial<AgentRulesSettings> | undefined): Ag
 const activeDraftThreads = new Set<string>();
 const activeRecentEmbeddingAccounts = new Set<string>();
 const embeddingIndexJobs = new Map<string, EmbeddingIndexJobStatus>();
+const semanticSearchRequestIds = new Map<string, number>();
 const EMBEDDING_BATCH_SIZE = 16;
 const EMBEDDING_FULL_INDEX_LIMIT = 100000;
 const EMBEDDING_REINDEX_PAGE_SIZE = 256;
-const EMBEDDING_SEARCH_PAGE_SIZE = 500;
-const EMBEDDING_SEARCH_SCAN_LIMIT = 12000;
-const EMBEDDING_SEARCH_TIME_BUDGET_MS = 1200;
 const EMBEDDING_MAX_RETRY_ATTEMPTS = 3;
 
 interface EmbeddingCandidate {
@@ -390,12 +389,6 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
   }
 }
 
-function scheduleRecentMessageIndex(accountId: string, maxMessages = 40): void {
-  setTimeout(() => {
-    void indexRecentMessages(accountId, maxMessages);
-  }, 0);
-}
-
 async function getEmbeddingIndexStatusForAccount(accountId: string): Promise<EmbeddingIndexStatus> {
   const settings = readAgentSettings(accountId);
   const model = currentEmbeddingModel(settings.embeddings);
@@ -639,57 +632,41 @@ async function processThreadInternal(accountId: string, threadId: string): Promi
   await generateDraftForThread(thread, messages);
 }
 
-async function searchSemanticInternal(accountId: string, query: string, limit = 60): Promise<SemanticSearchResult[]> {
+type SemanticSearchScope = 'interactive' | 'briefing';
+
+async function searchSemanticInternal(
+  accountId: string,
+  query: string,
+  limit = 60,
+  scope: SemanticSearchScope = 'interactive'
+): Promise<SemanticSearchResult[]> {
   const trimmed = normalizeEmbeddingText(query, 1000);
   if (!trimmed) return [];
   const settings = readAgentSettings(accountId);
   if (!settings.semanticSearchEnabled) return [];
 
-  scheduleRecentMessageIndex(accountId, 80);
+  // Newer searches supersede older ones per account and caller scope; the worker
+  // aborts stale scans. Scoping keeps independent callers (the interactive search
+  // box vs the daily briefing) from silently cancelling each other's scans.
+  const requestKey = `${scope}:${accountId}`;
+  const requestId = (semanticSearchRequestIds.get(requestKey) || 0) + 1;
+  semanticSearchRequestIds.set(requestKey, requestId);
+
   const queryEmbedding = await createEmbeddings([trimmed], {
     settings: settings.embeddings,
     purpose: 'query',
   });
-  const requestedLimit = Math.max(1, Math.min(200, limit));
-  const scoredRows: Array<{ row: ReturnType<typeof MailEmbeddingsRepo.listForAccountPage>[number]; score: number }> = [];
-  const deadline = Date.now() + EMBEDDING_SEARCH_TIME_BUDGET_MS;
+  if (semanticSearchRequestIds.get(requestKey) !== requestId) return [];
 
-  for (let offset = 0; offset < EMBEDDING_SEARCH_SCAN_LIMIT; offset += EMBEDDING_SEARCH_PAGE_SIZE) {
-    if (Date.now() > deadline) break;
-    const rows = MailEmbeddingsRepo.listForAccountPage(
-      accountId,
-      queryEmbedding.model,
-      Math.min(EMBEDDING_SEARCH_PAGE_SIZE, EMBEDDING_SEARCH_SCAN_LIMIT - offset),
-      offset
-    );
-    if (rows.length === 0) break;
-
-    for (const row of rows) {
-      const score = cosineSimilarity(queryEmbedding.embeddings[0], row.vector);
-      if (score > 0.14) scoredRows.push({ row, score });
-    }
-
-    if (scoredRows.length > requestedLimit * 4) {
-      scoredRows.sort((a, b) => b.score - a.score);
-      scoredRows.splice(requestedLimit * 2);
-    }
-
-    if (rows.length < EMBEDDING_SEARCH_PAGE_SIZE) break;
-    await pauseBetweenEmbeddingBatches();
-  }
-
-  return scoredRows
-    .sort((a, b) => b.score - a.score)
-    .slice(0, requestedLimit)
-    .map(item => ({
-      threadId: item.row.threadId,
-      messageId: item.row.messageId,
-      score: Number(item.score.toFixed(4)),
-      subject: item.row.subject,
-      sender: item.row.sender,
-      snippet: item.row.snippet,
-      receivedAt: item.row.receivedAt,
-    }));
+  const { results, aborted } = await semanticSearchWorkerClient.search(
+    accountId,
+    queryEmbedding.model,
+    queryEmbedding.embeddings[0],
+    Math.max(1, Math.min(200, limit)),
+    requestId,
+    scope
+  );
+  return aborted ? [] : results;
 }
 
 export const AgenticService = {
@@ -783,7 +760,8 @@ export const AgenticService = {
         semanticSearchEnabled: runtimeSettings.semanticSearchEnabled,
         dailyBriefing: runtimeSettings.dailyBriefing,
       },
-      searchSemantic: searchSemanticInternal,
+      searchSemantic: (briefingAccountId, briefingQuery, briefingLimit) =>
+        searchSemanticInternal(briefingAccountId, briefingQuery, briefingLimit, 'briefing'),
     });
   },
 
