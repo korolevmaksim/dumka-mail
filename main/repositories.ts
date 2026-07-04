@@ -24,6 +24,7 @@ import {
   AIChatMessage,
   AgentDraftSuggestion,
   MessageSecurityInsight,
+  SenderCleanupStat,
 } from '../shared/types';
 
 const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
@@ -522,6 +523,90 @@ export const MessagesRepo = {
       LIMIT ?
     `).all(accountId, senderEmail, beforeReceivedAt, Math.max(1, Math.min(50, limit))) as any[];
     return rows.reverse().map(mapMessageRow);
+  },
+
+  senderCleanupStats(accountId: string): SenderCleanupStat[] {
+    const db = getDatabase();
+    // NOTE: attachment bytes MUST stay a pre-aggregated json_each JOIN.
+    // A correlated per-sender subquery measured 35.9 s vs 0.6 s for this form.
+    const rows = db.prepare(`
+      WITH sender_stats AS (
+        SELECT
+          account_id,
+          lower(sender_email) AS sender_key,
+          MAX(sender_name) AS sender_name,
+          COUNT(DISTINCT thread_id) AS thread_count,
+          COUNT(*) AS message_count,
+          SUM(is_unread) AS unread_count,
+          MAX(received_at) AS last_received_at,
+          SUM(CASE WHEN received_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days') THEN 1 ELSE 0 END) AS recent_30d,
+          MAX(CASE WHEN headers_json LIKE '%list-unsubscribe%' THEN 1 ELSE 0 END) AS has_unsubscribe
+        FROM messages
+        WHERE account_id = @accountId
+        GROUP BY account_id, sender_key
+      ),
+      att_bytes AS (
+        SELECT
+          m.account_id,
+          lower(m.sender_email) AS sender_key,
+          SUM(COALESCE(json_extract(att.value, '$.sizeBytes'), 0)) AS attachment_bytes
+        FROM messages m,
+          json_each(CASE WHEN json_valid(m.attachments_json) THEN m.attachments_json ELSE '[]' END) att
+        WHERE m.account_id = @accountId AND m.has_attachments = 1
+        GROUP BY m.account_id, sender_key
+      ),
+      security AS (
+        SELECT
+          m.account_id,
+          lower(m.sender_email) AS sender_key,
+          SUM(s.tracker_count) AS tracker_count,
+          MAX(CASE s.risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END) AS max_risk_rank
+        FROM messages m
+        JOIN message_security s ON s.account_id = m.account_id AND s.message_id = m.id
+        WHERE m.account_id = @accountId
+        GROUP BY m.account_id, sender_key
+      )
+      SELECT
+        st.account_id,
+        st.sender_key,
+        st.sender_name,
+        st.thread_count,
+        st.message_count,
+        st.unread_count,
+        st.last_received_at,
+        st.recent_30d,
+        st.has_unsubscribe,
+        COALESCE(sec.tracker_count, 0) AS tracker_count,
+        COALESCE(sec.max_risk_rank, 0) AS max_risk_rank,
+        COALESCE(ab.attachment_bytes, 0) AS attachment_bytes
+      FROM sender_stats st
+      LEFT JOIN att_bytes ab ON ab.account_id = st.account_id AND ab.sender_key = st.sender_key
+      LEFT JOIN security sec ON sec.account_id = st.account_id AND sec.sender_key = st.sender_key
+      ORDER BY st.recent_30d DESC, st.message_count DESC
+      LIMIT 200
+    `).all({ accountId }) as any[];
+
+    const riskForRank: Record<number, SenderCleanupStat['maxRiskLevel']> = {
+      3: 'high',
+      2: 'medium',
+      1: 'low',
+      0: null,
+    };
+
+    return rows.map(r => ({
+      accountId: r.account_id,
+      senderEmail: r.sender_key,
+      senderName: r.sender_name || r.sender_key,
+      threadCount: r.thread_count,
+      messageCount: r.message_count,
+      unreadCount: r.unread_count || 0,
+      lastReceivedAt: r.last_received_at,
+      recent30dCount: r.recent_30d || 0,
+      hasUnsubscribeHeader: r.has_unsubscribe === 1,
+      trackerCount: r.tracker_count || 0,
+      maxRiskLevel: riskForRank[r.max_risk_rank as number] ?? null,
+      attachmentBytes: r.attachment_bytes || 0,
+    }));
   }
 };
 
