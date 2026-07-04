@@ -49,7 +49,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const searchIndicator = getSearchIndicatorState({
     draftQuery,
     committedQuery: searchQuery,
-    searchStatus,
+    searchState: searchStatus,
   });
   
   const appendOperator = (op: string) => {
@@ -125,7 +125,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           {searchIndicator.kind !== 'none' && (
             <span
               aria-live="polite"
-              title={searchIndicator.label}
+              title={searchIndicator.title ?? searchIndicator.label}
               className="flex shrink-0 items-center gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]"
             >
               {searchIndicator.kind === 'searching' ? (
