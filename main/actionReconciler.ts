@@ -182,18 +182,61 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
 
 export const SEND_LIKE_KINDS: ReadonlySet<ActionKind> = new Set(['send', 'forwardThread', 'autoReply']);
 
+// The kinds reconcilePendingActions actually dispatches. Any other kind hits the
+// loop's fall-through and is marked 'completed' without doing any work, so recovery
+// must never re-queue them (that would fabricate success).
+export const REPLAYABLE_KINDS: ReadonlySet<ActionKind> = new Set([
+  'markDone',
+  'restoreInbox',
+  'markRead',
+  'markUnread',
+  'moveToTrash',
+  'restoreFromTrash',
+  'reportSpam',
+  'restoreFromSpam',
+  'muteThread',
+  'unmuteThread',
+  'applyLabel',
+  'removeLabel',
+  'moveToLabel',
+  'send',
+  'forwardThread',
+  'autoReply',
+]);
+
+// Stranded rows can be arbitrarily old (nothing ever cleaned them up); replaying
+// months-old destructive intent (e.g. moveToTrash — Gmail purges trash after 30
+// days) is worse than failing. Rows older than this are failed, not re-queued.
+export const RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 // A crash or quit can strand actions in 'running' — listPending never picks them
-// up again. Label-family Gmail calls are idempotent, so replaying is safe; a send
-// may already have left the outbox, so it is failed rather than risking a duplicate.
+// up again. Policy per kind:
+// - send-like: failed (a send may already have left the outbox; never risk a duplicate)
+// - replayable label-family, fresh: re-queued to pending_sync (Gmail label/trash
+//   calls are idempotent, so replaying is safe), clearing stale failure fields
+// - replayable label-family, older than RECOVERY_MAX_AGE_MS: failed (stale intent)
+// - everything else (no dispatch branch): failed — re-queueing would fabricate success
 export function recoverStaleRunningActions(deps: ReconcilerDeps): void {
   const now = deps.now || (() => new Date());
   for (const action of deps.actionLog.listRunning()) {
+    const ageMs = now().getTime() - new Date(action.createdAt).getTime();
     if (SEND_LIKE_KINDS.has(action.kind)) {
       action.status = 'failed';
       action.failureMessage = 'Interrupted while sending; not retried to avoid a duplicate send.';
       action.completedAt = now().toISOString();
+    } else if (!REPLAYABLE_KINDS.has(action.kind)) {
+      action.status = 'failed';
+      action.failureMessage = 'Interrupted before completion; not retried automatically.';
+      action.completedAt = now().toISOString();
+    } else if (!(ageMs <= RECOVERY_MAX_AGE_MS)) {
+      // NaN age (unparseable createdAt) fails closed rather than replaying.
+      action.status = 'failed';
+      action.failureMessage = 'Interrupted too long ago; not retried automatically.';
+      action.completedAt = now().toISOString();
     } else {
       action.status = 'pending_sync';
+      action.failureMessage = null;
+      action.completedAt = null;
     }
     deps.actionLog.save(action);
   }
@@ -201,7 +244,13 @@ export function recoverStaleRunningActions(deps: ReconcilerDeps): void {
 
 export function startBackgroundSyncWorker(deps: ReconcilerDeps, intervalMs = 15000): NodeJS.Timeout {
   const logger = deps.logger || console;
-  recoverStaleRunningActions(deps);
+  try {
+    recoverStaleRunningActions(deps);
+  } catch (e) {
+    // Recovery is best-effort; a repo error here must not abort app startup
+    // (this is called synchronously from Electron's whenReady handler).
+    logger.error('[Sync Worker] Stale-running recovery failed:', e);
+  }
 
   let active = false;
   return setInterval(async () => {

@@ -29,7 +29,7 @@ has zero tests:
 | D2 | Draft builders | `buildForwardDraftFromThread` / `buildAutoReplyDraftFromRule` STAY in `main/index.ts`; the reconciler receives them as injected functions | They are shared with the optimistic paths (`main/index.ts:1126,1156`) and pull in `escapeHtml`, `MessagesRepo`, auto-reply safety helpers — moving them would balloon scope |
 | D3 | Dependency injection | Plain `ReconcilerDeps` object of structural types (`Pick<typeof ActionLogRepo, ...>` etc.) — no vi.mock needed in tests | Matches repo style (plain object repos); structural `Pick` types cannot drift from the real objects |
 | D4 | Behavior scope | Extraction is behavior-preserving, with exactly ONE fix: stale-`running` recovery at worker start | The stranded-`running` bug is the data-integrity motivation for this task; everything else moves verbatim |
-| D5 | Stale-`running` policy | Non-send kinds → reset to `pending_sync` (Gmail label/trash ops are idempotent — safe to replay). Send-like kinds (`send`, `forwardThread`, `autoReply`) → mark `failed` with an explanatory `failureMessage` (never risk a double-send) | A crash after Gmail accepted a send but before the status write is indistinguishable from a crash before the call; retrying is the dangerous branch |
+| D5 | Stale-`running` policy | Send-like kinds (`send`, `forwardThread`, `autoReply`) → `failed` (`'Interrupted while sending; not retried to avoid a duplicate send.'`; never risk a double-send). Replayable label-family kinds (the `REPLAYABLE_KINDS` dispatch set minus send-like) created within `RECOVERY_MAX_AGE_MS` (7 days) → reset to `pending_sync` with `failureMessage`/`completedAt` nulled (Gmail label/trash ops are idempotent — safe to replay). Replayable kinds older than 7 days → `failed` (`'Interrupted too long ago; not retried automatically.'`; stale destructive intent, e.g. an ancient `moveToTrash`, must not replay). All other kinds (no dispatch branch — e.g. `unsubscribeSender`, `setReminder`, calendar CRUD) → `failed` (`'Interrupted before completion; not retried automatically.'`) | A crash after Gmail accepted a send but before the status write is indistinguishable from a crash before the call; retrying is the dangerous branch. Re-queueing a kind without a dispatch branch would hit the loop's fall-through and fabricate a `completed` record without doing any work |
 
 ## Design
 
@@ -76,12 +76,26 @@ export interface ReconcilerDeps {
   `applyLabel`/`moveToLabel`/`removeLabel` with a missing `labelId` make no remote call and
   complete silently (same quirk — pinned by a test).
 - `recoverStaleRunningActions(deps): void` — the one behavioral fix (D4/D5). For each
-  `deps.actionLog.listRunning()` row: send-like kind → `status: 'failed'`,
-  `failureMessage: 'Interrupted while sending; not retried to avoid a duplicate send.'`,
-  `completedAt: now()`; any other kind → `status: 'pending_sync'`. No remote calls, no rollback
-  (the optimistic local state is still the user's intent; the next pass replays it).
+  `deps.actionLog.listRunning()` row:
+  - send-like kind → `status: 'failed'`,
+    `failureMessage: 'Interrupted while sending; not retried to avoid a duplicate send.'`,
+    `completedAt: now()`;
+  - kind not in `REPLAYABLE_KINDS` (no dispatch branch in the replay loop) →
+    `status: 'failed'`, `failureMessage: 'Interrupted before completion; not retried automatically.'`,
+    `completedAt: now()` — re-queueing would fall through to a fabricated `completed`;
+  - replayable label-family kind older than `RECOVERY_MAX_AGE_MS` (7 days, by `createdAt`
+    vs `now()`) → `status: 'failed'`,
+    `failureMessage: 'Interrupted too long ago; not retried automatically.'`, `completedAt: now()`;
+  - replayable label-family kind within the window → `status: 'pending_sync'` with
+    `failureMessage: null` and `completedAt: null` (clears stale fields from an earlier
+    failed-offline life of the row).
+
+  No remote calls, no rollback (the optimistic local state is still the user's intent; the
+  next pass replays it). Exports: `SEND_LIKE_KINDS`, `REPLAYABLE_KINDS`, `RECOVERY_MAX_AGE_MS`.
 - `startBackgroundSyncWorker(deps, intervalMs = 15000): NodeJS.Timeout` — calls
-  `recoverStaleRunningActions(deps)` once, then `setInterval` with the existing
+  `recoverStaleRunningActions(deps)` once inside a try/catch (a repo error during recovery is
+  logged and must not abort app startup — the call runs synchronously from Electron's
+  `whenReady` handler), then `setInterval` with the existing
   `syncWorkerActive` overlap guard held as CLOSURE state inside this function (not module
   state — two workers in a test must not share a guard). `reconcilePendingActions` itself is
   guard-free. Returns the timer handle (enables clearing in tests; `main/index.ts` ignores it).
@@ -118,8 +132,12 @@ Pure DI fakes (in-memory arrays/objects; no `vi.mock`). Coverage:
 6. **Send branch** — draft present: `sendDraft` then `drafts.delete`; draft missing: permanent
    failure, no delete. `forwardThread` missing `forwardTo`/thread and `autoReply` missing
    `replyBody`/`threadId`: permanent failures.
-7. **Stale-`running` recovery** — label kind → `pending_sync`; each send-like kind → `failed`
-   with the exact message; empty list → no-op; recovery runs before the first pass.
+7. **Stale-`running` recovery** — fresh label kind → `pending_sync` (with stale
+   `failureMessage`/`completedAt` nulled); label kind older than 7 days → `failed` with the
+   too-long-ago message; each send-like kind → `failed` with the exact duplicate-send message;
+   non-replayable kind (`unsubscribeSender`, `setReminder`) → `failed` with the
+   interrupted-before-completion message; empty list → no-op; recovery runs before the first
+   pass; a throwing recovery is logged and does not prevent the interval passes.
 8. **Overlap guard** — a second pass started while one is in flight returns immediately
    (exercise via a gmail fake that blocks on a controllable promise).
 

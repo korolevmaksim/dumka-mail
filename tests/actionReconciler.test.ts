@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isNetworkError,
+  RECOVERY_MAX_AGE_MS,
   reconcilePendingActions,
   recoverStaleRunningActions,
   startBackgroundSyncWorker,
@@ -301,6 +302,66 @@ describe('recoverStaleRunningActions', () => {
     },
   );
 
+  it.each(['unsubscribeSender', 'setReminder'] as const)(
+    'fails stale running non-replayable %s instead of fabricating success',
+    kind => {
+      const h = makeDeps({ running: [makeAction({ id: 'a1', kind, status: 'running' })] });
+      recoverStaleRunningActions(h.deps);
+      expect(h.saved).toHaveLength(1);
+      expect(h.saved[0]).toMatchObject({
+        id: 'a1',
+        status: 'failed',
+        failureMessage: 'Interrupted before completion; not retried automatically.',
+        completedAt: NOW.toISOString(),
+      });
+      expect(h.gmailCalls).toHaveLength(0);
+    },
+  );
+
+  it('fails a label action stranded longer than the recovery window instead of replaying it', () => {
+    const eightDaysAgo = new Date(NOW.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    const h = makeDeps({
+      running: [makeAction({ id: 'a1', kind: 'moveToTrash', status: 'running', createdAt: eightDaysAgo })],
+    });
+    recoverStaleRunningActions(h.deps);
+    expect(h.saved[0]).toMatchObject({
+      id: 'a1',
+      status: 'failed',
+      failureMessage: 'Interrupted too long ago; not retried automatically.',
+      completedAt: NOW.toISOString(),
+    });
+    expect(h.gmailCalls).toHaveLength(0);
+  });
+
+  it('re-queues a label action stranded within the recovery window', () => {
+    const oneHourAgo = new Date(NOW.getTime() - 60 * 60 * 1000).toISOString();
+    const h = makeDeps({
+      running: [makeAction({ id: 'a1', kind: 'moveToTrash', status: 'running', createdAt: oneHourAgo })],
+    });
+    recoverStaleRunningActions(h.deps);
+    expect(h.saved[0]).toMatchObject({ id: 'a1', status: 'pending_sync' });
+  });
+
+  it('exposes a 7-day recovery window', () => {
+    expect(RECOVERY_MAX_AGE_MS).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('clears stale failure fields when re-queueing', () => {
+    const h = makeDeps({
+      running: [makeAction({
+        id: 'a1',
+        kind: 'markDone',
+        status: 'running',
+        failureMessage: 'earlier offline failure',
+        completedAt: '2026-07-04T10:00:00.000Z',
+      })],
+    });
+    recoverStaleRunningActions(h.deps);
+    expect(h.saved[0].status).toBe('pending_sync');
+    expect(h.saved[0].failureMessage).toBeNull();
+    expect(h.saved[0].completedAt).toBeNull();
+  });
+
   it('is a no-op when nothing is stuck in running', () => {
     const h = makeDeps({});
     recoverStaleRunningActions(h.deps);
@@ -339,13 +400,42 @@ describe('startBackgroundSyncWorker', () => {
   });
 
   it('two workers do not share a guard', async () => {
-    const h1 = makeDeps({ pending: [] });
-    const h2 = makeDeps({ pending: [] });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const h1 = makeDeps({ pending: [makeAction({ id: 'p1', kind: 'markDone' })] });
+    const h2 = makeDeps({ pending: [makeAction({ id: 'p2', kind: 'markRead' })] });
+    h1.deps.gmail.modifyLabels = (...args) => { h1.gmailCalls.push({ method: 'modifyLabels', args }); return gate; };
     const t1 = startBackgroundSyncWorker(h1.deps, 1000);
     const t2 = startBackgroundSyncWorker(h2.deps, 1000);
     await vi.advanceTimersByTimeAsync(1000);
-    // Both workers ran their (empty) pass without interfering.
+    // Worker 1 is blocked mid-pass on the gate...
+    expect(h1.gmailCalls).toHaveLength(1);
+    expect(h1.saved[h1.saved.length - 1].status).toBe('running');
+    // ...yet worker 2 completed its own pass — a module-level guard would have blocked it.
+    expect(h2.gmailCalls).toHaveLength(1);
+    expect(h2.saved[h2.saved.length - 1].status).toBe('completed');
+    release();
+    await vi.advanceTimersByTimeAsync(0); // let worker 1 finish its in-flight pass
     clearInterval(t1);
     clearInterval(t2);
+  });
+
+  it('survives a throwing recovery and still reconciles on the interval', async () => {
+    const h = makeDeps({ pending: [makeAction({ id: 'p1', kind: 'markRead' })] });
+    let listRunningCalls = 0;
+    h.deps.actionLog.listRunning = () => {
+      listRunningCalls += 1;
+      throw new Error('db locked');
+    };
+    const timer = startBackgroundSyncWorker(h.deps, 1000);
+    expect(listRunningCalls).toBe(1);
+    expect(h.deps.logger!.error).toHaveBeenCalledWith(
+      '[Sync Worker] Stale-running recovery failed:',
+      expect.any(Error),
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.gmailCalls).toHaveLength(1);
+    expect(h.saved[h.saved.length - 1].status).toBe('completed');
+    clearInterval(timer);
   });
 });
