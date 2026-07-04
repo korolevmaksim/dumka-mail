@@ -32,6 +32,7 @@ import {
   AIProviderDescriptor,
   MCPServerConfig,
   SemanticSearchOutcome,
+  SenderCleanupStat,
   ThreadAgentInsights
 } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
@@ -139,6 +140,7 @@ export interface IElectronAPI {
   deleteOtherEmbeddingIndexes: (accountId: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
   unsubscribeThread: (email: string, threadId: string, actionId?: string) => Promise<{ method: string; archived: boolean }>;
+  listCleanupSenderStats: (accountId: string) => Promise<SenderCleanupStat[]>;
   loadAIConfig: () => Promise<Record<string, string>>;
   saveAIConfig: (config: Record<string, string>) => Promise<void>;
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;

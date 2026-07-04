@@ -1,10 +1,11 @@
 import path from 'path';
 import { Worker } from 'worker_threads';
-import type { MailMessage, MailThread } from '../shared/types';
+import type { MailMessage, MailThread, SenderCleanupStat } from '../shared/types';
 
 type WorkerPayload =
   | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
-  | { type: 'saveThreads'; threads: MailThread[] };
+  | { type: 'saveThreads'; threads: MailThread[] }
+  | { type: 'senderCleanupStats'; accountId: string };
 
 type WorkerResponse =
   | { id: number; ok: true; result: unknown }
@@ -131,6 +132,10 @@ class DatabaseWorkerClient {
         await yieldToEventLoop();
       }
     }
+  }
+
+  senderCleanupStats(accountId: string): Promise<SenderCleanupStat[]> {
+    return this.request<SenderCleanupStat[]>({ type: 'senderCleanupStats', accountId });
   }
 
   shutdown() {

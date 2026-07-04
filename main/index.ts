@@ -1346,6 +1346,7 @@ registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, action
     throw err;
   }
 });
+registerSecureHandler('api:listCleanupSenderStats', (_, accountId: string) => databaseWorkerClient.senderCleanupStats(accountId));
 registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
 registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
 registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));

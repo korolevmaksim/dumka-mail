@@ -4,7 +4,8 @@ import type { MailMessage, MailThread } from '../shared/types';
 
 type WorkerRequest =
   | { id: number; type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
-  | { id: number; type: 'saveThreads'; threads: MailThread[] };
+  | { id: number; type: 'saveThreads'; threads: MailThread[] }
+  | { id: number; type: 'senderCleanupStats'; accountId: string };
 
 type WorkerResponse =
   | { id: number; ok: true; result: unknown }
@@ -45,6 +46,11 @@ parentPort?.on('message', (request: WorkerRequest) => {
       const newMessages = request.notifyOfNew ? findNewMessages(request.messages) : [];
       MessagesRepo.save(request.messages, { indexBodies: request.indexBodies });
       send({ id: request.id, ok: true, result: { newMessages } });
+      return;
+    }
+
+    if (request.type === 'senderCleanupStats') {
+      send({ id: request.id, ok: true, result: MessagesRepo.senderCleanupStats(request.accountId) });
       return;
     }
 

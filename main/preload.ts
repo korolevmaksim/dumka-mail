@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteOtherEmbeddingIndexes: (accountId: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> => ipcRenderer.invoke('api:deleteOtherEmbeddingIndexes', accountId),
   searchSemantic: (accountId: string, query: string, limit?: number) => ipcRenderer.invoke('api:searchSemantic', accountId, query, limit),
   unsubscribeThread: (email: string, threadId: string, actionId?: string) => ipcRenderer.invoke('api:unsubscribeThread', email, threadId, actionId),
+  listCleanupSenderStats: (accountId: string) => ipcRenderer.invoke('api:listCleanupSenderStats', accountId),
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),
   saveAIConfig: (config: Record<string, string>) => ipcRenderer.invoke('api:saveAIConfig', config),
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),
