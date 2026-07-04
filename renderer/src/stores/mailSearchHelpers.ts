@@ -1,4 +1,5 @@
-import type { SemanticSearchOutcome } from '../../../shared/types';
+import type { SemanticSearchCoverage, SemanticSearchOutcome } from '../../../shared/types';
+import type { RankedSourceList } from '../../../shared/searchRanking';
 
 export interface ThreadSearchMatch {
   threadId: string;
@@ -8,16 +9,10 @@ export interface ThreadSearchMatch {
 type SearchFTS = (accountId: string, query: string) => Promise<ThreadSearchMatch[]>;
 type SearchSemantic = (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
 
-const DEFAULT_SEMANTIC_UI_BUDGET_MS = 1200;
+const SEMANTIC_RESULT_LIMIT = 80;
 
 export const SEMANTIC_SEARCH_MIN_QUERY_LENGTH = 3;
 export const SEMANTIC_SEARCH_SETTLE_DELAY_MS = 450;
-
-function timeoutAfter<T>(ms: number, fallback: T): Promise<T> {
-  return new Promise(resolve => {
-    globalThis.setTimeout(() => resolve(fallback), Math.max(1, ms));
-  });
-}
 
 export function shouldRunSemanticSearch(textQuery: string): boolean {
   return textQuery.trim().length >= SEMANTIC_SEARCH_MIN_QUERY_LENGTH;
@@ -31,32 +26,87 @@ export async function waitUnlessCancelled(ms: number, isCancelled: () => boolean
   return !isCancelled();
 }
 
-export async function collectFtsMatches(
+export async function collectFtsMatchLists(
   accountIds: string[],
   textQuery: string,
   searchFTS: SearchFTS,
-): Promise<ThreadSearchMatch[]> {
-  const batches = await Promise.all(accountIds.map(accountId => searchFTS(accountId, textQuery)));
-  return batches.flat();
+): Promise<RankedSourceList[]> {
+  const batches = await Promise.all(accountIds.map(async accountId => ({
+    accountId,
+    source: 'fts' as const,
+    entries: await searchFTS(accountId, textQuery),
+  })));
+  return batches.filter(list => list.entries.length > 0);
 }
 
-export async function collectSemanticMatchesWithTimeout(
+export interface SemanticCollectResult {
+  lists: RankedSourceList[];
+  state: 'ok' | 'off' | 'error';
+  coverage: SemanticSearchCoverage | null;
+  errorMessage?: string;
+}
+
+export async function collectSemanticOutcomes(
   accountIds: string[],
   textQuery: string,
   searchSemantic: SearchSemantic,
-  timeoutMs = DEFAULT_SEMANTIC_UI_BUDGET_MS,
-): Promise<ThreadSearchMatch[]> {
-  const semanticMatches = Promise.all(
-    accountIds.map(accountId => searchSemantic(accountId, textQuery, 80))
-  )
-    .then(outcomes => outcomes.flatMap(outcome => outcome.results).map(match => ({
-      threadId: match.threadId,
-      messageId: match.messageId,
-    })))
-    .catch(() => []);
+): Promise<SemanticCollectResult> {
+  const outcomes = await Promise.all(accountIds.map(async accountId => {
+    try {
+      return { accountId, outcome: await searchSemantic(accountId, textQuery, SEMANTIC_RESULT_LIMIT) };
+    } catch (error) {
+      const outcome: SemanticSearchOutcome = {
+        status: 'error',
+        results: [],
+        coverage: null,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      };
+      return { accountId, outcome };
+    }
+  }));
 
-  return Promise.race([
-    semanticMatches,
-    timeoutAfter<ThreadSearchMatch[]>(timeoutMs, []),
-  ]);
+  const lists: RankedSourceList[] = [];
+  let coverage: SemanticSearchCoverage | null = null;
+  let sawOk = false;
+  let errorMessage: string | undefined;
+
+  for (const { accountId, outcome } of outcomes) {
+    if (outcome.status === 'ok') {
+      sawOk = true;
+      if (outcome.results.length > 0) {
+        lists.push({
+          accountId,
+          source: 'semantic',
+          entries: outcome.results.map(result => ({
+            threadId: result.threadId,
+            messageId: result.messageId,
+            score: result.score,
+          })),
+        });
+      }
+      if (outcome.coverage) {
+        coverage = coverage
+          ? {
+              scanned: coverage.scanned + outcome.coverage.scanned,
+              totalIndexed: coverage.totalIndexed + outcome.coverage.totalIndexed,
+            }
+          : outcome.coverage;
+      }
+    } else if (outcome.status === 'error' && errorMessage === undefined) {
+      errorMessage = outcome.errorMessage || 'Semantic search failed';
+    }
+  }
+
+  // Worst state wins for the indicator; superseded/disabled stay silent.
+  const state: SemanticCollectResult['state'] =
+    errorMessage !== undefined ? 'error' : sawOk ? 'ok' : 'off';
+
+  return { lists, state, coverage, errorMessage };
+}
+
+export function flattenMatchLists(lists: RankedSourceList[]): ThreadSearchMatch[] {
+  return lists.flatMap(list => list.entries.map(entry => ({
+    threadId: entry.threadId,
+    messageId: entry.messageId,
+  })));
 }
