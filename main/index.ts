@@ -20,6 +20,7 @@ import {
   AIConversationsRepo,
   ThreadsRepo,
 } from './database';
+import { isNetworkError, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
 import { GoogleWorkspaceService } from './googleWorkspace';
@@ -632,7 +633,14 @@ app.whenReady().then(async () => {
   initializeAutoUpdates(() => mainWindow);
   
   // Start background sync worker loop
-  startBackgroundSyncWorker();
+  startBackgroundSyncWorker({
+    actionLog: ActionLogRepo,
+    threads: ThreadsRepo,
+    drafts: DraftsRepo,
+    gmail: GmailSyncService,
+    buildForwardDraft: buildForwardDraftFromThread,
+    buildAutoReplyDraft: buildAutoReplyDraftFromRule,
+  });
   startReminderNotificationWorker();
   startBackgroundMailboxSyncWorker();
   startBackgroundAgenticWorker();
@@ -1354,173 +1362,10 @@ registerSecureHandler('api:stopFindInPage', (event, action) => {
 
 // === Helper Functions and Background Sync Worker ===
 
-function isNetworkError(err: any): boolean {
-  if (!err) return false;
-  const msg = String(err.message || err).toLowerCase();
-  const code = String(err.code || '').toUpperCase();
-  return (
-    msg.includes('fetch failed') ||
-    msg.includes('network') ||
-    msg.includes('offline') ||
-    msg.includes('timeout') ||
-    msg.includes('request failed') ||
-    msg.includes('failed to fetch') ||
-    msg.includes('dns') ||
-    code === 'ENOTFOUND' ||
-    code === 'EAI_AGAIN' ||
-    code === 'ECONNREFUSED' ||
-    code === 'ECONNRESET' ||
-    code === 'ETIMEDOUT' ||
-    code === 'EHOSTUNREACH' ||
-    code === 'ENETUNREACH'
-  );
-}
-
-let syncWorkerActive = false;
 let mailboxSyncWorkerActive = false;
 let agenticWorkerActive = false;
 let reminderWorkerActive = false;
 const activeBackfillAccounts = new Set<string>();
-
-function startBackgroundSyncWorker() {
-  setInterval(async () => {
-    if (syncWorkerActive) return;
-    syncWorkerActive = true;
-
-    try {
-      const pendingActions = ActionLogRepo.listPending();
-      if (pendingActions.length === 0) {
-        syncWorkerActive = false;
-        return;
-      }
-
-      console.log(`[Sync Worker] Found ${pendingActions.length} pending actions to sync`);
-
-      for (const action of pendingActions) {
-        action.status = 'running';
-        ActionLogRepo.save(action);
-
-        try {
-          const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-          if (action.kind === 'markDone') {
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [], ['INBOX']);
-          } else if (action.kind === 'restoreInbox') {
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['INBOX'], []);
-          } else if (action.kind === 'markRead') {
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [], ['UNREAD']);
-          } else if (action.kind === 'markUnread') {
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['UNREAD'], []);
-          } else if (action.kind === 'moveToTrash') {
-            await GmailSyncService.trashThread(action.accountId, action.threadId!);
-          } else if (action.kind === 'restoreFromTrash') {
-            await GmailSyncService.untrashThread(action.accountId, action.threadId!);
-          } else if (action.kind === 'reportSpam') {
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['SPAM'], ['INBOX']);
-          } else if (action.kind === 'restoreFromSpam') {
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['INBOX'], ['SPAM']);
-          } else if (action.kind === 'muteThread') {
-            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, labelId ? [labelId] : [], ['INBOX']);
-          } else if (action.kind === 'unmuteThread') {
-            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
-            await GmailSyncService.modifyLabels(action.accountId, action.threadId!, ['INBOX'], labelId ? [labelId] : []);
-          } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel') {
-            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
-            if (labelId) {
-              await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [labelId], action.kind === 'moveToLabel' ? ['INBOX'] : []);
-            }
-          } else if (action.kind === 'removeLabel') {
-            const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
-            if (labelId) await GmailSyncService.modifyLabels(action.accountId, action.threadId!, [], [labelId]);
-          } else if (action.kind === 'send') {
-            if (action.draftId) {
-              const draft = DraftsRepo.get(action.draftId);
-              if (!draft) throw new Error('Draft not found for pending send.');
-              await GmailSyncService.sendDraft(action.accountId, draft);
-              DraftsRepo.delete(action.draftId);
-            }
-          } else if (action.kind === 'forwardThread') {
-            const payloadAction = payload.action as MailRuleAction | undefined;
-            const forwardTo = payloadAction?.forwardTo;
-            const thread = action.threadId ? ThreadsRepo.get(action.accountId, action.threadId) : null;
-            if (!forwardTo) throw new Error('Forward rule action is missing forwardTo.');
-            if (!thread) throw new Error('Thread not found for pending forward rule.');
-            await GmailSyncService.sendDraft(
-              action.accountId,
-              buildForwardDraftFromThread(action.accountId, thread, forwardTo),
-            );
-          } else if (action.kind === 'autoReply') {
-            const payloadAction = payload.action as MailRuleAction | undefined;
-            const replyBody = payloadAction?.replyBody?.trim();
-            if (!replyBody) throw new Error('Auto-reply rule action is missing replyBody.');
-            if (!action.threadId) throw new Error('Thread id is missing for pending auto-reply rule.');
-            await GmailSyncService.sendDraft(
-              action.accountId,
-              buildAutoReplyDraftFromRule(action.accountId, action.threadId, replyBody),
-            );
-          }
-
-          action.status = 'completed';
-          action.completedAt = new Date().toISOString();
-          ActionLogRepo.save(action);
-          console.log(`[Sync Worker] Successfully synced action ${action.id} of kind ${action.kind}`);
-        } catch (err: any) {
-          if (isNetworkError(err)) {
-            console.log(`[Sync Worker] Network still offline, will retry action ${action.id} later:`, err.message);
-            action.status = 'pending_sync';
-            ActionLogRepo.save(action);
-            break;
-          } else {
-            console.error(`[Sync Worker] Action ${action.id} failed permanently:`, err);
-            action.status = 'failed';
-            action.completedAt = new Date().toISOString();
-            action.failureMessage = err.message;
-            ActionLogRepo.save(action);
-
-            // Roll back local DB changes for labels on permanent failure
-            if (action.threadId) {
-              if (action.kind === 'markDone') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
-              } else if (action.kind === 'restoreInbox') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, [], ['INBOX']);
-              } else if (action.kind === 'markRead') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['UNREAD'], []);
-              } else if (action.kind === 'markUnread') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, [], ['UNREAD']);
-              } else if (action.kind === 'moveToTrash') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], ['TRASH']);
-              } else if (action.kind === 'restoreFromTrash') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX']);
-              } else if (action.kind === 'reportSpam') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM']);
-              } else if (action.kind === 'restoreFromSpam') {
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['SPAM'], ['INBOX']);
-              } else if (action.kind === 'muteThread') {
-                const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof payload.labelId === 'string' ? [payload.labelId] : []);
-              } else if (action.kind === 'unmuteThread') {
-                const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-                ThreadsRepo.updateLabels(action.accountId, action.threadId, typeof payload.labelId === 'string' ? [payload.labelId] : [], ['INBOX']);
-              } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel' || action.kind === 'removeLabel') {
-                const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-                const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
-                if (labelId && action.kind === 'removeLabel') {
-                  ThreadsRepo.updateLabels(action.accountId, action.threadId, [labelId], []);
-                } else if (labelId) {
-                  ThreadsRepo.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error('[Sync Worker] Error in background sync loop:', e);
-    } finally {
-      syncWorkerActive = false;
-    }
-  }, 15000);
-}
 
 function startReminderNotificationWorker() {
   const run = async () => {

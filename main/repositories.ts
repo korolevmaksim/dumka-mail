@@ -1535,6 +1535,29 @@ export const ActionLogRepo = {
     }));
   },
 
+  listRunning(): MailActionLog[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM mail_action_log
+      WHERE status = 'running'
+      ORDER BY created_at ASC
+    `).all() as any[];
+
+    return rows.map(r => ({
+      id: r.id,
+      accountId: r.account_id,
+      threadId: r.thread_id,
+      draftId: r.draft_id,
+      kind: r.kind,
+      status: r.status,
+      createdAt: r.created_at,
+      scheduledAt: r.scheduled_at,
+      completedAt: r.completed_at,
+      failureMessage: r.failure_message,
+      payloadJson: r.payload_json
+    }));
+  },
+
   save(log: MailActionLog) {
     const db = getDatabase();
     db.prepare(`
