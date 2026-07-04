@@ -54,7 +54,7 @@ import { useDraftsState } from './useDraftsState';
 import { useAIState } from './useAIState';
 import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
-import type { MailSearchStatus } from './mailSearchStatus';
+import type { MailSearchState } from './mailSearchStatus';
 
 export const UNIFIED_ACCOUNT: Account = {
   id: 'unified',
@@ -368,7 +368,9 @@ interface AppStoreContextType {
   deleteCustomClassifierRule: (id: string) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
-  searchStatus: MailSearchStatus;
+  searchStatus: MailSearchState;
+  searchTopCount: number;
+  semanticMatchThreadIds: Set<string>;
   searchCoverage: string;
   googleIntegrationStatus: GoogleIntegrationStatus | null;
   labelDefinitions: MailLabelDefinition[];

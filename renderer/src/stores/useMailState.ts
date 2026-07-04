@@ -2,6 +2,7 @@ import { startTransition, useState, useEffect, useCallback, useRef } from 'react
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
+import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
 import { categorize } from '../../../shared/categoryEngine';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
@@ -9,15 +10,15 @@ import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import {
-  collectFtsMatches,
-  collectSemanticMatchesWithTimeout,
+  collectFtsMatchLists,
+  collectSemanticOutcomes,
+  flattenMatchLists,
   SEMANTIC_SEARCH_SETTLE_DELAY_MS,
   shouldRunSemanticSearch,
   waitUnlessCancelled,
-  type ThreadSearchMatch,
 } from './mailSearchHelpers';
 import { filterVisibleThreadsCooperatively } from './mailThreadFilter';
-import type { MailSearchStatus } from './mailSearchStatus';
+import { IDLE_SEARCH_STATE, type MailSearchState } from './mailSearchStatus';
 
 export interface SpeedProof {
   cacheReadyMs?: number;
@@ -85,8 +86,10 @@ export function useMailState({
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchCoverage] = useState<string>('Local Cache');
-  const [searchStatus, setSearchStatusState] = useState<MailSearchStatus>('idle');
+  const [searchStatus, setSearchStatusState] = useState<MailSearchState>(IDLE_SEARCH_STATE);
   const searchStatusResetRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+  const [searchTopCount, setSearchTopCount] = useState(0);
+  const [semanticMatchThreadIds, setSemanticMatchThreadIds] = useState<Set<string>>(new Set());
   
   const [actionLog, setActionLog] = useState<MailActionLog[]>([]);
   
@@ -97,16 +100,18 @@ export function useMailState({
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
 
-  const updateSearchStatus = useCallback((status: MailSearchStatus) => {
+  const updateSearchState = useCallback((state: MailSearchState) => {
     if (searchStatusResetRef.current !== null) {
       globalThis.clearTimeout(searchStatusResetRef.current);
       searchStatusResetRef.current = null;
     }
 
-    setSearchStatusState(status);
-    if (status === 'complete') {
+    setSearchStatusState(state);
+    // Auto-hide the Done chip only once the semantic pass has settled.
+    if (state.phase === 'complete' && state.semantic !== 'pending') {
       searchStatusResetRef.current = globalThis.setTimeout(() => {
-        setSearchStatusState(current => current === 'complete' ? 'idle' : current);
+        setSearchStatusState(current =>
+          current.phase === 'complete' ? { ...current, phase: 'idle' } : current);
         searchStatusResetRef.current = null;
       }, SEARCH_COMPLETE_VISIBLE_MS);
     }
@@ -454,7 +459,9 @@ export function useMailState({
   useEffect(() => {
     if (threads.length === 0 || !activeAccount) {
       publishVisibleThreads([]);
-      updateSearchStatus('idle');
+      updateSearchState(IDLE_SEARCH_STATE);
+      setSearchTopCount(0);
+      setSemanticMatchThreadIds(prev => (prev.size === 0 ? prev : new Set()));
       return;
     }
 
@@ -471,10 +478,14 @@ export function useMailState({
       const accountIds = activeAccount.id === 'unified'
         ? accounts.map(acc => acc.email)
         : [activeAccount.email];
+      const semanticDue = Boolean(textQuery) && shouldRunSemanticSearch(textQuery);
 
-      updateSearchStatus('searching');
+      updateSearchState({ phase: 'searching', semantic: semanticDue ? 'pending' : 'off', coverage: null });
 
-      const applyMatches = async (matches: ThreadSearchMatch[]): Promise<boolean> => {
+      const applyMatches = async (
+        matchLists: RankedSourceList[],
+      ): Promise<boolean> => {
+        const matches = flattenMatchLists(matchLists);
         const nextFiltered = await filterVisibleThreadsCooperatively({
           threads,
           searchQuery,
@@ -490,24 +501,35 @@ export function useMailState({
         });
 
         if (!nextFiltered || cancelled) return false;
-        publishVisibleThreads(nextFiltered);
+
+        if (textQuery) {
+          const fusion = fuseSearchMatches(matchLists);
+          const ordered = orderSearchResults(nextFiltered, fusion);
+          publishVisibleThreads(ordered.threads);
+          setSearchTopCount(ordered.topCount);
+          setSemanticMatchThreadIds(ordered.semanticOnlyThreadIds);
+        } else {
+          publishVisibleThreads(nextFiltered);
+          setSearchTopCount(0);
+          setSemanticMatchThreadIds(prev => (prev.size === 0 ? prev : new Set()));
+        }
         return true;
       };
 
       try {
-        let ftsMatches: ThreadSearchMatch[] = [];
+        let ftsLists: RankedSourceList[] = [];
         if (ftsQuery) {
           try {
-            ftsMatches = await collectFtsMatches(accountIds, ftsQuery, window.electronAPI.searchFTS);
+            ftsLists = await collectFtsMatchLists(accountIds, ftsQuery, window.electronAPI.searchFTS);
           } catch (err) {
             console.error('Local mail search failed:', err);
-            ftsMatches = [];
+            ftsLists = [];
           }
         }
 
         if (cancelled) return;
 
-        const didApplyFts = await applyMatches(ftsMatches);
+        const didApplyFts = await applyMatches(ftsLists);
         if (!didApplyFts || cancelled) return;
 
         setSpeedProof((prev: SpeedProof) => ({
@@ -515,23 +537,37 @@ export function useMailState({
           searchMs: Math.round(performance.now() - start)
         }));
 
-        if (shouldRunSemanticSearch(textQuery)) {
-          // Fire semantic search only after the user has paused typing; a new
-          // searchQuery commit cancels this effect and skips the IPC call.
-          const settled = await waitUnlessCancelled(SEMANTIC_SEARCH_SETTLE_DELAY_MS, isCancelled);
-          if (!settled || cancelled) return;
-          const semanticMatches = await collectSemanticMatchesWithTimeout(accountIds, textQuery, window.electronAPI.searchSemantic);
-          if (cancelled) return;
-          if (semanticMatches.length > 0) {
-            const didApplySemantic = await applyMatches([...ftsMatches, ...semanticMatches]);
-            if (!didApplySemantic || cancelled) return;
-          }
+        if (!semanticDue) {
+          if (!cancelled) updateSearchState({ phase: 'complete', semantic: 'off', coverage: null });
+          return;
         }
 
-        if (!cancelled) updateSearchStatus('complete');
+        updateSearchState({ phase: 'complete', semantic: 'pending', coverage: null });
+
+        // Fire semantic search only after the user has paused typing; a new
+        // searchQuery commit cancels this effect and skips the IPC call.
+        const settled = await waitUnlessCancelled(SEMANTIC_SEARCH_SETTLE_DELAY_MS, isCancelled);
+        if (!settled || cancelled) return;
+
+        // Apply-when-ready: no timeout race — late results still land unless
+        // this effect was cancelled by a newer query (main also supersedes).
+        const semantic = await collectSemanticOutcomes(accountIds, textQuery, window.electronAPI.searchSemantic);
+        if (cancelled) return;
+
+        if (semantic.lists.length > 0) {
+          const didApplySemantic = await applyMatches([...ftsLists, ...semantic.lists]);
+          if (!didApplySemantic || cancelled) return;
+        }
+
+        updateSearchState({
+          phase: 'complete',
+          semantic: semantic.state === 'ok' ? 'applied' : semantic.state === 'error' ? 'error' : 'off',
+          coverage: semantic.coverage,
+          errorMessage: semantic.errorMessage,
+        });
       } catch (err) {
         console.error('Mail search filtering failed:', err);
-        if (!cancelled) updateSearchStatus('complete');
+        if (!cancelled) updateSearchState({ phase: 'complete', semantic: 'off', coverage: null });
       }
     };
 
@@ -550,7 +586,7 @@ export function useMailState({
     labelDefinitions,
     mutedLabelIdsByAccount,
     publishVisibleThreads,
-    updateSearchStatus,
+    updateSearchState,
   ]);
 
   // Recalculate Split Tabs counters
@@ -1094,6 +1130,8 @@ export function useMailState({
     agentInsightsLoading,
     searchQuery,
     searchStatus,
+    searchTopCount,
+    semanticMatchThreadIds,
     searchCoverage,
     actionLog,
     syncHealth,
