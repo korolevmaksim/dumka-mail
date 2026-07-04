@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, ExternalLink, FileText, MailCheck, MailPlus, ShieldAlert, Tag, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ExternalLink, FileText, MailCheck, MailMinus, MailPlus, ShieldAlert, Tag, X } from 'lucide-react';
 import type { AgentPlanActionKind, AgentPlanItem, AgentPlanRiskLevel } from '../../../shared/types';
 import { useAppStore } from '../stores/AppStore';
 
@@ -9,6 +9,7 @@ const ACTION_LABEL: Record<AgentPlanActionKind, string> = {
   draftReply: 'Draft',
   setReminder: 'Remind',
   applyLabel: 'Label',
+  unsubscribe: 'Unsubscribe',
 };
 
 const ACTION_ICON = {
@@ -18,6 +19,7 @@ const ACTION_ICON = {
   draftReply: MailPlus,
   setReminder: FileText,
   applyLabel: Tag,
+  unsubscribe: MailMinus,
 };
 
 const RISK_TONE: Record<AgentPlanRiskLevel, string> = {
@@ -32,6 +34,7 @@ function actionDescription(item: AgentPlanItem): string {
   if (item.action === 'markRead') return 'Marks the thread read locally first, then syncs to Gmail.';
   if (item.action === 'setReminder') return 'Creates a local reminder for tomorrow morning.';
   if (item.action === 'applyLabel') return 'Applies the selected Gmail label.';
+  if (item.action === 'unsubscribe') return "Send the sender's unsubscribe request.";
   return 'Opens the source thread for manual review.';
 }
 

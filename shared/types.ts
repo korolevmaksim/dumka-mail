@@ -466,8 +466,8 @@ export interface MailTriagePlan {
   selectedThreadIds?: string[];
 }
 
-export type AgentPlanSource = 'triageQueue' | 'dailyBriefing' | 'command';
-export type AgentPlanActionKind = 'openThread' | 'markRead' | 'archive' | 'draftReply' | 'setReminder' | 'applyLabel';
+export type AgentPlanSource = 'triageQueue' | 'dailyBriefing' | 'command' | 'cleanup';
+export type AgentPlanActionKind = 'openThread' | 'markRead' | 'archive' | 'draftReply' | 'setReminder' | 'applyLabel' | 'unsubscribe';
 export type AgentPlanRiskLevel = 'low' | 'medium' | 'high';
 export type AgentPlanApprovalState = 'proposed' | 'approved' | 'applied' | 'rejected' | 'blocked';
 export type AgentPlanSelectionPolicy = 'autoSelected' | 'explicitOptIn' | 'manualOnly';
@@ -1019,6 +1019,27 @@ export interface ThreadAgentInsights {
   draftSuggestion: AgentDraftSuggestion | null;
   securityInsights: MessageSecurityInsight[];
   unsubscribeCandidate: UnsubscribeCandidate | null;
+}
+
+export interface SenderCleanupStat {
+  accountId: AccountID;
+  /** Lower-cased grouping key. */
+  senderEmail: string;
+  /** MAX(sender_name) representative display name. */
+  senderName: string;
+  threadCount: number;
+  messageCount: number;
+  unreadCount: number;
+  /** ISO-8601 timestamp of the newest cached message from this sender. */
+  lastReceivedAt: string;
+  recent30dCount: number;
+  hasUnsubscribeHeader: boolean;
+  /** SUM of tracker_count over message_security rows (analyzed messages only). */
+  trackerCount: number;
+  /** null = no message from this sender was ever analyzed. */
+  maxRiskLevel: 'low' | 'medium' | 'high' | null;
+  /** SUM of attachments_json sizeBytes across cached messages. */
+  attachmentBytes: number;
 }
 
 export interface SemanticSearchResult {
