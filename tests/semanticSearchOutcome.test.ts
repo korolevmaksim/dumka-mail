@@ -101,4 +101,11 @@ describe('searchSemantic outcome', () => {
     const outcome = await AgenticService.searchSemantic('a@x.com', 'contract');
     expect(outcome.status).toBe('superseded');
   });
+
+  it('surfaces a briefing skip warning when semantic search errors', async () => {
+    vi.mocked(SettingsRepo.get).mockReturnValue(ENABLED_SETTINGS);
+    mockedCreateEmbeddings.mockRejectedValue(new Error('401 invalid key'));
+    const briefing = await AgenticService.buildDailyBriefing('a@x.com');
+    expect(briefing.coverage.warnings).toContain('Semantic briefing search skipped: 401 invalid key');
+  });
 });

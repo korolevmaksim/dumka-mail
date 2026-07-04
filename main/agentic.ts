@@ -790,9 +790,15 @@ export const AgenticService = {
         semanticSearchEnabled: runtimeSettings.semanticSearchEnabled,
         dailyBriefing: runtimeSettings.dailyBriefing,
       },
-      searchSemantic: (briefingAccountId, briefingQuery, briefingLimit) =>
-        searchSemanticInternal(briefingAccountId, briefingQuery, briefingLimit, 'briefing')
-          .then(outcome => outcome.results),
+      searchSemantic: async (briefingAccountId, briefingQuery, briefingLimit) => {
+        const outcome = await searchSemanticInternal(briefingAccountId, briefingQuery, briefingLimit, 'briefing');
+        // 'disabled' and 'superseded' are normal silent outcomes; only provider
+        // failures must throw so the briefing records a skip warning.
+        if (outcome.status === 'error') {
+          throw new Error(outcome.errorMessage || 'Semantic search failed');
+        }
+        return outcome.results;
+      },
     });
   },
 

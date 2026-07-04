@@ -1,5 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const databaseMocks = vi.hoisted(() => ({
+  MessagesRepo: {
+    listForThread: vi.fn(() => []),
+    listRecentBySender: vi.fn(() => []),
+  },
+  MessageSecurityRepo: {
+    saveMany: vi.fn(),
+    listForThread: vi.fn(() => []),
+  },
+  ThreadsRepo: {
+    list: vi.fn(() => []),
+  },
+}));
+
+vi.mock('../main/database', () => databaseMocks);
+
 import { buildDailyBriefing, normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
+import { buildDailyBriefingForAccount } from '../main/dailyBriefingService';
 import type { MailMessage, MailThread, MessageSecurityInsight } from '../shared/types';
 
 const NOW = new Date('2026-07-03T09:00:00.000Z');
@@ -189,5 +207,26 @@ describe('daily briefing builder', () => {
     expect(briefing.items[0].semanticScore).toBe(0.42);
     expect(briefing.items[0].reason).toContain('Semantic match');
     expect(briefing.coverage.semanticSearchEnabled).toBe(true);
+  });
+
+  it('records a skip warning and still builds when semantic search fails', async () => {
+    databaseMocks.ThreadsRepo.list.mockReturnValue([thread()] as never[]);
+    databaseMocks.MessagesRepo.listForThread.mockReturnValue([message()] as never[]);
+    const searchSemantic = vi.fn().mockRejectedValue(new Error('embedding provider offline'));
+
+    const briefing = await buildDailyBriefingForAccount({
+      accountId: ACCOUNT,
+      options: { nowIso: NOW.toISOString() },
+      runtimeSettings: {
+        semanticSearchEnabled: true,
+        dailyBriefing: normalizeDailyBriefingSettings({ useSemanticSearch: true }),
+      },
+      searchSemantic,
+    });
+
+    expect(searchSemantic).toHaveBeenCalledTimes(1);
+    expect(briefing.coverage.warnings).toContain('Semantic briefing search skipped: embedding provider offline');
+    expect(briefing.items.length).toBeGreaterThan(0);
+    expect(briefing.coverage.semanticMatches).toBe(0);
   });
 });
