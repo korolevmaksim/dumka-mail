@@ -63,8 +63,9 @@ describe('suggestCleanupAction', () => {
     expect(suggestCleanupAction(stat({ threadCount: 9, messageCount: 10, unreadCount: 9, recent30dCount: 0 }))).toBe('none');
   });
 
-  it('never divides by zero for senders with no messages', () => {
-    expect(suggestCleanupAction(stat({ threadCount: 10, messageCount: 0, unreadCount: 0, recent30dCount: 0 }))).toBe('none');
+  it('treats zero-message senders as none instead of an Infinity unread ratio', () => {
+    // Unguarded division would yield 7 / 0 = Infinity >= 0.7 -> 'archiveOld'.
+    expect(suggestCleanupAction(stat({ threadCount: 10, messageCount: 0, unreadCount: 7, recent30dCount: 0 }))).toBe('none');
   });
 });
 
