@@ -16,6 +16,7 @@ import {
   getEmbeddingProviderConfig,
   normalizeEmbeddingSettings,
 } from '../../../../shared/embeddingProviders';
+import { normalizeAccountKey, pruneAccountKeyVariants, resolveAccountEntry } from './embeddingAccountKeys';
 
 type FormKeys = Record<string, string>;
 
@@ -46,33 +47,6 @@ function compactModelKey(model: string): string {
   return `${model.slice(0, 38)}...${model.slice(-22)}`;
 }
 
-/**
- * Finds a per-account entry under any key variant: the exact normalized key
- * first, then a trim().toLowerCase() scan of existing keys. Mirrors the
- * read-side semantics of readAgentSettings in main/agentic.ts so the panel
- * displays what the main process resolves.
- */
-function resolveAccountEntry<T>(map: Record<string, T> | undefined, accountKey: string): T | undefined {
-  if (!map || !accountKey) return undefined;
-  if (accountKey in map) return map[accountKey];
-  const variant = Object.keys(map).find(key => key.trim().toLowerCase() === accountKey);
-  return variant === undefined ? undefined : map[variant];
-}
-
-/**
- * Removes stale key variants that normalize to the same account key so
- * stored settings converge on the canonical (trimmed, lowercased) key.
- * Without this, main's insertion-order key scan would keep resolving an
- * old variant entry and shadow newly written canonical values.
- */
-function pruneAccountKeyVariants<T>(map: Record<string, T>, accountKey: string): void {
-  for (const key of Object.keys(map)) {
-    if (key !== accountKey && key.trim().toLowerCase() === accountKey) {
-      delete map[key];
-    }
-  }
-}
-
 export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: EmbeddingSettingsPanelProps) {
   const store = useAppStore();
   const [testStatus, setTestStatus] = useState<TestStatus>({ status: 'idle' });
@@ -87,7 +61,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   }, [store.activeAccount, store.accounts]);
 
   const activeAccountId = localAccountId || targetAccountId;
-  const accountKey = activeAccountId.trim().toLowerCase();
+  const accountKey = normalizeAccountKey(activeAccountId);
 
   useEffect(() => {
     if (targetAccountId && !localAccountId) {
