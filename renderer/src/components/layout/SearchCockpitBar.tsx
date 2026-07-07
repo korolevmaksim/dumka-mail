@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
-import { AlertTriangle, Check, LoaderCircle, Search, X } from 'lucide-react';
+import { AlertTriangle, Check, LoaderCircle, Search, Sparkles, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
 import { getSearchIndicatorState } from './searchIndicator';
@@ -43,6 +43,14 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
     setDraftQuery(value);
     commitController.schedule(value);
   }, [commitController]);
+
+  const askMailbox = useCallback(() => {
+    const query = draftQuery.trim();
+    if (!query || store.aiPanelLoading) return;
+    commitController.flush(draftQuery);
+    store.setAiPanelOpen(true);
+    void store.sendAIMessage(`Find mail matching: ${query}`);
+  }, [commitController, draftQuery, store]);
 
   const parsedSearch = parseSearchQuery(draftQuery);
   const showSearchIntelligence = draftQuery.trim().length > 0;
@@ -140,6 +148,18 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
               )}
               <span>{searchIndicator.label}</span>
             </span>
+          )}
+          {draftQuery.trim() && (
+            <button
+              type="button"
+              onClick={askMailbox}
+              disabled={store.aiPanelLoading}
+              title="Ask AI assistant to search the local mailbox"
+              className="flex shrink-0 items-center gap-1 rounded border border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--ai-accent)]/60 hover:bg-[var(--ai-accent)]/15 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Sparkles className="h-3 w-3 text-[var(--ai-accent)]" />
+              <span>Ask</span>
+            </button>
           )}
           {draftQuery && (
             <button onClick={() => commitSearchImmediately('')} className="cursor-pointer">

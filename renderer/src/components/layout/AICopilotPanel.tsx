@@ -3,10 +3,10 @@ import { useAppStore } from '../../stores/AppStore';
 import {
   Sparkles, Pin, PinOff, Plus, X, Send,
   ListChecks, Text, PenLine, Wand2, Languages,
-  SlidersHorizontal, ChevronDown, SunMedium,
+  SlidersHorizontal, ChevronDown, SunMedium, ExternalLink, MailSearch,
   type LucideIcon
 } from 'lucide-react';
-import { AI_ACTIONS, type AIProviderPreference } from '../../../../shared/types';
+import { AI_ACTIONS, type AIProviderPreference, type MailboxSearchSource, type MailThread } from '../../../../shared/types';
 import { ConfigurableAIProvider, getAIProviderConfig, isConfigurableAIProvider, resolveConfiguredProviderModel } from '../../../../shared/aiProviders';
 import { isAIProviderPreference } from '../../../../shared/aiProviderPreference';
 import { DailyBriefingCard } from '../DailyBriefingCard';
@@ -102,6 +102,98 @@ function AIMessageContent({ role, text }: { role: string; text: string }) {
   );
 }
 
+function formatSourceDate(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+}
+
+function sourceKindLabel(source: MailboxSearchSource): string {
+  if (source.sourceKind === 'hybrid') return 'Hybrid';
+  if (source.sourceKind === 'semantic') return 'Semantic';
+  return 'FTS';
+}
+
+function escapeCssValue(value: string): string {
+  const css = (globalThis as any).CSS;
+  if (css && typeof css.escape === 'function') return css.escape(value);
+  return value.replace(/["\\]/g, '\\$&');
+}
+
+function fallbackThreadFromSource(source: MailboxSearchSource): MailThread {
+  return {
+    id: source.threadId,
+    accountId: source.accountId,
+    subject: source.subject,
+    snippet: source.snippet,
+    lastMessageAt: source.lastMessageAt || source.receivedAt || new Date(0).toISOString(),
+    senderNames: [source.sender],
+    senderEmail: source.senderEmail || source.sender,
+    labelIds: [],
+    hasAttachments: false,
+    isUnread: false,
+  };
+}
+
+function MailboxSourceCards({
+  sources,
+  onOpen,
+}: {
+  sources: MailboxSearchSource[];
+  onOpen: (source: MailboxSearchSource) => void;
+}) {
+  if (sources.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      <div className="flex items-center gap-1 text-[calc(9px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+        <MailSearch className="h-3 w-3" />
+        Mailbox Sources
+      </div>
+      {sources.map(source => (
+        <button
+          key={`${source.accountId}:${source.threadId}:${source.messageId || ''}`}
+          type="button"
+          onClick={() => onOpen(source)}
+          title="Open source thread"
+          className="group flex w-full min-w-0 flex-col gap-1 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2 text-left transition-colors hover:border-[var(--ai-accent)]/50 hover:bg-[var(--ai-accent)]/8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[calc(8px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">
+              {sourceKindLabel(source)}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
+              {source.subject || '(No subject)'}
+            </span>
+            <ExternalLink className="h-3 w-3 shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--ai-accent)]" />
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+            <span className="truncate">{source.sender}</span>
+            {formatSourceDate(source.receivedAt || source.lastMessageAt) && (
+              <>
+                <span className="text-[var(--text-tertiary)]">·</span>
+                <span className="shrink-0">{formatSourceDate(source.receivedAt || source.lastMessageAt)}</span>
+              </>
+            )}
+          </div>
+          {source.snippet && (
+            <p className="line-clamp-2 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+              {source.snippet}
+            </p>
+          )}
+          {source.whyMatched && (
+            <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-tertiary)]">{source.whyMatched}</span>
+          )}
+        </button>
+      ))}
+      <p className="text-[calc(8px*var(--font-scale))] leading-snug text-[var(--text-tertiary)]">
+        Searched the local cache. The AI provider saw only these bounded snippets/results, not the full mailbox by default.
+      </p>
+    </div>
+  );
+}
+
 export function AICopilotPanel() {
   const store = useAppStore();
   const [aiInput, setAiInput] = useState('');
@@ -115,6 +207,17 @@ export function AICopilotPanel() {
   const aiResizeStartRef = useRef({ x: 0, y: 0, width: 340, height: 600 });
   const aiMessagesRef = useRef<HTMLDivElement>(null);
   const aiControlsRef = useRef<HTMLDivElement>(null);
+
+  const openMailboxSource = async (source: MailboxSearchSource) => {
+    const thread = store.threads.find(item => item.accountId === source.accountId && item.id === source.threadId)
+      || fallbackThreadFromSource(source);
+    await store.openThread(thread);
+    if (!source.messageId) return;
+    window.setTimeout(() => {
+      const target = document.querySelector(`[data-message-id="${escapeCssValue(source.messageId || '')}"]`);
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 120);
+  };
 
   // Handle dragging logic
   useEffect(() => {
@@ -516,6 +619,9 @@ export function AICopilotPanel() {
                 {m.role === 'user' ? 'You' : m.role === 'system' ? 'System' : 'Assistant'}
               </span>
               <AIMessageContent role={m.role} text={m.text} />
+              {m.role === 'assistant' && m.sources && m.sources.length > 0 && (
+                <MailboxSourceCards sources={m.sources} onOpen={(source) => void openMailboxSource(source)} />
+              )}
             </div>
           ))
         ) : null}

@@ -1,8 +1,9 @@
-import { AIChatMessage, AIEmbeddingSettings, AIProviderPreference } from '../shared/types';
+import { AIChatMessage, AIEmbeddingSettings, AIProviderPreference, MailboxSearchSource } from '../shared/types';
 import { getAIProviderConfig } from '../shared/aiProviders';
 import { buildEmbeddingIndexKey, getEmbeddingProviderConfig, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { MCPManager, MCPToolSchema } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
+import { MAILBOX_SEARCH_TOOL_NAME } from '../shared/mailboxSearchTool';
 
 export { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer };
 
@@ -14,11 +15,13 @@ export interface AIRequest {
   toolPolicy?: {
     enabled: boolean;
     allowedToolNames?: string[];
+    allowMailboxSearch?: boolean;
   };
 }
 
 export interface AIResponse {
   text: string;
+  sources?: MailboxSearchSource[];
 }
 
 export interface EmbeddingResponse {
@@ -79,10 +82,12 @@ function supportsGeminiThinkingLevel(model: string): boolean {
 }
 
 function resolveRequestTools(request: AIRequest): MCPToolSchema[] {
-  if (!request.toolPolicy?.enabled) return [];
+  if (!request.toolPolicy?.enabled && !request.toolPolicy?.allowMailboxSearch) return [];
 
-  const tools = MCPManager.getActiveTools();
-  const allowedNames = request.toolPolicy.allowedToolNames;
+  const tools = MCPManager.getActiveTools({
+    includeMailboxSearch: request.toolPolicy?.allowMailboxSearch === true,
+  }).filter(tool => request.toolPolicy?.enabled || tool.source === 'mailbox');
+  const allowedNames = request.toolPolicy?.allowedToolNames;
   if (!allowedNames || allowedNames.length === 0) return tools;
 
   const allowlist = new Set(allowedNames);
@@ -96,6 +101,30 @@ async function executeAllowedTool(name: string, args: any, activeTools: MCPToolS
   return await MCPManager.executeTool(name, args);
 }
 
+function collectMailboxSources(result: any): MailboxSearchSource[] {
+  if (!result || typeof result !== 'object' || !Array.isArray(result.sources)) return [];
+  return result.sources.filter((source: any): source is MailboxSearchSource =>
+    source &&
+    typeof source.accountId === 'string' &&
+    typeof source.threadId === 'string' &&
+    typeof source.subject === 'string' &&
+    typeof source.sender === 'string' &&
+    typeof source.snippet === 'string'
+  );
+}
+
+function rememberToolSources(name: string, result: any, sources: MailboxSearchSource[]): void {
+  if (name !== MAILBOX_SEARCH_TOOL_NAME) return;
+  const seen = new Set(sources.map(source => `${source.accountId}:${source.threadId}:${source.messageId || ''}`));
+  for (const source of collectMailboxSources(result)) {
+    const key = `${source.accountId}:${source.threadId}:${source.messageId || ''}`;
+    if (!seen.has(key)) {
+      sources.push(source);
+      seen.add(key);
+    }
+  }
+}
+
 export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
   const descriptor = await getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
@@ -104,9 +133,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
 
   const env = await loadAIConfigAsync();
   const promptText = buildPrompt(request);
-  const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output.';
+  const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output. When using the searchMailbox tool, treat it as read-only local-cache search, cite the returned snippets/sources, and do not claim you searched remote Gmail or the full mailbox beyond the local cache.';
   await MCPManager.whenReady();
   const activeTools = resolveRequestTools(request);
+  const mailboxSources: MailboxSearchSource[] = [];
   const resolvedModel = resolveRealModel(descriptor.model);
 
   switch (descriptor.preference) {
@@ -200,6 +230,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             let result;
             try {
               result = await executeAllowedTool(name, args, activeTools);
+              rememberToolSources(name, result, mailboxSources);
             } catch (err: any) {
               console.error(`[AI] Tool execution failed:`, err);
               result = { error: err.message || String(err) };
@@ -218,7 +249,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from OpenAI.');
-      return { text: finalResponseText };
+      return { text: finalResponseText, sources: mailboxSources };
     }
 
     case 'anthropic': {
@@ -291,6 +322,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
               let result;
               try {
                 result = await executeAllowedTool(name, input, activeTools);
+                rememberToolSources(name, result, mailboxSources);
               } catch (err: any) {
                 console.error(`[AI] Tool execution failed:`, err);
                 result = { error: err.message || String(err) };
@@ -310,7 +342,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from Anthropic.');
-      return { text: finalResponseText };
+      return { text: finalResponseText, sources: mailboxSources };
     }
 
     case 'gemini': {
@@ -385,6 +417,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
               let result;
               try {
                 result = await executeAllowedTool(name, args, activeTools);
+                rememberToolSources(name, result, mailboxSources);
               } catch (err: any) {
                 console.error(`[AI] Tool execution failed:`, err);
                 result = { error: err.message || String(err) };
@@ -405,7 +438,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from Gemini.');
-      return { text: finalResponseText };
+      return { text: finalResponseText, sources: mailboxSources };
     }
 
     case 'openRouter':
@@ -506,6 +539,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             let result;
             try {
               result = await executeAllowedTool(name, args, activeTools);
+              rememberToolSources(name, result, mailboxSources);
             } catch (err: any) {
               console.error(`[AI] Tool execution failed:`, err);
               result = { error: err.message || String(err) };
@@ -524,7 +558,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from Chat completions API.');
-      return { text: finalResponseText };
+      return { text: finalResponseText, sources: mailboxSources };
     }
 
     default:

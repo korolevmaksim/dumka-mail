@@ -28,6 +28,7 @@ import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychai
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { AgenticService } from './agentic';
 import { MCPManager } from './mcpManager';
+import { executeMailboxSearchTool } from './mailboxSearchTool';
 import { prepareAppSettingsForStorage, resolveAppSettingsSecrets, resolveMCPServerConfigSecrets } from './mcpSettings';
 import { parseStoredAppSettings, settingsAffectMCPRuntime, settingsAffectSearchBodyIndexing } from './settingsSideEffects';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
@@ -63,6 +64,8 @@ const DEFAULT_MAIL_RULES_SETTINGS: MailRulesSettings = {
   enabled: false,
   rules: []
 };
+
+MCPManager.setMailboxSearchExecutor(executeMailboxSearchTool);
 
 interface RestoredWindowState {
   width: number;

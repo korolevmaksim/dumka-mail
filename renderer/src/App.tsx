@@ -1404,7 +1404,9 @@ function AppContent() {
                             </div>
                           ) : (
                             store.openedThreadMessages.map((msg) => (
-                              <MessageCard key={msg.id} msg={msg} defaultLoadImages={store.settings.privacy.loadRemoteImages} />
+                              <div key={msg.id} data-message-id={msg.id}>
+                                <MessageCard msg={msg} defaultLoadImages={store.settings.privacy.loadRemoteImages} />
+                              </div>
                             ))
                           )}
                         </div>

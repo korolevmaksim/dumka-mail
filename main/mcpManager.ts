@@ -1,5 +1,6 @@
 import { AppSettings, MCPServerConfig } from '../shared/types';
 import { redactSecrets } from '../shared/aiContext';
+import { MAILBOX_SEARCH_TOOL_NAME } from '../shared/mailboxSearchTool';
 
 let McpClient: any;
 let StdioClientTransport: any;
@@ -37,11 +38,13 @@ export interface MCPToolSchema {
     properties?: Record<string, any>;
     required?: string[];
   };
-  source: 'search' | 'mcp';
+  source: 'search' | 'mcp' | 'mailbox';
   serverId?: string;
   serverName?: string;
   originalName?: string;
 }
+
+type MailboxSearchExecutor = (args: any) => Promise<any>;
 
 export interface MCPManagerOptions {
   requestTimeoutMs?: number;
@@ -117,6 +120,7 @@ export class MCPManagerImpl {
   private initializeQueue: Promise<void> = Promise.resolve();
   private requestTimeoutMs: number;
   private maxToolResultChars: number;
+  private mailboxSearchExecutor: MailboxSearchExecutor | null = null;
 
   constructor(options: MCPManagerOptions = {}) {
     this.requestTimeoutMs = validTimeoutMs(options.requestTimeoutMs, DEFAULT_MCP_REQUEST_TIMEOUT_MS);
@@ -131,6 +135,10 @@ export class MCPManagerImpl {
 
   async whenReady(): Promise<void> {
     await this.initializeQueue;
+  }
+
+  setMailboxSearchExecutor(executor: MailboxSearchExecutor | null): void {
+    this.mailboxSearchExecutor = executor;
   }
 
   private async initializeNow(settings: AppSettings) {
@@ -259,8 +267,34 @@ export class MCPManagerImpl {
     return { client, transport, tools };
   }
 
-  getActiveTools(): MCPToolSchema[] {
+  getActiveTools(options: { includeMailboxSearch?: boolean } = {}): MCPToolSchema[] {
     const list: MCPToolSchema[] = [];
+
+    if (options.includeMailboxSearch && this.mailboxSearchExecutor) {
+      list.push({
+        name: MAILBOX_SEARCH_TOOL_NAME,
+        description: 'Read-only search over the local Dumka Mail mailbox cache. Use for questions about the user\'s email. Returns bounded snippets and clickable source metadata; never archives, sends, drafts, labels, unsubscribes, or mutates Gmail.',
+        source: 'mailbox',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Concise mailbox keywords or phrase to search for. Prefer the smallest useful query, such as "Postmark review" or "contract with Acme".',
+            },
+            accountId: {
+              type: 'string',
+              description: 'Optional local account email to scope search. Omit or use "all" to search every locally cached account.',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of source results to return. The app clamps this to a small bounded limit.',
+            },
+          },
+          required: ['query'],
+        },
+      });
+    }
 
     // 1. Built-in search tools
     if (this.searchSettings?.tavily?.enabled && this.searchSettings.tavily.apiKey) {
@@ -317,6 +351,11 @@ export class MCPManagerImpl {
   }
 
   async executeTool(name: string, args: any): Promise<any> {
+    if (name === MAILBOX_SEARCH_TOOL_NAME) {
+      if (!this.mailboxSearchExecutor) throw new Error('Local mailbox search is not available.');
+      return await this.mailboxSearchExecutor(args);
+    }
+
     // 1. Check if it's a built-in search tool
     if (name === 'tavily_search') {
       const apiKey = this.searchSettings?.tavily?.apiKey;

@@ -420,6 +420,32 @@ export interface AIChatMessage {
   id: string;
   role: AIChatRole;
   text: string;
+  sources?: MailboxSearchSource[];
+}
+
+export type MailboxSearchSourceKind = 'fts' | 'semantic' | 'hybrid';
+
+export interface MailboxSearchSource {
+  accountId: AccountID;
+  threadId: ThreadID;
+  messageId?: MessageID | null;
+  subject: string;
+  sender: string;
+  senderEmail?: string | null;
+  receivedAt?: string | null;
+  lastMessageAt?: string | null;
+  snippet: string;
+  sourceKind: MailboxSearchSourceKind;
+  whyMatched?: string | null;
+  score?: number;
+}
+
+export interface MailboxSearchToolResult {
+  query: string;
+  accountId?: AccountID | null;
+  privacyNote: string;
+  sources: MailboxSearchSource[];
+  warnings?: string[];
 }
 
 export interface AIConversation {

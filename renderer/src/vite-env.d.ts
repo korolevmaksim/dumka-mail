@@ -18,6 +18,7 @@ import {
   MailActionLog,
   MailLabelDefinition,
   MailMessage,
+  MailboxSearchSource,
   MailThread,
   OnboardAccountResult,
   SyncState,
@@ -127,7 +128,7 @@ export interface IElectronAPI {
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;
-  completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string }>;
+  completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string; sources?: MailboxSearchSource[] }>;
   getThreadAgentInsights: (accountId: string, threadId: string) => Promise<ThreadAgentInsights>;
   buildDailyBriefing: (accountId: string, options?: DailyBriefingBuildOptions) => Promise<DailyBriefing>;
   dismissAgentDraftSuggestion: (id: string) => Promise<void>;

@@ -204,13 +204,15 @@ export function useAIState({
         userInstruction: text,
         toolPolicy: {
           enabled: settings.ai.externalToolsEnabled,
+          allowMailboxSearch: true,
         },
       }, aiProvider, aiModel || undefined);
 
       const assistantMsg: AIChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        text: response.text
+        text: response.text,
+        sources: response.sources,
       };
 
       const finalMsgs = [...newMsgs, assistantMsg];
@@ -534,10 +536,11 @@ export function useAIState({
         userInstruction: `${instruction}${notes}`,
         toolPolicy: {
           enabled: settings.ai.externalToolsEnabled,
+          allowMailboxSearch: true,
         },
       }, aiProvider, aiModel || undefined);
 
-      const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text };
+      const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text, sources: response.sources };
       const finalMsgs = [...pending, assistantMsg];
       setActiveAIMessages(finalMsgs);
       await persistAIConversation(conv, finalMsgs);

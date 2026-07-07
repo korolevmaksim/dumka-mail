@@ -186,6 +186,7 @@ export function runMigrations(db: Database.Database) {
         sequence_index INTEGER NOT NULL,
         role TEXT NOT NULL,
         text TEXT NOT NULL,
+        sources_json TEXT,
         FOREIGN KEY(conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
     );
 
@@ -297,7 +298,8 @@ export function runMigrations(db: Database.Database) {
     { table: 'mail_embeddings', column: 'vector_blob', definition: 'vector_blob BLOB' },
     { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
     { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },
-    { table: 'calendar_events', column: 'source_message_id', definition: 'source_message_id TEXT' }
+    { table: 'calendar_events', column: 'source_message_id', definition: 'source_message_id TEXT' },
+    { table: 'ai_messages', column: 'sources_json', definition: 'sources_json TEXT' }
   ];
 
   for (const { table, column, definition } of tablesInfo) {

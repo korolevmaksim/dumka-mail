@@ -22,6 +22,7 @@ import {
   SyncState,
   AIConversation,
   AIChatMessage,
+  MailboxSearchSource,
   AgentDraftSuggestion,
   MessageSecurityInsight,
   SenderCleanupStat,
@@ -40,6 +41,16 @@ function parseStringArray(value: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonArray<T = any>(value: string | null | undefined): T[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as T[] : [];
   } catch {
     return [];
   }
@@ -1035,6 +1046,45 @@ export const SearchRepo = {
     }));
   },
 
+  searchDetailed(accountId: string, ftsQuery: string, limit = 40): MailboxSearchSource[] {
+    const db = getDatabase();
+    if (!ftsQuery.trim()) return [];
+
+    const rows = db.prepare(`
+      SELECT
+        s.thread_id,
+        s.message_id,
+        COALESCE(m.subject, t.subject, '') AS subject,
+        COALESCE(NULLIF(m.sender_name, ''), m.sender_email, t.sender_email, '') AS sender,
+        m.sender_email AS sender_email,
+        COALESCE(m.received_at, t.last_message_at) AS received_at,
+        t.last_message_at AS last_message_at,
+        COALESCE(NULLIF(m.snippet, ''), t.snippet, '') AS snippet
+      FROM mail_search s
+      LEFT JOIN messages m
+        ON m.account_id = s.account_id AND m.id = s.message_id
+      LEFT JOIN threads t
+        ON t.account_id = s.account_id AND t.id = s.thread_id
+      WHERE s.account_id = ? AND mail_search MATCH ?
+      ORDER BY rank
+      LIMIT ?
+    `).all(accountId, ftsQuery, Math.max(1, Math.min(100, Math.floor(limit)))) as any[];
+
+    return rows.map(r => ({
+      accountId,
+      threadId: r.thread_id,
+      messageId: r.message_id,
+      subject: r.subject || '(No subject)',
+      sender: r.sender || 'Unknown sender',
+      senderEmail: r.sender_email || null,
+      receivedAt: r.received_at || null,
+      lastMessageAt: r.last_message_at || null,
+      snippet: r.snippet || '',
+      sourceKind: 'fts',
+      whyMatched: 'Matched by full-text search in the local cache.',
+    }));
+  },
+
   setBodyIndexEnabled(enabled: boolean, accountId?: string) {
     const db = getDatabase();
     const nextBodySql = enabled
@@ -1792,7 +1842,8 @@ export const AIConversationsRepo = {
     return rows.map(r => ({
       id: r.id,
       role: r.role as any,
-      text: r.text
+      text: r.text,
+      sources: parseJsonArray(r.sources_json)
     }));
   },
 
@@ -1811,13 +1862,13 @@ export const AIConversationsRepo = {
       db.prepare('DELETE FROM ai_messages WHERE conversation_id = ?').run(conv.id);
       
       const insertMsg = db.prepare(`
-        INSERT INTO ai_messages (id, conversation_id, sequence_index, role, text)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO ai_messages (id, conversation_id, sequence_index, role, text, sources_json)
+        VALUES (?, ?, ?, ?, ?, ?)
       `);
 
       for (let i = 0; i < messages.length; i++) {
         const m = messages[i];
-        insertMsg.run(m.id, conv.id, i, m.role, m.text);
+        insertMsg.run(m.id, conv.id, i, m.role, m.text, m.sources && m.sources.length > 0 ? JSON.stringify(m.sources) : null);
       }
     })();
   },
