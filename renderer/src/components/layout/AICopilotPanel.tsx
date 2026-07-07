@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import {
   Sparkles, Pin, PinOff, Plus, X, Send,
@@ -24,6 +24,7 @@ type ResizeMode = 'dockedWidth' | 'floatingSize' | null;
 const MIN_AI_WIDTH = 300;
 const MAX_AI_WIDTH = 560;
 const MIN_AI_HEIGHT = 420;
+const AI_INPUT_MAX_LINES = 4;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -207,6 +208,13 @@ export function AICopilotPanel() {
   const aiResizeStartRef = useRef({ x: 0, y: 0, width: 340, height: 600 });
   const aiMessagesRef = useRef<HTMLDivElement>(null);
   const aiControlsRef = useRef<HTMLDivElement>(null);
+  const aiInputRef = useRef<HTMLTextAreaElement>(null);
+
+  const submitAIInput = () => {
+    if (!aiInput.trim()) return;
+    store.sendAIMessage(aiInput);
+    setAiInput('');
+  };
 
   const openMailboxSource = async (source: MailboxSearchSource) => {
     const thread = store.threads.find(item => item.accountId === source.accountId && item.id === source.threadId)
@@ -294,6 +302,21 @@ export function AICopilotPanel() {
     if (!store.triagePlan) return;
     aiMessagesRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [store.triagePlan?.generatedAt]);
+
+  useLayoutEffect(() => {
+    const input = aiInputRef.current;
+    if (!input) return;
+
+    input.style.height = 'auto';
+    const styles = window.getComputedStyle(input);
+    const lineHeight = Number.parseFloat(styles.lineHeight) || 16;
+    const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0;
+    const maxHeight = lineHeight * AI_INPUT_MAX_LINES + paddingTop + paddingBottom;
+    const nextHeight = Math.min(input.scrollHeight, maxHeight);
+    input.style.height = `${nextHeight}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [aiInput]);
 
   const [modelList, setModelList] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -638,22 +661,26 @@ export function AICopilotPanel() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (!aiInput.trim()) return;
-            store.sendAIMessage(aiInput);
-            setAiInput('');
+            submitAIInput();
           }}
-          className="flex items-center gap-1.5"
+          className="flex items-end gap-1.5"
         >
-          <input
-            type="text"
+          <textarea
+            ref={aiInputRef}
+            rows={1}
             placeholder="Ask assistant…"
-            className="flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none focus:outline focus:outline-2 focus:outline-[var(--ai-accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]"
+            className="min-h-[34px] flex-1 resize-none bg-[var(--panel-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none focus:outline focus:outline-2 focus:outline-[var(--ai-accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] leading-[1.35] text-[var(--text-primary)]"
             value={aiInput}
             onChange={(e) => setAiInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              submitAIInput();
+            }}
           />
           <button 
             type="submit" 
-            className="p-1.5 bg-[var(--ai-accent)] text-white rounded cursor-pointer hover:bg-[var(--ai-accent)]/95"
+            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center bg-[var(--ai-accent)] text-white rounded cursor-pointer hover:bg-[var(--ai-accent)]/95"
           >
             <Send className="w-4 h-4" />
           </button>
