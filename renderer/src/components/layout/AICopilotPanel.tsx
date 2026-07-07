@@ -25,9 +25,21 @@ const MIN_AI_WIDTH = 300;
 const MAX_AI_WIDTH = 560;
 const MIN_AI_HEIGHT = 420;
 const AI_INPUT_MAX_LINES = 4;
+const AI_PANEL_WIDTH_SETTING_KEY = 'aiAssistantPanelWidth';
+const DEFAULT_AI_PANEL_SIZE = { width: 340, height: 600 };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function maxAIPanelWidth(): number {
+  return Math.min(MAX_AI_WIDTH, window.innerWidth - 72);
+}
+
+function saveAIPanelWidth(width: number) {
+  window.electronAPI.setSetting(AI_PANEL_WIDTH_SETTING_KEY, String(Math.round(width))).catch(err => {
+    console.error('Failed to save AI assistant panel width to SQLite:', err);
+  });
 }
 
 const THINKING_CONTROLS: Partial<Record<ConfigurableAIProvider, {
@@ -200,12 +212,12 @@ export function AICopilotPanel() {
   const [aiInput, setAiInput] = useState('');
   const [isAiUndocked, setIsAiUndocked] = useState(false);
   const [aiPosition, setAiPosition] = useState({ x: 96, y: 60 });
-  const [aiPanelSize, setAiPanelSize] = useState({ width: 340, height: 600 });
+  const [aiPanelSize, setAiPanelSize] = useState(DEFAULT_AI_PANEL_SIZE);
   const [isAiDragging, setIsAiDragging] = useState(false);
   const [resizeMode, setResizeMode] = useState<ResizeMode>(null);
   const [aiControlsOpen, setAiControlsOpen] = useState(false);
   const aiDragStartRef = useRef({ x: 0, y: 0 });
-  const aiResizeStartRef = useRef({ x: 0, y: 0, width: 340, height: 600 });
+  const aiResizeStartRef = useRef({ x: 0, y: 0, ...DEFAULT_AI_PANEL_SIZE });
   const aiMessagesRef = useRef<HTMLDivElement>(null);
   const aiControlsRef = useRef<HTMLDivElement>(null);
   const aiInputRef = useRef<HTMLTextAreaElement>(null);
@@ -226,6 +238,25 @@ export function AICopilotPanel() {
       target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }, 120);
   };
+
+  useEffect(() => {
+    let active = true;
+    window.electronAPI.getSetting(AI_PANEL_WIDTH_SETTING_KEY).then(rawWidth => {
+      if (!active || rawWidth === null) return;
+      const parsedWidth = Number.parseInt(rawWidth, 10);
+      if (!Number.isFinite(parsedWidth)) return;
+      setAiPanelSize(prev => ({
+        ...prev,
+        width: clamp(parsedWidth, MIN_AI_WIDTH, maxAIPanelWidth()),
+      }));
+    }).catch(err => {
+      console.error('Failed to load AI assistant panel width from SQLite:', err);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Handle dragging logic
   useEffect(() => {
@@ -262,7 +293,7 @@ export function AICopilotPanel() {
     const handleMouseMove = (e: globalThis.MouseEvent) => {
       const dx = e.clientX - aiResizeStartRef.current.x;
       const dy = e.clientY - aiResizeStartRef.current.y;
-      const maxWidth = Math.min(MAX_AI_WIDTH, window.innerWidth - 72);
+      const maxWidth = maxAIPanelWidth();
 
       if (resizeMode === 'dockedWidth') {
         setAiPanelSize(prev => ({
@@ -277,7 +308,21 @@ export function AICopilotPanel() {
       }
     };
 
-    const handleMouseUp = () => setResizeMode(null);
+    const handleMouseUp = (e: globalThis.MouseEvent) => {
+      const dx = e.clientX - aiResizeStartRef.current.x;
+      const dy = e.clientY - aiResizeStartRef.current.y;
+      const nextWidth = clamp(aiResizeStartRef.current.width + dx, MIN_AI_WIDTH, maxAIPanelWidth());
+      if (resizeMode === 'dockedWidth') {
+        setAiPanelSize(prev => ({ ...prev, width: nextWidth }));
+      } else {
+        setAiPanelSize({
+          width: nextWidth,
+          height: clamp(aiResizeStartRef.current.height + dy, MIN_AI_HEIGHT, window.innerHeight - 40),
+        });
+      }
+      saveAIPanelWidth(nextWidth);
+      setResizeMode(null);
+    };
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
