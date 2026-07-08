@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { MailMessage, MessageSecurityInsight } from '../shared/types';
+import type { MailMessage, MailThread, MessageSecurityInsight } from '../shared/types';
 
 const require = createRequire(import.meta.url);
 
@@ -55,6 +55,22 @@ function message(partial: Partial<MailMessage> = {}): MailMessage {
   };
 }
 
+function thread(partial: Partial<MailThread> = {}): MailThread {
+  return {
+    id: partial.id || 'thread-1',
+    accountId: partial.accountId || 'me@example.com',
+    subject: partial.subject || 'Weekly digest',
+    snippet: partial.snippet || 'Digest content',
+    lastMessageAt: partial.lastMessageAt || isoDaysAgo(45),
+    senderNames: partial.senderNames || ['Example News'],
+    senderEmail: partial.senderEmail || 'news@example.com',
+    labelIds: partial.labelIds || ['INBOX'],
+    hasAttachments: partial.hasAttachments ?? false,
+    isUnread: partial.isUnread ?? false,
+    reminderAt: partial.reminderAt ?? null,
+  };
+}
+
 function insight(partial: Partial<MessageSecurityInsight> = {}): MessageSecurityInsight {
   return {
     accountId: partial.accountId || 'me@example.com',
@@ -97,12 +113,23 @@ async function withIsolatedDatabase<T>(
 
 describe('MessagesRepo.senderCleanupStats', () => {
   repositoryIt('groups senders case-insensitively with counts, unread and the 30-day window', async () => {
-    await withIsolatedDatabase(async ({ MessagesRepo }) => {
+    await withIsolatedDatabase(async ({ MessagesRepo, ThreadsRepo }) => {
       const newest = isoDaysAgo(5);
       MessagesRepo.save([
-        message({ senderEmail: 'News@Example.COM', threadId: 't1', isUnread: true, receivedAt: newest }),
+        message({
+          senderEmail: 'News@Example.COM',
+          threadId: 't1',
+          isUnread: true,
+          receivedAt: newest,
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
         message({ senderEmail: 'news@example.com', threadId: 't2', isUnread: false, receivedAt: isoDaysAgo(45) }),
         message({ senderEmail: 'other@example.com', senderName: 'Other', threadId: 't3', receivedAt: isoDaysAgo(1) }),
+      ]);
+      // other@ has no unsubscribe and no old INBOX thread → filtered out
+      ThreadsRepo.save([
+        thread({ id: 't1', senderEmail: 'News@Example.COM', lastMessageAt: newest, isUnread: true }),
+        thread({ id: 't2', senderEmail: 'news@example.com', lastMessageAt: isoDaysAgo(45), isUnread: false }),
       ]);
 
       const stats = MessagesRepo.senderCleanupStats('me@example.com');
@@ -116,12 +143,14 @@ describe('MessagesRepo.senderCleanupStats', () => {
         messageCount: 2,
         unreadCount: 1,
         recent30dCount: 1,
-        hasUnsubscribeHeader: false,
+        hasUnsubscribeHeader: true,
+        archiveableOldCount: 1,
         trackerCount: 0,
         maxRiskLevel: null,
         attachmentBytes: 0,
       });
       expect(news?.lastReceivedAt).toBe(newest);
+      expect(stats.find(s => s.senderEmail === 'other@example.com')).toBeUndefined();
     });
   });
 
@@ -137,15 +166,56 @@ describe('MessagesRepo.senderCleanupStats', () => {
 
       const stats = MessagesRepo.senderCleanupStats('me@example.com');
       expect(stats.find(s => s.senderEmail === 'promo@example.com')?.hasUnsubscribeHeader).toBe(true);
-      expect(stats.find(s => s.senderEmail === 'human@example.com')?.hasUnsubscribeHeader).toBe(false);
+      // No archiveable threads and no unsubscribe → excluded entirely
+      expect(stats.find(s => s.senderEmail === 'human@example.com')).toBeUndefined();
+    });
+  });
+
+  repositoryIt('counts archiveable old INBOX threads including unread and excludes pure volume noise', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo, ThreadsRepo }) => {
+      MessagesRepo.save([
+        message({ senderEmail: 'noise@example.com', threadId: 'noise-1', receivedAt: isoDaysAgo(2), isUnread: true }),
+        message({ senderEmail: 'old@example.com', threadId: 'old-1', receivedAt: isoDaysAgo(60), isUnread: true }),
+        message({ senderEmail: 'old@example.com', threadId: 'old-2', receivedAt: isoDaysAgo(40), isUnread: false }),
+        message({ senderEmail: 'old@example.com', threadId: 'old-recent', receivedAt: isoDaysAgo(3), isUnread: true }),
+      ]);
+      ThreadsRepo.save([
+        thread({ id: 'noise-1', senderEmail: 'noise@example.com', lastMessageAt: isoDaysAgo(2), isUnread: true }),
+        thread({ id: 'old-1', senderEmail: 'old@example.com', lastMessageAt: isoDaysAgo(60), isUnread: true }),
+        thread({ id: 'old-2', senderEmail: 'old@example.com', lastMessageAt: isoDaysAgo(40), isUnread: false }),
+        thread({ id: 'old-recent', senderEmail: 'old@example.com', lastMessageAt: isoDaysAgo(3), isUnread: true }),
+        thread({
+          id: 'old-archived',
+          senderEmail: 'old@example.com',
+          lastMessageAt: isoDaysAgo(90),
+          labelIds: ['CATEGORY_UPDATES'],
+        }),
+      ]);
+
+      const stats = MessagesRepo.senderCleanupStats('me@example.com');
+      expect(stats.find(s => s.senderEmail === 'noise@example.com')).toBeUndefined();
+      expect(stats.find(s => s.senderEmail === 'old@example.com')).toMatchObject({
+        archiveableOldCount: 2,
+        hasUnsubscribeHeader: false,
+      });
     });
   });
 
   repositoryIt('sums tracker counts and takes the max risk level from message_security', async () => {
     await withIsolatedDatabase(async ({ MessagesRepo, MessageSecurityRepo }) => {
       MessagesRepo.save([
-        message({ id: 'sec-1', threadId: 'sec-thread', senderEmail: 'promo@example.com' }),
-        message({ id: 'sec-2', threadId: 'sec-thread', senderEmail: 'promo@example.com' }),
+        message({
+          id: 'sec-1',
+          threadId: 'sec-thread',
+          senderEmail: 'promo@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          id: 'sec-2',
+          threadId: 'sec-thread',
+          senderEmail: 'promo@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
         message({ id: 'sec-3', threadId: 'plain-thread', senderEmail: 'plain@example.com' }),
       ]);
       MessageSecurityRepo.saveMany([
@@ -157,7 +227,8 @@ describe('MessagesRepo.senderCleanupStats', () => {
       const promo = stats.find(s => s.senderEmail === 'promo@example.com');
       expect(promo?.trackerCount).toBe(5);
       expect(promo?.maxRiskLevel).toBe('high');
-      expect(stats.find(s => s.senderEmail === 'plain@example.com')?.maxRiskLevel).toBeNull();
+      // plain has no unsubscribe / archiveable → not listed
+      expect(stats.find(s => s.senderEmail === 'plain@example.com')).toBeUndefined();
     });
   });
 
@@ -167,17 +238,22 @@ describe('MessagesRepo.senderCleanupStats', () => {
         message({
           senderEmail: 'files@example.com',
           hasAttachments: true,
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
           attachments: [{ id: 'att-1', filename: 'report.pdf', mimeType: 'application/pdf', sizeBytes: 1000 }],
         }),
         message({
           senderEmail: 'files@example.com',
           hasAttachments: true,
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
           attachments: [
             { id: 'att-2', filename: 'image.png', mimeType: 'image/png', sizeBytes: 2500 },
             { id: 'att-3', filename: 'sheet.xlsx', mimeType: 'application/vnd.ms-excel', sizeBytes: 500 },
           ],
         }),
-        message({ senderEmail: 'files@example.com' }),
+        message({
+          senderEmail: 'files@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
       ]);
 
       const stats = MessagesRepo.senderCleanupStats('me@example.com');
@@ -185,46 +261,69 @@ describe('MessagesRepo.senderCleanupStats', () => {
     });
   });
 
-  repositoryIt('orders by 30-day volume then message count and caps at 200 senders', async () => {
-    await withIsolatedDatabase(async ({ MessagesRepo }) => {
+  repositoryIt('orders actionable senders by unsubscribe, archiveable count, then volume', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo, ThreadsRepo }) => {
       MessagesRepo.save([
-        message({ senderEmail: 'a@example.com', threadId: 'a1', receivedAt: isoDaysAgo(2) }),
-        message({ senderEmail: 'a@example.com', threadId: 'a2', receivedAt: isoDaysAgo(3) }),
-        message({ senderEmail: 'b@example.com', threadId: 'b1', receivedAt: isoDaysAgo(1) }),
-        message({ senderEmail: 'b@example.com', threadId: 'b2', receivedAt: isoDaysAgo(2) }),
-        message({ senderEmail: 'b@example.com', threadId: 'b3', receivedAt: isoDaysAgo(3) }),
-        message({ senderEmail: 'c@example.com', threadId: 'c1', receivedAt: isoDaysAgo(2) }),
-        message({ senderEmail: 'c@example.com', threadId: 'c2', receivedAt: isoDaysAgo(3) }),
-        message({ senderEmail: 'c@example.com', threadId: 'c3', receivedAt: isoDaysAgo(60) }),
-        message({ senderEmail: 'c@example.com', threadId: 'c4', receivedAt: isoDaysAgo(90) }),
+        message({
+          senderEmail: 'unsub@example.com',
+          threadId: 'u1',
+          receivedAt: isoDaysAgo(2),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({ senderEmail: 'archive-heavy@example.com', threadId: 'a1', receivedAt: isoDaysAgo(60) }),
+        message({ senderEmail: 'archive-heavy@example.com', threadId: 'a2', receivedAt: isoDaysAgo(50) }),
+        message({ senderEmail: 'archive-light@example.com', threadId: 'b1', receivedAt: isoDaysAgo(40) }),
+        message({ senderEmail: 'noise@example.com', threadId: 'n1', receivedAt: isoDaysAgo(1) }),
+      ]);
+      ThreadsRepo.save([
+        thread({ id: 'a1', senderEmail: 'archive-heavy@example.com', lastMessageAt: isoDaysAgo(60) }),
+        thread({ id: 'a2', senderEmail: 'archive-heavy@example.com', lastMessageAt: isoDaysAgo(50) }),
+        thread({ id: 'b1', senderEmail: 'archive-light@example.com', lastMessageAt: isoDaysAgo(40) }),
+        thread({ id: 'n1', senderEmail: 'noise@example.com', lastMessageAt: isoDaysAgo(1) }),
       ]);
 
       const ordered = MessagesRepo.senderCleanupStats('me@example.com').map(s => s.senderEmail);
-      expect(ordered).toEqual(['b@example.com', 'c@example.com', 'a@example.com']);
-
-      const bulk: MailMessage[] = [];
-      for (let index = 0; index < 205; index += 1) {
-        bulk.push(message({
-          senderEmail: `bulk-${index}@example.com`,
-          threadId: `bulk-thread-${index}`,
-          receivedAt: isoDaysAgo(2),
-        }));
-      }
-      MessagesRepo.save(bulk);
-
-      expect(MessagesRepo.senderCleanupStats('me@example.com')).toHaveLength(200);
+      expect(ordered).toEqual([
+        'unsub@example.com',
+        'archive-heavy@example.com',
+        'archive-light@example.com',
+      ]);
     });
   });
 
   repositoryIt('scopes results to the requested account', async () => {
     await withIsolatedDatabase(async ({ MessagesRepo }) => {
       MessagesRepo.save([
-        message({ accountId: 'me@example.com', senderEmail: 'mine@example.com' }),
-        message({ accountId: 'other@account.com', senderEmail: 'theirs@example.com' }),
+        message({
+          accountId: 'me@example.com',
+          senderEmail: 'mine@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          accountId: 'other@account.com',
+          senderEmail: 'theirs@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
       ]);
 
       const stats = MessagesRepo.senderCleanupStats('me@example.com');
       expect(stats.map(s => s.senderEmail)).toEqual(['mine@example.com']);
+    });
+  });
+
+  repositoryIt('caps at 200 actionable senders', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo }) => {
+      const bulk: MailMessage[] = [];
+      for (let index = 0; index < 205; index += 1) {
+        bulk.push(message({
+          senderEmail: `bulk-${index}@example.com`,
+          threadId: `bulk-thread-${index}`,
+          receivedAt: isoDaysAgo(2),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }));
+      }
+      MessagesRepo.save(bulk);
+      expect(MessagesRepo.senderCleanupStats('me@example.com')).toHaveLength(200);
     });
   });
 });

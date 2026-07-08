@@ -1137,6 +1137,11 @@ export interface SenderCleanupStat {
   lastReceivedAt: string;
   recent30dCount: number;
   hasUnsubscribeHeader: boolean;
+  /**
+   * Count of this sender's threads still in INBOX whose last activity is older
+   * than 30 days (read or unread). Drives "Archive old" eligibility.
+   */
+  archiveableOldCount: number;
   /** SUM of tracker_count over message_security rows (analyzed messages only). */
   trackerCount: number;
   /** null = no message from this sender was ever analyzed. */

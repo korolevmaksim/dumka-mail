@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { buildCleanupArchiveItem, buildCleanupUnsubscribeItem } from '../shared/agentPlan';
-import { CLEANUP_ARCHIVE_BATCH_LIMIT, suggestCleanupAction } from '../shared/cleanup';
+import {
+  CLEANUP_ARCHIVE_AGE_MS,
+  CLEANUP_ARCHIVE_BATCH_LIMIT,
+  isCleanupSenderActionable,
+  selectArchiveOldCandidates,
+  suggestCleanupAction,
+} from '../shared/cleanup';
 import type { MailThread, SenderCleanupStat, UnsubscribeCandidate } from '../shared/types';
 
 function stat(partial: Partial<SenderCleanupStat> = {}): SenderCleanupStat {
@@ -14,12 +20,76 @@ function stat(partial: Partial<SenderCleanupStat> = {}): SenderCleanupStat {
     lastReceivedAt: '2026-07-01T00:00:00.000Z',
     recent30dCount: 2,
     hasUnsubscribeHeader: false,
+    archiveableOldCount: 0,
     trackerCount: 0,
     maxRiskLevel: null,
     attachmentBytes: 0,
     ...partial,
   };
 }
+
+function thread(partial: Partial<MailThread> = {}): MailThread {
+  return {
+    id: partial.id || 'thread-1',
+    accountId: partial.accountId || 'me@example.com',
+    subject: partial.subject || 'Weekly digest',
+    snippet: partial.snippet || 'Here are the weekly product updates and links.',
+    lastMessageAt: partial.lastMessageAt || '2026-05-20T08:00:00.000Z',
+    senderNames: partial.senderNames || ['Example News'],
+    senderEmail: partial.senderEmail || 'news@example.com',
+    labelIds: partial.labelIds || ['INBOX'],
+    hasAttachments: partial.hasAttachments ?? false,
+    isUnread: partial.isUnread ?? false,
+    reminderAt: partial.reminderAt ?? null,
+  };
+}
+
+describe('isCleanupSenderActionable', () => {
+  it('is false when neither archive nor unsubscribe is possible', () => {
+    expect(isCleanupSenderActionable(stat())).toBe(false);
+  });
+
+  it('is true when an unsubscribe header exists', () => {
+    expect(isCleanupSenderActionable(stat({ hasUnsubscribeHeader: true }))).toBe(true);
+  });
+
+  it('is true when archiveable old threads exist', () => {
+    expect(isCleanupSenderActionable(stat({ archiveableOldCount: 3 }))).toBe(true);
+  });
+});
+
+describe('selectArchiveOldCandidates', () => {
+  const now = Date.parse('2026-07-08T12:00:00.000Z');
+
+  it('keeps INBOX threads older than 30 days, including unread', () => {
+    const oldRead = thread({ id: 'old-read', lastMessageAt: '2026-05-01T00:00:00.000Z', isUnread: false });
+    const oldUnread = thread({ id: 'old-unread', lastMessageAt: '2026-05-02T00:00:00.000Z', isUnread: true });
+    const recent = thread({ id: 'recent', lastMessageAt: '2026-07-01T00:00:00.000Z' });
+    const archived = thread({ id: 'archived', lastMessageAt: '2026-04-01T00:00:00.000Z', labelIds: ['CATEGORY_UPDATES'] });
+
+    const selected = selectArchiveOldCandidates([oldRead, oldUnread, recent, archived], { now });
+    expect(selected.map(item => item.id)).toEqual(['old-read', 'old-unread']);
+  });
+
+  it('sorts oldest first and respects the batch limit', () => {
+    const threads = Array.from({ length: 30 }, (_, index) => thread({
+      id: `t-${index}`,
+      lastMessageAt: new Date(now - CLEANUP_ARCHIVE_AGE_MS - (index + 1) * 86_400_000).toISOString(),
+    }));
+
+    const selected = selectArchiveOldCandidates(threads, { now, limit: CLEANUP_ARCHIVE_BATCH_LIMIT });
+    expect(selected).toHaveLength(CLEANUP_ARCHIVE_BATCH_LIMIT);
+    expect(selected[0].id).toBe('t-29');
+    expect(selected[selected.length - 1].id).toBe('t-5');
+  });
+
+  it('returns an empty list when nothing is archiveable', () => {
+    expect(selectArchiveOldCandidates([
+      thread({ lastMessageAt: '2026-07-05T00:00:00.000Z' }),
+      thread({ lastMessageAt: '2026-04-01T00:00:00.000Z', labelIds: ['SENT'] }),
+    ], { now })).toEqual([]);
+  });
+});
 
 describe('suggestCleanupAction', () => {
   it('exports the archive batch limit used by the panel', () => {
@@ -31,41 +101,43 @@ describe('suggestCleanupAction', () => {
       maxRiskLevel: 'high',
       hasUnsubscribeHeader: true,
       recent30dCount: 50,
-      threadCount: 20,
-      messageCount: 20,
-      unreadCount: 20,
+      archiveableOldCount: 12,
     }))).toBe('review');
   });
 
   it('does not treat medium or low risk as review', () => {
-    expect(suggestCleanupAction(stat({ maxRiskLevel: 'medium' }))).toBe('none');
-    expect(suggestCleanupAction(stat({ maxRiskLevel: 'low' }))).toBe('none');
+    expect(suggestCleanupAction(stat({ maxRiskLevel: 'medium', archiveableOldCount: 4 }))).toBe('archiveOld');
+    expect(suggestCleanupAction(stat({ maxRiskLevel: 'low', hasUnsubscribeHeader: true, recent30dCount: 3 }))).toBe('unsubscribe');
   });
 
   it('recommends unsubscribe at the recent30d >= 3 boundary when the header exists', () => {
     expect(suggestCleanupAction(stat({ hasUnsubscribeHeader: true, recent30dCount: 3 }))).toBe('unsubscribe');
     expect(suggestCleanupAction(stat({ hasUnsubscribeHeader: true, recent30dCount: 2 }))).toBe('none');
-    expect(suggestCleanupAction(stat({ hasUnsubscribeHeader: false, recent30dCount: 3 }))).toBe('none');
+    expect(suggestCleanupAction(stat({ hasUnsubscribeHeader: false, recent30dCount: 3, archiveableOldCount: 0 }))).toBe('none');
   });
 
   it('prefers unsubscribe over archiveOld when both match', () => {
-    expect(suggestCleanupAction(stat({ hasUnsubscribeHeader: true, recent30dCount: 15 }))).toBe('unsubscribe');
+    expect(suggestCleanupAction(stat({
+      hasUnsubscribeHeader: true,
+      recent30dCount: 15,
+      archiveableOldCount: 20,
+    }))).toBe('unsubscribe');
   });
 
-  it('recommends archiveOld at the recent30d >= 10 boundary', () => {
-    expect(suggestCleanupAction(stat({ recent30dCount: 10 }))).toBe('archiveOld');
-    expect(suggestCleanupAction(stat({ recent30dCount: 9 }))).toBe('none');
+  it('recommends archiveOld only when archiveableOldCount > 0', () => {
+    expect(suggestCleanupAction(stat({ archiveableOldCount: 1 }))).toBe('archiveOld');
+    expect(suggestCleanupAction(stat({ archiveableOldCount: 0, recent30dCount: 50, threadCount: 40 }))).toBe('none');
   });
 
-  it('recommends archiveOld for 10+ threads with unread ratio >= 0.7', () => {
-    expect(suggestCleanupAction(stat({ threadCount: 10, messageCount: 10, unreadCount: 7, recent30dCount: 0 }))).toBe('archiveOld');
-    expect(suggestCleanupAction(stat({ threadCount: 10, messageCount: 10, unreadCount: 6, recent30dCount: 0 }))).toBe('none');
-    expect(suggestCleanupAction(stat({ threadCount: 9, messageCount: 10, unreadCount: 9, recent30dCount: 0 }))).toBe('none');
-  });
-
-  it('treats zero-message senders as none instead of an Infinity unread ratio', () => {
-    // Unguarded division would yield 7 / 0 = Infinity >= 0.7 -> 'archiveOld'.
-    expect(suggestCleanupAction(stat({ threadCount: 10, messageCount: 0, unreadCount: 7, recent30dCount: 0 }))).toBe('none');
+  it('does not invent archiveOld from volume alone when nothing is archiveable', () => {
+    // Former volume heuristic would fire here; capability-gated rules must not.
+    expect(suggestCleanupAction(stat({
+      recent30dCount: 10,
+      threadCount: 10,
+      messageCount: 10,
+      unreadCount: 10,
+      archiveableOldCount: 0,
+    }))).toBe('none');
   });
 });
 
@@ -113,7 +185,7 @@ describe('buildCleanupArchiveItem', () => {
       sourceItemId: 'cleanup:news@example.com',
     });
     expect(item.citation.evidence).toBe(
-      'Read thread from Example News, last activity 2026-05-20; part of Cleanup archive-old batch.'
+      'Inbox thread from Example News, last activity 2026-05-20; part of Cleanup archive-old batch.'
     );
     expect(item.citation.snippet).toBe('Here are the weekly product updates and links.');
   });

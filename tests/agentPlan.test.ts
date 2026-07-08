@@ -169,6 +169,7 @@ describe('Agent Plan builders', () => {
       lastReceivedAt: '2026-07-03T08:00:00.000Z',
       recent30dCount: 11,
       hasUnsubscribeHeader: true,
+      archiveableOldCount: 8,
       trackerCount: 4,
       maxRiskLevel: 'medium',
       attachmentBytes: 0,

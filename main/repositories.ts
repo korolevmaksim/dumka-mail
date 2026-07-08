@@ -597,6 +597,8 @@ export const MessagesRepo = {
     const db = getDatabase();
     // NOTE: attachment bytes MUST stay a pre-aggregated json_each JOIN.
     // A correlated per-sender subquery measured 35.9 s vs 0.6 s for this form.
+    // Only return senders the user can act on (unsubscribe header and/or
+    // archiveable old INBOX threads). Volume-only noise is filtered out.
     const rows = db.prepare(`
       WITH sender_stats AS (
         SELECT
@@ -611,6 +613,17 @@ export const MessagesRepo = {
           MAX(CASE WHEN headers_json LIKE '%list-unsubscribe%' THEN 1 ELSE 0 END) AS has_unsubscribe
         FROM messages
         WHERE account_id = @accountId
+        GROUP BY account_id, sender_key
+      ),
+      archiveable AS (
+        SELECT
+          account_id,
+          lower(sender_email) AS sender_key,
+          COUNT(*) AS archiveable_old_count
+        FROM threads
+        WHERE account_id = @accountId
+          AND last_message_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
+          AND instr(upper(label_ids_json), '"INBOX"') > 0
         GROUP BY account_id, sender_key
       ),
       att_bytes AS (
@@ -644,13 +657,21 @@ export const MessagesRepo = {
         st.last_received_at,
         st.recent_30d,
         st.has_unsubscribe,
+        COALESCE(arc.archiveable_old_count, 0) AS archiveable_old_count,
         COALESCE(sec.tracker_count, 0) AS tracker_count,
         COALESCE(sec.max_risk_rank, 0) AS max_risk_rank,
         COALESCE(ab.attachment_bytes, 0) AS attachment_bytes
       FROM sender_stats st
+      LEFT JOIN archiveable arc ON arc.account_id = st.account_id AND arc.sender_key = st.sender_key
       LEFT JOIN att_bytes ab ON ab.account_id = st.account_id AND ab.sender_key = st.sender_key
       LEFT JOIN security sec ON sec.account_id = st.account_id AND sec.sender_key = st.sender_key
-      ORDER BY st.recent_30d DESC, st.message_count DESC
+      WHERE st.has_unsubscribe = 1
+         OR COALESCE(arc.archiveable_old_count, 0) > 0
+      ORDER BY
+        CASE WHEN st.has_unsubscribe = 1 THEN 1 ELSE 0 END DESC,
+        COALESCE(arc.archiveable_old_count, 0) DESC,
+        st.recent_30d DESC,
+        st.message_count DESC
       LIMIT 200
     `).all({ accountId }) as any[];
 
@@ -671,6 +692,7 @@ export const MessagesRepo = {
       lastReceivedAt: r.last_received_at,
       recent30dCount: r.recent_30d || 0,
       hasUnsubscribeHeader: r.has_unsubscribe === 1,
+      archiveableOldCount: r.archiveable_old_count || 0,
       trackerCount: r.tracker_count || 0,
       maxRiskLevel: riskForRank[r.max_risk_rank as number] ?? null,
       attachmentBytes: r.attachment_bytes || 0,

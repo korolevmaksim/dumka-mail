@@ -318,7 +318,7 @@ export function buildCleanupArchiveItem({
     sender,
     action: 'archive',
     title: 'Archive old thread',
-    reason: `Read thread from ${sender} with no activity since ${lastActivity}.`,
+    reason: `Inbox thread from ${sender} with no activity since ${lastActivity}.`,
     citation: {
       accountId: thread.accountId,
       threadId: thread.id,
@@ -327,7 +327,7 @@ export function buildCleanupArchiveItem({
       sender,
       senderEmail: stat.senderEmail,
       snippet: snippet(thread.snippet),
-      evidence: `Read thread from ${sender}, last activity ${lastActivity}; part of Cleanup archive-old batch.`,
+      evidence: `Inbox thread from ${sender}, last activity ${lastActivity}; part of Cleanup archive-old batch.`,
       receivedAt: thread.lastMessageAt,
     },
     riskLevel: 'low',

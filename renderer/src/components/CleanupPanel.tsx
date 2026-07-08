@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Archive, Eraser, MailMinus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import type { MailThread, SenderCleanupStat } from '../../../shared/types';
-import { CLEANUP_ARCHIVE_BATCH_LIMIT, suggestCleanupAction, type CleanupSuggestedAction } from '../../../shared/cleanup';
+import type { SenderCleanupStat } from '../../../shared/types';
+import {
+  CLEANUP_ARCHIVE_BATCH_LIMIT,
+  isCleanupSenderActionable,
+  selectArchiveOldCandidates,
+  suggestCleanupAction,
+  type CleanupSuggestedAction,
+} from '../../../shared/cleanup';
 import { buildCleanupArchiveItem, buildCleanupUnsubscribeItem } from '../../../shared/agentPlan';
 import { parseUnsubscribeCandidate } from '../../../shared/mailSecurity';
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
 
 const PRIVACY_NOTE = 'Computed locally from your cached mail. Nothing leaves your machine until you approve an action.';
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const UNSUBSCRIBE_THREAD_PROBE_LIMIT = 5;
+const EMPTY_ACTIONABLE =
+  'Nothing to clean up right now. Senders appear here when they have old Inbox mail you can archive, or a List-Unsubscribe header.';
 
 const RISK_TONE: Record<'low' | 'medium' | 'high', string> = {
   low: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600',
@@ -37,19 +44,6 @@ function formatBytes(bytes: number): string {
 
 function senderGroupKey(accountId: string, senderEmail: string): string {
   return `${accountId}:${senderEmail}`;
-}
-
-function archiveCandidatesFrom(senderThreads: MailThread[] | undefined): MailThread[] {
-  if (!senderThreads || senderThreads.length === 0) return [];
-  const cutoff = Date.now() - THIRTY_DAYS_MS;
-  return senderThreads
-    .filter(thread =>
-      !thread.isUnread &&
-      thread.labelIds.some(label => label.toUpperCase() === 'INBOX') &&
-      Date.parse(thread.lastMessageAt) < cutoff
-    )
-    .sort((a, b) => Date.parse(a.lastMessageAt) - Date.parse(b.lastMessageAt))
-    .slice(0, CLEANUP_ARCHIVE_BATCH_LIMIT);
 }
 
 export function CleanupPanel() {
@@ -95,7 +89,7 @@ export function CleanupPanel() {
   // thread-list scan per row. Stats keys are lowercase (sender_key in SQL), so
   // thread sender emails are lowercased to match.
   const senderThreadGroups = useMemo(() => {
-    const groups = new Map<string, MailThread[]>();
+    const groups = new Map<string, typeof store.threads>();
     for (const thread of store.threads) {
       const key = senderGroupKey(thread.accountId, thread.senderEmail.toLowerCase());
       const group = groups.get(key);
@@ -108,10 +102,26 @@ export function CleanupPanel() {
     return groups;
   }, [store.threads]);
 
-  const handleArchiveOld = (stat: SenderCleanupStat) => {
-    const candidates = archiveCandidatesFrom(senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)));
+  const handleArchiveOld = async (stat: SenderCleanupStat) => {
+    let candidates = selectArchiveOldCandidates(
+      senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)) || [],
+    );
+
+    // Renderer thread list can lag the SQL stats query; re-fetch that account's
+    // threads so "Archive old" never shows a count it cannot enqueue.
+    if (candidates.length === 0 && stat.archiveableOldCount > 0) {
+      try {
+        const allThreads = await window.electronAPI.listThreads(stat.accountId);
+        candidates = selectArchiveOldCandidates(
+          allThreads.filter(thread => thread.senderEmail.toLowerCase() === stat.senderEmail),
+        );
+      } catch (err) {
+        console.error('Cleanup archive candidate refresh failed:', err);
+      }
+    }
+
     if (candidates.length === 0) {
-      emitToast({ type: 'info', message: 'No read threads older than 30 days for this sender in the local cache.' });
+      emitToast({ type: 'info', message: 'No Inbox threads older than 30 days for this sender in the local cache.' });
       return;
     }
     store.addAgentPlanItems(candidates.map(thread => buildCleanupArchiveItem({ stat, thread })));
@@ -209,7 +219,26 @@ export function CleanupPanel() {
         )}
 
         {!error && stats !== null && accountsToLoad.map(acc => {
-          const accountStats = stats.filter(stat => stat.accountId === acc.email);
+          const accountStats = stats
+            .filter(stat => stat.accountId === acc.email)
+            .map(stat => {
+              const archiveCandidates = selectArchiveOldCandidates(
+                senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)) || [],
+              );
+              const canUnsubscribe = stat.hasUnsubscribeHeader;
+              // Prefer live candidates for the button (what we can enqueue now).
+              // Fall back to the SQL archiveable count so rows stay visible/actionable
+              // if the renderer thread list is still catching up.
+              const canArchive = archiveCandidates.length > 0 || stat.archiveableOldCount > 0;
+              return { stat, archiveCandidates, canArchive, canUnsubscribe };
+            })
+            .filter(({ stat, archiveCandidates, canArchive, canUnsubscribe }) =>
+              isCleanupSenderActionable({
+                hasUnsubscribeHeader: canUnsubscribe,
+                archiveableOldCount: Math.max(stat.archiveableOldCount, archiveCandidates.length),
+              }) && (canArchive || canUnsubscribe)
+            );
+
           return (
             <section key={acc.email} className="flex flex-col gap-2">
               {accountsToLoad.length > 1 && (
@@ -220,11 +249,16 @@ export function CleanupPanel() {
 
               {accountStats.length === 0 ? (
                 <div className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                  No sender activity in the local cache yet.
+                  {EMPTY_ACTIONABLE}
                 </div>
-              ) : accountStats.map(stat => {
-                const archiveCandidates = archiveCandidatesFrom(senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)));
-                const suggestion = suggestCleanupAction(stat);
+              ) : accountStats.map(({ stat, archiveCandidates, canArchive, canUnsubscribe }) => {
+                const archiveCount = archiveCandidates.length > 0
+                  ? archiveCandidates.length
+                  : Math.min(stat.archiveableOldCount, CLEANUP_ARCHIVE_BATCH_LIMIT);
+                const suggestion = suggestCleanupAction({
+                  ...stat,
+                  archiveableOldCount: Math.max(stat.archiveableOldCount, archiveCandidates.length),
+                });
                 const busyKey = `${stat.accountId}:${stat.senderEmail}`;
 
                 return (
@@ -264,7 +298,7 @@ export function CleanupPanel() {
                           {stat.maxRiskLevel} risk
                         </span>
                       )}
-                      {stat.hasUnsubscribeHeader && (
+                      {canUnsubscribe && (
                         <span className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
                           Unsubscribe available
                         </span>
@@ -272,24 +306,27 @@ export function CleanupPanel() {
                     </div>
 
                     <div className="mt-2 flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        disabled={archiveCandidates.length === 0}
-                        onClick={() => handleArchiveOld(stat)}
-                        title={`Add up to ${CLEANUP_ARCHIVE_BATCH_LIMIT} archive proposals to the review queue`}
-                        className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <Archive className="h-3 w-3" /> Archive old ({archiveCandidates.length})
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!stat.hasUnsubscribeHeader || unsubscribeBusyKey === busyKey}
-                        onClick={() => void handleUnsubscribe(stat)}
-                        title="Add an unsubscribe proposal to the review queue"
-                        className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <MailMinus className="h-3 w-3" /> {unsubscribeBusyKey === busyKey ? 'Resolving…' : 'Unsubscribe'}
-                      </button>
+                      {canArchive && (
+                        <button
+                          type="button"
+                          onClick={() => void handleArchiveOld(stat)}
+                          title={`Add up to ${CLEANUP_ARCHIVE_BATCH_LIMIT} archive proposals to the review queue`}
+                          className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]"
+                        >
+                          <Archive className="h-3 w-3" /> Archive old ({archiveCount})
+                        </button>
+                      )}
+                      {canUnsubscribe && (
+                        <button
+                          type="button"
+                          disabled={unsubscribeBusyKey === busyKey}
+                          onClick={() => void handleUnsubscribe(stat)}
+                          title="Add an unsubscribe proposal to the review queue"
+                          className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <MailMinus className="h-3 w-3" /> {unsubscribeBusyKey === busyKey ? 'Resolving…' : 'Unsubscribe'}
+                        </button>
+                      )}
                     </div>
                   </article>
                 );
