@@ -36,7 +36,9 @@ import {
   MCPServerConfig,
   GmailSignatureSyncResult,
   MailboxView,
-  ThreadAgentInsights
+  ThreadAgentInsights,
+  FollowUpRadarResult,
+  FollowUpRadarItem
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { getDefaultEmbeddingSettings } from '../../../shared/embeddingProviders';
@@ -69,7 +71,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 13;
+export const SETTINGS_SCHEMA_VERSION = 14;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -97,6 +99,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     archiveOnDoneShortcut: true,
     enableReminders: true,
     enableFollowUps: true,
+    followUpThresholdHours: 48,
+    followUpMaxItems: 12,
+    followUpSnoozeHours: 24,
     showPurchasesSplit: true,
     showLinkedInSplit: true,
     showAutomationSplit: true,
@@ -397,6 +402,12 @@ interface AppStoreContextType {
   deleteCalendarEvent: (event: CalendarEvent, email?: string) => Promise<void>;
   createGoogleMeetDraftEvent: () => Promise<CalendarEvent | null>;
   actionLog: MailActionLog[];
+  followUpRadar: FollowUpRadarResult | null;
+  followUpRadarLoading: boolean;
+  followUpRadarError: string | null;
+  loadFollowUpRadar: () => Promise<void>;
+  dismissFollowUpRadarItem: (item: FollowUpRadarItem) => Promise<void>;
+  snoozeFollowUpRadarItem: (item: FollowUpRadarItem, snoozedUntil: string) => Promise<void>;
   executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: (actionId: string) => Promise<any>, payloadJson?: string | null) => Promise<void>;
   undoLastAction: () => Promise<void>;
   snoozeThread: (thread: MailThread, date: Date) => Promise<void>;
@@ -442,7 +453,7 @@ interface AppStoreContextType {
   runAIAction: (action: AIAction) => Promise<void>;
   runAIPromptShortcut: (shortcut: AIPromptShortcut) => Promise<void>;
   runAITriagePlan: () => Promise<void>;
-  runDailyBriefing: (options?: DailyBriefingBuildOptions) => Promise<void>;
+  runDailyBriefing: (options?: DailyBriefingBuildOptions, behavior?: { openPanel?: boolean }) => Promise<void>;
   dismissDailyBriefingItem: (itemOrThreadId: DailyBriefingItem | string) => void;
   addDailyBriefingItemToAgentPlan: (item: DailyBriefingItem, labelId?: string | null) => void;
   addAgentPlanItems: (items: AgentPlanItem[]) => void;
@@ -458,6 +469,8 @@ interface AppStoreContextType {
   setSettingsOpen: (open: boolean) => void;
   cleanupOpen: boolean;
   setCleanupOpen: (open: boolean) => void;
+  workspaceView: 'today' | 'mail';
+  setWorkspaceView: (view: 'today' | 'mail') => void;
   aiModel: string;
   setAiModel: (model: string) => void;
   customEnv: Record<string, string>;

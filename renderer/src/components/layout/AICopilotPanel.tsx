@@ -236,6 +236,7 @@ export function AICopilotPanel() {
   const openMailboxSource = async (source: MailboxSearchSource) => {
     const thread = store.threads.find(item => item.accountId === source.accountId && item.id === source.threadId)
       || fallbackThreadFromSource(source);
+    store.setWorkspaceView('mail');
     await store.openThread(thread);
     if (!source.messageId) return;
     window.setTimeout(() => {

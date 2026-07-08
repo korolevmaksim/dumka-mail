@@ -297,6 +297,33 @@ export function InboxTab() {
             />
           </div>
         ))}
+
+        <div className="grid grid-cols-3 gap-2 border-t border-[var(--border)] pt-3">
+          {[
+            { key: 'followUpThresholdHours', title: 'Radar age', suffix: 'hours', min: 1, max: 720 },
+            { key: 'followUpMaxItems', title: 'Radar limit', suffix: 'items', min: 1, max: 50 },
+            { key: 'followUpSnoozeHours', title: 'Snooze', suffix: 'hours', min: 1, max: 720 },
+          ].map(item => (
+            <label key={item.key} className="flex min-w-0 flex-col gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <span>{item.title}</span>
+              <span className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1">
+                <input
+                  type="number"
+                  min={item.min}
+                  max={item.max}
+                  value={Number((store.settings.inbox as any)[item.key]) || item.min}
+                  onChange={(event) => {
+                    const rawValue = Number(event.target.value);
+                    const nextValue = Math.max(item.min, Math.min(item.max, Number.isFinite(rawValue) ? Math.floor(rawValue) : item.min));
+                    store.updateSettings(settings => { (settings.inbox as any)[item.key] = nextValue; });
+                  }}
+                  className="min-w-0 flex-1 bg-transparent text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                />
+                <span className="shrink-0 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{item.suffix}</span>
+              </span>
+            </label>
+          ))}
+        </div>
       </div>
     </div>
   );

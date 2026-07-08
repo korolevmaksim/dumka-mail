@@ -13,6 +13,7 @@ export function useSettingsState() {
   const [modelsCache, setModelsCache] = useState<Record<string, string[]>>({});
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [cleanupOpen, setCleanupOpen] = useState<boolean>(false);
+  const [workspaceView, setWorkspaceView] = useState<'today' | 'mail'>('mail');
   const [customEnv, setCustomEnv] = useState<Record<string, string>>({});
 
   const setEnablePreviewPane = (val: boolean) => {
@@ -486,6 +487,7 @@ export function useSettingsState() {
     modelsCache,
     settingsOpen,
     cleanupOpen,
+    workspaceView,
     customEnv,
     setSettingsState,
     setThemeState,
@@ -496,6 +498,7 @@ export function useSettingsState() {
     setModelsCache,
     setSettingsOpen,
     setCleanupOpen,
+    setWorkspaceView,
     setCustomEnv,
     setEnablePreviewPane,
     setPreviewPaneWidth,

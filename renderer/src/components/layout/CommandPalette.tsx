@@ -20,6 +20,11 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
 
   // Command palette actions list
   const commands: Array<PaletteCommand & { action: () => void }> = [
+    { id: 'open-today', group: 'navigation', title: 'Open Today', shortcut: 'Home', keywords: ['operator', 'home', 'today'], action: () => {
+      store.setWorkspaceView('today');
+      store.setSettingsOpen(false);
+      store.setCleanupOpen(false);
+    } },
     { id: 'mark-done', group: 'mail', title: 'Mark Done (Archive)', shortcut: 'E', keywords: ['archive', 'done'], action: () => store.executeMailAction('markDone') },
     { id: 'mark-read', group: 'mail', title: 'Mark Read', shortcut: 'R', keywords: ['read'], action: () => store.executeMailAction('markRead') },
     { id: 'mark-unread', group: 'mail', title: 'Mark Unread', shortcut: 'Shift+R', keywords: ['unread'], action: () => store.executeMailAction('markUnread') },
@@ -32,6 +37,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
     { id: 'compose-message', group: 'compose', title: 'Compose Message', shortcut: 'C', keywords: ['new mail', 'draft'], action: () => {
       const draft = store.startNewDraft();
       if (!draft) {
+        store.setWorkspaceView('mail');
         store.setSettingsOpen(true);
         store.setCleanupOpen(false);
         emitToast({ type: 'warning', message: 'Connect an account before composing.' });
@@ -39,11 +45,13 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       }
     }},
     { id: 'toggle-unified-inbox', group: 'navigation', title: 'Toggle Unified Inbox', shortcut: 'Cmd+0', keywords: ['unified', 'all accounts'], action: () => {
+      store.setWorkspaceView('mail');
       store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
       store.setSettingsOpen(false);
       store.setCleanupOpen(false);
     } },
     { id: 'switch-mailbox', group: 'navigation', title: 'Switch Mailbox', shortcut: 'G', keywords: ['inbox', 'sent', 'trash', 'spam'], action: () => {
+      store.setWorkspaceView('mail');
       store.setMailboxView(nextMailboxView(store.mailboxView));
       store.setSettingsOpen(false);
       store.setCleanupOpen(false);

@@ -13,6 +13,7 @@ import {
   LabelsRepo,
   MessagesRepo,
   RemindersRepo,
+  FollowUpRadarRepo,
   SearchRepo,
   SettingsRepo,
   SyncStateRepo,
@@ -41,7 +42,7 @@ import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoRep
 import { evaluateMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
-import type { ActionKind, CalendarAttendeeResponse, CalendarInvite, MailMessage, MailNotificationSettings, MailRuleAction, MailRulesSettings, MailThread, SyncState } from '../shared/types';
+import type { ActionKind, CalendarAttendeeResponse, CalendarInvite, FollowUpRadarListOptions, MailMessage, MailNotificationSettings, MailRuleAction, MailRulesSettings, MailThread, SyncState } from '../shared/types';
 
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenThread: { accountId: string; threadId: string } | null = null;
@@ -747,6 +748,10 @@ registerSecureHandler('api:getPendingOpenThread', () => {
   pendingOpenThread = null;
   return pending;
 });
+
+registerSecureHandler('api:listFollowUpRadarItems', (_, accountId: string, options?: FollowUpRadarListOptions) => FollowUpRadarRepo.listItems(accountId, options));
+registerSecureHandler('api:dismissFollowUpRadarItem', (_, accountId: string, threadId: string, sentMessageId: string) => FollowUpRadarRepo.dismiss(accountId, threadId, sentMessageId));
+registerSecureHandler('api:snoozeFollowUpRadarItem', (_, accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) => FollowUpRadarRepo.snooze(accountId, threadId, sentMessageId, snoozedUntil));
 
 registerSecureHandler('db:listDrafts', (_, accountId) => DraftsRepo.list(accountId));
 registerSecureHandler('db:getDraft', (_, id) => DraftsRepo.get(id));

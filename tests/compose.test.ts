@@ -214,6 +214,16 @@ describe('startReply', () => {
     expect(seed.to).toEqual([{ name: 'Bob', email: 'bob@example.com' }]);
   });
 
+  it('treats SENT-labeled alias mail as sent by me', () => {
+    const seed = startReply(makeMessage({
+      senderEmail: 'alias@example.com',
+      senderName: 'Alias',
+      labelIds: ['SENT'],
+    }), 'me@example.com');
+
+    expect(seed.to).toEqual([{ name: 'Bob', email: 'bob@example.com' }]);
+  });
+
   it('quotes the snippet when there is no plain body', () => {
     const seed = startReply(makeMessage({ bodyPlain: null, snippet: 'snip line' }), 'me@example.com');
     expect(seed.body).toContain('> snip line');

@@ -21,7 +21,7 @@ This project is early alpha software. It is useful for local development and exp
 - Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
 - Local mailbox search tool for interactive AI assistant chats, plus opt-in MCP and web-search tools with secrets stored through OS-backed credential storage.
-- Agentic mail layer with private daily briefings, an approval-based Agent Review Queue, source-cited AI-assisted triage, opt-in proactive draft previews, notification filtering and actions, one-click unsubscribe support, local security snapshots, tracker stripping, and phishing-link warnings.
+- Agentic mail layer with a Today operator workspace, private daily briefings, an approval-based Agent Review Queue, Follow-up Radar for sent mail awaiting replies, source-cited AI-assisted triage, opt-in proactive draft previews, notification filtering and actions, rule dry-runs, one-click unsubscribe support, local security snapshots, tracker stripping, and phishing-link warnings.
 - Keyboard shortcut discovery overlay, fuzzy command palette matching, virtualized mailbox lists, and accessible thread/draft list semantics.
 - I18n foundation with persisted interface language settings, an English catalog, and pseudo-locale QA for localized surfaces.
 - Built-in auto-update status and checks for configured macOS/Windows update feeds.

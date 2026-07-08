@@ -84,6 +84,7 @@ export function DailyBriefingCard() {
       emitToast({ type: 'warning', message: 'Thread is no longer in the local cache.' });
       return;
     }
+    store.setWorkspaceView('mail');
     await store.openThread(thread);
   };
 
@@ -99,6 +100,7 @@ export function DailyBriefingCard() {
       emitToast({ type: 'warning', message: 'No source message found for this briefing item.' });
       return;
     }
+    store.setWorkspaceView('mail');
     await store.openThread(thread);
     const draft = store.startReplyWithBody(message, '');
     if (draft) {

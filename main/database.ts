@@ -40,6 +40,7 @@ export {
   EmailSuggestionsRepo,
   SearchRepo,
   RemindersRepo,
+  FollowUpRadarRepo,
   SyncStateRepo,
   ActionLogRepo,
   DraftsRepo,

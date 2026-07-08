@@ -1,5 +1,5 @@
 import { startTransition, useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
@@ -30,6 +30,7 @@ export interface SpeedProof {
 
 const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
 const SEARCH_COMPLETE_VISIBLE_MS = 1_200;
+const DEFAULT_FOLLOW_UP_SCAN_LIMIT = 150;
 
 interface UseMailStateProps {
   tabCategories: TabCategory[];
@@ -92,6 +93,9 @@ export function useMailState({
   const [semanticMatchThreadIds, setSemanticMatchThreadIds] = useState<Set<string>>(new Set());
   
   const [actionLog, setActionLog] = useState<MailActionLog[]>([]);
+  const [followUpRadar, setFollowUpRadar] = useState<FollowUpRadarResult | null>(null);
+  const [followUpRadarLoading, setFollowUpRadarLoading] = useState(false);
+  const [followUpRadarError, setFollowUpRadarError] = useState<string | null>(null);
   
   const [speedProof, setSpeedProof] = useState<SpeedProof>({
     detailCacheCoverage: '0% detail · 0% bodies'
@@ -444,6 +448,82 @@ export function useMailState({
   useEffect(() => {
     loadActionLog();
   }, [loadActionLog]);
+
+  const loadFollowUpRadar = useCallback(async () => {
+    if (!activeAccount || !inboxSettings.enableFollowUps) {
+      setFollowUpRadar(null);
+      setFollowUpRadarError(null);
+      return;
+    }
+
+    const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
+    const accountIds = targetAccounts.map(account => account.email).filter(Boolean);
+    if (accountIds.length === 0) {
+      setFollowUpRadar(null);
+      setFollowUpRadarError(null);
+      return;
+    }
+
+    setFollowUpRadarLoading(true);
+    setFollowUpRadarError(null);
+    try {
+      const options = {
+        thresholdHours: inboxSettings.followUpThresholdHours,
+        maxItems: inboxSettings.followUpMaxItems,
+        sentThreadScanLimit: DEFAULT_FOLLOW_UP_SCAN_LIMIT,
+      };
+      const results = await Promise.all(accountIds.map(accountId => (
+        window.electronAPI.listFollowUpRadarItems(accountId, options)
+      )));
+
+      if (results.length === 1) {
+        setFollowUpRadar(results[0]);
+        return;
+      }
+
+      const items = results
+        .flatMap(result => result.items)
+        .sort((a, b) => {
+          if (a.priority === b.priority) return Date.parse(b.lastSentAt) - Date.parse(a.lastSentAt);
+          return b.priority - a.priority;
+        })
+        .slice(0, inboxSettings.followUpMaxItems);
+      setFollowUpRadar({
+        accountId: 'unified',
+        generatedAt: new Date().toISOString(),
+        scannedThreadCount: results.reduce((sum, result) => sum + result.scannedThreadCount, 0),
+        candidateCount: results.reduce((sum, result) => sum + result.candidateCount, 0),
+        items,
+        warnings: Array.from(new Set(results.flatMap(result => result.warnings))),
+      });
+    } catch (err) {
+      console.error('Follow-up Radar failed:', err);
+      setFollowUpRadar(null);
+      setFollowUpRadarError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFollowUpRadarLoading(false);
+    }
+  }, [
+    activeAccount,
+    accounts,
+    inboxSettings.enableFollowUps,
+    inboxSettings.followUpThresholdHours,
+    inboxSettings.followUpMaxItems,
+  ]);
+
+  useEffect(() => {
+    void loadFollowUpRadar();
+  }, [loadFollowUpRadar]);
+
+  const dismissFollowUpRadarItem = useCallback(async (item: FollowUpRadarItem) => {
+    await window.electronAPI.dismissFollowUpRadarItem(item.accountId, item.threadId, item.sentMessageId);
+    await loadFollowUpRadar();
+  }, [loadFollowUpRadar]);
+
+  const snoozeFollowUpRadarItem = useCallback(async (item: FollowUpRadarItem, snoozedUntil: string) => {
+    await window.electronAPI.snoozeFollowUpRadarItem(item.accountId, item.threadId, item.sentMessageId, snoozedUntil);
+    await loadFollowUpRadar();
+  }, [loadFollowUpRadar]);
 
   const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
     startTransition(() => {
@@ -1134,6 +1214,9 @@ export function useMailState({
     semanticMatchThreadIds,
     searchCoverage,
     actionLog,
+    followUpRadar,
+    followUpRadarLoading,
+    followUpRadarError,
     syncHealth,
     syncStatusText,
     backfillProgress,
@@ -1164,6 +1247,9 @@ export function useMailState({
     dismissAgentDraftSuggestion,
     markAgentDraftSuggestionApplied,
     unsubscribeThread,
+    loadFollowUpRadar,
+    dismissFollowUpRadarItem,
+    snoozeFollowUpRadarItem,
     executeMailAction,
     undoLastAction,
     snoozeThread,

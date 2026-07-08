@@ -23,6 +23,7 @@ import { CommandPalette } from './components/layout/CommandPalette';
 import { InlineReplyComposer } from './components/layout/InlineReplyComposer';
 import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer';
 import { ShortcutGuideOverlay } from './components/layout/ShortcutGuideOverlay';
+import { TodayHome } from './components/today/TodayHome';
 import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
@@ -193,6 +194,7 @@ function AppContent() {
       ? store.threads.find(candidate => candidate.id === draft.threadId && candidate.accountId === draft.accountId) || null
       : null;
 
+    store.setWorkspaceView('mail');
     if (thread) {
       await store.openThread(thread);
       store.setComposeLayout('inline');
@@ -224,8 +226,10 @@ function AppContent() {
     const unsubscribe = window.electronAPI.onExecuteCommand((cmdId: string) => {
       switch (cmdId) {
         case 'file.newDraft': {
+          if (store.workspaceView === 'today') break;
           const draft = store.startNewDraft();
           if (!draft) {
+            store.setWorkspaceView('mail');
             store.setSettingsOpen(true);
             store.setCleanupOpen(false);
             emitToast({ type: 'warning', message: 'Connect an account before composing.' });
@@ -234,12 +238,14 @@ function AppContent() {
           break;
         }
         case 'edit.undo':
+          if (store.workspaceView === 'today') break;
           store.undoLastAction();
           break;
         case 'view.toggleAiCopilot':
           store.setAiPanelOpen(!store.aiPanelOpen);
           break;
         case 'view.settings':
+          store.setWorkspaceView('mail');
           store.setSettingsOpen(!store.settingsOpen);
           store.setCleanupOpen(false);
           break;
@@ -674,6 +680,8 @@ function AppContent() {
         store.setSettingsOpen(false);
       } else if (store.cleanupOpen) {
         store.setCleanupOpen(false);
+      } else if (store.workspaceView === 'today') {
+        store.setWorkspaceView('mail');
       } else if (store.searchQuery) {
         store.setSearchQuery('');
       } else if (store.activeDraft) {
@@ -809,6 +817,7 @@ function AppContent() {
                             key={mailbox.id}
                             type="button"
                             onClick={() => {
+                              store.setWorkspaceView('mail');
                               store.setMailboxView(mailbox.id);
                               store.setSettingsOpen(false);
                               store.setCleanupOpen(false);
@@ -850,6 +859,7 @@ function AppContent() {
                           onDragEnd={handleDragEndTab}
                           onDrop={(e) => handleDropTab(e, category.id)}
                           onClick={() => {
+                            store.setWorkspaceView('mail');
                             store.setActiveSplit(category.id);
                             store.setSettingsOpen(false);
                             store.setCleanupOpen(false);
@@ -894,6 +904,7 @@ function AppContent() {
                   onClick={() => {
                     const draft = store.startNewDraft();
                     if (!draft) {
+                      store.setWorkspaceView('mail');
                       store.setSettingsOpen(true);
                       store.setCleanupOpen(false);
                       emitToast({ type: 'warning', message: 'Connect an account before composing.' });
@@ -917,7 +928,9 @@ function AppContent() {
 
             {/* SPLIT SCREEN WORKSPACE: Thread List + Reader pane OR Settings Panel */}
             <div className="flex flex-1 overflow-hidden">
-              {store.settingsOpen ? (
+              {store.workspaceView === 'today' ? (
+                <TodayHome />
+              ) : store.settingsOpen ? (
                 <SettingsPanel />
               ) : store.cleanupOpen ? (
                 <CleanupPanel />
@@ -1010,7 +1023,10 @@ function AppContent() {
                                   isSemanticMatch={store.semanticMatchThreadIds.has(thread.id)}
                                   positionInSet={row.threadIndex + 1}
                                   setSize={store.visibleThreads.length}
-                                  onClick={() => store.openThread(thread)}
+                                  onClick={() => {
+                                    store.setWorkspaceView('mail');
+                                    store.openThread(thread);
+                                  }}
                                   onToggleSelect={(e) => handleThreadSelectToggle(e, thread.id)}
                                   onContextMenu={(e) => {
                                     e.preventDefault();
@@ -1512,6 +1528,7 @@ function AppContent() {
         >
           <button
             onClick={() => {
+              store.setWorkspaceView('mail');
               store.openThread(contextMenu.thread);
               setContextMenu(null);
             }}
@@ -1635,6 +1652,7 @@ function AppContent() {
 
           <button
             onClick={() => {
+              store.setWorkspaceView('mail');
               store.openThread(contextMenu.thread).then(() => {
                 store.saveDraftLocally('', contextMenu.thread.senderEmail, `Re: ${contextMenu.thread.subject}`);
               });
@@ -1648,6 +1666,7 @@ function AppContent() {
 
           <button
             onClick={() => {
+              store.setWorkspaceView('mail');
               store.openThread(contextMenu.thread).then(() => {
                 store.runAITriagePlan();
               });

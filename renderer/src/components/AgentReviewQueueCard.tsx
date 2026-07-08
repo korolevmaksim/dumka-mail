@@ -183,7 +183,12 @@ export function AgentReviewQueueCard() {
                   <div className="mt-2 flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => void store.applyAgentPlanItem(item)}
+                      onClick={() => {
+                        if (item.action === 'openThread' || item.action === 'draftReply') {
+                          store.setWorkspaceView('mail');
+                        }
+                        void store.applyAgentPlanItem(item);
+                      }}
                       disabled={disabled}
                       className="flex-1 rounded bg-[var(--ai-accent)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-bold text-white transition-colors hover:bg-[var(--ai-accent)]/90 disabled:cursor-not-allowed disabled:opacity-40"
                     >

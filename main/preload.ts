@@ -19,7 +19,9 @@ import {
   DailyBriefingBuildOptions,
   EmbeddingIndexReindexOptions,
   EmbeddingIndexStatus,
+  FollowUpRadarListOptions,
   AIProviderPreference,
+  FollowUpRadarResult,
   MCPServerConfig
 } from '../shared/types';
 import { AIRequest } from './ai';
@@ -85,6 +87,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   verifyTokenExists: (email: string) => ipcRenderer.invoke('api:verifyTokenExists', email),
   disconnectAccount: (email: string, options?: { purgeCache?: boolean; revokeToken?: boolean }) => ipcRenderer.invoke('api:disconnectAccount', email, options),
   authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => ipcRenderer.invoke('api:authorizeGoogleIntegration', email, integration),
+
+  // Follow-up Radar
+  listFollowUpRadarItems: (accountId: string, options?: FollowUpRadarListOptions): Promise<FollowUpRadarResult> => ipcRenderer.invoke('api:listFollowUpRadarItems', accountId, options),
+  dismissFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string) => ipcRenderer.invoke('api:dismissFollowUpRadarItem', accountId, threadId, sentMessageId),
+  snoozeFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) => ipcRenderer.invoke('api:snoozeFollowUpRadarItem', accountId, threadId, sentMessageId, snoozedUntil),
 
   // Gmail sync & mutations
   syncInbox: (email: string) => ipcRenderer.invoke('api:syncInbox', email),

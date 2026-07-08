@@ -660,8 +660,13 @@ export function useAIState({
     emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewPlan.items.length} actions.` });
   };
 
-  const runDailyBriefing = async (options: DailyBriefingBuildOptions = {}) => {
-    setAiPanelOpen(true);
+  const runDailyBriefing = async (
+    options: DailyBriefingBuildOptions = {},
+    behavior: { openPanel?: boolean } = {}
+  ) => {
+    if (behavior.openPanel !== false) {
+      setAiPanelOpen(true);
+    }
     if (!activeAccount) {
       setDailyBriefing(null);
       emitToast({ type: 'warning', message: 'Connect an account before building a daily briefing.' });

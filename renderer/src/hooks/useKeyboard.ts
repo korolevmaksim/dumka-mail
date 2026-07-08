@@ -37,6 +37,7 @@ export function useKeyboard(options: KeyboardOptions) {
         activeEl.tagName === 'TEXTAREA' ||
         (activeEl as HTMLElement).isContentEditable
       );
+      const isInteractiveFocused = activeEl instanceof HTMLElement && Boolean(activeEl.closest('button,a,select,input,textarea,[role="button"],[tabindex]'));
 
       // Escape key handles closing layers (independent of text input focus!)
       if (e.key === 'Escape') {
@@ -57,10 +58,12 @@ export function useKeyboard(options: KeyboardOptions) {
 
       const isMetaOrCtrl = e.metaKey || e.ctrlKey;
       const noModifiers = !e.metaKey && !e.ctrlKey && !e.altKey;
+      const isTodayWorkspace = currentStore.workspaceView === 'today';
 
       // Command/Ctrl + A: Select All Threads
       if (isMetaOrCtrl && (e.code === 'KeyA' || e.key === 'a')) {
         e.preventDefault();
+        if (isTodayWorkspace) return;
         currentStore.selectAllThreads();
         return;
       }
@@ -86,6 +89,15 @@ export function useKeyboard(options: KeyboardOptions) {
       // accelerator (main/menu.ts -> 'view.toggleAiCopilot' -> App.tsx). Binding
       // it here as well makes one keypress toggle the panel twice whenever the
       // menu accelerator also fires (e.g. focus inside the mail iframe).
+
+      if (isTodayWorkspace && isMetaOrCtrl && e.shiftKey && (
+        e.code === 'KeyE' || e.key === 'E' ||
+        e.code === 'KeyU' || e.key === 'U' ||
+        e.code === 'KeyH' || e.key === 'H'
+      )) {
+        e.preventDefault();
+        return;
+      }
 
       // Command + Shift + E: Archive/Done fallback
       if (isMetaOrCtrl && e.shiftKey && (e.code === 'KeyE' || e.key === 'E')) {
@@ -114,6 +126,7 @@ export function useKeyboard(options: KeyboardOptions) {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
         if (currentStore.accounts[idx]) {
+          currentStore.setWorkspaceView('mail');
           currentStore.setActiveAccount(currentStore.accounts[idx]);
           currentStore.setSettingsOpen(false);
           currentStore.setCleanupOpen(false);
@@ -126,9 +139,11 @@ export function useKeyboard(options: KeyboardOptions) {
         e.preventDefault();
         if (currentStore.activeAccount?.id === 'unified') {
           if (currentStore.accounts.length > 0) {
+            currentStore.setWorkspaceView('mail');
             currentStore.setActiveAccount(currentStore.accounts[0]);
           }
         } else {
+          currentStore.setWorkspaceView('mail');
           currentStore.setActiveAccount(UNIFIED_ACCOUNT);
         }
         currentStore.setSettingsOpen(false);
@@ -139,6 +154,7 @@ export function useKeyboard(options: KeyboardOptions) {
       // G / Shift+G: cycle mailbox views without mixing them into split tabs.
       if (noModifiers && (e.code === 'KeyG' || e.key.toLowerCase() === 'g')) {
         e.preventDefault();
+        currentStore.setWorkspaceView('mail');
         currentStore.setMailboxView(nextMailboxView(currentStore.mailboxView, e.shiftKey ? -1 : 1));
         currentStore.setSettingsOpen(false);
         currentStore.setCleanupOpen(false);
@@ -156,6 +172,7 @@ export function useKeyboard(options: KeyboardOptions) {
         const idx = parseInt(e.key, 10) - 1;
         if (activeTabs[idx]) {
           e.preventDefault();
+          currentStore.setWorkspaceView('mail');
           currentStore.setActiveSplit(activeTabs[idx].id);
           currentStore.setSettingsOpen(false);
           currentStore.setCleanupOpen(false);
@@ -166,9 +183,25 @@ export function useKeyboard(options: KeyboardOptions) {
       // Slash (/): Focus search
       if (noModifiers && (e.code === 'Slash' || e.key === '/')) {
         e.preventDefault();
+        currentStore.setWorkspaceView('mail');
         currentOptions.onSearchFocus();
         currentStore.setSettingsOpen(false);
         currentStore.setCleanupOpen(false);
+        return;
+      }
+
+      const mailOnlyKey = (e.key === 'Enter' && !isInteractiveFocused)
+        || e.key === 'Backspace'
+        || e.key === 'Delete'
+        || e.key === 'ArrowUp'
+        || e.key === 'ArrowDown'
+        || e.key === '!'
+        || (noModifiers && ['a', 'c', 'e', 'f', 'h', 'j', 'k', 'm', 'o', 'r', 's', 'u', 'x', 'z'].includes(e.key.toLowerCase()));
+      if (isTodayWorkspace && mailOnlyKey) {
+        e.preventDefault();
+        return;
+      }
+      if (isTodayWorkspace && e.key === 'Enter' && isInteractiveFocused) {
         return;
       }
 
@@ -206,7 +239,10 @@ export function useKeyboard(options: KeyboardOptions) {
       // Enter opens the focused thread (works in every mode).
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (focusedThread) currentStore.openThread(focusedThread);
+        if (focusedThread) {
+          currentStore.setWorkspaceView('mail');
+          currentStore.openThread(focusedThread);
+        }
         return;
       }
 
@@ -216,7 +252,10 @@ export function useKeyboard(options: KeyboardOptions) {
       // O: open
       if (noModifiers && (e.code === 'KeyO' || e.key === 'o')) {
         e.preventDefault();
-        if (focusedThread) currentStore.openThread(focusedThread);
+        if (focusedThread) {
+          currentStore.setWorkspaceView('mail');
+          currentStore.openThread(focusedThread);
+        }
         return;
       }
 
@@ -266,7 +305,10 @@ export function useKeyboard(options: KeyboardOptions) {
       if (noModifiers && (e.code === 'KeyR' || e.key === 'r')) {
         e.preventDefault();
         if (lastMsg) currentStore.startReply(lastMsg);
-        else if (focusedThread) currentStore.openThread(focusedThread);
+        else if (focusedThread) {
+          currentStore.setWorkspaceView('mail');
+          currentStore.openThread(focusedThread);
+        }
         return;
       }
       if (noModifiers && (e.code === 'KeyA' || e.key === 'a')) {
@@ -301,6 +343,7 @@ export function useKeyboard(options: KeyboardOptions) {
         e.preventDefault();
         const draft = currentStore.startNewDraft();
         if (!draft) {
+          currentStore.setWorkspaceView('mail');
           currentStore.setSettingsOpen(true);
           currentStore.setCleanupOpen(false);
           emitToast({ type: 'warning', message: 'Connect an account before composing.' });

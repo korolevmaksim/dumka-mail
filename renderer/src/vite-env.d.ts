@@ -29,6 +29,8 @@ import {
   DailyBriefingBuildOptions,
   EmbeddingIndexReindexOptions,
   EmbeddingIndexStatus,
+  FollowUpRadarListOptions,
+  FollowUpRadarResult,
   AIProviderPreference,
   AIProviderDescriptor,
   MCPServerConfig,
@@ -97,6 +99,11 @@ export interface IElectronAPI {
   verifyTokenExists: (email: string) => Promise<boolean>;
   disconnectAccount: (email: string, options?: { purgeCache?: boolean; revokeToken?: boolean }) => Promise<{ revokeStatus: 'skipped' | 'missing' | 'revoked' | 'failed' }>;
   authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => Promise<GoogleIntegrationStatus>;
+
+  // Follow-up Radar
+  listFollowUpRadarItems: (accountId: string, options?: FollowUpRadarListOptions) => Promise<FollowUpRadarResult>;
+  dismissFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string) => Promise<void>;
+  snoozeFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) => Promise<void>;
 
   // Gmail sync & mutations
   syncInbox: (email: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;

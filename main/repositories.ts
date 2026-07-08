@@ -24,9 +24,13 @@ import {
   AIChatMessage,
   MailboxSearchSource,
   AgentDraftSuggestion,
+  FollowUpRadarListOptions,
+  FollowUpRadarResult,
+  FollowUpRadarState,
   MessageSecurityInsight,
   SenderCleanupStat,
 } from '../shared/types';
+import { buildFollowUpRadarResult } from '../shared/followUpRadar';
 
 const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
 const MAX_EMAIL_SUGGESTION_LIMIT = 5000;
@@ -124,6 +128,7 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM drafts WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM ai_conversations WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_action_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_search WHERE account_id = ?').run(id);
@@ -325,6 +330,7 @@ export const ThreadsRepo = {
       db.prepare('DELETE FROM threads WHERE account_id = ? AND id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM messages WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM mail_search WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM agent_drafts WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM message_security WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
@@ -386,6 +392,32 @@ function mapMessageRow(r: any): MailMessage {
   };
 }
 
+function mapMessageMetadataRow(r: any): MailMessage {
+  return {
+    id: r.id,
+    threadId: r.thread_id,
+    accountId: r.account_id,
+    senderName: r.sender_name,
+    senderEmail: r.sender_email,
+    subject: r.subject,
+    snippet: r.snippet,
+    receivedAt: r.received_at,
+    labelIds: JSON.parse(r.label_ids_json),
+    hasAttachments: r.has_attachments === 1,
+    isUnread: r.is_unread === 1,
+    to: JSON.parse(r.to_recipients_json),
+    cc: JSON.parse(r.cc_recipients_json),
+    bcc: JSON.parse(r.bcc_recipients_json),
+    bodyHtml: null,
+    bodyPlain: null,
+    attachments: [],
+    headers: JSON.parse(r.headers_json || '[]'),
+    rfcMessageId: r.rfc_message_id,
+    rfcReferences: r.rfc_references,
+    rfcInReplyTo: r.rfc_in_reply_to
+  };
+}
+
 // === Messages Repository ===
 export const MessagesRepo = {
   listForThread(accountId: string, threadId: string): MailMessage[] {
@@ -397,6 +429,31 @@ export const MessagesRepo = {
     `).all(accountId, threadId) as any[];
 
     return rows.map(mapMessageRow);
+  },
+
+  listMetadataForThreads(accountId: string, threadIds: string[]): Map<string, MailMessage[]> {
+    const uniqueThreadIds = Array.from(new Set(threadIds.filter(Boolean)));
+    const messagesByThread = new Map<string, MailMessage[]>();
+    if (uniqueThreadIds.length === 0) return messagesByThread;
+
+    const db = getDatabase();
+    const placeholders = uniqueThreadIds.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT
+        id, thread_id, account_id, sender_name, sender_email, subject, snippet, received_at,
+        label_ids_json, has_attachments, is_unread, to_recipients_json, cc_recipients_json,
+        bcc_recipients_json, headers_json, rfc_message_id, rfc_references, rfc_in_reply_to
+      FROM messages
+      WHERE account_id = ? AND thread_id IN (${placeholders})
+      ORDER BY thread_id ASC, received_at ASC
+    `).all(accountId, ...uniqueThreadIds) as any[];
+
+    for (const message of rows.map(mapMessageMetadataRow)) {
+      const list = messagesByThread.get(message.threadId) || [];
+      list.push(message);
+      messagesByThread.set(message.threadId, list);
+    }
+    return messagesByThread;
   },
 
   save(messages: MailMessage[], options: { indexBodies?: boolean } = {}) {
@@ -1552,6 +1609,119 @@ export const RemindersRepo = {
       WHERE account_id = ? AND thread_id = ?
     `).run(accountId, threadId);
   }
+};
+
+function mapFollowUpRadarStateRow(row: any): FollowUpRadarState {
+  return {
+    accountId: row.account_id,
+    threadId: row.thread_id,
+    sentMessageId: row.sent_message_id,
+    status: row.status,
+    snoozedUntil: row.snoozed_until,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// === Follow-up Radar Repository ===
+export const FollowUpRadarRepo = {
+  listStates(accountId: string): FollowUpRadarState[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM follow_up_radar_state
+      WHERE account_id = ?
+      ORDER BY updated_at DESC
+    `).all(accountId) as any[];
+    return rows.map(mapFollowUpRadarStateRow);
+  },
+
+  listItems(accountId: string, options: FollowUpRadarListOptions = {}): FollowUpRadarResult {
+    const scanLimit = Math.max(1, Math.min(500, Math.floor(options.sentThreadScanLimit || 150)));
+    const maxItems = Math.max(1, Math.min(50, Math.floor(options.maxItems || 12)));
+    const thresholdHours = Math.max(1, Math.min(720, Math.floor(options.thresholdHours || 48)));
+    const now = options.nowIso ? new Date(options.nowIso) : new Date();
+    const safeNow = Number.isFinite(now.getTime()) ? now : new Date();
+    const sentCutoffIso = new Date(safeNow.getTime() - thresholdHours * 3_600_000).toISOString();
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT t.*, r.reminder_at
+      FROM threads t
+      JOIN (
+        SELECT account_id, thread_id, MAX(received_at) AS latest_sent_at
+        FROM messages
+        WHERE account_id = ?
+          AND label_ids_json LIKE '%"SENT"%'
+        GROUP BY account_id, thread_id
+        HAVING latest_sent_at <= ?
+      ) sent ON sent.account_id = t.account_id AND sent.thread_id = t.id
+      LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE t.account_id = ?
+      ORDER BY sent.latest_sent_at DESC
+      LIMIT ?
+    `).all(accountId, sentCutoffIso, accountId, scanLimit) as any[];
+    const threads = rows.map(mapThreadRow);
+    const states = this.listStates(accountId);
+    const messagesByThread = MessagesRepo.listMetadataForThreads(accountId, threads.map(thread => thread.id));
+
+    return buildFollowUpRadarResult({
+      accountId,
+      threadsWithMessages: threads.map(thread => ({
+        thread,
+        messages: messagesByThread.get(thread.id) || [],
+      })),
+      states,
+      now: safeNow,
+      thresholdHours,
+      maxItems,
+    });
+  },
+
+  saveState(state: FollowUpRadarState) {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO follow_up_radar_state (
+        account_id, thread_id, sent_message_id, status, snoozed_until, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, thread_id, sent_message_id) DO UPDATE SET
+        status=excluded.status,
+        snoozed_until=excluded.snoozed_until,
+        updated_at=excluded.updated_at
+    `).run(
+      state.accountId,
+      state.threadId,
+      state.sentMessageId,
+      state.status,
+      state.snoozedUntil || null,
+      state.createdAt,
+      state.updatedAt,
+    );
+  },
+
+  dismiss(accountId: string, threadId: string, sentMessageId: string) {
+    const now = new Date().toISOString();
+    this.saveState({
+      accountId,
+      threadId,
+      sentMessageId,
+      status: 'dismissed',
+      snoozedUntil: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+
+  snooze(accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) {
+    const now = new Date().toISOString();
+    this.saveState({
+      accountId,
+      threadId,
+      sentMessageId,
+      status: 'snoozed',
+      snoozedUntil,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
 };
 
 // === Sync State Repository ===

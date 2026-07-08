@@ -1,4 +1,4 @@
-import { Eraser, Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
+import { Eraser, Home, Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { AccountAvatar } from '../AccountAvatar';
 
@@ -8,10 +8,27 @@ export function LeftRail() {
   return (
     <div className="flex flex-col items-center justify-between w-[84px] border-r border-[var(--border)] bg-[var(--rail-bg)] py-4 traffic-light-margin shrink-0">
       <div className="flex flex-col gap-3 items-center w-full">
+        <button
+          onClick={() => {
+            store.setWorkspaceView('today');
+            store.setSettingsOpen(false);
+            store.setCleanupOpen(false);
+          }}
+          title="Today"
+          className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
+            store.workspaceView === 'today'
+              ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm'
+              : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] opacity-60 hover:opacity-100'
+          }`}
+        >
+          <Home className="w-5 h-5" />
+        </button>
+        <div className="w-8 h-[1px] bg-[var(--border)] opacity-60" />
         {store.accounts.length > 0 && (
           <>
             <button
               onClick={() => {
+                store.setWorkspaceView('mail');
                 store.setActiveAccount(UNIFIED_ACCOUNT);
                 store.setSettingsOpen(false);
                 store.setCleanupOpen(false);
@@ -36,6 +53,7 @@ export function LeftRail() {
           <button
             key={acc.id}
             onClick={() => {
+              store.setWorkspaceView('mail');
               store.setActiveAccount(acc);
               store.setSettingsOpen(false);
               store.setCleanupOpen(false);
@@ -83,6 +101,7 @@ export function LeftRail() {
         </button>
         <button
           onClick={() => {
+            store.setWorkspaceView('mail');
             store.setCleanupOpen(!store.cleanupOpen);
             store.setSettingsOpen(false);
           }}
@@ -93,6 +112,7 @@ export function LeftRail() {
         </button>
         <button
           onClick={() => {
+            store.setWorkspaceView('mail');
             store.setSettingsOpen(!store.settingsOpen);
             store.setCleanupOpen(false);
           }}

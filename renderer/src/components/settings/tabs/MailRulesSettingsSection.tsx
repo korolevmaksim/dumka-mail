@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { useAppStore } from '../../../stores/AppStore';
+import { RuleSimulatorPanel } from '../../automation/RuleSimulatorPanel';
 import { Toggle } from '../SettingsControls';
 import { labelDefinitionsForAccount, labelDisplayName } from '../../../../../shared/labels';
 import type { MailAutomationRule, MailCategoryRule, MailRuleAction, MailRuleActionType } from '../../../../../shared/types';
@@ -255,6 +256,8 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
           ))}
         </div>
       )}
+
+      <RuleSimulatorPanel compact />
     </div>
   );
 }

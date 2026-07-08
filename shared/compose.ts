@@ -328,7 +328,8 @@ function forwardBody(message: MailMessage): string {
 export function startReply(message: MailMessage, selfEmail: string, replyAll = false): DraftSeed {
   const self = selfEmail.trim().toLowerCase()
   const selfSet = self ? new Set([self]) : new Set<string>()
-  const sentByMe = self !== '' && message.senderEmail.trim().toLowerCase() === self
+  const hasSentLabel = message.labelIds.some(label => label.toUpperCase() === 'SENT')
+  const sentByMe = hasSentLabel || (self !== '' && message.senderEmail.trim().toLowerCase() === self)
   const sender = senderRecipient(message)
   const messageTo = message.to ?? []
   const messageCc = message.cc ?? []

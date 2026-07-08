@@ -719,6 +719,9 @@ export interface InboxSettings {
   archiveOnDoneShortcut: boolean;
   enableReminders: boolean;
   enableFollowUps: boolean;
+  followUpThresholdHours: number;
+  followUpMaxItems: number;
+  followUpSnoozeHours: number;
   showPurchasesSplit: boolean;
   showLinkedInSplit: boolean;
   showAutomationSplit: boolean;
@@ -752,6 +755,59 @@ export interface MailAutomationRule {
 export interface MailRulesSettings {
   enabled: boolean;
   rules: MailAutomationRule[];
+}
+
+export type FollowUpRadarStateStatus = 'dismissed' | 'snoozed';
+
+export interface FollowUpRadarState {
+  accountId: AccountID;
+  threadId: ThreadID;
+  sentMessageId: MessageID;
+  status: FollowUpRadarStateStatus;
+  snoozedUntil?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FollowUpRadarItem {
+  id: string;
+  accountId: AccountID;
+  threadId: ThreadID;
+  sentMessageId: MessageID;
+  subject: string;
+  recipientLine: string;
+  lastSentAt: string;
+  ageHours: number;
+  priority: number;
+  reason: string;
+  snippet: string;
+  thread: MailThread;
+  sentMessage: MailMessage;
+}
+
+export interface FollowUpRadarResult {
+  accountId: AccountID;
+  generatedAt: string;
+  scannedThreadCount: number;
+  candidateCount: number;
+  items: FollowUpRadarItem[];
+  warnings: string[];
+}
+
+export interface FollowUpRadarListOptions {
+  thresholdHours?: number;
+  maxItems?: number;
+  sentThreadScanLimit?: number;
+  nowIso?: string;
+}
+
+export interface AutomationRuleCandidate {
+  id: string;
+  title: string;
+  reason: string;
+  rule: MailAutomationRule;
+  sourceActionCount: number;
+  sampleThreadIds: ThreadID[];
 }
 
 export interface ComposeSettings {

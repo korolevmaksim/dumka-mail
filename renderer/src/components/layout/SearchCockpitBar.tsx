@@ -7,7 +7,7 @@ import { getSearchIndicatorState } from './searchIndicator';
 
 export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
-  const { searchQuery, searchStatus, setSearchQuery, settingsOpen, setSettingsOpen, cleanupOpen, setCleanupOpen } = store;
+  const { searchQuery, searchStatus, setSearchQuery, settingsOpen, setSettingsOpen, cleanupOpen, setCleanupOpen, setWorkspaceView } = store;
   const [draftQuery, setDraftQuery] = useState(searchQuery);
   const committedQueryRef = useRef(searchQuery);
   const commitRef = useRef<(value: string) => void>(() => undefined);
@@ -116,6 +116,9 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
               }
               if (nextQuery && cleanupOpen) {
                 setCleanupOpen(false);
+              }
+              if (nextQuery) {
+                setWorkspaceView('mail');
               }
             }}
             onKeyDown={(e) => {

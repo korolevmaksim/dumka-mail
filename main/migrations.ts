@@ -170,6 +170,17 @@ export function runMigrations(db: Database.Database) {
         PRIMARY KEY (account_id, thread_id)
     );
 
+    CREATE TABLE IF NOT EXISTS follow_up_radar_state (
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        sent_message_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        snoozed_until TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, thread_id, sent_message_id)
+    );
+
     CREATE TABLE IF NOT EXISTS ai_conversations (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -254,6 +265,7 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_ai_conversations_account_id ON ai_conversations(account_id);
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_created_at ON mail_action_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_account_id ON mail_action_log(account_id);
+    CREATE INDEX IF NOT EXISTS idx_follow_up_radar_state_account ON follow_up_radar_state(account_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_drafts_thread ON agent_drafts(account_id, thread_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_message_security_thread ON message_security(account_id, thread_id);
     CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model ON mail_embeddings(account_id, model, indexed_at DESC);
