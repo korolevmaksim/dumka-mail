@@ -187,6 +187,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ai: {
     provider: 'automatic',
     globalDefaultModel: '',
+    automationModel: '',
     fallback: {
       isEnabled: true,
       orderText: 'openai, anthropic, gemini, openrouter, deepseek'

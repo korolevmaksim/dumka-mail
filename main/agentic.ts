@@ -19,6 +19,7 @@ import {
   shouldGenerateAgentDraft,
 } from '../shared/mailSecurity';
 import { buildThreadContext, htmlToText } from '../shared/aiContext';
+import { resolveAIModelForPurpose } from '../shared/aiModelPurpose';
 import { normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
 import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
@@ -47,6 +48,8 @@ import type {
 
 interface RuntimeAgentSettings {
   provider: AIProviderPreference;
+  interactiveModel: string;
+  automationModel: string;
   allowMailBodyContext: boolean;
   proactiveDraftsEnabled: boolean;
   semanticSearchEnabled: boolean;
@@ -114,6 +117,8 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
 
     return {
       provider: parsed?.ai?.provider || 'automatic',
+      interactiveModel: typeof parsed?.ai?.globalDefaultModel === 'string' ? parsed.ai.globalDefaultModel : '',
+      automationModel: typeof parsed?.ai?.automationModel === 'string' ? parsed.ai.automationModel : '',
       allowMailBodyContext: parsed?.ai?.allowMailBodyContext === true,
       proactiveDraftsEnabled: parsed?.ai?.proactiveDraftsEnabled === true,
       semanticSearchEnabled,
@@ -127,6 +132,8 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
   } catch {
     return {
       provider: 'automatic',
+      interactiveModel: '',
+      automationModel: '',
       allowMailBodyContext: true,
       proactiveDraftsEnabled: false,
       semanticSearchEnabled: false,
@@ -260,7 +267,8 @@ function cleanDraftText(text: string): string {
 function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
   return {
     provider: settings.provider,
-    globalDefaultModel: '',
+    globalDefaultModel: settings.interactiveModel,
+    automationModel: settings.automationModel,
     fallback: { isEnabled: true, orderText: '' },
     providerConfigurations: [],
     promptShortcuts: [],
@@ -281,6 +289,13 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
   };
 }
 
+function automationModelOverride(settings: RuntimeAgentSettings): string | undefined {
+  return resolveAIModelForPurpose('automation', {
+    interactiveModel: settings.interactiveModel,
+    automationModel: settings.automationModel,
+  });
+}
+
 async function generateDraftForThread(thread: MailThread, messages: MailMessage[]): Promise<AgentDraftSuggestion | null> {
   const settings = readAgentSettings(thread.accountId);
   if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return null;
@@ -296,7 +311,8 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
   activeDraftThreads.add(key);
 
   try {
-    const descriptor = await getAIProviderDescriptor(settings.provider);
+    const overrideModel = automationModelOverride(settings);
+    const descriptor = await getAIProviderDescriptor(settings.provider, overrideModel);
     if (descriptor.preference === 'disabled') return null;
 
     const tone = settings.replyTone === 'direct'
@@ -322,7 +338,7 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
         'If facts are missing, include a short bracketed placeholder instead of guessing.',
         personalization,
       ].join('\n'),
-    }, settings.provider);
+    }, settings.provider, overrideModel);
 
     const bodyPlain = cleanDraftText(response.text);
     if (bodyPlain.length < 8) return null;

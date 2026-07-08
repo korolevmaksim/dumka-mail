@@ -310,19 +310,38 @@ export function AISettingsTab() {
 
         <div className="w-full h-[1px] bg-[var(--border)]" />
 
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Global Default Model</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Target model for triage generation and summaries</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Interactive Model</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Chat, triage, and on-demand compose. Cascade: AI panel session model → this field → provider default below.</span>
           </div>
           <input
             type="text"
-            placeholder="e.g. gpt-5.4-mini, gemini-3.5-flash"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            placeholder="e.g. gpt-5.4, claude-sonnet-4.6"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none shrink-0 max-w-[220px]"
             value={store.settings.ai.globalDefaultModel}
             onChange={(e) => {
               const val = e.target.value;
               store.updateSettings(s => { s.ai.globalDefaultModel = val; });
+            }}
+          />
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Automation Model</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Proactive auto-drafts and background LLM jobs. Empty falls back to Interactive Model, then provider default.</span>
+          </div>
+          <input
+            type="text"
+            placeholder="e.g. gpt-5.4-mini, gemini-3.5-flash"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none shrink-0 max-w-[220px]"
+            value={store.settings.ai.automationModel}
+            onChange={(e) => {
+              const val = e.target.value;
+              store.updateSettings(s => { s.ai.automationModel = val; });
             }}
           />
         </div>

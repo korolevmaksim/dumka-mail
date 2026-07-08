@@ -28,6 +28,7 @@ import {
 import { useAppStore } from '../../stores/AppStore';
 import { emitToast } from '../../lib/toastBus';
 import { formatAIUserError } from '../../../../shared/aiErrors';
+import { resolveAIModelForPurpose } from '../../../../shared/aiModelPurpose';
 import {
   buildInitialDraftBodyWithSignature,
   escapeHtml,
@@ -402,7 +403,9 @@ export function FloatingComposeDrawer() {
         context,
         conversationHistory: [],
         userInstruction: instruction,
-      }, store.aiProvider, store.aiModel || undefined);
+      }, store.aiProvider, resolveAIModelForPurpose('interactive', {
+        interactiveModel: store.settings.ai.globalDefaultModel,
+      }, store.aiModel));
 
       const fragment = textOrHtmlToFragment(response.text);
       if (!fragment) return;

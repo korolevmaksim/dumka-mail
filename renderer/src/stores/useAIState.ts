@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
+import { resolveAIModelForPurpose } from '../../../shared/aiModelPurpose';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 import { MailTriagePlanner } from '../../../shared/triagePlanner';
@@ -209,7 +210,9 @@ export function useAIState({
           enabled: settings.ai.externalToolsEnabled,
           allowMailboxSearch: true,
         },
-      }, aiProvider, aiModel || undefined);
+      }, aiProvider, resolveAIModelForPurpose('interactive', {
+        interactiveModel: settings.ai.globalDefaultModel,
+      }, aiModel));
 
       const assistantMsg: AIChatMessage = {
         id: crypto.randomUUID(),
@@ -541,7 +544,9 @@ export function useAIState({
           enabled: settings.ai.externalToolsEnabled,
           allowMailboxSearch: true,
         },
-      }, aiProvider, aiModel || undefined);
+      }, aiProvider, resolveAIModelForPurpose('interactive', {
+        interactiveModel: settings.ai.globalDefaultModel,
+      }, aiModel));
 
       const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text, sources: response.sources };
       const finalMsgs = [...pending, assistantMsg];
@@ -628,7 +633,9 @@ export function useAIState({
           context: buildAITriageContext(visibleThreads),
           conversationHistory: [],
           userInstruction: buildAITriageInstruction(intent),
-        }, aiProvider, aiModel || undefined);
+        }, aiProvider, resolveAIModelForPurpose('interactive', {
+          interactiveModel: settings.ai.globalDefaultModel,
+        }, aiModel));
 
         plan = buildAITriagePlanFromResponse({
           accountId: fallbackPlan.accountId,

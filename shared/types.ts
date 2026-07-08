@@ -961,7 +961,10 @@ export interface AgentRulesSettings {
 
 export interface AISettings {
   provider: AIProviderPreference;
+  /** Interactive model override for chat, triage, compose assist. Empty → provider env default. */
   globalDefaultModel: string;
+  /** Automation model override for proactive drafts and other background LLM jobs. Empty → interactive/default. */
+  automationModel: string;
   fallback: AIFallbackSettings;
   providerConfigurations: AIProviderConfiguration[];
   promptShortcuts: AIPromptShortcut[];

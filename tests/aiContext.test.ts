@@ -45,6 +45,7 @@ function makeAISettings(allowMailBodyContext: boolean): AISettings {
   return {
     provider: 'automatic',
     globalDefaultModel: '',
+    automationModel: '',
     fallback: { isEnabled: false, orderText: '' },
     providerConfigurations: [],
     promptShortcuts: [],

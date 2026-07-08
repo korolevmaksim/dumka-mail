@@ -75,6 +75,37 @@ describe('AppSettings AI prompt shortcuts', () => {
     expect(merged.general.language).toBe('pseudo');
   });
 
+  it('ships interactive and automation model fields empty so installs fall back to provider defaults', () => {
+    expect(DEFAULT_SETTINGS.ai.globalDefaultModel).toBe('');
+    expect(DEFAULT_SETTINGS.ai.automationModel).toBe('');
+  });
+
+  it('fills automationModel when migrating older settings blobs that only had interactive model', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+      ai: {
+        provider: 'openAI',
+        globalDefaultModel: 'gpt-5.4',
+      },
+    });
+
+    expect(merged.ai.globalDefaultModel).toBe('gpt-5.4');
+    expect(merged.ai.automationModel).toBe('');
+  });
+
+  it('preserves a user-configured automation model independently of interactive model', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      ai: {
+        globalDefaultModel: 'gpt-5.4',
+        automationModel: 'gpt-5.4-mini',
+      },
+    });
+
+    expect(merged.ai.globalDefaultModel).toBe('gpt-5.4');
+    expect(merged.ai.automationModel).toBe('gpt-5.4-mini');
+  });
+
   it('ships with a thread-scoped request explanation shortcut', () => {
     expect(DEFAULT_SETTINGS.ai.promptShortcuts).toEqual([
       expect.objectContaining({
