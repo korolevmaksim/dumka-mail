@@ -326,4 +326,150 @@ describe('MessagesRepo.senderCleanupStats', () => {
       expect(MessagesRepo.senderCleanupStats('me@example.com')).toHaveLength(200);
     });
   });
+
+  repositoryIt('excludes senders marked as unsubscribed even when List-Unsubscribe headers remain', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo, ThreadsRepo, UnsubscribedSendersRepo }) => {
+      MessagesRepo.save([
+        message({
+          senderEmail: 'Promo@News.COM',
+          threadId: 'promo-1',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          senderEmail: 'still@example.com',
+          threadId: 'still-1',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({ senderEmail: 'old-only@example.com', threadId: 'old-1', receivedAt: isoDaysAgo(60) }),
+      ]);
+      ThreadsRepo.save([
+        thread({ id: 'old-1', senderEmail: 'old-only@example.com', lastMessageAt: isoDaysAgo(60) }),
+      ]);
+
+      expect(MessagesRepo.senderCleanupStats('me@example.com').map(s => s.senderEmail).sort()).toEqual([
+        'old-only@example.com',
+        'promo@news.com',
+        'still@example.com',
+      ]);
+
+      UnsubscribedSendersRepo.mark('me@example.com', 'Promo@News.COM', {
+        threadId: 'promo-1',
+        method: 'httpPost',
+      });
+      // Case-insensitive identity: upper/mixed-case mark matches lower-cased sender_key.
+      expect(UnsubscribedSendersRepo.has('me@example.com', 'promo@news.com')).toBe(true);
+
+      const after = MessagesRepo.senderCleanupStats('me@example.com').map(s => s.senderEmail).sort();
+      expect(after).toEqual([
+        'old-only@example.com',
+        'still@example.com',
+      ]);
+      expect(after).not.toContain('promo@news.com');
+    });
+  });
+
+  repositoryIt('excludes archiveable-only senders once they are marked unsubscribed', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo, ThreadsRepo, UnsubscribedSendersRepo }) => {
+      MessagesRepo.save([
+        message({ senderEmail: 'bulk@example.com', threadId: 'bulk-old', receivedAt: isoDaysAgo(60) }),
+      ]);
+      ThreadsRepo.save([
+        thread({ id: 'bulk-old', senderEmail: 'bulk@example.com', lastMessageAt: isoDaysAgo(60) }),
+      ]);
+
+      expect(MessagesRepo.senderCleanupStats('me@example.com').map(s => s.senderEmail)).toEqual([
+        'bulk@example.com',
+      ]);
+
+      UnsubscribedSendersRepo.mark('me@example.com', 'bulk@example.com');
+      expect(MessagesRepo.senderCleanupStats('me@example.com')).toEqual([]);
+    });
+  });
+
+  repositoryIt('re-surfaces unsubscribed senders after grace when enough post-unsub mail arrives', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo, UnsubscribedSendersRepo }) => {
+      const unsubscribedAt = isoDaysAgo(20);
+      MessagesRepo.save([
+        message({
+          id: 'pre-1',
+          senderEmail: 'nag@example.com',
+          threadId: 'nag-pre',
+          receivedAt: isoDaysAgo(25),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        // During grace (within 7 days of unsub) — must not count.
+        message({
+          id: 'grace-1',
+          senderEmail: 'nag@example.com',
+          threadId: 'nag-grace',
+          receivedAt: isoDaysAgo(18),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        // After grace — need ≥2 to resurface.
+        message({
+          id: 'post-1',
+          senderEmail: 'nag@example.com',
+          threadId: 'nag-post-1',
+          receivedAt: isoDaysAgo(5),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          id: 'post-2',
+          senderEmail: 'nag@example.com',
+          threadId: 'nag-post-2',
+          receivedAt: isoDaysAgo(2),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          senderEmail: 'quiet@example.com',
+          threadId: 'quiet-1',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+      ]);
+
+      UnsubscribedSendersRepo.mark('me@example.com', 'nag@example.com', {
+        unsubscribedAt,
+        method: 'httpPost',
+      });
+      UnsubscribedSendersRepo.mark('me@example.com', 'quiet@example.com', {
+        unsubscribedAt,
+        method: 'httpPost',
+      });
+
+      const stats = MessagesRepo.senderCleanupStats('me@example.com');
+      const nag = stats.find(s => s.senderEmail === 'nag@example.com');
+      expect(nag).toMatchObject({
+        previouslyUnsubscribed: true,
+        postUnsubscribeMessageCount: 2,
+        hasUnsubscribeHeader: true,
+      });
+      expect(stats.find(s => s.senderEmail === 'quiet@example.com')).toBeUndefined();
+    });
+  });
+
+  repositoryIt('does not re-surface on a single post-grace message', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo, UnsubscribedSendersRepo }) => {
+      MessagesRepo.save([
+        message({
+          senderEmail: 'once@example.com',
+          threadId: 'once-pre',
+          receivedAt: isoDaysAgo(30),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          senderEmail: 'once@example.com',
+          threadId: 'once-post',
+          receivedAt: isoDaysAgo(2),
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+      ]);
+      UnsubscribedSendersRepo.mark('me@example.com', 'once@example.com', {
+        unsubscribedAt: isoDaysAgo(20),
+      });
+
+      expect(MessagesRepo.senderCleanupStats('me@example.com').map(s => s.senderEmail)).not.toContain(
+        'once@example.com',
+      );
+    });
+  });
 });

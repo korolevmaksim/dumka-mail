@@ -5,7 +5,10 @@ import {
   CLEANUP_ARCHIVE_BATCH_LIMIT,
   isCleanupSenderActionable,
   selectArchiveOldCandidates,
+  shouldResurfaceUnsubscribedSender,
   suggestCleanupAction,
+  UNSUBSCRIBE_GRACE_PERIOD_MS,
+  UNSUBSCRIBE_RESURFACE_MIN_MESSAGES,
 } from '../shared/cleanup';
 import type { MailThread, SenderCleanupStat, UnsubscribeCandidate } from '../shared/types';
 
@@ -116,6 +119,14 @@ describe('suggestCleanupAction', () => {
     expect(suggestCleanupAction(stat({ hasUnsubscribeHeader: false, recent30dCount: 3, archiveableOldCount: 0 }))).toBe('none');
   });
 
+  it('recommends unsubscribe for re-surfaced previously-unsubscribed senders without the volume gate', () => {
+    expect(suggestCleanupAction(stat({
+      previouslyUnsubscribed: true,
+      hasUnsubscribeHeader: true,
+      recent30dCount: 1,
+    }))).toBe('unsubscribe');
+  });
+
   it('prefers unsubscribe over archiveOld when both match', () => {
     expect(suggestCleanupAction(stat({
       hasUnsubscribeHeader: true,
@@ -138,6 +149,40 @@ describe('suggestCleanupAction', () => {
       unreadCount: 10,
       archiveableOldCount: 0,
     }))).toBe('none');
+  });
+});
+
+describe('shouldResurfaceUnsubscribedSender', () => {
+  const unsubscribedAt = '2026-06-01T00:00:00.000Z';
+  const unsubscribedMs = Date.parse(unsubscribedAt);
+
+  it('stays hidden inside the grace window even with post-grace-shaped counts', () => {
+    expect(shouldResurfaceUnsubscribedSender({
+      unsubscribedAt,
+      postGraceMessageCount: 5,
+      now: unsubscribedMs + UNSUBSCRIBE_GRACE_PERIOD_MS - 1,
+    })).toBe(false);
+  });
+
+  it('stays hidden after grace until the min message threshold is met', () => {
+    const now = unsubscribedMs + UNSUBSCRIBE_GRACE_PERIOD_MS + 1;
+    expect(shouldResurfaceUnsubscribedSender({
+      unsubscribedAt,
+      postGraceMessageCount: UNSUBSCRIBE_RESURFACE_MIN_MESSAGES - 1,
+      now,
+    })).toBe(false);
+    expect(shouldResurfaceUnsubscribedSender({
+      unsubscribedAt,
+      postGraceMessageCount: UNSUBSCRIBE_RESURFACE_MIN_MESSAGES,
+      now,
+    })).toBe(true);
+  });
+
+  it('rejects invalid unsubscribedAt timestamps', () => {
+    expect(shouldResurfaceUnsubscribedSender({
+      unsubscribedAt: 'not-a-date',
+      postGraceMessageCount: 10,
+    })).toBe(false);
   });
 });
 

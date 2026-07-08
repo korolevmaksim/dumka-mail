@@ -9,6 +9,45 @@ export const CLEANUP_ARCHIVE_BATCH_LIMIT = 25;
 export const CLEANUP_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * Grace period after a successful unsubscribe before counting new mail as
+ * "still sending". Grounded in product norms:
+ *  - Gmail: "may take a few days"
+ *  - Leave Me Alone: up to ~72h processing
+ *  - CAN-SPAM: 10 business days legal outer bound (~14 calendar days)
+ *
+ * 7 calendar days sits past processing delays without waiting the full legal
+ * window (cleanup should re-surface non-compliant volume sooner than that).
+ * Keep in sync with the julianday('+N days') filter in MessagesRepo.senderCleanupStats.
+ */
+export const UNSUBSCRIBE_GRACE_PERIOD_DAYS = 7;
+export const UNSUBSCRIBE_GRACE_PERIOD_MS = UNSUBSCRIBE_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * Minimum messages received after the grace period that re-surface a previously
+ * unsubscribed sender in Cleanup. One queued campaign email is ignored.
+ */
+export const UNSUBSCRIBE_RESURFACE_MIN_MESSAGES = 2;
+
+/**
+ * Whether a previously unsubscribed sender should reappear in Cleanup after
+ * more mail arrives (non-compliant / multi-list / sold-list cases).
+ */
+export function shouldResurfaceUnsubscribedSender(options: {
+  unsubscribedAt: string;
+  /** Messages with received_at strictly after unsubscribedAt + grace. */
+  postGraceMessageCount: number;
+  now?: number;
+}): boolean {
+  const unsubscribedMs = Date.parse(options.unsubscribedAt);
+  if (!Number.isFinite(unsubscribedMs)) return false;
+  const now = options.now ?? Date.now();
+  // Still inside the grace window: do not resurface even if mail arrived
+  // (senders may have already-queued campaigns).
+  if (now < unsubscribedMs + UNSUBSCRIBE_GRACE_PERIOD_MS) return false;
+  return options.postGraceMessageCount >= UNSUBSCRIBE_RESURFACE_MIN_MESSAGES;
+}
+
+/**
  * Whether a cleanup-center row is worth showing at all.
  *
  * The panel is a cleanup tool, not a leaderboard: senders with no archiveable
@@ -52,15 +91,18 @@ export function selectArchiveOldCandidates(
  * Deterministic suggested action for a sender row, evaluated in this exact
  * precedence order:
  *  1. maxRiskLevel === 'high'                             -> 'review'
- *  2. hasUnsubscribeHeader AND recent30dCount >= 3        -> 'unsubscribe'
- *  3. archiveableOldCount > 0                             -> 'archiveOld'
- *  4. otherwise                                           -> 'none'
+ *  2. previouslyUnsubscribed AND hasUnsubscribeHeader     -> 'unsubscribe'
+ *     (re-surfaced non-compliant senders; skip volume gate)
+ *  3. hasUnsubscribeHeader AND recent30dCount >= 3        -> 'unsubscribe'
+ *  4. archiveableOldCount > 0                             -> 'archiveOld'
+ *  5. otherwise                                           -> 'none'
  *
  * archiveOld is gated on real archiveable count (not volume heuristics) so the
  * suggestion never promises an action the buttons cannot perform.
  */
 export function suggestCleanupAction(stat: SenderCleanupStat): CleanupSuggestedAction {
   if (stat.maxRiskLevel === 'high') return 'review';
+  if (stat.previouslyUnsubscribed && stat.hasUnsubscribeHeader) return 'unsubscribe';
   if (stat.hasUnsubscribeHeader && stat.recent30dCount >= 3) return 'unsubscribe';
   if (stat.archiveableOldCount > 0) return 'archiveOld';
   return 'none';

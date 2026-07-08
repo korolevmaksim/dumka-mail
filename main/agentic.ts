@@ -8,6 +8,7 @@ import {
   MessageSecurityRepo,
   SettingsRepo,
   ThreadsRepo,
+  UnsubscribedSendersRepo,
 } from './database';
 import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
 import { GmailSyncService } from './gmail';
@@ -824,7 +825,7 @@ export const AgenticService = {
     };
   },
 
-  async unsubscribeThread(accountId: string, threadId: string, sourceMessageId?: string): Promise<{ method: string; archived: boolean }> {
+  async unsubscribeThread(accountId: string, threadId: string, sourceMessageId?: string): Promise<{ method: string; archived: boolean; senderEmail: string | null }> {
     const messages = MessagesRepo.listForThread(accountId, threadId);
     let candidate: UnsubscribeCandidate | null;
     if (sourceMessageId) {
@@ -845,8 +846,14 @@ export const AgenticService = {
     }
 
     const method = await performUnsubscribe(accountId, candidate.recommendedMethod);
+    // Persist so Cleanup Center drops this sender even though List-Unsubscribe
+    // headers remain on historical cached messages.
+    const senderEmail = (candidate.senderEmail || messages[0]?.senderEmail || '').trim().toLowerCase();
+    if (senderEmail) {
+      UnsubscribedSendersRepo.mark(accountId, senderEmail, { threadId, method });
+    }
     ThreadsRepo.updateLabels(accountId, threadId, [], ['INBOX']);
     await GmailSyncService.modifyLabels(accountId, threadId, [], ['INBOX']);
-    return { method, archived: true };
+    return { method, archived: true, senderEmail: senderEmail || null };
   },
 };

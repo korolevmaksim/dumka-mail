@@ -181,6 +181,18 @@ export function runMigrations(db: Database.Database) {
         PRIMARY KEY (account_id, thread_id, sent_message_id)
     );
 
+    -- Senders the user successfully unsubscribed from. Cleanup Center excludes
+    -- these so an approved unsubscribe removes the row even though List-Unsubscribe
+    -- headers remain on historical messages in the local cache.
+    CREATE TABLE IF NOT EXISTS unsubscribed_senders (
+        account_id TEXT NOT NULL,
+        sender_email TEXT NOT NULL,
+        unsubscribed_at TEXT NOT NULL,
+        thread_id TEXT,
+        method TEXT,
+        PRIMARY KEY (account_id, sender_email)
+    );
+
     CREATE TABLE IF NOT EXISTS ai_conversations (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -266,6 +278,7 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_created_at ON mail_action_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_account_id ON mail_action_log(account_id);
     CREATE INDEX IF NOT EXISTS idx_follow_up_radar_state_account ON follow_up_radar_state(account_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_unsubscribed_senders_account ON unsubscribed_senders(account_id, unsubscribed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_drafts_thread ON agent_drafts(account_id, thread_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_message_security_thread ON message_security(account_id, thread_id);
     CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model ON mail_embeddings(account_id, model, indexed_at DESC);
@@ -324,5 +337,31 @@ export function runMigrations(db: Database.Database) {
     } catch (e) {
       console.error(`Migration error for ${table}.${column}:`, e);
     }
+  }
+
+  // Idempotent backfill: completed unsubscribe actions that predate the
+  // unsubscribed_senders table still need to hide those senders in Cleanup.
+  try {
+    db.exec(`
+      INSERT OR IGNORE INTO unsubscribed_senders (
+        account_id, sender_email, unsubscribed_at, thread_id, method
+      )
+      SELECT
+        al.account_id,
+        lower(t.sender_email),
+        COALESCE(al.completed_at, al.created_at),
+        al.thread_id,
+        NULL
+      FROM mail_action_log al
+      JOIN threads t
+        ON t.account_id = al.account_id
+       AND t.id = al.thread_id
+      WHERE al.kind = 'unsubscribeSender'
+        AND al.status = 'completed'
+        AND t.sender_email IS NOT NULL
+        AND trim(t.sender_email) != ''
+    `);
+  } catch (e) {
+    console.error('Migration error backfilling unsubscribed_senders:', e);
   }
 }

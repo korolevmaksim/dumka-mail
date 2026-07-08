@@ -85,6 +85,19 @@ export function CleanupPanel() {
     void loadStats();
   }, [loadStats]);
 
+  // After a successful unsubscribe, the main process marks the sender and the
+  // action log flips to completed. Reload stats so the row disappears without
+  // requiring a manual refresh (historical List-Unsubscribe headers still match).
+  const completedUnsubscribeKey = useMemo(() => store.actionLog
+    .filter(log => log.kind === 'unsubscribeSender' && log.status === 'completed')
+    .map(log => `${log.id}:${log.completedAt || ''}`)
+    .join('|'), [store.actionLog]);
+
+  useEffect(() => {
+    if (!completedUnsubscribeKey) return;
+    void loadStats();
+  }, [completedUnsubscribeKey, loadStats]);
+
   // One O(threads) grouping pass shared by every sender row instead of a full
   // thread-list scan per row. Stats keys are lowercase (sender_key in SQL), so
   // thread sender emails are lowercased to match.
@@ -296,6 +309,17 @@ export function CleanupPanel() {
                       {stat.maxRiskLevel && (
                         <span className={`rounded border px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-semibold uppercase ${RISK_TONE[stat.maxRiskLevel]}`}>
                           {stat.maxRiskLevel} risk
+                        </span>
+                      )}
+                      {stat.previouslyUnsubscribed && (
+                        <span
+                          className="rounded border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--danger)]"
+                          title="This sender kept mailing after a previous in-app unsubscribe (past the 7-day grace window)."
+                        >
+                          Still sending
+                          {typeof stat.postUnsubscribeMessageCount === 'number' && stat.postUnsubscribeMessageCount > 0
+                            ? ` (${stat.postUnsubscribeMessageCount})`
+                            : ''}
                         </span>
                       )}
                       {canUnsubscribe && (

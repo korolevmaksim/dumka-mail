@@ -129,6 +129,7 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM unsubscribed_senders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM ai_conversations WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_action_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_search WHERE account_id = ?').run(id);
@@ -599,6 +600,10 @@ export const MessagesRepo = {
     // A correlated per-sender subquery measured 35.9 s vs 0.6 s for this form.
     // Only return senders the user can act on (unsubscribe header and/or
     // archiveable old INBOX threads). Volume-only noise is filtered out.
+    //
+    // Previously unsubscribed senders stay hidden until post-grace mail reaches
+    // UNSUBSCRIBE_RESURFACE_MIN_MESSAGES (shared/cleanup.ts: 7-day grace, 2 msgs).
+    // The +7 in julianday() MUST match UNSUBSCRIBE_GRACE_PERIOD_DAYS.
     const rows = db.prepare(`
       WITH sender_stats AS (
         SELECT
@@ -646,6 +651,19 @@ export const MessagesRepo = {
         JOIN message_security s ON s.account_id = m.account_id AND s.message_id = m.id
         WHERE m.account_id = @accountId
         GROUP BY m.account_id, sender_key
+      ),
+      post_unsubscribe AS (
+        SELECT
+          us.account_id,
+          us.sender_email AS sender_key,
+          COUNT(m.id) AS post_grace_count
+        FROM unsubscribed_senders us
+        LEFT JOIN messages m
+          ON m.account_id = us.account_id
+         AND lower(m.sender_email) = us.sender_email
+         AND julianday(m.received_at) > julianday(us.unsubscribed_at) + 7.0
+        WHERE us.account_id = @accountId
+        GROUP BY us.account_id, us.sender_email
       )
       SELECT
         st.account_id,
@@ -660,14 +678,25 @@ export const MessagesRepo = {
         COALESCE(arc.archiveable_old_count, 0) AS archiveable_old_count,
         COALESCE(sec.tracker_count, 0) AS tracker_count,
         COALESCE(sec.max_risk_rank, 0) AS max_risk_rank,
-        COALESCE(ab.attachment_bytes, 0) AS attachment_bytes
+        COALESCE(ab.attachment_bytes, 0) AS attachment_bytes,
+        CASE WHEN us.sender_email IS NOT NULL THEN 1 ELSE 0 END AS previously_unsubscribed,
+        COALESCE(pu.post_grace_count, 0) AS post_grace_count
       FROM sender_stats st
       LEFT JOIN archiveable arc ON arc.account_id = st.account_id AND arc.sender_key = st.sender_key
       LEFT JOIN att_bytes ab ON ab.account_id = st.account_id AND ab.sender_key = st.sender_key
       LEFT JOIN security sec ON sec.account_id = st.account_id AND sec.sender_key = st.sender_key
-      WHERE st.has_unsubscribe = 1
-         OR COALESCE(arc.archiveable_old_count, 0) > 0
+      LEFT JOIN unsubscribed_senders us
+        ON us.account_id = st.account_id AND us.sender_email = st.sender_key
+      LEFT JOIN post_unsubscribe pu
+        ON pu.account_id = st.account_id AND pu.sender_key = st.sender_key
+      WHERE (st.has_unsubscribe = 1
+         OR COALESCE(arc.archiveable_old_count, 0) > 0)
+        AND (
+          us.sender_email IS NULL
+          OR COALESCE(pu.post_grace_count, 0) >= 2
+        )
       ORDER BY
+        CASE WHEN us.sender_email IS NOT NULL THEN 1 ELSE 0 END DESC,
         CASE WHEN st.has_unsubscribe = 1 THEN 1 ELSE 0 END DESC,
         COALESCE(arc.archiveable_old_count, 0) DESC,
         st.recent_30d DESC,
@@ -696,6 +725,8 @@ export const MessagesRepo = {
       trackerCount: r.tracker_count || 0,
       maxRiskLevel: riskForRank[r.max_risk_rank as number] ?? null,
       attachmentBytes: r.attachment_bytes || 0,
+      previouslyUnsubscribed: r.previously_unsubscribed === 1,
+      postUnsubscribeMessageCount: r.post_grace_count || 0,
     }));
   }
 };
@@ -1644,6 +1675,61 @@ function mapFollowUpRadarStateRow(row: any): FollowUpRadarState {
     updatedAt: row.updated_at,
   };
 }
+
+// === Unsubscribed Senders Repository ===
+export const UnsubscribedSendersRepo = {
+  /**
+   * Record a successful one-click / mailto unsubscribe so Cleanup Center can
+   * hide the sender. Sender emails are stored lower-cased to match sender_key.
+   */
+  mark(accountId: string, senderEmail: string, options?: {
+    threadId?: string | null;
+    method?: string | null;
+    unsubscribedAt?: string;
+  }) {
+    const normalized = senderEmail.trim().toLowerCase();
+    if (!accountId || !normalized) return;
+    const db = getDatabase();
+    const unsubscribedAt = options?.unsubscribedAt || new Date().toISOString();
+    db.prepare(`
+      INSERT INTO unsubscribed_senders (
+        account_id, sender_email, unsubscribed_at, thread_id, method
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, sender_email) DO UPDATE SET
+        unsubscribed_at=excluded.unsubscribed_at,
+        thread_id=COALESCE(excluded.thread_id, unsubscribed_senders.thread_id),
+        method=COALESCE(excluded.method, unsubscribed_senders.method)
+    `).run(
+      accountId,
+      normalized,
+      unsubscribedAt,
+      options?.threadId || null,
+      options?.method || null,
+    );
+  },
+
+  has(accountId: string, senderEmail: string): boolean {
+    const normalized = senderEmail.trim().toLowerCase();
+    if (!accountId || !normalized) return false;
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT 1 AS ok FROM unsubscribed_senders
+      WHERE account_id = ? AND sender_email = ?
+      LIMIT 1
+    `).get(accountId, normalized) as { ok: number } | undefined;
+    return Boolean(row);
+  },
+
+  list(accountId: string): string[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT sender_email FROM unsubscribed_senders
+      WHERE account_id = ?
+      ORDER BY unsubscribed_at DESC
+    `).all(accountId) as { sender_email: string }[];
+    return rows.map(row => row.sender_email);
+  },
+};
 
 // === Follow-up Radar Repository ===
 export const FollowUpRadarRepo = {

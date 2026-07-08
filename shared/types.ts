@@ -1148,6 +1148,13 @@ export interface SenderCleanupStat {
   maxRiskLevel: 'low' | 'medium' | 'high' | null;
   /** SUM of attachments_json sizeBytes across cached messages. */
   attachmentBytes: number;
+  /**
+   * True when this sender was previously unsubscribed in-app and is re-shown
+   * because enough post-grace mail still arrived (see shared/cleanup.ts).
+   */
+  previouslyUnsubscribed?: boolean;
+  /** Messages received after unsubscribedAt + grace period (when previouslyUnsubscribed). */
+  postUnsubscribeMessageCount?: number;
 }
 
 export interface SemanticSearchResult {
