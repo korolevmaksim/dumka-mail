@@ -503,6 +503,12 @@ function replaceLabelsForAccount(
   ];
 }
 
+function sameStringList(left: string[] | undefined, right: string[]): boolean {
+  return Array.isArray(left)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
 export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const settingsState = useSettingsState();
   const [googleIntegrationStatus, setGoogleIntegrationStatus] = useState<GoogleIntegrationStatus | null>(null);
@@ -867,7 +873,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return event;
   }, [draftsState.activeDraft, draftsState.updateDraftBody, settingsState.settings.calendar.defaultMeetingDurationMinutes, syncCalendarAgenda]);
 
-  const fetchModelsForProvider = async (provider: string) => {
+  const fetchModelsForProvider = useCallback(async (provider: string) => {
     let key = '';
     let baseUrl = '';
     
@@ -877,8 +883,19 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       baseUrl = settingsState.customEnv[providerConfig.baseUrlEnv] || '';
     }
     
-    return await window.electronAPI.listProviderModels(provider, key, baseUrl);
-  };
+    const models = await window.electronAPI.listProviderModels(provider, key, baseUrl);
+    if (models.length > 0) {
+      settingsState.setModelsCache(prev => {
+        if (sameStringList(prev[provider], models)) return prev;
+        const updated = { ...prev, [provider]: models };
+        window.electronAPI.setSetting(`models_cache:${provider}`, JSON.stringify(models)).catch(err => {
+          console.error(`Failed to save models_cache:${provider} to SQLite:`, err);
+        });
+        return updated;
+      });
+    }
+    return models;
+  }, [settingsState.customEnv, settingsState.setModelsCache]);
 
   const syncGmailSignature = async (email?: string): Promise<GmailSignatureSyncResult> => {
     const targetEmail = email

@@ -14,6 +14,11 @@ import { AgentReviewQueueCard } from '../AgentReviewQueueCard';
 import { SearchableSelect } from '../common/SearchableSelect';
 import { compileMarkdownToHtmlFragment } from '../../../../shared/markdown';
 import { AIPromptShortcutStrip } from './AIPromptShortcutStrip';
+import {
+  resolveAssistantModelProvider,
+  resolveAssistantModelSummary,
+  shouldFetchAssistantModelCatalog,
+} from '../../lib/aiAssistantModelControls';
 
 const AI_ICON: Record<string, LucideIcon> = {
   ListChecks, Text, PenLine, Wand2, Languages,
@@ -366,7 +371,11 @@ export function AICopilotPanel() {
   const [modelList, setModelList] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const effectiveProvider = store.aiProvider === 'automatic' ? store.aiProviderDesc?.preference : store.aiProvider;
-  const modelProvider = effectiveProvider && isConfigurableAIProvider(effectiveProvider) ? effectiveProvider : null;
+  const modelProvider = resolveAssistantModelProvider(store.aiProvider, store.aiProviderDesc);
+  const modelProviderConfig = modelProvider ? getAIProviderConfig(modelProvider) : null;
+  const cachedModels = modelProvider ? store.modelsCache[modelProvider] : undefined;
+  const modelCatalogApiKey = modelProviderConfig ? store.customEnv[modelProviderConfig.apiKeyEnv] || '' : '';
+  const modelCatalogBaseUrl = modelProviderConfig ? store.customEnv[modelProviderConfig.baseUrlEnv] || '' : '';
   const thinkingControl = modelProvider ? THINKING_CONTROLS[modelProvider] : null;
   const configuredModel = modelProvider
     ? resolveConfiguredProviderModel(modelProvider, store.customEnv)
@@ -382,9 +391,7 @@ export function AICopilotPanel() {
       : store.aiProvider === 'disabled'
         ? 'Disabled'
         : 'Compatible';
-  const modelSummary = modelProvider
-    ? store.aiModel || configuredModel || getAIProviderConfig(modelProvider).defaultModel
-    : store.aiProviderDesc?.model || '';
+  const modelSummary = resolveAssistantModelSummary(modelProvider, configuredModel, store.aiProviderDesc);
   const controlsSummary = [
     providerLabel,
     modelSummary,
@@ -425,8 +432,10 @@ export function AICopilotPanel() {
 
   useEffect(() => {
     if (!modelProvider || !configuredModel) return;
-    store.setAiModel(configuredModel);
-  }, [modelProvider, configuredModel]);
+    if (store.aiModel !== configuredModel) {
+      store.setAiModel(configuredModel);
+    }
+  }, [modelProvider, configuredModel, store.aiModel]);
 
   useEffect(() => {
     let active = true;
@@ -436,9 +445,13 @@ export function AICopilotPanel() {
       return;
     }
 
-    const cachedModels = store.modelsCache[modelProvider] || [];
-    if (cachedModels.length > 0) {
+    if (cachedModels && cachedModels.length > 0) {
       setModelList(cachedModels);
+      setLoadingModels(false);
+      return;
+    }
+
+    if (!shouldFetchAssistantModelCatalog({ controlsOpen: aiControlsOpen, modelProvider, cachedModels })) {
       setLoadingModels(false);
       return;
     }
@@ -450,17 +463,17 @@ export function AICopilotPanel() {
       if (fetched && fetched.length > 0) {
         setModelList(fetched);
       } else {
-        setModelList([getAIProviderConfig(modelProvider).defaultModel]);
+        setModelList([configuredModel || getAIProviderConfig(modelProvider).defaultModel]);
       }
     }).catch(err => {
       if (!active) return;
       console.error(`Failed to load models for ${modelProvider}:`, err);
       setLoadingModels(false);
-      setModelList([store.aiModel || getAIProviderConfig(modelProvider).defaultModel]);
+      setModelList([configuredModel || getAIProviderConfig(modelProvider).defaultModel]);
     });
 
     return () => { active = false; };
-  }, [modelProvider, store.customEnv, store.modelsCache, store.aiModel]);
+  }, [aiControlsOpen, modelProvider, cachedModels, modelCatalogApiKey, modelCatalogBaseUrl, configuredModel]);
 
   const startResize = (mode: Exclude<ResizeMode, null>, event: ReactMouseEvent) => {
     event.preventDefault();
@@ -577,7 +590,7 @@ export function AICopilotPanel() {
                     <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] animate-pulse">Loading…</span>
                   ) : (
                     <SearchableSelect
-                      value={store.aiModel || configuredModel}
+                      value={configuredModel || store.aiModel}
                       options={modelList}
                       onChange={(model) => void updateModel(model)}
                       placeholder="Search models"

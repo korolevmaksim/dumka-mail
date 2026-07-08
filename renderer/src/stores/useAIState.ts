@@ -88,9 +88,13 @@ export function useAIState({
 
   // Sync provider and model from settings on load/change
   useEffect(() => {
-    if (settings?.ai) {
-      setAiProviderState(settings.ai.provider);
-    }
+    if (!settings?.ai) return;
+    setAiProviderState(current => {
+      if (current === settings.ai.provider) return current;
+      setAiModel('');
+      setAiProviderDesc(null);
+      return settings.ai.provider;
+    });
   }, [settings?.ai?.provider]);
 
   const setAiProvider = useCallback((pref: AIProviderPreference) => {
@@ -112,15 +116,14 @@ export function useAIState({
 
   // Resolve active AI provider descriptors
   useEffect(() => {
-    window.electronAPI.getAIProviderDescriptor(aiProvider, aiModel || undefined).then(setAiProviderDesc);
-  }, [aiProvider, aiModel]);
-
-  // Synchronize model with provider default on provider change
-  useEffect(() => {
-    if (aiProviderDesc) {
-      setAiModel(aiProviderDesc.model);
-    }
-  }, [aiProviderDesc]);
+    let active = true;
+    window.electronAPI.getAIProviderDescriptor(aiProvider).then(desc => {
+      if (active) setAiProviderDesc(desc);
+    });
+    return () => {
+      active = false;
+    };
+  }, [aiProvider]);
 
   const loadAIConversations = useCallback(async () => {
     if (!settings.ai.savePromptHistory) {
