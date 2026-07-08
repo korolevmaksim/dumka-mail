@@ -58,6 +58,21 @@ function threadStateKey(thread: Pick<MailThread, 'accountId' | 'id'> | null): st
   return thread ? `${thread.accountId}:${thread.id}` : null;
 }
 
+function followUpRadarItemMatches(a: FollowUpRadarItem, b: FollowUpRadarItem): boolean {
+  return a.accountId === b.accountId && a.threadId === b.threadId && a.sentMessageId === b.sentMessageId;
+}
+
+function removeFollowUpRadarItem(result: FollowUpRadarResult | null, item: FollowUpRadarItem): FollowUpRadarResult | null {
+  if (!result) return result;
+  const items = result.items.filter(candidate => !followUpRadarItemMatches(candidate, item));
+  if (items.length === result.items.length) return result;
+  return {
+    ...result,
+    candidateCount: Math.max(0, result.candidateCount - (result.items.length - items.length)),
+    items,
+  };
+}
+
 export function useMailState({
   tabCategories,
   categorySettings,
@@ -516,14 +531,28 @@ export function useMailState({
   }, [loadFollowUpRadar]);
 
   const dismissFollowUpRadarItem = useCallback(async (item: FollowUpRadarItem) => {
-    await window.electronAPI.dismissFollowUpRadarItem(item.accountId, item.threadId, item.sentMessageId);
-    await loadFollowUpRadar();
-  }, [loadFollowUpRadar]);
+    const previousRadar = followUpRadar;
+    setFollowUpRadar(prev => removeFollowUpRadarItem(prev, item));
+    try {
+      await window.electronAPI.dismissFollowUpRadarItem(item.accountId, item.threadId, item.sentMessageId);
+      void loadFollowUpRadar();
+    } catch (err) {
+      setFollowUpRadar(previousRadar);
+      throw err;
+    }
+  }, [followUpRadar, loadFollowUpRadar]);
 
   const snoozeFollowUpRadarItem = useCallback(async (item: FollowUpRadarItem, snoozedUntil: string) => {
-    await window.electronAPI.snoozeFollowUpRadarItem(item.accountId, item.threadId, item.sentMessageId, snoozedUntil);
-    await loadFollowUpRadar();
-  }, [loadFollowUpRadar]);
+    const previousRadar = followUpRadar;
+    setFollowUpRadar(prev => removeFollowUpRadarItem(prev, item));
+    try {
+      await window.electronAPI.snoozeFollowUpRadarItem(item.accountId, item.threadId, item.sentMessageId, snoozedUntil);
+      void loadFollowUpRadar();
+    } catch (err) {
+      setFollowUpRadar(previousRadar);
+      throw err;
+    }
+  }, [followUpRadar, loadFollowUpRadar]);
 
   const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
     startTransition(() => {
