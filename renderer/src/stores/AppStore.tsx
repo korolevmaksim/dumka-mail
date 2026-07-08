@@ -101,6 +101,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     enableReminders: true,
     enableFollowUps: true,
     followUpThresholdHours: 48,
+    followUpMaxAgeDays: 30,
     followUpMaxItems: 12,
     followUpSnoozeHours: 24,
     showPurchasesSplit: true,
@@ -472,6 +473,17 @@ interface AppStoreContextType {
   setCleanupOpen: (open: boolean) => void;
   workspaceView: 'today' | 'mail';
   setWorkspaceView: (view: 'today' | 'mail') => void;
+  /** When non-null, user-initiated thread close restores this workspace (Today / Follow-up Radar). */
+  returnWorkspaceView: 'today' | null;
+  /**
+   * Enter mail workspace while remembering Today as the back target.
+   * Use before openThread when the open path is not openThreadFromToday itself.
+   */
+  beginTodayThreadNavigation: () => void;
+  /** Open a thread from Today surfaces; Back/Escape returns to Today. */
+  openThreadFromToday: (thread: MailThread) => Promise<void>;
+  /** Close the opened thread and restore returnWorkspaceView when present. */
+  closeOpenedThread: () => Promise<void>;
   aiModel: string;
   setAiModel: (model: string) => void;
   customEnv: Record<string, string>;
@@ -925,8 +937,41 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return result;
   };
 
+  const beginTodayThreadNavigation = useCallback(() => {
+    settingsState.setReturnWorkspaceView('today');
+    settingsState.enterMailWorkspacePreservingReturn();
+    settingsState.setSettingsOpen(false);
+    settingsState.setCleanupOpen(false);
+  }, [
+    settingsState.enterMailWorkspacePreservingReturn,
+    settingsState.setCleanupOpen,
+    settingsState.setReturnWorkspaceView,
+    settingsState.setSettingsOpen,
+  ]);
+
+  const openThreadFromToday = useCallback(async (thread: MailThread) => {
+    beginTodayThreadNavigation();
+    await mailState.openThread(thread);
+  }, [beginTodayThreadNavigation, mailState.openThread]);
+
+  const closeOpenedThread = useCallback(async () => {
+    const returnTo = settingsState.returnWorkspaceView;
+    settingsState.setReturnWorkspaceView(null);
+    await mailState.openThread(null);
+    if (returnTo) {
+      // return is already cleared; setWorkspaceView('today') only switches surface.
+      settingsState.setWorkspaceView(returnTo);
+    }
+  }, [mailState.openThread, settingsState.returnWorkspaceView, settingsState.setReturnWorkspaceView, settingsState.setWorkspaceView]);
+
+  const {
+    enterMailWorkspacePreservingReturn: _enterMailWorkspacePreservingReturn,
+    setReturnWorkspaceView: _setReturnWorkspaceView,
+    ...publicSettingsState
+  } = settingsState;
+
   const storeValue: AppStoreContextType = {
-    ...settingsState,
+    ...publicSettingsState,
     ...mailState,
     ...draftsState,
     ...aiState,
@@ -958,7 +1003,10 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     deleteCalendarEvent,
     createGoogleMeetDraftEvent,
     fetchModelsForProvider,
-    syncGmailSignature
+    syncGmailSignature,
+    beginTodayThreadNavigation,
+    openThreadFromToday,
+    closeOpenedThread,
   };
 
   return (

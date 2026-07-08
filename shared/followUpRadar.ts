@@ -19,6 +19,8 @@ export interface BuildFollowUpRadarItemInput extends FollowUpThreadInput {
   now: Date;
   state?: FollowUpRadarState | null;
   thresholdHours?: number;
+  /** Maximum age in hours; outbound messages older than this are excluded. */
+  maxAgeHours?: number;
 }
 
 export interface BuildFollowUpRadarResultInput {
@@ -27,11 +29,37 @@ export interface BuildFollowUpRadarResultInput {
   states?: FollowUpRadarState[];
   now: Date;
   thresholdHours?: number;
+  maxAgeHours?: number;
   maxItems?: number;
 }
 
-const DEFAULT_THRESHOLD_HOURS = 48;
+/** Default minimum wait before a sent thread is a follow-up candidate (2 days). */
+export const DEFAULT_FOLLOW_UP_THRESHOLD_HOURS = 48;
+/** Default lookback window: only sent mail from the last 30 days. */
+export const DEFAULT_FOLLOW_UP_MAX_AGE_DAYS = 30;
+export const DEFAULT_FOLLOW_UP_MAX_AGE_HOURS = DEFAULT_FOLLOW_UP_MAX_AGE_DAYS * 24;
+const DEFAULT_THRESHOLD_HOURS = DEFAULT_FOLLOW_UP_THRESHOLD_HOURS;
+const DEFAULT_MAX_AGE_HOURS = DEFAULT_FOLLOW_UP_MAX_AGE_HOURS;
 const DEFAULT_MAX_ITEMS = 12;
+
+function positiveHours(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
+/** Clamp / normalize the radar age window. Ensures maxAge is always >= threshold. */
+export function normalizeFollowUpAgeWindow(
+  thresholdHours: number = DEFAULT_THRESHOLD_HOURS,
+  maxAgeHours: number = DEFAULT_MAX_AGE_HOURS,
+): { thresholdHours: number; maxAgeHours: number } {
+  const safeThreshold = Math.max(1, Math.min(720, positiveHours(thresholdHours, DEFAULT_THRESHOLD_HOURS)));
+  // Allow up to 2 years of lookback if the user really wants archaeology.
+  const rawMax = Math.max(1, Math.min(24 * 365 * 2, positiveHours(maxAgeHours, DEFAULT_MAX_AGE_HOURS)));
+  // Max age must be at least the threshold, otherwise the window is empty.
+  const safeMax = Math.max(safeThreshold, rawMax);
+  return { thresholdHours: safeThreshold, maxAgeHours: safeMax };
+}
 const ACTIVE_EXCLUDED_LABELS = new Set(['TRASH', 'SPAM']);
 const ASK_TERMS = [
   'following up',
@@ -158,6 +186,7 @@ export function buildFollowUpRadarItem({
   now,
   state,
   thresholdHours = DEFAULT_THRESHOLD_HOURS,
+  maxAgeHours = DEFAULT_MAX_AGE_HOURS,
 }: BuildFollowUpRadarItemInput): FollowUpRadarItem | null {
   if (!thread.labelIds.some(label => label.toUpperCase() === 'SENT')) return null;
   const timeline = sortedMessages(messages).filter(isActiveMessage);
@@ -168,8 +197,10 @@ export function buildFollowUpRadarItem({
   if (externalRecipients(latest, accountId).length === 0) return null;
   if (stateIsHidden(state, now)) return null;
 
+  const ageWindow = normalizeFollowUpAgeWindow(thresholdHours, maxAgeHours);
   const ageHours = Math.max(0, (now.getTime() - Date.parse(latest.receivedAt)) / 3_600_000);
-  if (ageHours < thresholdHours) return null;
+  if (ageHours < ageWindow.thresholdHours) return null;
+  if (ageHours > ageWindow.maxAgeHours) return null;
 
   const latestIndex = timeline.length - 1;
   const previousInbound = [...timeline.slice(0, latestIndex)]
@@ -200,8 +231,10 @@ export function buildFollowUpRadarResult({
   states = [],
   now,
   thresholdHours = DEFAULT_THRESHOLD_HOURS,
+  maxAgeHours = DEFAULT_MAX_AGE_HOURS,
   maxItems = DEFAULT_MAX_ITEMS,
 }: BuildFollowUpRadarResultInput): FollowUpRadarResult {
+  const ageWindow = normalizeFollowUpAgeWindow(thresholdHours, maxAgeHours);
   const stateByKey = new Map(states.map(state => [
     followUpStateKey(state.accountId, state.threadId, state.sentMessageId),
     state,
@@ -212,7 +245,8 @@ export function buildFollowUpRadarResult({
       ...input,
       accountId,
       now,
-      thresholdHours,
+      thresholdHours: ageWindow.thresholdHours,
+      maxAgeHours: ageWindow.maxAgeHours,
       state: stateByKey.get(followUpStateKey(accountId, input.thread.id, sortedMessages(input.messages).filter(isActiveMessage).at(-1)?.id || '')),
     }))
     .filter((item): item is FollowUpRadarItem => Boolean(item))

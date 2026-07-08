@@ -748,7 +748,13 @@ export interface InboxSettings {
   archiveOnDoneShortcut: boolean;
   enableReminders: boolean;
   enableFollowUps: boolean;
+  /** Minimum hours since the last outbound message before a thread becomes a follow-up candidate. */
   followUpThresholdHours: number;
+  /**
+   * Maximum age (days) of the last outbound message still considered for Follow-up Radar.
+   * Older unanswered sent mail is treated as stale archaeology and excluded.
+   */
+  followUpMaxAgeDays: number;
   followUpMaxItems: number;
   followUpSnoozeHours: number;
   showPurchasesSplit: boolean;
@@ -824,7 +830,13 @@ export interface FollowUpRadarResult {
 }
 
 export interface FollowUpRadarListOptions {
+  /** Minimum age of the last outbound message (hours) before it becomes a candidate. */
   thresholdHours?: number;
+  /**
+   * Maximum age of the last outbound message (hours) still considered.
+   * Candidates older than this are excluded as stale.
+   */
+  maxAgeHours?: number;
   maxItems?: number;
   sentThreadScanLimit?: number;
   nowIso?: string;

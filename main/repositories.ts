@@ -30,7 +30,7 @@ import {
   MessageSecurityInsight,
   SenderCleanupStat,
 } from '../shared/types';
-import { buildFollowUpRadarResult } from '../shared/followUpRadar';
+import { buildFollowUpRadarResult, normalizeFollowUpAgeWindow } from '../shared/followUpRadar';
 
 const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
 const MAX_EMAIL_SUGGESTION_LIMIT = 5000;
@@ -1638,10 +1638,16 @@ export const FollowUpRadarRepo = {
   listItems(accountId: string, options: FollowUpRadarListOptions = {}): FollowUpRadarResult {
     const scanLimit = Math.max(1, Math.min(500, Math.floor(options.sentThreadScanLimit || 150)));
     const maxItems = Math.max(1, Math.min(50, Math.floor(options.maxItems || 12)));
-    const thresholdHours = Math.max(1, Math.min(720, Math.floor(options.thresholdHours || 48)));
+    const { thresholdHours, maxAgeHours } = normalizeFollowUpAgeWindow(
+      options.thresholdHours,
+      options.maxAgeHours,
+    );
     const now = options.nowIso ? new Date(options.nowIso) : new Date();
     const safeNow = Number.isFinite(now.getTime()) ? now : new Date();
-    const sentCutoffIso = new Date(safeNow.getTime() - thresholdHours * 3_600_000).toISOString();
+    // Window of interest: [now - maxAge, now - threshold].
+    // latest_sent_at must be old enough to be past the min wait, but not so old it is archaeology.
+    const minAgeCutoffIso = new Date(safeNow.getTime() - thresholdHours * 3_600_000).toISOString();
+    const maxAgeCutoffIso = new Date(safeNow.getTime() - maxAgeHours * 3_600_000).toISOString();
     const db = getDatabase();
     const rows = db.prepare(`
       SELECT t.*, r.reminder_at
@@ -1653,12 +1659,13 @@ export const FollowUpRadarRepo = {
           AND label_ids_json LIKE '%"SENT"%'
         GROUP BY account_id, thread_id
         HAVING latest_sent_at <= ?
+           AND latest_sent_at >= ?
       ) sent ON sent.account_id = t.account_id AND sent.thread_id = t.id
       LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
       WHERE t.account_id = ?
       ORDER BY sent.latest_sent_at DESC
       LIMIT ?
-    `).all(accountId, sentCutoffIso, accountId, scanLimit) as any[];
+    `).all(accountId, minAgeCutoffIso, maxAgeCutoffIso, accountId, scanLimit) as any[];
     const threads = rows.map(mapThreadRow);
     const states = this.listStates(accountId);
     const messagesByThread = MessagesRepo.listMetadataForThreads(accountId, threads.map(thread => thread.id));
@@ -1672,6 +1679,7 @@ export const FollowUpRadarRepo = {
       states,
       now: safeNow,
       thresholdHours,
+      maxAgeHours,
       maxItems,
     });
   },

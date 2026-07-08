@@ -116,7 +116,8 @@ export interface FollowUpRadarResult {
 
 Add to `InboxSettings`:
 
-- `followUpThresholdHours: number`
+- `followUpThresholdHours: number` — min wait before a sent message becomes a candidate
+- `followUpMaxAgeDays: number` — lookback window; older unanswered sent mail is excluded (default 30)
 - `followUpMaxItems: number`
 - `followUpSnoozeHours: number`
 
@@ -138,16 +139,17 @@ setWorkspaceView(view: WorkspaceView): void;
 
 Required APIs:
 
-- `buildFollowUpRadarItem({ thread, messages, accountId, now, state, thresholdHours }): FollowUpRadarItem | null`
-- `buildFollowUpRadarResult({ accountId, threadsWithMessages, states, now, thresholdHours, maxItems }): FollowUpRadarResult`
+- `buildFollowUpRadarItem({ thread, messages, accountId, now, state, thresholdHours, maxAgeHours }): FollowUpRadarItem | null`
+- `buildFollowUpRadarResult({ accountId, threadsWithMessages, states, now, thresholdHours, maxAgeHours, maxItems }): FollowUpRadarResult`
 - `followUpStateKey(accountId, threadId, sentMessageId): string`
+- `normalizeFollowUpAgeWindow(thresholdHours, maxAgeHours)` — clamps the window so max ≥ min
 
 Behavior:
 
 - Sort messages by `receivedAt`.
 - Ignore trash/spam messages when choosing the latest active message.
 - Outbound if message label IDs include `SENT`; fallback to `senderEmail === accountId`.
-- Candidate only when latest active message is outbound and older than threshold.
+- Candidate only when latest active message is outbound, older than threshold, and younger than max age (lookback).
 - Candidate must have at least one external recipient in `to/cc/bcc`.
 - If state is `dismissed`, hide.
 - If state is `snoozed` and `snoozedUntil` is in the future, hide.

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFollowUpRadarItem,
   buildFollowUpRadarResult,
+  DEFAULT_FOLLOW_UP_MAX_AGE_HOURS,
   followUpStateKey,
+  normalizeFollowUpAgeWindow,
 } from '../shared/followUpRadar';
 import type { FollowUpRadarState, MailMessage, MailThread, Recipient } from '../shared/types';
 
@@ -161,6 +163,73 @@ describe('buildFollowUpRadarItem', () => {
 
     expect(item).toBeNull();
   });
+
+  it('excludes archaeology older than the max age lookback', () => {
+    const item = buildFollowUpRadarItem({
+      thread: thread({ lastMessageAt: '2025-09-01T08:00:00.000Z' }),
+      messages: [message({ receivedAt: '2025-09-01T08:00:00.000Z' })],
+      accountId: ACCOUNT,
+      now: NOW,
+      thresholdHours: 48,
+      maxAgeHours: 30 * 24, // 30 days
+    });
+
+    expect(item).toBeNull();
+  });
+
+  it('keeps recent unanswered sent mail inside the lookback window', () => {
+    const item = buildFollowUpRadarItem({
+      thread: thread({ lastMessageAt: '2026-06-20T08:00:00.000Z' }),
+      messages: [message({ receivedAt: '2026-06-20T08:00:00.000Z' })],
+      accountId: ACCOUNT,
+      now: NOW,
+      thresholdHours: 48,
+      maxAgeHours: 30 * 24,
+    });
+
+    expect(item?.sentMessageId).toBe('m1');
+    expect(item?.ageHours).toBeGreaterThan(48);
+  });
+
+  it('uses the default max age (30 days) when omitted', () => {
+    const archaeology = buildFollowUpRadarItem({
+      thread: thread({ lastMessageAt: '2025-01-01T08:00:00.000Z' }),
+      messages: [message({ receivedAt: '2025-01-01T08:00:00.000Z' })],
+      accountId: ACCOUNT,
+      now: NOW,
+      thresholdHours: 48,
+    });
+    const recent = buildFollowUpRadarItem({
+      thread: thread(),
+      messages: [message()],
+      accountId: ACCOUNT,
+      now: NOW,
+      thresholdHours: 48,
+    });
+
+    expect(archaeology).toBeNull();
+    expect(recent?.sentMessageId).toBe('m1');
+    expect(DEFAULT_FOLLOW_UP_MAX_AGE_HOURS).toBe(30 * 24);
+  });
+});
+
+describe('normalizeFollowUpAgeWindow', () => {
+  it('clamps threshold and raises max age to at least the threshold', () => {
+    expect(normalizeFollowUpAgeWindow(48, 30 * 24)).toEqual({
+      thresholdHours: 48,
+      maxAgeHours: 30 * 24,
+    });
+    // Lookback shorter than min wait would yield an empty window — lift max to threshold.
+    expect(normalizeFollowUpAgeWindow(100, 24)).toEqual({
+      thresholdHours: 100,
+      maxAgeHours: 100,
+    });
+    // Invalid / zero inputs fall back to product defaults (48h min, 30d max).
+    expect(normalizeFollowUpAgeWindow(0, 0)).toEqual({
+      thresholdHours: 48,
+      maxAgeHours: 30 * 24,
+    });
+  });
 });
 
 describe('buildFollowUpRadarResult', () => {
@@ -169,6 +238,7 @@ describe('buildFollowUpRadarResult', () => {
       accountId: ACCOUNT,
       now: NOW,
       thresholdHours: 24,
+      maxAgeHours: 60 * 24,
       maxItems: 1,
       threadsWithMessages: [
         {
@@ -187,5 +257,28 @@ describe('buildFollowUpRadarResult', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0].threadId).toBe('high');
     expect(result.warnings[0]).toContain('locally cached sent mail');
+  });
+
+  it('drops candidates outside the max age window from the result list', () => {
+    const result = buildFollowUpRadarResult({
+      accountId: ACCOUNT,
+      now: NOW,
+      thresholdHours: 24,
+      maxAgeHours: 14 * 24,
+      maxItems: 10,
+      threadsWithMessages: [
+        {
+          thread: thread({ id: 'fresh', lastMessageAt: '2026-07-01T08:00:00.000Z' }),
+          messages: [message({ id: 'fresh-msg', threadId: 'fresh', receivedAt: '2026-07-01T08:00:00.000Z' })],
+        },
+        {
+          thread: thread({ id: 'ancient', lastMessageAt: '2025-09-01T08:00:00.000Z' }),
+          messages: [message({ id: 'ancient-msg', threadId: 'ancient', receivedAt: '2025-09-01T08:00:00.000Z' })],
+        },
+      ],
+    });
+
+    expect(result.candidateCount).toBe(1);
+    expect(result.items.map(item => item.threadId)).toEqual(['fresh']);
   });
 });

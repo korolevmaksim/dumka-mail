@@ -63,10 +63,7 @@ export function TodayHome() {
     .slice(0, 5), [store.actionLog]);
 
   const openThread = async (item: FollowUpRadarItem) => {
-    store.setWorkspaceView('mail');
-    store.setSettingsOpen(false);
-    store.setCleanupOpen(false);
-    await store.openThread(item.thread);
+    await store.openThreadFromToday(item.thread);
   };
 
   const runFollowUpAction = async (

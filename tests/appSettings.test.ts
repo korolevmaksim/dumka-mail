@@ -33,6 +33,26 @@ describe('AppSettings AI prompt shortcuts', () => {
     expect(merged.general.attachmentDownloadFolder).toBe('/Users/me/Mail Downloads');
   });
 
+  it('ships a 30-day Follow-up Radar lookback so archaeology stays out of the radar', () => {
+    expect(DEFAULT_SETTINGS.inbox.followUpMaxAgeDays).toBe(30);
+    expect(DEFAULT_SETTINGS.inbox.followUpThresholdHours).toBe(48);
+  });
+
+  it('fills followUpMaxAgeDays when migrating older settings blobs', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+      inbox: {
+        enableFollowUps: true,
+        followUpThresholdHours: 72,
+        followUpMaxItems: 8,
+      },
+    });
+
+    expect(merged.inbox.followUpMaxAgeDays).toBe(30);
+    expect(merged.inbox.followUpThresholdHours).toBe(72);
+    expect(merged.inbox.followUpMaxItems).toBe(8);
+  });
+
   it('normalizes invalid persisted interface language values', () => {
     const merged = mergeSettings({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,

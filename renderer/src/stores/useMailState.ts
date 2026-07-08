@@ -482,8 +482,10 @@ export function useMailState({
     setFollowUpRadarLoading(true);
     setFollowUpRadarError(null);
     try {
+      const maxAgeDays = Math.max(1, Math.floor(inboxSettings.followUpMaxAgeDays || 30));
       const options = {
         thresholdHours: inboxSettings.followUpThresholdHours,
+        maxAgeHours: maxAgeDays * 24,
         maxItems: inboxSettings.followUpMaxItems,
         sentThreadScanLimit: DEFAULT_FOLLOW_UP_SCAN_LIMIT,
       };
@@ -523,6 +525,7 @@ export function useMailState({
     accounts,
     inboxSettings.enableFollowUps,
     inboxSettings.followUpThresholdHours,
+    inboxSettings.followUpMaxAgeDays,
     inboxSettings.followUpMaxItems,
   ]);
 

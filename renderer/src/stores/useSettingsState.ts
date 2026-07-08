@@ -13,8 +13,23 @@ export function useSettingsState() {
   const [modelsCache, setModelsCache] = useState<Record<string, string[]>>({});
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [cleanupOpen, setCleanupOpen] = useState<boolean>(false);
-  const [workspaceView, setWorkspaceView] = useState<'today' | 'mail'>('mail');
+  const [workspaceView, setWorkspaceViewState] = useState<'today' | 'mail'>('mail');
+  /** When set, closing an opened thread restores this workspace (e.g. back from Follow-up Radar). */
+  const [returnWorkspaceView, setReturnWorkspaceView] = useState<'today' | null>(null);
   const [customEnv, setCustomEnv] = useState<Record<string, string>>({});
+
+  const setWorkspaceView = useCallback((view: 'today' | 'mail') => {
+    // Explicit workspace switches abandon any pending "return to Today" stack entry.
+    if (view === 'mail') {
+      setReturnWorkspaceView(null);
+    }
+    setWorkspaceViewState(view);
+  }, []);
+
+  /** Switch to mail workspace without clearing returnWorkspaceView (used by openThreadFromToday). */
+  const enterMailWorkspacePreservingReturn = useCallback(() => {
+    setWorkspaceViewState('mail');
+  }, []);
 
   const setEnablePreviewPane = (val: boolean) => {
     setEnablePreviewPaneState(val);
@@ -488,6 +503,7 @@ export function useSettingsState() {
     settingsOpen,
     cleanupOpen,
     workspaceView,
+    returnWorkspaceView,
     customEnv,
     setSettingsState,
     setThemeState,
@@ -499,6 +515,8 @@ export function useSettingsState() {
     setSettingsOpen,
     setCleanupOpen,
     setWorkspaceView,
+    setReturnWorkspaceView,
+    enterMailWorkspacePreservingReturn,
     setCustomEnv,
     setEnablePreviewPane,
     setPreviewPaneWidth,

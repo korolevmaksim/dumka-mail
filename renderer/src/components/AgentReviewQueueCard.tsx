@@ -185,7 +185,8 @@ export function AgentReviewQueueCard() {
                       type="button"
                       onClick={() => {
                         if (item.action === 'openThread' || item.action === 'draftReply') {
-                          store.setWorkspaceView('mail');
+                          // Preserve Today as the back target after approval opens a thread.
+                          store.beginTodayThreadNavigation();
                         }
                         void store.applyAgentPlanItem(item);
                       }}

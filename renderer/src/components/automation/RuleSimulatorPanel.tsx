@@ -10,6 +10,10 @@ function formatGeneratedAt(iso: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatCount(value: number): string {
+  return value.toLocaleString();
+}
+
 function createUniqueRuleId(rule: MailAutomationRule, existing: MailAutomationRule[]): string {
   const ids = new Set(existing.map(existingRule => existingRule.id));
   if (!ids.has(rule.id)) return rule.id;
@@ -20,6 +24,23 @@ function createUniqueRuleId(rule: MailAutomationRule, existing: MailAutomationRu
     candidate = `${rule.id}-${suffix}`;
   }
   return candidate;
+}
+
+function MetricCell({ value, label, emphasize = false }: { value: number; label: string; emphasize?: boolean }) {
+  return (
+    <div className="flex min-w-0 flex-col items-center gap-0.5 px-1 py-1.5">
+      <span
+        className={`tabular-nums text-[calc(13px*var(--font-scale))] font-semibold leading-none ${
+          emphasize ? 'text-[var(--warning)]' : 'text-[var(--text-primary)]'
+        }`}
+      >
+        {formatCount(value)}
+      </span>
+      <span className="truncate text-[calc(9px*var(--font-scale))] leading-none text-[var(--text-tertiary)]">
+        {label}
+      </span>
+    </div>
+  );
 }
 
 export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
@@ -37,6 +58,8 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
     actionLogs: store.actionLog,
   }), [store.actionLog, store.agentPlan, store.threads]);
   const visibleSimulations = simulation.simulations.slice(0, compact ? 3 : 6);
+  const generatedAt = formatGeneratedAt(simulation.generatedAt);
+  const hasRules = simulation.ruleCount > 0;
 
   const addCandidate = async (candidate: AutomationRuleCandidate) => {
     await store.updateSettings(settings => {
@@ -51,85 +74,141 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
   };
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-[calc(11px*var(--font-scale))]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
-            <FlaskConical className="h-3.5 w-3.5 text-[var(--accent)]" />
-            Automation Simulator
-          </div>
-          <div className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-            {simulation.ruleCount} rule{simulation.ruleCount === 1 ? '' : 's'} checked against {store.threads.length} cached thread{store.threads.length === 1 ? '' : 's'} at {formatGeneratedAt(simulation.generatedAt)}
-          </div>
+    <section className="flex flex-col gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-[calc(11px*var(--font-scale))]">
+      {/* Header: title + time only — never compete with stats for width */}
+      <header className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <FlaskConical className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
+          <h3 className="truncate font-semibold text-[var(--text-primary)]">
+            Automation
+          </h3>
         </div>
-        <div className="grid grid-cols-3 gap-1 text-center text-[calc(9px*var(--font-scale))]">
-          <span className="rounded bg-[var(--app-bg)] px-2 py-1 text-[var(--text-secondary)]">{simulation.matchedThreadCount} matches</span>
-          <span className="rounded bg-[var(--app-bg)] px-2 py-1 text-[var(--text-secondary)]">{simulation.effectCount} effects</span>
-          <span className="rounded bg-[var(--app-bg)] px-2 py-1 text-[var(--text-secondary)]">{simulation.previewOnlyCount} preview</span>
+        {generatedAt ? (
+          <time
+            dateTime={simulation.generatedAt}
+            className="shrink-0 text-[calc(10px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]"
+            title={`Simulated at ${generatedAt}`}
+          >
+            {generatedAt}
+          </time>
+        ) : null}
+      </header>
+
+      {/* Quiet meta — one line, no run-on sentence */}
+      <p className="text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+        {hasRules
+          ? `${formatCount(simulation.ruleCount)} rule${simulation.ruleCount === 1 ? '' : 's'} · ${formatCount(store.threads.length)} threads`
+          : `${formatCount(store.threads.length)} threads cached`}
+      </p>
+
+      {/* Metrics: full-width strip so labels never clip */}
+      {hasRules && (
+        <div
+          className="grid grid-cols-3 divide-x divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--app-bg)]"
+          role="group"
+          aria-label="Simulation summary"
+        >
+          <MetricCell value={simulation.matchedThreadCount} label="Matches" />
+          <MetricCell value={simulation.effectCount} label="Effects" />
+          <MetricCell
+            value={simulation.previewOnlyCount}
+            label="Review"
+            emphasize={simulation.previewOnlyCount > 0}
+          />
         </div>
-      </div>
+      )}
 
       {simulation.warnings.length > 0 && (
-        <div className="flex items-start gap-2 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-2 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>{simulation.warnings[0]}</span>
+        <div className="flex items-start gap-2 rounded-md border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-2.5 py-2 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 leading-snug">{simulation.warnings[0]}</span>
         </div>
       )}
 
       {visibleSimulations.length === 0 ? (
-        <div className="rounded border border-dashed border-[var(--border)] bg-[var(--app-bg)] px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-          No rules to simulate yet.
+        <div className="px-0.5 py-1 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-tertiary)]">
+          {hasRules
+            ? 'No matches against the local cache.'
+            : 'No rules yet. Add one in Settings → Mail Rules to preview impact.'}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-1.5" aria-label="Rule simulation results">
           {visibleSimulations.map(result => (
-            <article key={result.ruleId} className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] p-2.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-[var(--text-primary)]">{result.ruleTitle}</div>
-                  <div className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
-                    {result.matchedThreadCount} match{result.matchedThreadCount === 1 ? '' : 'es'} · {result.effectCount} would apply · {result.alreadyAppliedCount} already applied
+            <li
+              key={result.ruleId}
+              className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2"
+            >
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-[var(--text-primary)]">
+                    {result.ruleTitle}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                    <span className="tabular-nums">{formatCount(result.matchedThreadCount)} match{result.matchedThreadCount === 1 ? '' : 'es'}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">{formatCount(result.effectCount)} apply</span>
+                    {result.alreadyAppliedCount > 0 && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="tabular-nums">{formatCount(result.alreadyAppliedCount)} done</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 {result.previewOnlyCount > 0 ? (
-                  <span className="rounded border border-[var(--warning)]/30 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--warning)]">review</span>
+                  <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium text-[var(--warning)]">
+                    review
+                  </span>
                 ) : (
-                  <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" aria-label="Safe to apply" />
                 )}
               </div>
               {result.samples[0]?.effects[0] && (
-                <div className="mt-2 line-clamp-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                  {result.samples[0].effects[0].summary} on {result.samples[0].subject || 'untitled thread'}
-                </div>
+                <p className="mt-1.5 line-clamp-2 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+                  {result.samples[0].effects[0].summary}
+                  <span className="text-[var(--text-tertiary)]">
+                    {' · '}
+                    {result.samples[0].subject || 'untitled thread'}
+                  </span>
+                </p>
               )}
-            </article>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       {candidates.length > 0 && (
-        <div className="flex flex-col gap-2 border-t border-[var(--border)] pt-3">
-          <div className="flex items-center gap-1.5 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-            Candidate rules from approved work
+        <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
+          <div className="flex items-center gap-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
+            From approved work
           </div>
-          {candidates.slice(0, compact ? 2 : 4).map(candidate => (
-            <div key={candidate.id} className="flex items-center justify-between gap-3 rounded-md bg-[var(--app-bg)] px-2.5 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-[var(--text-primary)]">{candidate.title}</div>
-                <div className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{candidate.reason}</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void addCandidate(candidate)}
-                disabled={candidateAddedId === candidate.id}
-                className="flex shrink-0 items-center gap-1 rounded bg-[var(--accent)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+          {candidates.slice(0, compact ? 2 : 4).map(candidate => {
+            const isAdded = candidateAddedId === candidate.id;
+            return (
+              <div
+                key={candidate.id}
+                className="flex items-center justify-between gap-2 rounded-md bg-[var(--app-bg)] px-2.5 py-2"
               >
-                <Plus className="h-3 w-3" />
-                {candidateAddedId === candidate.id ? 'Added' : 'Add disabled'}
-              </button>
-            </div>
-          ))}
+                <div className="min-w-0">
+                  <div className="truncate text-[var(--text-primary)]">{candidate.title}</div>
+                  <div className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                    {candidate.reason}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void addCandidate(candidate)}
+                  disabled={isAdded}
+                  title={isAdded ? 'Already added as a disabled rule' : 'Add as a disabled rule'}
+                  className="flex shrink-0 items-center gap-1 rounded-md bg-[var(--accent)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus className="h-3 w-3" aria-hidden="true" />
+                  {isAdded ? 'Added' : 'Add'}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>

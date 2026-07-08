@@ -357,31 +357,38 @@ export function InboxTab() {
           </div>
         ))}
 
-        <div className="grid grid-cols-3 gap-2 border-t border-[var(--border)] pt-3">
-          {[
-            { key: 'followUpThresholdHours', title: 'Radar age', suffix: 'hours', min: 1, max: 720 },
-            { key: 'followUpMaxItems', title: 'Radar limit', suffix: 'items', min: 1, max: 50 },
-            { key: 'followUpSnoozeHours', title: 'Snooze', suffix: 'hours', min: 1, max: 720 },
-          ].map(item => (
-            <label key={item.key} className="flex min-w-0 flex-col gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-              <span>{item.title}</span>
-              <span className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1">
-                <input
-                  type="number"
-                  min={item.min}
-                  max={item.max}
-                  value={Number((store.settings.inbox as any)[item.key]) || item.min}
-                  onChange={(event) => {
-                    const rawValue = Number(event.target.value);
-                    const nextValue = Math.max(item.min, Math.min(item.max, Number.isFinite(rawValue) ? Math.floor(rawValue) : item.min));
-                    store.updateSettings(settings => { (settings.inbox as any)[item.key] = nextValue; });
-                  }}
-                  className="min-w-0 flex-1 bg-transparent text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
-                />
-                <span className="shrink-0 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{item.suffix}</span>
-              </span>
-            </label>
-          ))}
+        <div className="border-t border-[var(--border)] pt-3 flex flex-col gap-2">
+          <div className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)]">Follow-up Radar window</div>
+          <p className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] leading-snug">
+            Only unanswered sent mail older than the min wait and younger than the lookback is shown. Old archaeology stays out of the radar.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { key: 'followUpThresholdHours', title: 'Min wait', suffix: 'hours', min: 1, max: 720, hint: 'How long to wait before a sent mail becomes a follow-up' },
+              { key: 'followUpMaxAgeDays', title: 'Lookback', suffix: 'days', min: 1, max: 365, hint: 'Ignore sent mail older than this (default 30 days)' },
+              { key: 'followUpMaxItems', title: 'Radar limit', suffix: 'items', min: 1, max: 50, hint: 'Max candidates listed at once' },
+              { key: 'followUpSnoozeHours', title: 'Snooze', suffix: 'hours', min: 1, max: 720, hint: 'How long Snooze hides an item' },
+            ].map(item => (
+              <label key={item.key} className="flex min-w-0 flex-col gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]" title={item.hint}>
+                <span>{item.title}</span>
+                <span className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1">
+                  <input
+                    type="number"
+                    min={item.min}
+                    max={item.max}
+                    value={Number((store.settings.inbox as any)[item.key]) || item.min}
+                    onChange={(event) => {
+                      const rawValue = Number(event.target.value);
+                      const nextValue = Math.max(item.min, Math.min(item.max, Number.isFinite(rawValue) ? Math.floor(rawValue) : item.min));
+                      store.updateSettings(settings => { (settings.inbox as any)[item.key] = nextValue; });
+                    }}
+                    className="min-w-0 flex-1 bg-transparent text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                  />
+                  <span className="shrink-0 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{item.suffix}</span>
+                </span>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
     </div>

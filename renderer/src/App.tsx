@@ -687,7 +687,7 @@ function AppContent() {
       } else if (store.activeDraft) {
         store.setActiveDraft(null);
       } else if (store.openedThread) {
-        store.openThread(null);
+        void store.closeOpenedThread();
       }
     }
   });
@@ -1254,10 +1254,11 @@ function AppContent() {
                           <div>
                             {!store.enablePreviewPane && (
                               <button
-                                onClick={() => store.openThread(null)}
+                                onClick={() => void store.closeOpenedThread()}
                                 className="print-hidden flex items-center gap-1 mb-3 text-[calc(11px*var(--font-scale))] text-[var(--accent)] font-medium hover:underline cursor-pointer select-none bg-[var(--hover-row)] px-2 py-1 rounded"
                               >
-                                <ArrowLeft className="w-3.5 h-3.5" /> Back to List
+                                <ArrowLeft className="w-3.5 h-3.5" />
+                                {store.returnWorkspaceView === 'today' ? 'Back to Today' : 'Back to List'}
                               </button>
                             )}
                             <h1 className="text-thread-title mb-2 text-[var(--text-primary)] select-text">
@@ -1403,8 +1404,9 @@ function AppContent() {
                               </button>
                             )}
                             <button
-                              onClick={() => store.openThread(null)}
+                              onClick={() => void store.closeOpenedThread()}
                               className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                              title={store.returnWorkspaceView === 'today' ? 'Back to Today' : 'Close thread'}
                             >
                               <X className="w-4 h-4" />
                             </button>
