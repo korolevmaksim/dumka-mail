@@ -71,7 +71,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 14;
+export const SETTINGS_SCHEMA_VERSION = 15;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -89,7 +89,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     showRightContextPanel: true,
     openLinksInBackground: true,
     confirmBeforeQuitting: true,
-    keepDraftsAcrossLaunches: true
+    keepDraftsAcrossLaunches: true,
+    attachmentDownloadFolder: '',
   },
   inbox: {
     enableSplitInbox: true,

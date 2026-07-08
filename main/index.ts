@@ -1,6 +1,8 @@
-import { app, BrowserWindow, ipcMain, dialog, Notification, screen, type NotificationAction } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Notification, screen, shell, type NotificationAction } from 'electron';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import {
   initializeDatabase,
   AccountIntegrationsRepo,
@@ -42,7 +44,28 @@ import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoRep
 import { evaluateMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
-import type { ActionKind, CalendarAttendeeResponse, CalendarInvite, FollowUpRadarListOptions, MailMessage, MailNotificationSettings, MailRuleAction, MailRulesSettings, MailThread, SyncState } from '../shared/types';
+import type {
+  ActionKind,
+  AppSettings,
+  AttachmentOpenBlocked,
+  AttachmentOpenResult,
+  AttachmentSaveCancelled,
+  AttachmentSaveResult,
+  CalendarAttendeeResponse,
+  CalendarInvite,
+  FollowUpRadarListOptions,
+  MailMessage,
+  MailNotificationSettings,
+  MailRuleAction,
+  MailRulesSettings,
+  MailThread,
+  SyncState,
+} from '../shared/types';
+import {
+  allocateUniqueFilename,
+  canOpenExternally,
+  sanitizeAttachmentFilename,
+} from '../shared/attachments';
 
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenThread: { accountId: string; threadId: string } | null = null;
@@ -1037,18 +1060,110 @@ registerSecureHandler('api:syncGmailSignature', (_, email) => GmailSyncService.f
 registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
 registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
 registerSecureHandler('api:fetchAttachmentData', (_, email, messageId, attachmentId) => GmailSyncService.fetchAttachment(email, messageId, attachmentId));
-registerSecureHandler('api:downloadAttachment', async (_, email, messageId, attachmentId, filename) => {
-  if (!mainWindow) return;
-  const { filePath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: filename,
-    title: 'Save Attachment'
+
+registerSecureHandler(
+  'api:downloadAttachment',
+  async (
+    _,
+    email: string,
+    messageId: string,
+    attachmentId: string,
+    filename: string,
+    options?: { saveAs?: boolean; base64Data?: string | null },
+  ): Promise<AttachmentSaveResult | AttachmentSaveCancelled> => {
+    const safeName = sanitizeAttachmentFilename(filename);
+    const buffer = await loadAttachmentBuffer(email, messageId, attachmentId, options?.base64Data);
+
+    let targetPath: string;
+    if (options?.saveAs) {
+      if (!mainWindow) return { ok: false, cancelled: true };
+      const { filePath } = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: path.join(resolveAttachmentDownloadDir(), safeName),
+        title: 'Save Attachment',
+      });
+      if (!filePath) return { ok: false, cancelled: true };
+      targetPath = filePath;
+    } else {
+      // Allocate after the network fetch so concurrent saves cannot race the same free name.
+      targetPath = allocatePathInDir(resolveAttachmentDownloadDir(), safeName);
+    }
+
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, buffer);
+    applyDownloadQuarantine(targetPath);
+    return { ok: true, filePath: targetPath };
+  },
+);
+
+registerSecureHandler(
+  'api:openAttachment',
+  async (
+    _,
+    email: string,
+    messageId: string,
+    attachmentId: string,
+    filename: string,
+    mimeType: string,
+    options?: { base64Data?: string | null },
+  ): Promise<AttachmentOpenResult | AttachmentOpenBlocked> => {
+    const safeName = sanitizeAttachmentFilename(filename);
+    if (!canOpenExternally(mimeType || '', safeName)) {
+      return {
+        ok: false,
+        reason: 'unsafe',
+        message: 'This attachment type cannot be opened automatically for safety. Use Download instead.',
+      };
+    }
+
+    try {
+      const buffer = await loadAttachmentBuffer(email, messageId, attachmentId, options?.base64Data);
+      const openDir = path.join(os.tmpdir(), 'dumka-mail-open');
+      fs.mkdirSync(openDir, { recursive: true });
+      // Stable cache key per message+attachment so reopening reuses the same path (rewritten each open).
+      const cacheKey = `${messageId.slice(0, 12)}-${(attachmentId || safeName).replace(/[^\w.-]+/g, '_').slice(0, 40)}`;
+      const cachedName = `${cacheKey}-${safeName}`;
+      const filePath = path.join(openDir, cachedName);
+      fs.writeFileSync(filePath, buffer);
+      applyDownloadQuarantine(filePath);
+
+      const openError = await shell.openPath(filePath);
+      if (openError) {
+        return { ok: false, reason: 'open_failed', message: openError };
+      }
+      return { ok: true, filePath };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (/fetchAttachment|No attachment|missing/i.test(msg)) {
+        return { ok: false, reason: 'fetch_failed', message: msg };
+      }
+      if (/missing|not found|empty/i.test(msg)) {
+        return { ok: false, reason: 'missing', message: msg };
+      }
+      return { ok: false, reason: 'fetch_failed', message: msg };
+    }
+  },
+);
+
+registerSecureHandler('api:chooseAttachmentDownloadFolder', async (): Promise<string | null> => {
+  if (!mainWindow) return null;
+  const defaultPath = resolveAttachmentDownloadDir();
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'createDirectory'],
+    title: 'Choose Attachment Download Folder',
+    defaultPath,
   });
+  return filePaths?.[0] || null;
+});
 
-  if (!filePath) return;
+registerSecureHandler('api:getSystemDownloadsPath', (): string => {
+  return app.getPath('downloads');
+});
 
-  const base64Data = await GmailSyncService.fetchAttachment(email, messageId, attachmentId);
-  const buffer = Buffer.from(base64Data, 'base64url');
-  fs.writeFileSync(filePath, buffer);
+registerSecureHandler('api:revealInFolder', async (_, filePath: string): Promise<void> => {
+  if (typeof filePath !== 'string' || !filePath) return;
+  // Only reveal existing absolute paths to avoid shell injection-ish misuse.
+  if (!path.isAbsolute(filePath) || !fs.existsSync(filePath)) return;
+  shell.showItemInFolder(filePath);
 });
 
 registerSecureHandler('api:uploadAttachment', async () => {
@@ -1589,4 +1704,98 @@ function getMimeType(filePath: string): string {
     '.mp4': 'video/mp4'
   };
   return mimes[ext] || 'application/octet-stream';
+}
+
+/** Decode Gmail base64url payloads and standard base64 (inline parts). */
+function decodeAttachmentBase64(data: string): Buffer {
+  const trimmed = (data || '').trim();
+  if (!trimmed) return Buffer.alloc(0);
+  // Gmail attachment API returns base64url; Node accepts it via 'base64url'.
+  // Also tolerate standard base64 (inline MIME parts converted earlier).
+  if (trimmed.includes('-') || trimmed.includes('_')) {
+    return Buffer.from(trimmed, 'base64url');
+  }
+  return Buffer.from(trimmed, 'base64');
+}
+
+function readConfiguredAttachmentDownloadFolder(): string {
+  try {
+    const raw = SettingsRepo.get('appSettings');
+    if (!raw) return '';
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const folder = parsed?.general?.attachmentDownloadFolder;
+    return typeof folder === 'string' ? folder.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function isAllowedAttachmentDownloadDir(dir: string): boolean {
+  if (typeof dir !== 'string' || !dir.trim()) return false;
+  if (!path.isAbsolute(dir)) return false;
+  try {
+    const resolved = path.resolve(dir);
+    // Reject exotic absolute forms that are not real local directories.
+    if (resolved.startsWith('\\\\') || /^[a-zA-Z]+:\/\//.test(dir)) return false;
+    return fs.existsSync(resolved) && fs.statSync(resolved).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function resolveAttachmentDownloadDir(): string {
+  const configured = readConfiguredAttachmentDownloadFolder();
+  if (configured && isAllowedAttachmentDownloadDir(configured)) {
+    return path.resolve(configured);
+  }
+  return app.getPath('downloads');
+}
+
+/** Best-effort Gatekeeper quarantine so opened/saved mail files behave like browser downloads. */
+function applyDownloadQuarantine(filePath: string): void {
+  if (process.platform !== 'darwin') return;
+  try {
+    // flags;timestamp_hex;agent-name; (LS_QUARANTINE_FLAG_DOWNLOAD | USER)
+    const value = `0081;${Math.floor(Date.now() / 1000).toString(16)};Dumka Mail;`;
+    execFileSync('xattr', ['-w', 'com.apple.quarantine', value, filePath], {
+      stdio: 'ignore',
+      timeout: 2000,
+    });
+  } catch {
+    // Non-fatal: missing xattr tooling or SIP-restricted tmp paths.
+  }
+}
+
+function allocatePathInDir(dir: string, filename: string): string {
+  fs.mkdirSync(dir, { recursive: true });
+  let existing: string[] = [];
+  try {
+    existing = fs.readdirSync(dir);
+  } catch {
+    existing = [];
+  }
+  const names = new Set(existing.map(name => name.toLowerCase()));
+  const unique = allocateUniqueFilename(names, filename);
+  return path.join(dir, unique);
+}
+
+async function loadAttachmentBuffer(
+  email: string,
+  messageId: string,
+  attachmentId: string,
+  inlineBase64?: string | null,
+): Promise<Buffer> {
+  if (inlineBase64) {
+    const buf = decodeAttachmentBase64(inlineBase64);
+    if (buf.length > 0) return buf;
+  }
+  if (!attachmentId) {
+    throw new Error('Attachment payload is missing (no attachment id or inline data).');
+  }
+  const remote = await GmailSyncService.fetchAttachment(email, messageId, attachmentId);
+  const buf = decodeAttachmentBase64(remote);
+  if (buf.length === 0) {
+    throw new Error('Attachment payload was empty.');
+  }
+  return buf;
 }

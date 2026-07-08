@@ -681,6 +681,35 @@ export interface GeneralSettings {
   openLinksInBackground: boolean;
   confirmBeforeQuitting: boolean;
   keepDraftsAcrossLaunches: boolean;
+  /**
+   * Absolute path for attachment downloads. Empty string means the OS Downloads
+   * folder (`app.getPath('downloads')` on the main process).
+   */
+  attachmentDownloadFolder: string;
+}
+
+/** Result of saving an attachment to disk. */
+export interface AttachmentSaveResult {
+  ok: true;
+  filePath: string;
+  /** True when the user cancelled a Save dialog (only for explicit Save As). */
+  cancelled?: false;
+}
+
+export interface AttachmentSaveCancelled {
+  ok: false;
+  cancelled: true;
+}
+
+export interface AttachmentOpenResult {
+  ok: true;
+  filePath: string;
+}
+
+export interface AttachmentOpenBlocked {
+  ok: false;
+  reason: 'unsafe' | 'missing' | 'open_failed' | 'fetch_failed';
+  message: string;
 }
 
 export interface MailCategoryRule {

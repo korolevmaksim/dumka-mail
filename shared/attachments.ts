@@ -58,6 +58,15 @@ const UNSAFE_MIME = new Set([
   'application/x-shellscript',
 ]);
 
+// Extra open-time blocks beyond the Swift port: markup that shell.openPath would hand to a
+// browser / renderer and can be used for phishing (local fake login pages, active SVG).
+const UNSAFE_OPEN_EXT = new Set(['html', 'htm', 'shtml', 'xhtml', 'svg']);
+const UNSAFE_OPEN_MIME = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+]);
+
 // MailAttachment.safeExternalOpenExtensions (Swift lines 103–105).
 const SAFE_EXT = new Set([
   'doc', 'docx', 'key', 'numbers', 'pages', 'ppt', 'pptx', 'rtf', 'xls', 'xlsx', 'zip',
@@ -244,6 +253,8 @@ export function canOpenExternally(mimeType: string, filename: string): boolean {
   const nmime = normalizeMime(mimeType);
 
   if (UNSAFE_EXT.has(ext) || UNSAFE_MIME.has(nmime)) return false;
+  // Defense-in-depth beyond Swift: never hand active markup to shell.openPath.
+  if (UNSAFE_OPEN_EXT.has(ext) || UNSAFE_OPEN_MIME.has(nmime)) return false;
   if (swiftPreviewKind(mimeType, ext) !== 'unsupported') return true;
   return SAFE_EXT.has(ext) || SAFE_MIME.has(nmime);
 }
@@ -255,6 +266,54 @@ export function canOpenExternally(mimeType: string, filename: string): boolean {
  */
 export function isPotentiallyUnsafe(filename: string): boolean {
   return UNSAFE_EXT.has(fileExtension(filename));
+}
+
+/**
+ * Strip path separators / control characters so a malicious attachment name cannot escape
+ * the destination directory when joined with `path.join`.
+ * Empty / "." / ".." collapse to "attachment".
+ * When truncating, the file extension is preserved when possible.
+ */
+export function sanitizeAttachmentFilename(filename: string): string {
+  const base = (filename || '').split(/[\\/]/).pop() ?? '';
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/^\.+/, '')
+    .trim();
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'attachment';
+  if (cleaned.length <= 200) return cleaned;
+
+  const dot = cleaned.lastIndexOf('.');
+  if (dot > 0 && cleaned.length - dot <= 20) {
+    const ext = cleaned.slice(dot);
+    const stem = cleaned.slice(0, 200 - ext.length);
+    return `${stem}${ext}`;
+  }
+  return cleaned.slice(0, 200);
+}
+
+/**
+ * Choose a non-colliding filename within `existingLowercaseNames` (a set of already-used
+ * basenames lowercased for case-insensitive filesystems like APFS default / NTFS).
+ * "report.pdf" → "report (1).pdf" → "report (2).pdf" …
+ */
+export function allocateUniqueFilename(existingLowercaseNames: Set<string>, filename: string): string {
+  const safe = sanitizeAttachmentFilename(filename);
+  const lower = safe.toLowerCase();
+  if (!existingLowercaseNames.has(lower)) return safe;
+
+  const dot = safe.lastIndexOf('.');
+  const hasExt = dot > 0;
+  const stem = hasExt ? safe.slice(0, dot) : safe;
+  const ext = hasExt ? safe.slice(dot) : '';
+
+  let n = 1;
+  while (true) {
+    const candidate = `${stem} (${n})${ext}`;
+    if (!existingLowercaseNames.has(candidate.toLowerCase())) return candidate;
+    n += 1;
+    if (n > 10_000) return `${stem}-${Date.now()}${ext}`;
+  }
 }
 
 /**

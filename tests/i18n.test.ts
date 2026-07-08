@@ -28,4 +28,9 @@ describe('i18n helpers', () => {
     expect(t('settings.general.startup.commandPalette')).toBe('Launch Command Palette');
     expect(t('settings.privacy.clearCacheOnDisconnect.title')).toBe('Purge SQLite Cache on Disconnect');
   });
+
+  it('includes attachment download folder copy', () => {
+    expect(translate('en', 'settings.general.attachmentDownloadFolder.title')).toBe('Attachment Download Folder');
+    expect(translate('en', 'settings.general.attachmentDownloadFolder.choose')).toBe('Choose…');
+  });
 });

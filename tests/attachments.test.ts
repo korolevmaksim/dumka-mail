@@ -7,6 +7,8 @@ import {
   canOpenExternally,
   isPotentiallyUnsafe,
   formatByteSize,
+  sanitizeAttachmentFilename,
+  allocateUniqueFilename,
 } from '../shared/attachments';
 
 describe('fileExtension', () => {
@@ -135,6 +137,13 @@ describe('canOpenExternally', () => {
   it('strips MIME parameters before matching the unsafe set', () => {
     expect(canOpenExternally('application/octet-stream; name=x', 'data.bin')).toBe(false);
   });
+
+  it('blocks HTML/SVG markup even though text/* would otherwise preview', () => {
+    expect(canOpenExternally('text/html', 'page.html')).toBe(false);
+    expect(canOpenExternally('', 'index.htm')).toBe(false);
+    expect(canOpenExternally('image/svg+xml', 'icon.svg')).toBe(false);
+    expect(canOpenExternally('', 'chart.svg')).toBe(false);
+  });
 });
 
 describe('isPotentiallyUnsafe', () => {
@@ -152,6 +161,44 @@ describe('isPotentiallyUnsafe', () => {
 
   it('is case-insensitive', () => {
     expect(isPotentiallyUnsafe('SETUP.EXE')).toBe(true);
+  });
+});
+
+describe('sanitizeAttachmentFilename', () => {
+  it('strips path components and control characters', () => {
+    expect(sanitizeAttachmentFilename('../../etc/passwd')).toBe('passwd');
+    expect(sanitizeAttachmentFilename('C:\\Windows\\evil.exe')).toBe('evil.exe');
+    expect(sanitizeAttachmentFilename('report\u0000.pdf')).toBe('report.pdf');
+  });
+
+  it('rejects empty / dot-only names', () => {
+    expect(sanitizeAttachmentFilename('')).toBe('attachment');
+    expect(sanitizeAttachmentFilename('...')).toBe('attachment');
+    expect(sanitizeAttachmentFilename('.')).toBe('attachment');
+    expect(sanitizeAttachmentFilename('..')).toBe('attachment');
+  });
+
+  it('caps extremely long names while preserving the extension', () => {
+    const long = `${'a'.repeat(300)}.pdf`;
+    const sanitized = sanitizeAttachmentFilename(long);
+    expect(sanitized.length).toBeLessThanOrEqual(200);
+    expect(sanitized.endsWith('.pdf')).toBe(true);
+  });
+});
+
+describe('allocateUniqueFilename', () => {
+  it('returns the original name when free', () => {
+    expect(allocateUniqueFilename(new Set(), 'report.pdf')).toBe('report.pdf');
+  });
+
+  it('appends (n) before the extension on collision', () => {
+    const existing = new Set(['report.pdf', 'report (1).pdf']);
+    expect(allocateUniqueFilename(existing, 'report.pdf')).toBe('report (2).pdf');
+  });
+
+  it('is case-insensitive against existing names', () => {
+    const existing = new Set(['photo.jpg']);
+    expect(allocateUniqueFilename(existing, 'Photo.JPG')).toBe('Photo (1).JPG');
   });
 });
 

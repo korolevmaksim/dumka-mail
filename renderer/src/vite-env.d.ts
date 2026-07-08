@@ -2,6 +2,10 @@
 import {
   Account,
   AttachmentMetadata,
+  AttachmentOpenBlocked,
+  AttachmentOpenResult,
+  AttachmentSaveCancelled,
+  AttachmentSaveResult,
   CalendarAttendeeResponse,
   CalendarEvent,
   CalendarEventCreateInput,
@@ -121,7 +125,24 @@ export interface IElectronAPI {
   modifyLabels: (email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], actionId?: string, actionKind?: MailActionLog['kind'], payloadJson?: string) => Promise<{ offline: boolean }>;
   sendDraft: (email: string, draft: any, actionId?: string) => Promise<{ offline: boolean; threadId?: string }>;
   fetchAttachmentData: (email: string, messageId: string, attachmentId: string) => Promise<string>;
-  downloadAttachment: (email: string, messageId: string, attachmentId: string, filename: string) => Promise<void>;
+  downloadAttachment: (
+    email: string,
+    messageId: string,
+    attachmentId: string,
+    filename: string,
+    options?: { saveAs?: boolean; base64Data?: string | null },
+  ) => Promise<AttachmentSaveResult | AttachmentSaveCancelled>;
+  openAttachment: (
+    email: string,
+    messageId: string,
+    attachmentId: string,
+    filename: string,
+    mimeType: string,
+    options?: { base64Data?: string | null },
+  ) => Promise<AttachmentOpenResult | AttachmentOpenBlocked>;
+  chooseAttachmentDownloadFolder: () => Promise<string | null>;
+  getSystemDownloadsPath: () => Promise<string>;
+  revealInFolder: (filePath: string) => Promise<void>;
   uploadAttachment: () => Promise<AttachmentMetadata | null>;
   syncContacts: (email: string) => Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }>;
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;

@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { AttachmentMetadata, MailMessage } from '../../../shared/types';
-import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown } from 'lucide-react';
+import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, ExternalLink } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
 import { hasRemoteImages, SafeHtmlRenderer } from './SafeHtmlRenderer';
 import { resolveInlineCids } from '../../../shared/messageBody';
 import { calendarInvitesFromMessage } from '../../../shared/calendar';
 import { CalendarInviteCard } from './CalendarInviteCard';
+import { canOpenExternally, formatByteSize } from '../../../shared/attachments';
+import { emitToast } from '../lib/toastBus';
 
 export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
@@ -174,18 +176,7 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
             </span>
             <div className="flex flex-wrap gap-2">
               {visibleAttachments.map((att) => (
-                <div key={att.id} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--app-bg)] border border-[var(--border)] rounded-[6px] hover:border-[var(--strong-border)] transition-colors">
-                  <Paperclip className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
-                  <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[180px] truncate">{att.filename}</span>
-                  <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{att.sizeBytes >= 1048576 ? `${(att.sizeBytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(att.sizeBytes / 1024))} KB`}</span>
-                  <button
-                    onClick={() => window.electronAPI.downloadAttachment(msg.accountId, msg.id, attachmentFetchId(att) || att.id, att.filename)}
-                    title="Download attachment"
-                    className="ml-1 p-0.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                  >
-                    <Download className="w-3 h-3" />
-                  </button>
-                </div>
+                <AttachmentChip key={att.id} accountId={msg.accountId} messageId={msg.id} attachment={att} />
               ))}
             </div>
           </div>
@@ -205,6 +196,135 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
 
 function attachmentFetchId(att: AttachmentMetadata): string | null {
   return att.attachmentId || att.id || null;
+}
+
+function AttachmentChip({
+  accountId,
+  messageId,
+  attachment,
+}: {
+  accountId: string;
+  messageId: string;
+  attachment: AttachmentMetadata;
+}) {
+  const [busy, setBusy] = useState<'open' | 'download' | null>(null);
+  const fetchId = attachmentFetchId(attachment) || attachment.id;
+  const openable = canOpenExternally(attachment.mimeType || '', attachment.filename);
+  const sizeLabel = formatByteSize(attachment.sizeBytes);
+
+  const payloadOptions = attachment.base64Data
+    ? { base64Data: attachment.base64Data }
+    : undefined;
+
+  const handleOpen = async () => {
+    if (busy) return;
+    setBusy('open');
+    try {
+      const result = await window.electronAPI.openAttachment(
+        accountId,
+        messageId,
+        fetchId,
+        attachment.filename,
+        attachment.mimeType || '',
+        payloadOptions,
+      );
+      if (!result.ok) {
+        emitToast({
+          type: result.reason === 'unsafe' ? 'warning' : 'error',
+          message: result.message,
+        });
+      }
+    } catch (err: any) {
+      emitToast({ type: 'error', message: err?.message || 'Failed to open attachment' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDownload = async (saveAs = false) => {
+    if (busy) return;
+    setBusy('download');
+    try {
+      const result = await window.electronAPI.downloadAttachment(
+        accountId,
+        messageId,
+        fetchId,
+        attachment.filename,
+        { ...payloadOptions, saveAs },
+      );
+      if (!result.ok) {
+        // User cancelled Save As — silent.
+        return;
+      }
+      const savedName = result.filePath.split(/[\\/]/).pop() || attachment.filename;
+      emitToast({
+        type: 'success',
+        message: `Saved ${savedName}`,
+        actionLabel: 'Show in Folder',
+        onAction: () => { void window.electronAPI.revealInFolder(result.filePath); },
+        duration: 5000,
+      });
+    } catch (err: any) {
+      emitToast({ type: 'error', message: err?.message || 'Failed to download attachment' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--app-bg)] border border-[var(--border)] rounded-[6px] transition-colors ${
+        openable
+          ? 'hover:border-[var(--accent)] cursor-pointer'
+          : 'hover:border-[var(--strong-border)]'
+      } ${busy ? 'opacity-70' : ''}`}
+      title={openable ? 'Open with default app' : 'This type cannot be opened automatically — use Download'}
+      onClick={() => {
+        if (openable) void handleOpen();
+      }}
+      onKeyDown={(e) => {
+        if (!openable) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          void handleOpen();
+        }
+      }}
+      role={openable ? 'button' : undefined}
+      tabIndex={openable ? 0 : undefined}
+    >
+      <Paperclip className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
+      <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[180px] truncate">
+        {attachment.filename}
+      </span>
+      <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{sizeLabel}</span>
+      {openable && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleOpen();
+          }}
+          disabled={busy !== null}
+          title="Open with default app"
+          className="ml-0.5 p-0.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
+        >
+          <ExternalLink className="w-3 h-3" />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void handleDownload(e.shiftKey);
+        }}
+        disabled={busy !== null}
+        title="Download attachment (Shift+click for Save As…)"
+        className="ml-0.5 p-0.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
+      >
+        <Download className="w-3 h-3" />
+      </button>
+    </div>
+  );
 }
 
 function shouldTreatAsInlineImage(att: AttachmentMetadata, html: string): boolean {

@@ -6,6 +6,33 @@ describe('AppSettings AI prompt shortcuts', () => {
     expect(DEFAULT_SETTINGS.general.language).toBe('system');
   });
 
+  it('defaults attachment download folder to empty (system Downloads)', () => {
+    expect(DEFAULT_SETTINGS.general.attachmentDownloadFolder).toBe('');
+  });
+
+  it('fills attachmentDownloadFolder when migrating older settings blobs', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+      general: {
+        language: 'en',
+      },
+    });
+
+    expect(merged.general.attachmentDownloadFolder).toBe('');
+    expect(merged.general.language).toBe('en');
+  });
+
+  it('preserves a user-configured attachment download folder', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      general: {
+        attachmentDownloadFolder: '/Users/me/Mail Downloads',
+      },
+    });
+
+    expect(merged.general.attachmentDownloadFolder).toBe('/Users/me/Mail Downloads');
+  });
+
   it('normalizes invalid persisted interface language values', () => {
     const merged = mergeSettings({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,

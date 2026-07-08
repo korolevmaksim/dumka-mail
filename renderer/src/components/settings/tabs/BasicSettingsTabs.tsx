@@ -162,6 +162,7 @@ export function ProfileTab() {
 export function GeneralTab() {
   const store = useAppStore();
   const t = createTranslator(store.settings.general.language);
+  const [systemDownloadsPath, setSystemDownloadsPath] = useState('');
   const generalToggleItems: Array<{ key: keyof typeof store.settings.general; title: TranslationKey; desc: TranslationKey }> = [
     { key: 'showBottomShortcutBar', title: 'settings.general.showBottomShortcutBar.title', desc: 'settings.general.showBottomShortcutBar.description' },
     { key: 'showRightContextPanel', title: 'settings.general.showRightContextPanel.title', desc: 'settings.general.showRightContextPanel.description' },
@@ -174,6 +175,19 @@ export function GeneralTab() {
     en: 'settings.general.language.english',
     pseudo: 'settings.general.language.pseudo',
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.getSystemDownloadsPath().then(path => {
+      if (!cancelled) setSystemDownloadsPath(path);
+    }).catch(() => {
+      if (!cancelled) setSystemDownloadsPath('');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const configuredFolder = store.settings.general.attachmentDownloadFolder?.trim() || '';
+  const folderDisplay = configuredFolder || systemDownloadsPath || t('settings.general.attachmentDownloadFolder.systemDownloads');
 
   return (
     <div className="flex flex-col gap-4 max-w-[600px]">
@@ -242,6 +256,51 @@ export function GeneralTab() {
               <option key={c.id} value={c.id}>{c.displayName}</option>
             ))}
           </select>
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.attachmentDownloadFolder.title')}</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.attachmentDownloadFolder.description')}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className="flex-1 min-w-0 px-2.5 py-1.5 bg-[var(--app-bg)] border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-mono truncate"
+              title={folderDisplay}
+            >
+              {folderDisplay}
+              {!configuredFolder && (
+                <span className="ml-1.5 text-[var(--text-tertiary)] font-sans">
+                  ({t('settings.general.attachmentDownloadFolder.systemDownloads')})
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void window.electronAPI.chooseAttachmentDownloadFolder().then(selected => {
+                  if (!selected) return;
+                  store.updateSettings(s => { s.general.attachmentDownloadFolder = selected; });
+                });
+              }}
+              className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)] cursor-pointer bg-[var(--panel-bg)]"
+            >
+              {t('settings.general.attachmentDownloadFolder.choose')}
+            </button>
+            {configuredFolder && (
+              <button
+                type="button"
+                onClick={() => {
+                  store.updateSettings(s => { s.general.attachmentDownloadFolder = ''; });
+                }}
+                className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-[var(--panel-bg)]"
+              >
+                {t('settings.general.attachmentDownloadFolder.reset')}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="w-full h-[1px] bg-[var(--border)]" />

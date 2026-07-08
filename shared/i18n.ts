@@ -45,6 +45,11 @@ export type TranslationKey =
   | 'settings.general.confirmBeforeQuitting.description'
   | 'settings.general.keepDraftsAcrossLaunches.title'
   | 'settings.general.keepDraftsAcrossLaunches.description'
+  | 'settings.general.attachmentDownloadFolder.title'
+  | 'settings.general.attachmentDownloadFolder.description'
+  | 'settings.general.attachmentDownloadFolder.choose'
+  | 'settings.general.attachmentDownloadFolder.reset'
+  | 'settings.general.attachmentDownloadFolder.systemDownloads'
   | 'settings.privacy.title'
   | 'settings.privacy.description'
   | 'settings.privacy.loadRemoteImages.title'
@@ -109,6 +114,11 @@ const ENGLISH: Record<TranslationKey, string> = {
   'settings.general.confirmBeforeQuitting.description': 'Prompt before closing process',
   'settings.general.keepDraftsAcrossLaunches.title': 'Restore Drafts on Launch',
   'settings.general.keepDraftsAcrossLaunches.description': 'Save unsent composer details locally',
+  'settings.general.attachmentDownloadFolder.title': 'Attachment Download Folder',
+  'settings.general.attachmentDownloadFolder.description': 'Where Save Attachment writes files by default. Empty uses the system Downloads folder.',
+  'settings.general.attachmentDownloadFolder.choose': 'Choose…',
+  'settings.general.attachmentDownloadFolder.reset': 'Use Downloads',
+  'settings.general.attachmentDownloadFolder.systemDownloads': 'System Downloads',
   'settings.privacy.title': 'Privacy & Security',
   'settings.privacy.description': 'Manage log redactions, keychain credentials, local indices, and image loader.',
   'settings.privacy.loadRemoteImages.title': 'Load Remote Images',
