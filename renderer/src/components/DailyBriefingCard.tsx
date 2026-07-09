@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Archive, Bell, ExternalLink, ListChecks, MailPlus, RefreshCw, ShieldAlert, Sparkles, Tag, X } from 'lucide-react';
-import type { DailyBriefingCategory, DailyBriefingItem, MailLabelDefinition, MailMessage } from '../../../shared/types';
+import type { DailyBriefingCategory, DailyBriefingItem, MailLabelDefinition, ReplyPipelineCandidate } from '../../../shared/types';
 import { labelDisplayName } from '../../../shared/labels';
+import { canPrepareReplyPipelineCandidateDraft } from '../../../shared/replyPipeline';
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
 
@@ -37,12 +38,6 @@ function nextReminderAt(hour: number): Date {
   return date;
 }
 
-function latestMessage(messages: MailMessage[], item: DailyBriefingItem): MailMessage | null {
-  return messages.find(message => message.id === item.source.messageId) ||
-    [...messages].sort((a, b) => Date.parse(a.receivedAt) - Date.parse(b.receivedAt)).at(-1) ||
-    null;
-}
-
 function labelOptions(labels: MailLabelDefinition[], accountId: string): MailLabelDefinition[] {
   return labels
     .filter(label => label.accountId === accountId && label.type !== 'system')
@@ -54,6 +49,19 @@ function categoryGroups(items: DailyBriefingItem[]): Record<DailyBriefingCategor
     result[category] = items.filter(item => item.category === category);
     return result;
   }, {} as Record<DailyBriefingCategory, DailyBriefingItem[]>);
+}
+
+function replyCandidateFor(item: DailyBriefingItem): ReplyPipelineCandidate {
+  return {
+    accountId: item.accountId,
+    threadId: item.threadId,
+    sourceMessageId: item.source.messageId,
+    sourceReceivedAt: item.source.receivedAt,
+    sourceKind: 'inbound',
+    status: 'needsReply',
+    reason: item.reason,
+    priority: item.priority,
+  };
 }
 
 export function DailyBriefingCard() {
@@ -78,6 +86,15 @@ export function DailyBriefingCard() {
     thread.accountId === item.accountId && thread.id === item.threadId
   ));
 
+  const blockingPipelineState = (item: DailyBriefingItem) => {
+    const state = store.replyPipelineItems.find(candidate => (
+      candidate.accountId === item.accountId && candidate.threadId === item.threadId
+    ));
+    if (!state || Date.parse(state.sourceReceivedAt) < Date.parse(item.source.receivedAt)) return null;
+    if (canPrepareReplyPipelineCandidateDraft(state, replyCandidateFor(item))) return null;
+    return state;
+  };
+
   const openThread = async (item: DailyBriefingItem) => {
     const thread = findThread(item);
     if (!thread) {
@@ -88,29 +105,46 @@ export function DailyBriefingCard() {
   };
 
   const draftReply = async (item: DailyBriefingItem) => {
-    const thread = findThread(item);
-    if (!thread) {
-      emitToast({ type: 'warning', message: 'Thread is no longer in the local cache.' });
-      return;
-    }
-    const messages = await window.electronAPI.listMessagesForThread(item.accountId, item.threadId);
-    const message = latestMessage(messages, item);
-    if (!message) {
-      emitToast({ type: 'warning', message: 'No source message found for this briefing item.' });
-      return;
-    }
-    await store.openThreadFromToday(thread);
-    const draft = store.startReplyWithBody(message, '');
-    if (draft) {
+    try {
+      const thread = findThread(item);
+      if (!thread) {
+        emitToast({ type: 'warning', message: 'Thread is no longer in the local cache.' });
+        return;
+      }
+      const candidate = replyCandidateFor(item);
+      const [state] = await window.electronAPI.reconcileReplyPipeline([candidate]);
+      if (!canPrepareReplyPipelineCandidateDraft(state || null, candidate)) {
+        if (state?.status !== 'snoozed') store.dismissDailyBriefingItem(item);
+        emitToast({
+          type: 'info',
+          message: state?.status === 'snoozed'
+            ? 'This reply is snoozed in the Reply Pipeline.'
+            : 'This briefing item has already moved to a newer reply state.',
+        });
+        return;
+      }
+      const result = await store.prepareReplyPipelineDraft(item.accountId, item.threadId);
+      await store.loadDrafts();
+      await store.openThreadFromToday(thread);
+      store.setActiveDraft(result.draft);
+      store.setComposeLayout('inline');
       await store.executeMailAction(
         'applyAIDraftPreview',
         item.threadId,
-        draft.id,
+        result.draft.id,
         async () => null,
-        payloadFor(item, 'draftReply', { draftId: draft.id })
+        payloadFor(item, 'draftReply', { draftId: result.draft.id, draftOrigin: result.state.draftOrigin })
       );
+      emitToast({
+        type: result.placeholders.length > 0 ? 'warning' : 'success',
+        message: result.placeholders.length > 0
+          ? 'Reply draft opened. Replace the placeholder before sending.'
+          : 'Reply draft opened from briefing source.',
+      });
+    } catch (error) {
+      console.error('Daily Briefing reply draft failed:', error);
+      emitToast({ type: 'error', message: error instanceof Error ? error.message : 'Could not prepare the reply draft.' });
     }
-    emitToast({ type: 'success', message: 'Reply draft opened from briefing source.' });
   };
 
   const setReminder = async (item: DailyBriefingItem) => {
@@ -207,6 +241,8 @@ export function DailyBriefingCard() {
               {items.map(item => {
                 const labels = labelOptions(store.labelDefinitions, item.accountId);
                 const selectedLabel = labelByItemId[item.id] || labels[0]?.id || '';
+                const blockedPipelineState = blockingPipelineState(item);
+                const draftLabel = blockedPipelineState?.status === 'snoozed' ? 'Snoozed' : blockedPipelineState ? 'Handled' : 'Draft';
                 return (
                   <article key={item.id} className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-2.5">
                     <div className="flex items-start justify-between gap-2">
@@ -237,8 +273,8 @@ export function DailyBriefingCard() {
                       <button type="button" title="Open source thread" onClick={() => void openThread(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]">
                         <ExternalLink className="h-3 w-3" /> Open
                       </button>
-                      <button type="button" title="Draft reply" onClick={() => void draftReply(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]">
-                        <MailPlus className="h-3 w-3" /> Draft
+                      <button type="button" title={blockedPipelineState ? 'This source has already moved to another Reply Pipeline state' : 'Draft reply'} disabled={Boolean(blockedPipelineState)} onClick={() => void draftReply(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-45">
+                        <MailPlus className="h-3 w-3" /> {draftLabel}
                       </button>
                       <button type="button" title="Set reminder" onClick={() => void setReminder(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]">
                         <Bell className="h-3 w-3" /> Remind

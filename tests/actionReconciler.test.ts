@@ -215,7 +215,7 @@ describe('reconcilePendingActions permanent failure', () => {
 
 describe('reconcilePendingActions send-like kinds', () => {
   it('sends a pending draft and deletes it afterwards', async () => {
-    const draft = { subject: 'hi' };
+    const draft = { accountId: 'me@example.com', subject: 'hi' };
     const h = makeDeps({
       pending: [makeAction({ kind: 'send', draftId: 'd1' })],
       drafts: { d1: draft },
@@ -226,6 +226,25 @@ describe('reconcilePendingActions send-like kinds', () => {
     expect(h.saved[h.saved.length - 1].status).toBe('completed');
   });
 
+  it('keeps a confirmed send completed when the post-send Reply Pipeline hook fails', async () => {
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'send', draftId: 'd1' })],
+      drafts: { d1: { accountId: 'me@example.com', subject: 'hi' } },
+    });
+    h.deps.onDraftSent = () => {
+      throw new Error('local pipeline write failed');
+    };
+
+    await reconcilePendingActions(h.deps);
+
+    expect(h.draftsDeleted).toEqual(['d1']);
+    expect(h.saved[h.saved.length - 1].status).toBe('completed');
+    expect(h.deps.logger?.error).toHaveBeenCalledWith(
+      '[Sync Worker] Reply Pipeline update failed after confirmed send:',
+      expect.any(Error),
+    );
+  });
+
   it('fails permanently when the pending draft is gone, without deleting anything', async () => {
     const h = makeDeps({ pending: [makeAction({ kind: 'send', draftId: 'd1' })] });
     await reconcilePendingActions(h.deps);
@@ -234,6 +253,34 @@ describe('reconcilePendingActions send-like kinds', () => {
     expect(final.failureMessage).toBe('Draft not found for pending send.');
     expect(h.draftsDeleted).toEqual([]);
     expect(h.rollbacks).toHaveLength(0);
+  });
+
+  it('rejects a pending draft owned by another account before Gmail is called', async () => {
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'send', draftId: 'd1' })],
+      drafts: { d1: { accountId: 'other@example.com', subject: 'hi' } },
+    });
+    await reconcilePendingActions(h.deps);
+    expect(h.gmailCalls).toEqual([]);
+    expect(h.draftsDeleted).toEqual([]);
+    expect(h.saved[h.saved.length - 1]).toMatchObject({
+      status: 'failed',
+      failureMessage: 'Draft account does not match the pending send account.',
+    });
+  });
+
+  it('rejects a scheduled draft with an editable placeholder before Gmail is called', async () => {
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'send', draftId: 'd1' })],
+      drafts: { d1: { accountId: 'me@example.com', bodyPlain: 'Meet on [date].', subject: 'hi' } },
+    });
+    await reconcilePendingActions(h.deps);
+    expect(h.gmailCalls).toEqual([]);
+    expect(h.draftsDeleted).toEqual([]);
+    expect(h.saved[h.saved.length - 1]).toMatchObject({
+      status: 'failed',
+      failureMessage: 'Replace draft placeholder before sending: [date]',
+    });
   });
 
   it('forwards a thread using the injected builder', async () => {

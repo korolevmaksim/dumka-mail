@@ -46,6 +46,7 @@ import { ComposeTemplatesMenu } from '../compose/ComposeTemplatesMenu';
 import { LinkPopover } from '../compose/LinkPopover';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
 import { SnoozeMenu } from '../SnoozeMenu';
+import { DraftPlaceholderWarning } from '../compose/DraftPlaceholderWarning';
 
 type ComposeCommand = 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'insertUnorderedList' | 'insertOrderedList' | 'justifyLeft' | 'justifyCenter' | 'justifyRight' | 'removeFormat';
 
@@ -541,6 +542,8 @@ export function FloatingComposeDrawer() {
         onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
         onImageFile={insertInlineImageFromFile}
       />
+
+      <DraftPlaceholderWarning bodyPlain={activeDraft.bodyPlain} bodyHtml={activeDraft.bodyHtml} />
 
       {activeDraft.attachments.length > 0 && (
         <div className="border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-2 select-none">

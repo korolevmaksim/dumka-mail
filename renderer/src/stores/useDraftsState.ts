@@ -3,6 +3,7 @@ import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionLog } f
 import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
 import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
+import { replyDraftPlaceholderValidationMessage } from '../../../shared/replyPipeline';
 
 interface UseDraftsStateProps {
   settings: AppSettings;
@@ -306,6 +307,8 @@ export function useDraftsState({
   };
 
   const validateDraftForSend = (draftToValidate: Draft): string | null => {
+    const placeholderError = replyDraftPlaceholderValidationMessage(draftToValidate.bodyPlain, draftToValidate.bodyHtml);
+    if (placeholderError) return placeholderError;
     const attachmentBytes = (draftToValidate.attachments || []).reduce((sum, att) => sum + (att.sizeBytes || 0), 0);
     const validation = validateDraft({
       to: draftToValidate.to,

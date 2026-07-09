@@ -28,6 +28,7 @@ import { ComposeTemplatesMenu } from '../compose/ComposeTemplatesMenu';
 import { LinkPopover } from '../compose/LinkPopover';
 import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor';
 import { SendLaterMenu } from '../compose/SendLaterMenu';
+import { DraftPlaceholderWarning } from '../compose/DraftPlaceholderWarning';
 
 interface ToolbarButtonProps {
   title: string;
@@ -270,6 +271,8 @@ export function InlineReplyComposer() {
         collapseQuotedText={hasQuotedReply && !quotedTextExpanded}
         onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
       />
+
+      <DraftPlaceholderWarning bodyPlain={activeDraft.bodyPlain} bodyHtml={activeDraft.bodyHtml} />
 
       {hasQuotedReply && (
         <div className="border-t border-[var(--border)]/40 px-4 py-2 select-none">

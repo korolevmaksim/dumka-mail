@@ -190,6 +190,28 @@ export function runMigrations(db: Database.Database) {
         updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS reply_pipeline_state (
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        source_received_at TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        resume_status TEXT,
+        draft_id TEXT,
+        draft_origin TEXT,
+        has_placeholders INTEGER NOT NULL DEFAULT 0,
+        waiting_since TEXT,
+        due_at TEXT,
+        snoozed_until TEXT,
+        reason TEXT NOT NULL DEFAULT '',
+        priority INTEGER NOT NULL DEFAULT 0,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, thread_id)
+    );
+
     -- Senders the user successfully unsubscribed from. Cleanup Center excludes
     -- these so an approved unsubscribe removes the row even though List-Unsubscribe
     -- headers remain on historical messages in the local cache.
@@ -288,6 +310,9 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_account_id ON mail_action_log(account_id);
     CREATE INDEX IF NOT EXISTS idx_follow_up_radar_state_account ON follow_up_radar_state(account_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_operator_home_state_updated_at ON operator_home_state(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_reply_pipeline_account_status ON reply_pipeline_state(account_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_reply_pipeline_draft ON reply_pipeline_state(draft_id);
+    CREATE INDEX IF NOT EXISTS idx_reply_pipeline_account_draft ON reply_pipeline_state(account_id, draft_id);
     CREATE INDEX IF NOT EXISTS idx_unsubscribed_senders_account ON unsubscribed_senders(account_id, unsubscribed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_drafts_thread ON agent_drafts(account_id, thread_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_message_security_thread ON message_security(account_id, thread_id);
@@ -334,7 +359,8 @@ export function runMigrations(db: Database.Database) {
     { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
     { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },
     { table: 'calendar_events', column: 'source_message_id', definition: 'source_message_id TEXT' },
-    { table: 'ai_messages', column: 'sources_json', definition: 'sources_json TEXT' }
+    { table: 'ai_messages', column: 'sources_json', definition: 'sources_json TEXT' },
+    { table: 'reply_pipeline_state', column: 'has_placeholders', definition: 'has_placeholders INTEGER NOT NULL DEFAULT 0' }
   ];
 
   for (const { table, column, definition } of tablesInfo) {

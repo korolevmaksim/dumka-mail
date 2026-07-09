@@ -26,6 +26,9 @@ import {
   MailThread,
   OnboardAccountResult,
   OperatorHomeStateSnapshot,
+  ReplyPipelineCandidate,
+  ReplyPipelineDraftResult,
+  ReplyPipelineState,
   SyncState,
   AIConversation,
   AIChatMessage,
@@ -115,6 +118,14 @@ export interface IElectronAPI {
   dismissFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string) => Promise<void>;
   snoozeFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) => Promise<void>;
 
+  // Reply Pipeline
+  reconcileReplyPipeline: (candidates: ReplyPipelineCandidate[]) => Promise<ReplyPipelineState[]>;
+  listReplyPipeline: (accountIds: string[]) => Promise<ReplyPipelineState[]>;
+  prepareReplyPipelineDraft: (accountId: string, threadId: string) => Promise<ReplyPipelineDraftResult>;
+  snoozeReplyPipelineItem: (accountId: string, threadId: string, snoozedUntil: string) => Promise<ReplyPipelineState>;
+  suppressReplyPipelineItem: (accountId: string, threadId: string) => Promise<ReplyPipelineState>;
+  resolveReplyPipelineItem: (accountId: string, threadId: string) => Promise<ReplyPipelineState>;
+
   // Gmail sync & mutations
   syncInbox: (email: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;
   syncSent: (email: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;
@@ -195,6 +206,7 @@ export interface IElectronAPI {
   onFoundInPageResult: (callback: (result: any) => void) => () => void;
   onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => () => void;
+  onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
   onExecuteCommand: (callback: (cmdId: string) => void) => () => void;

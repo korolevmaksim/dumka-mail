@@ -1,4 +1,5 @@
 import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
+import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
 
 export interface ReconcilerDeps {
   actionLog: {
@@ -22,6 +23,7 @@ export interface ReconcilerDeps {
   };
   buildForwardDraft(accountId: string, thread: MailThread, forwardTo: string): unknown;
   buildAutoReplyDraft(accountId: string, threadId: string, replyBody: string): unknown;
+  onDraftSent?: (accountId: string, draftId: string) => void;
   now?: () => Date;
   logger?: Pick<Console, 'log' | 'error'>;
 }
@@ -100,7 +102,26 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
         if (action.draftId) {
           const draft = deps.drafts.get(action.draftId);
           if (!draft) throw new Error('Draft not found for pending send.');
+          const draftAccountId = typeof draft === 'object' && draft !== null && 'accountId' in draft
+            ? String(draft.accountId).trim().toLowerCase()
+            : '';
+          if (!draftAccountId || draftAccountId !== action.accountId.trim().toLowerCase()) {
+            throw new Error('Draft account does not match the pending send account.');
+          }
+          const draftBodyPlain = typeof draft === 'object' && draft !== null && 'bodyPlain' in draft
+            ? String(draft.bodyPlain || '')
+            : '';
+          const draftBodyHtml = typeof draft === 'object' && draft !== null && 'bodyHtml' in draft
+            ? String(draft.bodyHtml || '')
+            : null;
+          const placeholderError = replyDraftPlaceholderValidationMessage(draftBodyPlain, draftBodyHtml);
+          if (placeholderError) throw new Error(placeholderError);
           await deps.gmail.sendDraft(action.accountId, draft);
+          try {
+            deps.onDraftSent?.(action.accountId, action.draftId);
+          } catch (pipelineError) {
+            logger.error('[Sync Worker] Reply Pipeline update failed after confirmed send:', pipelineError);
+          }
           deps.drafts.delete(action.draftId);
         }
       } else if (action.kind === 'forwardThread') {

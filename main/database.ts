@@ -42,6 +42,7 @@ export {
   RemindersRepo,
   FollowUpRadarRepo,
   OperatorHomeStateRepo,
+  ReplyPipelineRepo,
   UnsubscribedSendersRepo,
   SyncStateRepo,
   ActionLogRepo,

@@ -39,6 +39,8 @@ import {
   ThreadAgentInsights,
   FollowUpRadarResult,
   FollowUpRadarItem,
+  ReplyPipelineDraftResult,
+  ReplyPipelineState,
   MailSyncCompletion
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
@@ -52,6 +54,7 @@ import { useSettingsState } from './useSettingsState';
 import { useMailState } from './useMailState';
 import { useDraftsState } from './useDraftsState';
 import { useAIState } from './useAIState';
+import { useReplyPipelineState } from './useReplyPipelineState';
 import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import type { MailSearchState } from './mailSearchStatus';
@@ -416,6 +419,14 @@ interface AppStoreContextType {
   loadFollowUpRadar: () => Promise<void>;
   dismissFollowUpRadarItem: (item: FollowUpRadarItem) => Promise<void>;
   snoozeFollowUpRadarItem: (item: FollowUpRadarItem, snoozedUntil: string) => Promise<void>;
+  replyPipelineItems: ReplyPipelineState[];
+  replyPipelineLoading: boolean;
+  replyPipelineError: string | null;
+  loadReplyPipeline: () => Promise<void>;
+  prepareReplyPipelineDraft: (accountId: string, threadId: string) => Promise<ReplyPipelineDraftResult>;
+  snoozeReplyPipelineItem: (item: ReplyPipelineState, snoozedUntil: string) => Promise<void>;
+  suppressReplyPipelineItem: (item: ReplyPipelineState) => Promise<void>;
+  resolveReplyPipelineItem: (item: ReplyPipelineState) => Promise<void>;
   executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: (actionId: string) => Promise<any>, payloadJson?: string | null) => Promise<void>;
   undoLastAction: () => Promise<void>;
   snoozeThread: (thread: MailThread, date: Date) => Promise<void>;
@@ -425,6 +436,7 @@ interface AppStoreContextType {
   composeLayout: 'inline' | 'floating';
   setComposeLayout: (layout: 'inline' | 'floating') => void;
   draftsList: Draft[];
+  loadDrafts: () => Promise<void>;
   startNewDraft: (accountId?: string | null, seed?: Partial<Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject'>>) => Draft | null;
   saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
   startReply: (message: MailMessage, replyAll?: boolean) => void;
@@ -613,6 +625,13 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     startReplyWithBody: draftsState.startReplyWithBody,
     executeMailAction: mailState.executeMailAction,
     setSpeedProof: mailState.setSpeedProof
+  });
+
+  const replyPipelineState = useReplyPipelineState({
+    accounts: mailState.accounts,
+    activeAccount: mailState.activeAccount,
+    dailyBriefing: aiState.dailyBriefing,
+    followUpRadar: mailState.followUpRadar,
   });
 
   const primaryWorkspaceEmail = useMemo(() => {
@@ -984,6 +1003,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...mailState,
     ...draftsState,
     ...aiState,
+    ...replyPipelineState,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,

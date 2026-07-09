@@ -29,6 +29,7 @@ import {
   FollowUpRadarResult,
   FollowUpRadarState,
   OperatorHomeStateSnapshot,
+  ReplyPipelineState,
   MessageSecurityInsight,
   SenderCleanupStat,
 } from '../shared/types';
@@ -144,6 +145,7 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM reply_pipeline_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM operator_home_state WHERE scope_id = ?').run(id.toLowerCase());
       db.prepare('DELETE FROM unsubscribed_senders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM ai_conversations WHERE account_id = ?').run(id);
@@ -348,6 +350,7 @@ export const ThreadsRepo = {
       db.prepare('DELETE FROM messages WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM reply_pipeline_state WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM mail_search WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM agent_drafts WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM message_security WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
@@ -1971,6 +1974,118 @@ export const OperatorHomeStateRepo = {
       now,
     );
     return Number(result.changes || 0) > 0;
+  },
+};
+
+function mapReplyPipelineStateRow(row: any): ReplyPipelineState {
+  return {
+    accountId: row.account_id,
+    threadId: row.thread_id,
+    sourceMessageId: row.source_message_id,
+    sourceReceivedAt: row.source_received_at,
+    sourceKind: row.source_kind,
+    status: row.status,
+    resumeStatus: row.resume_status,
+    draftId: row.draft_id,
+    draftOrigin: row.draft_origin,
+    hasPlaceholders: Boolean(row.has_placeholders),
+    waitingSince: row.waiting_since,
+    dueAt: row.due_at,
+    snoozedUntil: row.snoozed_until,
+    reason: row.reason || '',
+    priority: Number(row.priority) || 0,
+    resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// === Reply Pipeline Repository ===
+export const ReplyPipelineRepo = {
+  get(accountId: string, threadId: string): ReplyPipelineState | null {
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT * FROM reply_pipeline_state
+      WHERE account_id = ? AND thread_id = ?
+    `).get(accountId, threadId) as any;
+    return row ? mapReplyPipelineStateRow(row) : null;
+  },
+
+  list(accountIds: string | string[]): ReplyPipelineState[] {
+    const ids = Array.from(new Set((Array.isArray(accountIds) ? accountIds : [accountIds])
+      .map(id => id.trim())
+      .filter(Boolean)));
+    if (ids.length === 0) return [];
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT * FROM reply_pipeline_state
+      WHERE account_id IN (${placeholders})
+      ORDER BY priority DESC, updated_at DESC
+    `).all(...ids) as any[];
+    return rows.map(mapReplyPipelineStateRow);
+  },
+
+  findByDraftId(accountId: string, draftId: string): ReplyPipelineState | null {
+    if (!accountId || !draftId) return null;
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT * FROM reply_pipeline_state
+      WHERE account_id = ? AND draft_id = ? LIMIT 1
+    `).get(accountId, draftId) as any;
+    return row ? mapReplyPipelineStateRow(row) : null;
+  },
+
+  save(state: ReplyPipelineState): void {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO reply_pipeline_state (
+        account_id, thread_id, source_message_id, source_received_at, source_kind, status,
+        resume_status, draft_id, draft_origin, has_placeholders, waiting_since, due_at,
+        snoozed_until, reason, priority, resolved_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, thread_id) DO UPDATE SET
+        source_message_id=excluded.source_message_id,
+        source_received_at=excluded.source_received_at,
+        source_kind=excluded.source_kind,
+        status=excluded.status,
+        resume_status=excluded.resume_status,
+        draft_id=excluded.draft_id,
+        draft_origin=excluded.draft_origin,
+        has_placeholders=excluded.has_placeholders,
+        waiting_since=excluded.waiting_since,
+        due_at=excluded.due_at,
+        snoozed_until=excluded.snoozed_until,
+        reason=excluded.reason,
+        priority=excluded.priority,
+        resolved_at=excluded.resolved_at,
+        updated_at=excluded.updated_at
+    `).run(
+      state.accountId,
+      state.threadId,
+      state.sourceMessageId,
+      state.sourceReceivedAt,
+      state.sourceKind,
+      state.status,
+      state.resumeStatus || null,
+      state.draftId || null,
+      state.draftOrigin || null,
+      state.hasPlaceholders ? 1 : 0,
+      state.waitingSince || null,
+      state.dueAt || null,
+      state.snoozedUntil || null,
+      state.reason || '',
+      Math.max(0, Math.min(100, Math.round(state.priority || 0))),
+      state.resolvedAt || null,
+      state.createdAt,
+      state.updatedAt,
+    );
+  },
+
+  delete(accountId: string, threadId: string): void {
+    getDatabase().prepare(`
+      DELETE FROM reply_pipeline_state WHERE account_id = ? AND thread_id = ?
+    `).run(accountId, threadId);
   },
 };
 

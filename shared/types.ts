@@ -857,6 +857,59 @@ export interface FollowUpRadarListOptions {
   nowIso?: string;
 }
 
+export type ReplyPipelineStatus =
+  | 'needsReply'
+  | 'draftReady'
+  | 'waitingOnThem'
+  | 'due'
+  | 'resolved'
+  | 'snoozed'
+  | 'suppressed';
+
+export type ReplyPipelineActiveStatus = 'needsReply' | 'draftReady' | 'waitingOnThem' | 'due';
+export type ReplyPipelineResumeStatus = Exclude<ReplyPipelineStatus, 'snoozed'>;
+export type ReplyPipelineCandidateKind = 'needsReply' | 'due';
+export type ReplyPipelineSourceKind = 'inbound' | 'outbound';
+export type ReplyPipelineDraftOrigin = 'automation' | 'template';
+
+export interface ReplyPipelineCandidate {
+  accountId: AccountID;
+  threadId: ThreadID;
+  sourceMessageId: MessageID;
+  sourceReceivedAt: string;
+  sourceKind: ReplyPipelineSourceKind;
+  status: ReplyPipelineCandidateKind;
+  reason: string;
+  priority: number;
+}
+
+export interface ReplyPipelineState {
+  accountId: AccountID;
+  threadId: ThreadID;
+  sourceMessageId: MessageID;
+  sourceReceivedAt: string;
+  sourceKind: ReplyPipelineSourceKind;
+  status: ReplyPipelineStatus;
+  resumeStatus: ReplyPipelineResumeStatus | null;
+  draftId: DraftID | null;
+  draftOrigin: ReplyPipelineDraftOrigin | null;
+  hasPlaceholders: boolean;
+  waitingSince: string | null;
+  dueAt: string | null;
+  snoozedUntil: string | null;
+  reason: string;
+  priority: number;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplyPipelineDraftResult {
+  state: ReplyPipelineState;
+  draft: Draft;
+  placeholders: string[];
+}
+
 export interface AutomationRuleCandidate {
   id: string;
   title: string;

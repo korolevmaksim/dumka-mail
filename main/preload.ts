@@ -24,6 +24,9 @@ import {
   AIProviderPreference,
   FollowUpRadarResult,
   OperatorHomeStateSnapshot,
+  ReplyPipelineCandidate,
+  ReplyPipelineDraftResult,
+  ReplyPipelineState,
   MCPServerConfig
 } from '../shared/types';
 import { AIRequest } from './ai';
@@ -99,6 +102,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listFollowUpRadarItems: (accountId: string, options?: FollowUpRadarListOptions): Promise<FollowUpRadarResult> => ipcRenderer.invoke('api:listFollowUpRadarItems', accountId, options),
   dismissFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string) => ipcRenderer.invoke('api:dismissFollowUpRadarItem', accountId, threadId, sentMessageId),
   snoozeFollowUpRadarItem: (accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) => ipcRenderer.invoke('api:snoozeFollowUpRadarItem', accountId, threadId, sentMessageId, snoozedUntil),
+
+  // Reply Pipeline
+  reconcileReplyPipeline: (candidates: ReplyPipelineCandidate[]): Promise<ReplyPipelineState[]> => ipcRenderer.invoke('api:reconcileReplyPipeline', candidates),
+  listReplyPipeline: (accountIds: string[]): Promise<ReplyPipelineState[]> => ipcRenderer.invoke('api:listReplyPipeline', accountIds),
+  prepareReplyPipelineDraft: (accountId: string, threadId: string): Promise<ReplyPipelineDraftResult> => ipcRenderer.invoke('api:prepareReplyPipelineDraft', accountId, threadId),
+  snoozeReplyPipelineItem: (accountId: string, threadId: string, snoozedUntil: string): Promise<ReplyPipelineState> => ipcRenderer.invoke('api:snoozeReplyPipelineItem', accountId, threadId, snoozedUntil),
+  suppressReplyPipelineItem: (accountId: string, threadId: string): Promise<ReplyPipelineState> => ipcRenderer.invoke('api:suppressReplyPipelineItem', accountId, threadId),
+  resolveReplyPipelineItem: (accountId: string, threadId: string): Promise<ReplyPipelineState> => ipcRenderer.invoke('api:resolveReplyPipelineItem', accountId, threadId),
 
   // Gmail sync & mutations
   syncInbox: (email: string) => ipcRenderer.invoke('api:syncInbox', email),
@@ -196,6 +207,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('api:remindersDue', listener);
     return () => {
       ipcRenderer.off('api:remindersDue', listener);
+    };
+  },
+  onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => {
+    const listener = (_: unknown, data: { accountId: string; threadId: string }) => callback(data);
+    ipcRenderer.on('api:replyPipelineUpdated', listener);
+    return () => {
+      ipcRenderer.off('api:replyPipelineUpdated', listener);
     };
   },
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => {

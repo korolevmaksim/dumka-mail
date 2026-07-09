@@ -31,6 +31,8 @@ import { GoogleWorkspaceService } from './googleWorkspace';
 import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import { AgenticService } from './agentic';
+import { ReplyPipelineService } from './replyPipelineService';
+import { sendReplyPipelineUpdateSafely } from './replyPipelineNotifications';
 import { MCPManager } from './mcpManager';
 import { executeMailboxSearchTool } from './mailboxSearchTool';
 import { prepareAppSettingsForStorage, resolveAppSettingsSecrets, resolveMCPServerConfigSecrets } from './mcpSettings';
@@ -44,6 +46,7 @@ import { shouldNotifyForMessage } from '../shared/mailSecurity';
 import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoReply';
 import { evaluateMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
+import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
 import type {
   ActionKind,
@@ -62,6 +65,7 @@ import type {
   MailRulesSettings,
   MailThread,
   OperatorHomeStateSnapshot,
+  ReplyPipelineCandidate,
   SyncState,
 } from '../shared/types';
 import {
@@ -91,6 +95,10 @@ const DEFAULT_MAIL_RULES_SETTINGS: MailRulesSettings = {
   enabled: false,
   rules: []
 };
+
+function notifyReplyPipelineUpdated(accountId: string, threadId: string): void {
+  sendReplyPipelineUpdateSafely(mainWindow, accountId, threadId);
+}
 
 MCPManager.setMailboxSearchExecutor(executeMailboxSearchTool);
 
@@ -670,6 +678,10 @@ app.whenReady().then(async () => {
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
     buildAutoReplyDraft: buildAutoReplyDraftFromRule,
+    onDraftSent: (accountId, draftId) => {
+      const state = ReplyPipelineService.markSentByDraftBestEffort(accountId, draftId);
+      if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
+    },
   });
   startReminderNotificationWorker();
   startBackgroundMailboxSyncWorker();
@@ -721,6 +733,14 @@ async function saveMessagesToDatabase(messages: MailMessage[], options?: { notif
     ...options,
     indexBodies: readIncludeBodiesInSearchIndex()
   });
+
+  try {
+    for (const state of ReplyPipelineService.processNewMessages(messages)) {
+      notifyReplyPipelineUpdated(state.accountId, state.threadId);
+    }
+  } catch (pipelineError) {
+    console.error('[Reply Pipeline] Failed to reconcile persisted messages:', pipelineError);
+  }
 
   if (options?.notifyOfNew && newMessages.length > 0) {
     notifyOfNewMessages(newMessages);
@@ -779,9 +799,27 @@ registerSecureHandler('api:listFollowUpRadarItems', (_, accountId: string, optio
 registerSecureHandler('api:dismissFollowUpRadarItem', (_, accountId: string, threadId: string, sentMessageId: string) => FollowUpRadarRepo.dismiss(accountId, threadId, sentMessageId));
 registerSecureHandler('api:snoozeFollowUpRadarItem', (_, accountId: string, threadId: string, sentMessageId: string, snoozedUntil: string) => FollowUpRadarRepo.snooze(accountId, threadId, sentMessageId, snoozedUntil));
 
+registerSecureHandler('api:reconcileReplyPipeline', (_, candidates: ReplyPipelineCandidate[]) => ReplyPipelineService.reconcileCandidates(candidates));
+registerSecureHandler('api:listReplyPipeline', (_, accountIds: string[]) => ReplyPipelineService.list(accountIds));
+registerSecureHandler('api:prepareReplyPipelineDraft', (_, accountId: string, threadId: string) => ReplyPipelineService.prepareDraft(accountId, threadId));
+registerSecureHandler('api:snoozeReplyPipelineItem', (_, accountId: string, threadId: string, snoozedUntil: string) => ReplyPipelineService.snooze(accountId, threadId, snoozedUntil));
+registerSecureHandler('api:suppressReplyPipelineItem', (_, accountId: string, threadId: string) => ReplyPipelineService.suppress(accountId, threadId));
+registerSecureHandler('api:resolveReplyPipelineItem', (_, accountId: string, threadId: string) => ReplyPipelineService.resolve(accountId, threadId));
+
 registerSecureHandler('db:listDrafts', (_, accountId) => DraftsRepo.list(accountId));
 registerSecureHandler('db:getDraft', (_, id) => DraftsRepo.get(id));
-registerSecureHandler('db:saveDraft', (_, draft) => DraftsRepo.save(draft));
+registerSecureHandler('db:saveDraft', (_, draft) => {
+  DraftsRepo.save(draft);
+  if (typeof draft?.accountId === 'string' && typeof draft?.id === 'string') {
+    const state = ReplyPipelineService.refreshDraftPlaceholdersBestEffort(
+      draft.accountId,
+      draft.id,
+      typeof draft.bodyPlain === 'string' ? draft.bodyPlain : '',
+      typeof draft.bodyHtml === 'string' ? draft.bodyHtml : null,
+    );
+    if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
+  }
+});
 registerSecureHandler('db:deleteDraft', (_, id) => DraftsRepo.delete(id));
 
 registerSecureHandler('db:getReminder', (_, accountId, threadId) => RemindersRepo.get(accountId, threadId));
@@ -1383,8 +1421,21 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   }
 });
 registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string) => {
+  if (!draft || typeof draft.accountId !== 'string'
+    || draft.accountId.trim().toLowerCase() !== email.trim().toLowerCase()) {
+    throw new Error('Draft account does not match the sending account.');
+  }
+  const placeholderError = replyDraftPlaceholderValidationMessage(
+    typeof draft.bodyPlain === 'string' ? draft.bodyPlain : '',
+    typeof draft.bodyHtml === 'string' ? draft.bodyHtml : null,
+  );
+  if (placeholderError) throw new Error(placeholderError);
   try {
     const threadId = await GmailSyncService.sendDraft(email, draft);
+    if (draft?.id) {
+      const state = ReplyPipelineService.markSentByDraftBestEffort(email, draft.id);
+      if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
+    }
     return { offline: false, threadId };
   } catch (err: any) {
     if (isNetworkError(err)) {
