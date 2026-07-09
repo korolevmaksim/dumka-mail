@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailSyncCompletion } from '../../../shared/types';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 
@@ -28,6 +28,7 @@ export function useMailSync({
   const [syncStatusText, setSyncStatusText] = useState<string>('Ready');
   const [backfillProgress, setBackfillProgress] = useState<string>('0%');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [lastSuccessfulSync, setLastSuccessfulSync] = useState<MailSyncCompletion | null>(null);
   const isSyncingRef = useRef<boolean>(false);
 
   // Backfill background loader
@@ -74,6 +75,7 @@ export function useMailSync({
     try {
       const start = performance.now();
       const targetAccounts = (syncAll || activeAccount.id === 'unified') ? accounts : [activeAccount];
+      const targetAccountIds = targetAccounts.map(account => account.email.trim().toLowerCase()).filter(Boolean);
 
       for (const acc of targetAccounts) {
         const syncState = await window.electronAPI.getSyncState(acc.email);
@@ -149,6 +151,11 @@ export function useMailSync({
       }
 
       await loadThreadsFromDB();
+      setLastSuccessfulSync(previous => ({
+        revision: (previous?.revision || 0) + 1,
+        accountIds: targetAccountIds,
+        completedAt: new Date().toISOString(),
+      }));
       setSyncHealth('ready');
       setSyncStatusText('Ready');
       setSpeedProof((prev: SpeedProof) => ({
@@ -221,6 +228,7 @@ export function useMailSync({
     syncStatusText,
     backfillProgress,
     isSyncing,
+    lastSuccessfulSync,
     onboardAccount,
     disconnectAccount,
     triggerSyncManual,

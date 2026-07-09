@@ -231,6 +231,7 @@ export function GeneralTab() {
             }}
             className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
+            <option value="today">{t('settings.general.startup.today')}</option>
             <option value="inbox">{t('settings.general.startup.inbox')}</option>
             <option value="lastSelectedAccount">{t('settings.general.startup.lastSelectedAccount')}</option>
             <option value="commandPalette">{t('settings.general.startup.commandPalette')}</option>

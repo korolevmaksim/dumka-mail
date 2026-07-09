@@ -38,7 +38,8 @@ import {
   MailboxView,
   ThreadAgentInsights,
   FollowUpRadarResult,
-  FollowUpRadarItem
+  FollowUpRadarItem,
+  MailSyncCompletion
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { getDefaultEmbeddingSettings } from '../../../shared/embeddingProviders';
@@ -71,7 +72,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 15;
+export const SETTINGS_SCHEMA_VERSION = 16;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -306,6 +307,9 @@ export function mergeSettings(parsed: any): AppSettings {
   merged.snippets.templates = normalizeSnippetTemplates(merged.snippets.templates);
   merged.mailRules = normalizeMailRulesSettings(merged.mailRules);
   merged.general.language = normalizeAppLanguage(merged.general.language);
+  if (!['today', 'inbox', 'lastSelectedAccount', 'commandPalette'].includes(merged.general.startupBehavior)) {
+    merged.general.startupBehavior = 'inbox';
+  }
 
   if (parsedSchemaVersion < 6) {
     merged.notifications.notifyImportantOnly = false;
@@ -329,6 +333,7 @@ interface CalendarEventRange {
 }
 
 interface AppStoreContextType {
+  settingsLoaded: boolean;
   theme: 'light' | 'dark' | 'system';
   setTheme: (t: 'light' | 'dark' | 'system') => void;
   accounts: Account[];
@@ -440,6 +445,7 @@ interface AppStoreContextType {
   backfillProgress: string;
   triggerBackfillManual: () => Promise<void>;
   isSyncing: boolean;
+  lastSuccessfulSync: MailSyncCompletion | null;
   triggerSyncManual: () => Promise<void>;
   syncGmailSignature: (email?: string) => Promise<GmailSignatureSyncResult>;
   aiPanelOpen: boolean;
@@ -456,7 +462,7 @@ interface AppStoreContextType {
   runAIAction: (action: AIAction) => Promise<void>;
   runAIPromptShortcut: (shortcut: AIPromptShortcut) => Promise<void>;
   runAITriagePlan: () => Promise<void>;
-  runDailyBriefing: (options?: DailyBriefingBuildOptions, behavior?: { openPanel?: boolean }) => Promise<void>;
+  runDailyBriefing: (options?: DailyBriefingBuildOptions, behavior?: { openPanel?: boolean; silent?: boolean; preserveOnError?: boolean; autoRefreshWindowKey?: string }) => Promise<boolean>;
   dismissDailyBriefingItem: (itemOrThreadId: DailyBriefingItem | string) => void;
   addDailyBriefingItemToAgentPlan: (item: DailyBriefingItem, labelId?: string | null) => void;
   addAgentPlanItems: (items: AgentPlanItem[]) => void;
@@ -601,6 +607,8 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     visibleThreads: mailState.visibleThreads,
     activeSplit: mailState.activeSplit,
     threads: mailState.threads,
+    labelDefinitions,
+    lastSuccessfulSync: mailState.lastSuccessfulSync,
     openThread: mailState.openThread,
     startReplyWithBody: draftsState.startReplyWithBody,
     executeMailAction: mailState.executeMailAction,

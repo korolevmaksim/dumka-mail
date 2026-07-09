@@ -16,12 +16,14 @@ import {
   MailActionLog,
   AIConversation,
   AIChatMessage,
+  DailyBriefing,
   DailyBriefingBuildOptions,
   EmbeddingIndexReindexOptions,
   EmbeddingIndexStatus,
   FollowUpRadarListOptions,
   AIProviderPreference,
   FollowUpRadarResult,
+  OperatorHomeStateSnapshot,
   MCPServerConfig
 } from '../shared/types';
 import { AIRequest } from './ai';
@@ -72,6 +74,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Action Log
   listActionLog: (accountId: string) => ipcRenderer.invoke('db:listActionLog', accountId),
   saveActionLog: (log: MailActionLog) => ipcRenderer.invoke('db:saveActionLog', log),
+
+  // Operator Home state
+  getOperatorHomeState: (scopeId: string): Promise<OperatorHomeStateSnapshot | null> => ipcRenderer.invoke('db:getOperatorHomeState', scopeId),
+  saveOperatorHomeState: (snapshot: OperatorHomeStateSnapshot) => ipcRenderer.invoke('db:saveOperatorHomeState', snapshot),
+  finalizeOperatorHomeAutoRefreshWindow: (scopeId: string, windowKey: string, briefing: DailyBriefing): Promise<boolean> => ipcRenderer.invoke('db:finalizeOperatorHomeAutoRefreshWindow', scopeId, windowKey, briefing),
 
   // AI Conversations
   listConversations: (accountId: string) => ipcRenderer.invoke('db:listConversations', accountId),

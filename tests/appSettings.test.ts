@@ -6,6 +6,11 @@ describe('AppSettings AI prompt shortcuts', () => {
     expect(DEFAULT_SETTINGS.general.language).toBe('system');
   });
 
+  it('preserves Today as a supported startup workspace and rejects unknown values', () => {
+    expect(mergeSettings({ general: { startupBehavior: 'today' } }).general.startupBehavior).toBe('today');
+    expect(mergeSettings({ general: { startupBehavior: 'unknown' } }).general.startupBehavior).toBe('inbox');
+  });
+
   it('defaults attachment download folder to empty (system Downloads)', () => {
     expect(DEFAULT_SETTINGS.general.attachmentDownloadFolder).toBe('');
   });

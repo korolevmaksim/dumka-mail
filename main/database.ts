@@ -41,6 +41,7 @@ export {
   SearchRepo,
   RemindersRepo,
   FollowUpRadarRepo,
+  OperatorHomeStateRepo,
   UnsubscribedSendersRepo,
   SyncStateRepo,
   ActionLogRepo,

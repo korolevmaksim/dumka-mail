@@ -16,6 +16,7 @@ import {
   MessagesRepo,
   RemindersRepo,
   FollowUpRadarRepo,
+  OperatorHomeStateRepo,
   SearchRepo,
   SettingsRepo,
   SyncStateRepo,
@@ -53,12 +54,14 @@ import type {
   AttachmentSaveResult,
   CalendarAttendeeResponse,
   CalendarInvite,
+  DailyBriefing,
   FollowUpRadarListOptions,
   MailMessage,
   MailNotificationSettings,
   MailRuleAction,
   MailRulesSettings,
   MailThread,
+  OperatorHomeStateSnapshot,
   SyncState,
 } from '../shared/types';
 import {
@@ -790,6 +793,10 @@ registerSecureHandler('db:saveSyncState', (_, state) => SyncStateRepo.save(state
 
 registerSecureHandler('db:listActionLog', (_, accountId) => ActionLogRepo.list(accountId));
 registerSecureHandler('db:saveActionLog', (_, log) => ActionLogRepo.save(log));
+
+registerSecureHandler('db:getOperatorHomeState', (_, scopeId: string) => OperatorHomeStateRepo.get(scopeId));
+registerSecureHandler('db:saveOperatorHomeState', (_, snapshot: OperatorHomeStateSnapshot) => OperatorHomeStateRepo.saveSnapshot(snapshot));
+registerSecureHandler('db:finalizeOperatorHomeAutoRefreshWindow', (_, scopeId: string, windowKey: string, briefing: DailyBriefing) => OperatorHomeStateRepo.finalizeAutoRefreshWindow(scopeId, windowKey, briefing));
 
 registerSecureHandler('db:listConversations', (_, accountId) => AIConversationsRepo.list(accountId));
 registerSecureHandler('db:getConversationMessages', (_, id) => AIConversationsRepo.getMessages(id));

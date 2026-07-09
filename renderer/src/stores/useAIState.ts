@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Account, MailThread, MailMessage, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
+import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
+import { Account, MailThread, MailMessage, MailLabelDefinition, MailSyncCompletion, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
 import { resolveAIModelForPurpose } from '../../../shared/aiModelPurpose';
@@ -9,6 +9,12 @@ import { MailTriagePlanner } from '../../../shared/triagePlanner';
 import { buildAITriageContext, buildAITriageInstruction, buildAITriagePlanFromResponse } from '../../../shared/aiTriage';
 import { normalizeDailyBriefingSettings } from '../../../shared/dailyBriefing';
 import { buildAgentPlanFromDailyBriefingItem, buildAgentPlanFromTriagePlan, mergeAgentPlanItem } from '../../../shared/agentPlan';
+import {
+  dailyBriefingRefreshWindowKey,
+  isOperatorRequestCurrent,
+  normalizeOperatorHomeScopeId,
+  type OperatorRequestToken,
+} from '../../../shared/operatorHomeState';
 
 interface UseAIStateProps {
   settings: AppSettings;
@@ -19,6 +25,8 @@ interface UseAIStateProps {
   visibleThreads: MailThread[];
   activeSplit: string;
   threads: MailThread[];
+  labelDefinitions: MailLabelDefinition[];
+  lastSuccessfulSync: MailSyncCompletion | null;
   openThread: (thread: MailThread | null) => Promise<void>;
   startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => any;
   executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<void>;
@@ -66,6 +74,8 @@ export function useAIState({
   visibleThreads,
   activeSplit,
   threads,
+  labelDefinitions,
+  lastSuccessfulSync,
   openThread,
   startReplyWithBody,
   executeMailAction,
@@ -85,7 +95,28 @@ export function useAIState({
   const [aiModel, setAiModel] = useState<string>('');
 
   const [selectedAgentPlanItemIds, setSelectedAgentPlanItemIds] = useState<Set<string>>(new Set());
-  const [activeAccountCredentialsValid, setActiveAccountCredentialsValid] = useState<boolean>(true);
+  const [credentialsValidByAccount, setCredentialsValidByAccount] = useState<Record<string, boolean>>({});
+  const [loadedOperatorScope, setLoadedOperatorScope] = useState<string | null>(null);
+  const [lastAutoRefreshWindow, setLastAutoRefreshWindow] = useState<string | null>(null);
+  const operatorScopeId = activeAccount
+    ? normalizeOperatorHomeScopeId(activeAccount.id === 'unified' ? 'unified' : activeAccount.email)
+    : null;
+  const currentOperatorScopeRef = useRef<string | null>(operatorScopeId);
+  const operatorScopeGenerationRef = useRef(0);
+  const dailyBriefingRequestGenerationRef = useRef(0);
+  const triageRequestGenerationRef = useRef(0);
+  const autoRefreshInFlightRef = useRef<string | null>(null);
+  const lastAutoRefreshAttemptRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (currentOperatorScopeRef.current === operatorScopeId) return;
+    currentOperatorScopeRef.current = operatorScopeId;
+    operatorScopeGenerationRef.current += 1;
+    dailyBriefingRequestGenerationRef.current += 1;
+    triageRequestGenerationRef.current += 1;
+    autoRefreshInFlightRef.current = null;
+    lastAutoRefreshAttemptRef.current = null;
+  }, [operatorScopeId]);
 
   // Sync provider and model from settings on load/change
   useEffect(() => {
@@ -104,16 +135,94 @@ export function useAIState({
     setAiProviderDesc(null);
   }, []);
 
-  // Check connected account credentials
+  // Credential readiness is per account so restored Unified queues cannot
+  // accidentally treat every remote action as connected.
   useEffect(() => {
-    if (!activeAccount || activeAccount.id === 'unified') {
-      setActiveAccountCredentialsValid(true);
-      return;
-    }
-    window.electronAPI.verifyTokenExists(activeAccount.email).then(valid => {
-      setActiveAccountCredentialsValid(valid);
+    let active = true;
+    const connectedAccounts = accounts.filter(account => account.email && account.id !== 'unified');
+    void Promise.all(connectedAccounts.map(async account => [
+      account.email.trim().toLowerCase(),
+      await window.electronAPI.verifyTokenExists(account.email),
+    ] as const)).then(entries => {
+      if (active) setCredentialsValidByAccount(Object.fromEntries(entries));
+    }).catch(error => {
+      console.warn('Failed to verify account credentials for Operator Home:', error);
+      if (active) setCredentialsValidByAccount({});
     });
-  }, [activeAccount]);
+    return () => {
+      active = false;
+    };
+  }, [accounts]);
+
+  // Each account (and Unified) owns an independent durable Operator Home
+  // snapshot. Clear old-scope state before async restore to prevent cross-account
+  // persistence when the account selector changes quickly.
+  useEffect(() => {
+    let active = true;
+    const scopeGeneration = operatorScopeGenerationRef.current;
+    setLoadedOperatorScope(null);
+    setAgentPlan(null);
+    setSelectedAgentPlanItemIds(new Set());
+    setDailyBriefing(null);
+    setLastAutoRefreshWindow(null);
+    setDailyBriefingLoading(false);
+    setAiPanelLoading(false);
+    if (!operatorScopeId) return () => {
+      active = false;
+    };
+
+    const restore = async () => {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const snapshot = await window.electronAPI.getOperatorHomeState(operatorScopeId);
+          if (!active
+            || currentOperatorScopeRef.current !== operatorScopeId
+            || operatorScopeGenerationRef.current !== scopeGeneration) return;
+          setAgentPlan(snapshot?.agentPlan || null);
+          setSelectedAgentPlanItemIds(new Set(snapshot?.selectedAgentPlanItemIds || []));
+          setDailyBriefing(snapshot?.dailyBriefing || null);
+          setLastAutoRefreshWindow(snapshot?.lastAutoRefreshWindow || null);
+          setLoadedOperatorScope(operatorScopeId);
+          return;
+        } catch (error) {
+          if (!active
+            || currentOperatorScopeRef.current !== operatorScopeId
+            || operatorScopeGenerationRef.current !== scopeGeneration) return;
+          if (attempt === 3) {
+            // Keep the scope unhydrated so the autosave effect cannot replace a
+            // durable snapshot with the cleared in-memory defaults.
+            console.error('Failed to restore Operator Home state:', error);
+            return;
+          }
+          await new Promise(resolve => globalThis.setTimeout(resolve, attempt * 200));
+        }
+      }
+    };
+    void restore();
+
+    return () => {
+      active = false;
+    };
+  }, [operatorScopeId]);
+
+  // Persist all review decisions and briefing dismissals after hydration. A
+  // short debounce coalesces plan and selection changes from the same action.
+  useEffect(() => {
+    if (!operatorScopeId || loadedOperatorScope !== operatorScopeId) return;
+    const timeout = globalThis.setTimeout(() => {
+      void window.electronAPI.saveOperatorHomeState({
+        scopeId: operatorScopeId,
+        agentPlan,
+        selectedAgentPlanItemIds: Array.from(selectedAgentPlanItemIds),
+        dailyBriefing,
+        lastAutoRefreshWindow,
+        updatedAt: new Date().toISOString(),
+      }).catch(error => {
+        console.error('Failed to persist Operator Home state:', error);
+      });
+    }, 120);
+    return () => globalThis.clearTimeout(timeout);
+  }, [agentPlan, dailyBriefing, lastAutoRefreshWindow, loadedOperatorScope, operatorScopeId, selectedAgentPlanItemIds]);
 
   // Resolve active AI provider descriptors
   useEffect(() => {
@@ -240,6 +349,10 @@ export function useAIState({
   const agentPlanActionPreview = useCallback((item: AgentPlanItem): AgentPlanActionPreview => {
     const isSelected = selectedAgentPlanItemIds.has(item.id);
     const threadExists = threads.some(thread => thread.accountId === item.accountId && thread.id === item.threadId);
+    const normalizedItemAccountId = item.accountId.trim().toLowerCase();
+    const accountLabels = labelDefinitions.filter(label => label.accountId.trim().toLowerCase() === normalizedItemAccountId);
+    const targetLabelExists = Boolean(item.payload?.labelId)
+      && accountLabels.some(label => label.id === item.payload?.labelId);
     const scope: AgentPlanActionPreview['scope'] =
       item.action === 'markRead' || item.action === 'archive' || item.action === 'applyLabel' || item.action === 'unsubscribe'
         ? 'gmail'
@@ -250,9 +363,12 @@ export function useAIState({
     let eligibility: AgentPlanActionPreview['eligibility'] = 'ready';
     if (!threadExists) {
       eligibility = 'threadMissing';
-    } else if (item.action === 'applyLabel' && !item.payload?.labelId) {
+    } else if (item.action === 'applyLabel' && (
+      !item.payload?.labelId
+      || !targetLabelExists
+    )) {
       eligibility = 'labelMissing';
-    } else if (scope === 'gmail' && !activeAccountCredentialsValid) {
+    } else if (scope === 'gmail' && credentialsValidByAccount[normalizedItemAccountId] !== true) {
       eligibility = 'requiresReconnect';
     } else if (scope === 'focus') {
       eligibility = 'focusOnly';
@@ -267,7 +383,7 @@ export function useAIState({
       selectionPolicy: item.selectionPolicy,
       riskLevel: item.riskLevel,
     };
-  }, [activeAccountCredentialsValid, selectedAgentPlanItemIds, threads]);
+  }, [credentialsValidByAccount, labelDefinitions, selectedAgentPlanItemIds, threads]);
 
   const agentPlanQueueReadiness: AgentPlanQueueReadiness | null = (() => {
     if (!agentPlan) return null;
@@ -596,11 +712,22 @@ export function useAIState({
 
   const runAITriagePlan = async () => {
     setAiPanelOpen(true);
-    if (!activeAccount) {
+    if (!activeAccount || !operatorScopeId) {
       setTriagePlan(null);
       emitToast({ type: 'warning', message: 'Connect an account before building a triage queue.' });
       return;
     }
+    const requestToken: OperatorRequestToken = {
+      scopeId: operatorScopeId,
+      scopeGeneration: operatorScopeGenerationRef.current,
+      requestGeneration: ++triageRequestGenerationRef.current,
+    };
+    const requestIsCurrent = () => isOperatorRequestCurrent(
+      requestToken,
+      currentOperatorScopeRef.current,
+      operatorScopeGenerationRef.current,
+      triageRequestGenerationRef.current,
+    );
     if (visibleThreads.length === 0) {
       setTriagePlan(null);
       emitToast({ type: 'info', message: 'No visible messages to triage in this tab.' });
@@ -609,14 +736,16 @@ export function useAIState({
     
     setAiPanelLoading(true);
 
-    const isAutomationSplit = activeSplit === 'automation';
+    const visibleThreadsSnapshot = [...visibleThreads];
+    const activeSplitSnapshot = activeSplit;
+    const isAutomationSplit = activeSplitSnapshot === 'automation';
     const intent = isAutomationSplit ? 'automationCleanup' : 'mailboxTriage';
     const now = new Date();
     
     const fallbackPlan = MailTriagePlanner.build(
-      activeAccount.id === 'unified' ? 'unified' : activeAccount.email,
-      activeSplit,
-      visibleThreads,
+      operatorScopeId,
+      activeSplitSnapshot,
+      visibleThreadsSnapshot,
       now,
       intent,
       8
@@ -630,12 +759,13 @@ export function useAIState({
       if (canUseAI) {
         const response = await window.electronAPI.completeAI({
           action: 'triage',
-          context: buildAITriageContext(visibleThreads),
+          context: buildAITriageContext(visibleThreadsSnapshot),
           conversationHistory: [],
           userInstruction: buildAITriageInstruction(intent),
         }, aiProvider, resolveAIModelForPurpose('interactive', {
           interactiveModel: settings.ai.globalDefaultModel,
         }, aiModel));
+        if (!requestIsCurrent()) return;
 
         plan = buildAITriagePlanFromResponse({
           accountId: fallbackPlan.accountId,
@@ -645,16 +775,20 @@ export function useAIState({
           intent,
           automationRulePreview: fallbackPlan.automationRulePreview || null,
           responseText: response.text,
-          threads: visibleThreads,
+          threads: visibleThreadsSnapshot,
         });
         usedAI = true;
       }
     } catch (error) {
+      if (!requestIsCurrent()) return;
       console.warn('AI triage failed; using deterministic fallback:', error);
+    } finally {
+      if (requestIsCurrent()) setAiPanelLoading(false);
     }
 
+    if (!requestIsCurrent()) return;
     setTriagePlan(plan);
-    const reviewPlan = buildAgentPlanFromTriagePlan({ plan, threads: visibleThreads, aiAssisted: usedAI });
+    const reviewPlan = buildAgentPlanFromTriagePlan({ plan, threads: visibleThreadsSnapshot, aiAssisted: usedAI });
     setAgentPlan(prev => reviewPlan.items.reduce((acc, item) => mergeAgentPlanItem(acc, item), prev));
     setSelectedAgentPlanItemIds(prev => {
       const next = new Set(prev);
@@ -663,28 +797,39 @@ export function useAIState({
       }
       return next;
     });
-    setAiPanelLoading(false);
     emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewPlan.items.length} actions.` });
   };
 
-  const runDailyBriefing = async (
+  const runDailyBriefing = useCallback(async (
     options: DailyBriefingBuildOptions = {},
-    behavior: { openPanel?: boolean } = {}
-  ) => {
+    behavior: { openPanel?: boolean; silent?: boolean; preserveOnError?: boolean; autoRefreshWindowKey?: string } = {}
+  ): Promise<boolean> => {
     if (behavior.openPanel !== false) {
       setAiPanelOpen(true);
     }
-    if (!activeAccount) {
+    if (!activeAccount || !operatorScopeId) {
       setDailyBriefing(null);
       emitToast({ type: 'warning', message: 'Connect an account before building a daily briefing.' });
-      return;
+      return false;
     }
     if (!settings.ai.dailyBriefing.enabled) {
       setDailyBriefing(null);
       emitToast({ type: 'info', message: 'Daily Briefing is disabled in AI settings.' });
-      return;
+      return false;
     }
 
+    const requestToken: OperatorRequestToken = {
+      scopeId: operatorScopeId,
+      scopeGeneration: operatorScopeGenerationRef.current,
+      requestGeneration: ++dailyBriefingRequestGenerationRef.current,
+    };
+    const requestIsCurrent = () => isOperatorRequestCurrent(
+      requestToken,
+      currentOperatorScopeRef.current,
+      operatorScopeGenerationRef.current,
+      dailyBriefingRequestGenerationRef.current,
+    );
+    const targetAccounts = activeAccount.id === 'unified' ? [...accounts] : [activeAccount];
     setDailyBriefingLoading(true);
     const start = performance.now();
     try {
@@ -693,12 +838,12 @@ export function useAIState({
         ...briefingSettings,
         nowIso: options.nowIso || new Date().toISOString(),
       };
-      const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
       const briefings = await Promise.all(
         targetAccounts
           .filter(account => account.email)
           .map(account => window.electronAPI.buildDailyBriefing(account.email, requestOptions))
       );
+      if (!requestIsCurrent()) return false;
 
       const briefing = activeAccount.id === 'unified'
         ? mergeDailyBriefings('unified', briefings, briefingSettings)
@@ -709,20 +854,83 @@ export function useAIState({
         ...prev,
         aiMs: Math.round(performance.now() - start)
       }));
-      emitToast({
-        type: briefing && briefing.items.length > 0 ? 'success' : 'info',
-        message: briefing && briefing.items.length > 0
-          ? `Daily briefing ready with ${briefing.items.length} item${briefing.items.length === 1 ? '' : 's'}.`
-          : 'Daily briefing found no current items.',
-      });
+      if (behavior.autoRefreshWindowKey && briefing) {
+        try {
+          await window.electronAPI.finalizeOperatorHomeAutoRefreshWindow(
+            operatorScopeId,
+            behavior.autoRefreshWindowKey,
+            briefing,
+          );
+          if (requestIsCurrent()) setLastAutoRefreshWindow(behavior.autoRefreshWindowKey);
+        } catch (error) {
+          console.warn('Failed to finalize Daily Briefing refresh window:', error);
+        }
+      }
+      if (!requestIsCurrent()) return false;
+      if (!behavior.silent) {
+        emitToast({
+          type: briefing && briefing.items.length > 0 ? 'success' : 'info',
+          message: briefing && briefing.items.length > 0
+            ? `Daily briefing ready with ${briefing.items.length} item${briefing.items.length === 1 ? '' : 's'}.`
+            : 'Daily briefing found no current items.',
+        });
+      }
+      return true;
     } catch (error) {
+      if (!requestIsCurrent()) return false;
       console.error('Daily briefing failed:', error);
-      setDailyBriefing(null);
-      emitToast({ type: 'error', message: formatAIUserError(error) });
+      if (!behavior.preserveOnError) setDailyBriefing(null);
+      if (!behavior.silent) emitToast({ type: 'error', message: formatAIUserError(error) });
+      return false;
     } finally {
-      setDailyBriefingLoading(false);
+      if (requestIsCurrent()) setDailyBriefingLoading(false);
     }
-  };
+  }, [accounts, activeAccount, operatorScopeId, setSpeedProof, settings.ai.dailyBriefing]);
+
+  // Refresh only after the matching Gmail sync has been persisted and the
+  // renderer cache reloaded. The window is finalized by runDailyBriefing only
+  // after a successful local build, so failures remain retryable on the next
+  // successful sync completion. Semantic search stays off on this path.
+  useEffect(() => {
+    if (!operatorScopeId || loadedOperatorScope !== operatorScopeId) return;
+    if (!activeAccount || !settings.ai.dailyBriefing.enabled) return;
+    if (activeAccount.id === 'unified' && accounts.length === 0) return;
+    if (!lastSuccessfulSync || dailyBriefingLoading) return;
+
+    const targetAccountIds = (activeAccount.id === 'unified' ? accounts : [activeAccount])
+      .map(account => account.email.trim().toLowerCase())
+      .filter(Boolean);
+    const completedAccountIds = new Set(lastSuccessfulSync.accountIds.map(accountId => accountId.trim().toLowerCase()));
+    if (targetAccountIds.length === 0 || !targetAccountIds.every(accountId => completedAccountIds.has(accountId))) return;
+
+    const now = new Date();
+    const windowKey = dailyBriefingRefreshWindowKey(now, settings.ai.dailyBriefing.defaultReminderHour);
+    if (lastAutoRefreshWindow === windowKey) return;
+    const attemptKey = `${operatorScopeId}:${windowKey}:${lastSuccessfulSync.revision}`;
+    if (autoRefreshInFlightRef.current || lastAutoRefreshAttemptRef.current === attemptKey) return;
+    autoRefreshInFlightRef.current = attemptKey;
+    lastAutoRefreshAttemptRef.current = attemptKey;
+
+    void runDailyBriefing(
+        { useSemanticSearch: false, nowIso: now.toISOString() },
+        { openPanel: false, silent: true, preserveOnError: true, autoRefreshWindowKey: windowKey },
+      ).finally(() => {
+        if (autoRefreshInFlightRef.current === attemptKey) {
+          autoRefreshInFlightRef.current = null;
+        }
+      });
+  }, [
+    accounts.length,
+    activeAccount,
+    dailyBriefingLoading,
+    lastAutoRefreshWindow,
+    lastSuccessfulSync,
+    loadedOperatorScope,
+    operatorScopeId,
+    runDailyBriefing,
+    settings.ai.dailyBriefing.defaultReminderHour,
+    settings.ai.dailyBriefing.enabled,
+  ]);
 
   const dismissDailyBriefingItem = (itemOrThreadId: DailyBriefingItem | string) => {
     const threadId = typeof itemOrThreadId === 'string' ? itemOrThreadId : itemOrThreadId.threadId;

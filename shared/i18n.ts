@@ -30,6 +30,7 @@ export type TranslationKey =
   | 'settings.general.language.pseudo'
   | 'settings.general.startup.title'
   | 'settings.general.startup.description'
+  | 'settings.general.startup.today'
   | 'settings.general.startup.inbox'
   | 'settings.general.startup.lastSelectedAccount'
   | 'settings.general.startup.commandPalette'
@@ -99,6 +100,7 @@ const ENGLISH: Record<TranslationKey, string> = {
   'settings.general.language.pseudo': 'Pseudo Locale',
   'settings.general.startup.title': 'Startup Behavior',
   'settings.general.startup.description': 'Choose screen displayed on application launch',
+  'settings.general.startup.today': 'Today / Operator Home',
   'settings.general.startup.inbox': 'Focus Inbox Split',
   'settings.general.startup.lastSelectedAccount': 'Last Selected Account',
   'settings.general.startup.commandPalette': 'Launch Command Palette',

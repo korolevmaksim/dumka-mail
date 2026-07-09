@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, SETTINGS_SCHEMA_VERSION, mergeSet
 
 export function useSettingsState() {
   const [settings, setSettingsState] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
   const [theme, setThemeState] = useState<'light' | 'dark' | 'system'>('system');
   const [enablePreviewPane, setEnablePreviewPaneState] = useState<boolean>(true);
   const [previewPaneWidth, setPreviewPaneWidthState] = useState<number>(320);
@@ -322,6 +323,8 @@ export function useSettingsState() {
         setModelsCache(cache);
       } catch (err) {
         console.error('Failed to load settings from SQLite:', err);
+      } finally {
+        setSettingsLoaded(true);
       }
     }
     loadSettingsFromSQLite();
@@ -494,6 +497,7 @@ export function useSettingsState() {
 
   return {
     settings,
+    settingsLoaded,
     theme,
     enablePreviewPane,
     previewPaneWidth,

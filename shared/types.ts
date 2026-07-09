@@ -644,6 +644,21 @@ export interface DailyBriefing {
   settings: DailyBriefingSettings;
 }
 
+export interface OperatorHomeStateSnapshot {
+  scopeId: AccountID | 'unified';
+  agentPlan: AgentPlan | null;
+  selectedAgentPlanItemIds: string[];
+  dailyBriefing: DailyBriefing | null;
+  lastAutoRefreshWindow: string | null;
+  updatedAt: string;
+}
+
+export interface MailSyncCompletion {
+  revision: number;
+  accountIds: AccountID[];
+  completedAt: string;
+}
+
 export interface TabCategory {
   id: string;
   displayName: string;
@@ -674,7 +689,7 @@ export interface ProfileSettings {
 
 export interface GeneralSettings {
   language: AppLanguage;
-  startupBehavior: 'inbox' | 'lastSelectedAccount' | 'commandPalette';
+  startupBehavior: 'today' | 'inbox' | 'lastSelectedAccount' | 'commandPalette';
   defaultSplitInbox: string;
   showBottomShortcutBar: boolean;
   showRightContextPanel: boolean;

@@ -25,6 +25,7 @@ import {
   MailboxSearchSource,
   MailThread,
   OnboardAccountResult,
+  OperatorHomeStateSnapshot,
   SyncState,
   AIConversation,
   AIChatMessage,
@@ -88,6 +89,11 @@ export interface IElectronAPI {
   // Action Log
   listActionLog: (accountId: string) => Promise<MailActionLog[]>;
   saveActionLog: (log: MailActionLog) => Promise<void>;
+
+  // Operator Home state
+  getOperatorHomeState: (scopeId: string) => Promise<OperatorHomeStateSnapshot | null>;
+  saveOperatorHomeState: (snapshot: OperatorHomeStateSnapshot) => Promise<void>;
+  finalizeOperatorHomeAutoRefreshWindow: (scopeId: string, windowKey: string, briefing: DailyBriefing) => Promise<boolean>;
 
   // AI Conversations
   listConversations: (accountId: string) => Promise<AIConversation[]>;

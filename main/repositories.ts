@@ -22,15 +22,21 @@ import {
   SyncState,
   AIConversation,
   AIChatMessage,
+  DailyBriefing,
   MailboxSearchSource,
   AgentDraftSuggestion,
   FollowUpRadarListOptions,
   FollowUpRadarResult,
   FollowUpRadarState,
+  OperatorHomeStateSnapshot,
   MessageSecurityInsight,
   SenderCleanupStat,
 } from '../shared/types';
 import { buildFollowUpRadarResult, normalizeFollowUpAgeWindow } from '../shared/followUpRadar';
+import {
+  normalizeOperatorHomeScopeId,
+  normalizeOperatorHomeStateSnapshot,
+} from '../shared/operatorHomeState';
 
 const DEFAULT_EMAIL_SUGGESTION_LIMIT = 1000;
 const MAX_EMAIL_SUGGESTION_LIMIT = 5000;
@@ -57,6 +63,15 @@ function parseJsonArray<T = any>(value: string | null | undefined): T[] {
     return Array.isArray(parsed) ? parsed as T[] : [];
   } catch {
     return [];
+  }
+}
+
+function parseJsonValue(value: string | null | undefined, fallback: unknown): unknown {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
   }
 }
 
@@ -129,6 +144,7 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM operator_home_state WHERE scope_id = ?').run(id.toLowerCase());
       db.prepare('DELETE FROM unsubscribed_senders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM ai_conversations WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_action_log WHERE account_id = ?').run(id);
@@ -1837,6 +1853,124 @@ export const FollowUpRadarRepo = {
       createdAt: now,
       updatedAt: now,
     });
+  },
+};
+
+// === Operator Home Repository ===
+export const OperatorHomeStateRepo = {
+  get(scopeId: string): OperatorHomeStateSnapshot | null {
+    const normalizedScopeId = normalizeOperatorHomeScopeId(scopeId);
+    if (!normalizedScopeId) return null;
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT * FROM operator_home_state WHERE scope_id = ?
+    `).get(normalizedScopeId) as any;
+    if (!row) return null;
+
+    const agentPlan = parseJsonValue(row.agent_plan_json, null);
+    const selectedAgentPlanItemIds = parseJsonValue(row.selected_item_ids_json, []);
+    const dailyBriefing = parseJsonValue(row.daily_briefing_json, null);
+
+    const snapshot = normalizeOperatorHomeStateSnapshot({
+      scopeId: normalizedScopeId,
+      agentPlan,
+      selectedAgentPlanItemIds,
+      dailyBriefing,
+      lastAutoRefreshWindow: row.last_auto_refresh_window,
+      updatedAt: row.updated_at,
+    }, normalizedScopeId);
+    if (!snapshot) return null;
+
+    if (snapshot.agentPlan) {
+      const retainedItems = snapshot.agentPlan.items.filter(item => ThreadsRepo.get(item.accountId, item.threadId));
+      const expiredCount = snapshot.agentPlan.items.length - retainedItems.length;
+      snapshot.agentPlan = {
+        ...snapshot.agentPlan,
+        items: retainedItems,
+        coverage: {
+          ...snapshot.agentPlan.coverage,
+          proposedActionCount: retainedItems.length,
+          warnings: expiredCount > 0
+            ? [...snapshot.agentPlan.coverage.warnings, `${expiredCount} stale review item${expiredCount === 1 ? '' : 's'} expired from the local cache.`]
+            : snapshot.agentPlan.coverage.warnings,
+        },
+      };
+      const retainedIds = new Set(retainedItems.map(item => item.id));
+      snapshot.selectedAgentPlanItemIds = snapshot.selectedAgentPlanItemIds.filter(id => retainedIds.has(id));
+    }
+
+    if (snapshot.dailyBriefing) {
+      const retainedItems = snapshot.dailyBriefing.items.filter(item => ThreadsRepo.get(item.accountId, item.threadId));
+      snapshot.dailyBriefing = {
+        ...snapshot.dailyBriefing,
+        items: retainedItems,
+        coverage: {
+          ...snapshot.dailyBriefing.coverage,
+          includedItemCount: retainedItems.length,
+        },
+      };
+    }
+
+    return snapshot;
+  },
+
+  saveSnapshot(snapshot: OperatorHomeStateSnapshot): void {
+    const normalized = normalizeOperatorHomeStateSnapshot(snapshot, snapshot.scopeId);
+    if (!normalized) throw new Error('Invalid Operator Home state snapshot.');
+    const db = getDatabase();
+    const updatedAt = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO operator_home_state (
+        scope_id, agent_plan_json, selected_item_ids_json, daily_briefing_json,
+        last_auto_refresh_window, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scope_id) DO UPDATE SET
+        agent_plan_json=excluded.agent_plan_json,
+        selected_item_ids_json=excluded.selected_item_ids_json,
+        daily_briefing_json=excluded.daily_briefing_json,
+        updated_at=excluded.updated_at
+    `).run(
+      normalized.scopeId,
+      normalized.agentPlan ? JSON.stringify(normalized.agentPlan) : null,
+      JSON.stringify(normalized.selectedAgentPlanItemIds),
+      normalized.dailyBriefing ? JSON.stringify(normalized.dailyBriefing) : null,
+      normalized.lastAutoRefreshWindow,
+      updatedAt,
+    );
+  },
+
+  finalizeAutoRefreshWindow(scopeId: string, windowKey: string, briefing: DailyBriefing): boolean {
+    const normalizedScopeId = normalizeOperatorHomeScopeId(scopeId);
+    const normalizedWindowKey = typeof windowKey === 'string' ? windowKey.trim() : '';
+    if (!normalizedScopeId || !normalizedWindowKey || normalizedWindowKey.length > 80) return false;
+    if (normalizeOperatorHomeScopeId(briefing?.accountId) !== normalizedScopeId) return false;
+    const now = new Date().toISOString();
+    const normalizedSnapshot = normalizeOperatorHomeStateSnapshot({
+      scopeId: normalizedScopeId,
+      agentPlan: null,
+      selectedAgentPlanItemIds: [],
+      dailyBriefing: briefing,
+      lastAutoRefreshWindow: normalizedWindowKey,
+      updatedAt: now,
+    }, normalizedScopeId);
+    if (!normalizedSnapshot?.dailyBriefing) return false;
+    const db = getDatabase();
+    const result = db.prepare(`
+      INSERT INTO operator_home_state (
+        scope_id, agent_plan_json, selected_item_ids_json, daily_briefing_json,
+        last_auto_refresh_window, updated_at
+      ) VALUES (?, NULL, '[]', ?, ?, ?)
+      ON CONFLICT(scope_id) DO UPDATE SET
+        daily_briefing_json=excluded.daily_briefing_json,
+        last_auto_refresh_window=excluded.last_auto_refresh_window,
+        updated_at=excluded.updated_at
+    `).run(
+      normalizedScopeId,
+      JSON.stringify(normalizedSnapshot.dailyBriefing),
+      normalizedWindowKey,
+      now,
+    );
+    return Number(result.changes || 0) > 0;
   },
 };
 

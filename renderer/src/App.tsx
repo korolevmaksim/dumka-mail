@@ -155,6 +155,7 @@ function AppContent() {
     thread: any;
   } | null>(null);
   const previousSearchQueryRef = useRef(store.searchQuery);
+  const startupBehaviorAppliedRef = useRef(false);
   const mailboxListRef = useRef<HTMLDivElement>(null);
   const [mailboxViewport, setMailboxViewport] = useState({ scrollTop: 0, height: 0 });
   const [measuredThreadRowHeight, setMeasuredThreadRowHeight] = useState<number | null>(null);
@@ -219,6 +220,21 @@ function AppContent() {
     const isMac = window.navigator.platform.includes('Mac');
     document.documentElement.setAttribute('data-platform', isMac ? 'darwin' : 'other');
   }, []);
+
+  useEffect(() => {
+    if (!store.settingsLoaded || startupBehaviorAppliedRef.current) return;
+    startupBehaviorAppliedRef.current = true;
+    store.setSettingsOpen(false);
+    store.setCleanupOpen(false);
+    if (store.settings.general.startupBehavior === 'today') {
+      store.setWorkspaceView('today');
+    } else {
+      store.setWorkspaceView('mail');
+      if (store.settings.general.startupBehavior === 'commandPalette') {
+        setCommandPaletteOpen(true);
+      }
+    }
+  }, [store.settings.general.startupBehavior, store.settingsLoaded]);
 
   // Listen to native Electron menu commands
   useEffect(() => {
