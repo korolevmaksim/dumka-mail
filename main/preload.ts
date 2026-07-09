@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   Account,
+  AgentPlanItem,
+  AgentPlanValidationResult,
   CalendarAttendeeResponse,
   CalendarEventCreateInput,
   CalendarEventUpdateInput,
@@ -67,7 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Reminders
   getReminder: (accountId: string, threadId: string) => ipcRenderer.invoke('db:getReminder', accountId, threadId),
-  saveReminder: (accountId: string, threadId: string, reminderAt: string) => ipcRenderer.invoke('db:saveReminder', accountId, threadId, reminderAt),
+  saveReminder: (accountId: string, threadId: string, reminderAt: string, proposalItem?: AgentPlanItem) => ipcRenderer.invoke('db:saveReminder', accountId, threadId, reminderAt, proposalItem),
   deleteReminder: (accountId: string, threadId: string) => ipcRenderer.invoke('db:deleteReminder', accountId, threadId),
 
   // Sync State
@@ -159,6 +161,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:getAIProviderDescriptor', preference, overrideModel),
   completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:completeAI', request, preference, overrideModel),
+  validateAgentActionProposal: (item: AgentPlanItem): Promise<AgentPlanValidationResult> => ipcRenderer.invoke('api:validateAgentActionProposal', item),
   getThreadAgentInsights: (accountId: string, threadId: string) => ipcRenderer.invoke('api:getThreadAgentInsights', accountId, threadId),
   buildDailyBriefing: (accountId: string, options?: DailyBriefingBuildOptions) => ipcRenderer.invoke('api:buildDailyBriefing', accountId, options),
   dismissAgentDraftSuggestion: (id: string) => ipcRenderer.invoke('api:dismissAgentDraftSuggestion', id),

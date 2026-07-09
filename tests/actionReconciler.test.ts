@@ -211,6 +211,35 @@ describe('reconcilePendingActions permanent failure', () => {
     await reconcilePendingActions(h.deps);
     expect(h.gmailCalls).toHaveLength(2);
   });
+
+  it.each([
+    { kind: 'markDone' as const, payloadJson: '{"provenance":{"origin":"aiAssistant"},"proposalValidationItem":{"id":"proposal-1"}}', add: ['INBOX'], remove: [] },
+    { kind: 'applyLabel' as const, payloadJson: '{"labelId":"L7","provenance":{"origin":"aiAssistant"},"proposalValidationItem":{"id":"proposal-1"}}', add: [], remove: ['L7'] },
+  ])('blocks stale AI $kind replay and rolls back its optimistic labels', async spec => {
+    const action = makeAction({ kind: spec.kind, payloadJson: spec.payloadJson });
+    const h = makeDeps({ pending: [action] });
+    h.deps.validateAgentProposalReplay = vi.fn(() => {
+      throw new Error('This thread changed after the AI proposal was prepared.');
+    });
+
+    await reconcilePendingActions(h.deps);
+
+    expect(h.deps.validateAgentProposalReplay).toHaveBeenCalledWith(
+      action,
+      expect.objectContaining({ proposalValidationItem: { id: 'proposal-1' } }),
+    );
+    expect(h.gmailCalls).toEqual([]);
+    expect(h.saved[h.saved.length - 1]).toMatchObject({
+      status: 'failed',
+      failureMessage: 'This thread changed after the AI proposal was prepared.',
+    });
+    expect(h.rollbacks).toEqual([{
+      accountId: 'me@example.com',
+      threadId: 't1',
+      add: spec.add,
+      remove: spec.remove,
+    }]);
+  });
 });
 
 describe('reconcilePendingActions send-like kinds', () => {

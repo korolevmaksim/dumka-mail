@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   briefingBelongsToRefreshWindow,
   dailyBriefingRefreshWindowKey,
+  filterAgentPlanItemsForOperatorScope,
   isOperatorRequestCurrent,
   normalizeOperatorHomeStateSnapshot,
 } from '../shared/operatorHomeState';
@@ -187,6 +188,46 @@ describe('Operator Home state', () => {
     expect(normalized?.agentPlan?.items[0].approvalState).toBe('approved');
   });
 
+  it('preserves AI proposal provenance, source snapshot, and draft body in the durable queue', () => {
+    const aiPlan: AgentPlan = {
+      ...plan,
+      items: [{
+        ...plan.items[0],
+        action: 'draftReply',
+        selectionPolicy: 'manualOnly',
+        approvalState: 'proposed',
+        provenance: {
+          origin: 'aiAssistant',
+          requestId: 'request-1',
+          proposedAt: '2026-07-09T09:00:00.000Z',
+        },
+        sourceSnapshot: {
+          accountId,
+          threadId: thread.id,
+          citedMessageId: 'message-1',
+          latestMessageId: 'message-1',
+          lastMessageAt: thread.lastMessageAt,
+        },
+        payload: {
+          sourceMessageId: 'message-1',
+          bodyPlain: 'Thanks, I reviewed the plan.',
+        },
+      }],
+    };
+
+    const normalized = normalizeOperatorHomeStateSnapshot({
+      ...snapshot(),
+      agentPlan: aiPlan,
+      selectedAgentPlanItemIds: [],
+    }, accountId);
+
+    expect(normalized?.agentPlan?.items[0]).toMatchObject({
+      provenance: { origin: 'aiAssistant', requestId: 'request-1' },
+      sourceSnapshot: { latestMessageId: 'message-1' },
+      payload: { bodyPlain: 'Thanks, I reviewed the plan.' },
+    });
+  });
+
   it('uses one local-day window anchored to the configured briefing hour', () => {
     const beforeWindow = new Date(2026, 6, 9, 8, 30);
     const inWindow = new Date(2026, 6, 9, 10, 0);
@@ -211,6 +252,35 @@ describe('Operator Home state', () => {
     expect(isOperatorRequestCurrent(token, 'other@example.com', 4, 7)).toBe(false);
     expect(isOperatorRequestCurrent(token, accountId, 4, 7)).toBe(false);
     expect(isOperatorRequestCurrent(token, accountId, 3, 8)).toBe(false);
+  });
+
+  it('accepts proposals only from the current single-account operator scope', () => {
+    const ownItem = plan.items[0];
+    const foreignItem = { ...ownItem, id: 'foreign-item', accountId: 'other@example.com' };
+
+    const filtered = filterAgentPlanItemsForOperatorScope(
+      [ownItem, foreignItem],
+      accountId,
+      [accountId, 'other@example.com'],
+    );
+
+    expect(filtered.accepted.map(item => item.id)).toEqual(['item-1']);
+    expect(filtered.rejected.map(item => item.id)).toEqual(['foreign-item']);
+  });
+
+  it('limits unified proposals to connected account ids', () => {
+    const first = plan.items[0];
+    const second = { ...first, id: 'second-item', accountId: 'second@example.com' };
+    const unknown = { ...first, id: 'unknown-item', accountId: 'unknown@example.com' };
+
+    const filtered = filterAgentPlanItemsForOperatorScope(
+      [first, second, unknown],
+      'unified',
+      [accountId, 'second@example.com'],
+    );
+
+    expect(filtered.accepted.map(item => item.id)).toEqual(['item-1', 'second-item']);
+    expect(filtered.rejected.map(item => item.id)).toEqual(['unknown-item']);
   });
 
   repositoryIt('round-trips snapshots, claims a window once, and expires deleted threads', async () => {

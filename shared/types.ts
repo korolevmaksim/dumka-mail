@@ -360,6 +360,13 @@ export interface MailActionLog {
   payloadJson?: string | null;
 }
 
+export interface MailActionExecutionResult {
+  accepted: boolean;
+  offline: boolean;
+  actionId?: string;
+  errorMessage?: string;
+}
+
 export type AIProviderPreference = 'automatic' | 'openAI' | 'anthropic' | 'gemini' | 'openRouter' | 'deepSeek' | 'openAICompatible' | 'disabled';
 
 export const AI_SECRET_STORED_PLACEHOLDER = '__DUMKA_SECRET_STORED__';
@@ -525,12 +532,46 @@ export interface AgentPlanItem {
   selectionPolicy: AgentPlanSelectionPolicy;
   approvalState: AgentPlanApprovalState;
   sourceItemId?: string | null;
+  provenance?: AgentPlanProvenance | null;
+  sourceSnapshot?: AgentPlanSourceSnapshot | null;
   payload?: {
     labelId?: string | null;
+    labelName?: string | null;
     reminderAt?: string | null;
     sourceMessageId?: string | null;
+    bodyPlain?: string | null;
     category?: string | null;
   };
+}
+
+export interface AgentPlanProvenance {
+  origin: 'aiAssistant';
+  requestId: string;
+  proposedAt: string;
+}
+
+export interface AgentPlanSourceSnapshot {
+  accountId: AccountID;
+  threadId: ThreadID;
+  citedMessageId: MessageID;
+  latestMessageId: MessageID;
+  lastMessageAt: string;
+}
+
+export type AgentPlanValidationCode =
+  | 'ready'
+  | 'invalidItem'
+  | 'accountMismatch'
+  | 'threadMissing'
+  | 'sourceMissing'
+  | 'staleSource'
+  | 'labelMissing'
+  | 'alreadyApplied';
+
+export interface AgentPlanValidationResult {
+  valid: boolean;
+  code: AgentPlanValidationCode;
+  message: string;
 }
 
 export interface AgentPlanCoverage {

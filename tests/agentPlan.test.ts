@@ -5,7 +5,7 @@ import {
   buildCleanupArchiveItem,
   mergeAgentPlanItem,
 } from '../shared/agentPlan';
-import type { AgentPlan, DailyBriefing, DailyBriefingItem, MailThread, MailTriagePlan, SenderCleanupStat } from '../shared/types';
+import type { AgentPlan, AgentPlanItem, DailyBriefing, DailyBriefingItem, MailThread, MailTriagePlan, SenderCleanupStat } from '../shared/types';
 
 const thread: MailThread = {
   id: 'thread-1',
@@ -204,5 +204,68 @@ describe('Agent Plan builders', () => {
     expect(merged?.items.map(item => item.id)).toContain(briefingPlan.items[0].id);
     expect(merged?.items).toHaveLength(2);
     expect(merged?.coverage.proposedActionCount).toBe(2);
+  });
+
+  it('marks a standalone AI proposal as AI-assisted and identifies Ask Dumka as its source', () => {
+    const aiProposal: AgentPlanItem = {
+      ...buildAgentPlanFromDailyBriefingItem({ briefing, item: briefingItem }).items[0],
+      id: 'agent:ai:archive:thread-1',
+      provenance: {
+        origin: 'aiAssistant',
+        requestId: 'request-1',
+        proposedAt: '2026-07-03T09:05:00.000Z',
+      },
+    };
+
+    const merged = mergeAgentPlanItem(null, aiProposal);
+
+    expect(merged).toMatchObject({
+      source: 'command',
+      sourceTitle: 'Ask Dumka',
+      coverage: {
+        aiAssisted: true,
+        privacyMode: 'aiAssisted',
+      },
+    });
+  });
+
+  it('marks mixed local and AI plans as AI-assisted without losing their original source', () => {
+    const localPlan = buildAgentPlanFromDailyBriefingItem({ briefing, item: briefingItem });
+    const aiProposal: AgentPlanItem = {
+      ...localPlan.items[0],
+      id: 'agent:ai:archive:thread-2',
+      threadId: 'thread-2',
+      provenance: {
+        origin: 'aiAssistant',
+        requestId: 'request-2',
+        proposedAt: '2026-07-03T09:05:00.000Z',
+      },
+    };
+
+    const merged = mergeAgentPlanItem(localPlan, aiProposal);
+    const deduped = mergeAgentPlanItem(merged, { ...aiProposal, reason: 'Updated AI reason' });
+
+    expect(deduped.source).toBe('dailyBriefing');
+    expect(deduped.sourceTitle).toBe('Daily Briefing + Ask Dumka');
+    expect(deduped.coverage).toMatchObject({
+      aiAssisted: true,
+      privacyMode: 'aiAssisted',
+      proposedActionCount: 2,
+    });
+  });
+
+  it('keeps standalone deterministic additions local and manual', () => {
+    const deterministicItem = buildAgentPlanFromDailyBriefingItem({ briefing, item: briefingItem }).items[0];
+
+    const merged = mergeAgentPlanItem(null, deterministicItem);
+
+    expect(merged).toMatchObject({
+      source: 'command',
+      sourceTitle: 'Manual additions',
+      coverage: {
+        aiAssisted: false,
+        privacyMode: 'localCache',
+      },
+    });
   });
 });

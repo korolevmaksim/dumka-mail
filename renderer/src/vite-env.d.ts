@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 import {
   Account,
+  AgentPlanItem,
+  AgentPlanValidationResult,
   AttachmentMetadata,
   AttachmentOpenBlocked,
   AttachmentOpenResult,
@@ -82,7 +84,7 @@ export interface IElectronAPI {
 
   // Reminders
   getReminder: (accountId: string, threadId: string) => Promise<string | null>;
-  saveReminder: (accountId: string, threadId: string, reminderAt: string) => Promise<void>;
+  saveReminder: (accountId: string, threadId: string, reminderAt: string, proposalItem?: AgentPlanItem) => Promise<void>;
   deleteReminder: (accountId: string, threadId: string) => Promise<void>;
 
   // Sync State
@@ -173,7 +175,8 @@ export interface IElectronAPI {
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;
-  completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string; sources?: MailboxSearchSource[] }>;
+  completeAI: (request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string; sources?: MailboxSearchSource[]; proposedActions?: AgentPlanItem[]; proposalWarnings?: string[] }>;
+  validateAgentActionProposal: (item: AgentPlanItem) => Promise<AgentPlanValidationResult>;
   getThreadAgentInsights: (accountId: string, threadId: string) => Promise<ThreadAgentInsights>;
   buildDailyBriefing: (accountId: string, options?: DailyBriefingBuildOptions) => Promise<DailyBriefing>;
   dismissAgentDraftSuggestion: (id: string) => Promise<void>;

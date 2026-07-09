@@ -172,3 +172,24 @@ export function isOperatorRequestCurrent(
     && token.scopeGeneration === currentScopeGeneration
     && token.requestGeneration === currentRequestGeneration;
 }
+
+export function filterAgentPlanItemsForOperatorScope(
+  items: AgentPlanItem[],
+  scopeId: string,
+  connectedAccountIds: string[],
+): { accepted: AgentPlanItem[]; rejected: AgentPlanItem[] } {
+  const normalizedScope = normalizeOperatorHomeScopeId(scopeId);
+  const allowedAccountIds = normalizedScope === 'unified'
+    ? new Set(connectedAccountIds
+        .map(normalizeOperatorHomeScopeId)
+        .filter((accountId): accountId is string => Boolean(accountId)))
+    : new Set(normalizedScope ? [normalizedScope] : []);
+  const accepted: AgentPlanItem[] = [];
+  const rejected: AgentPlanItem[] = [];
+
+  for (const item of items) {
+    const itemAccountId = normalizeOperatorHomeScopeId(item.accountId);
+    (itemAccountId && allowedAccountIds.has(itemAccountId) ? accepted : rejected).push(item);
+  }
+  return { accepted, rejected };
+}

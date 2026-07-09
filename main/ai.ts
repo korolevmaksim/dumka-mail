@@ -1,9 +1,12 @@
-import { AIChatMessage, AIEmbeddingSettings, AIProviderPreference, MailboxSearchSource } from '../shared/types';
+import { randomUUID } from 'node:crypto';
+import type { AgentPlanItem, AIChatMessage, AIEmbeddingSettings, AIProviderPreference, MailboxSearchSource } from '../shared/types';
 import { getAIProviderConfig } from '../shared/aiProviders';
 import { buildEmbeddingIndexKey, getEmbeddingProviderConfig, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { MCPManager, MCPToolSchema } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
 import { MAILBOX_SEARCH_TOOL_NAME } from '../shared/mailboxSearchTool';
+import { buildAgentActionProposalInstruction, parseAgentActionProposalResponse } from '../shared/agentActionProposal';
+import { resolveAgentActionProposals } from './agentActionProposalResolver';
 
 export { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer };
 
@@ -16,12 +19,16 @@ export interface AIRequest {
     enabled: boolean;
     allowedToolNames?: string[];
     allowMailboxSearch?: boolean;
+    allowActionProposals?: boolean;
+    mailboxAccountIds?: string[];
   };
 }
 
 export interface AIResponse {
   text: string;
   sources?: MailboxSearchSource[];
+  proposedActions?: AgentPlanItem[];
+  proposalWarnings?: string[];
 }
 
 export interface EmbeddingResponse {
@@ -84,9 +91,21 @@ function supportsGeminiThinkingLevel(model: string): boolean {
 function resolveRequestTools(request: AIRequest): MCPToolSchema[] {
   if (!request.toolPolicy?.enabled && !request.toolPolicy?.allowMailboxSearch) return [];
 
-  const tools = MCPManager.getActiveTools({
+  let tools = MCPManager.getActiveTools({
     includeMailboxSearch: request.toolPolicy?.allowMailboxSearch === true,
-  }).filter(tool => request.toolPolicy?.enabled || tool.source === 'mailbox');
+  });
+  if (request.toolPolicy?.allowActionProposals === true) {
+    // Proposal mode is deliberately narrower than the general MCP grant. The
+    // model may inspect bounded local search results, but it must never gain a
+    // mutating or arbitrary external tool merely because MCP is enabled.
+    tools = tools.filter(tool => (
+      request.toolPolicy?.allowMailboxSearch === true
+      && tool.source === 'mailbox'
+      && tool.name === MAILBOX_SEARCH_TOOL_NAME
+    ));
+  } else {
+    tools = tools.filter(tool => request.toolPolicy?.enabled || tool.source === 'mailbox');
+  }
   const allowedNames = request.toolPolicy?.allowedToolNames;
   if (!allowedNames || allowedNames.length === 0) return tools;
 
@@ -94,11 +113,29 @@ function resolveRequestTools(request: AIRequest): MCPToolSchema[] {
   return tools.filter(tool => allowlist.has(tool.name));
 }
 
-async function executeAllowedTool(name: string, args: any, activeTools: MCPToolSchema[]): Promise<any> {
+async function executeAllowedTool(name: string, args: any, activeTools: MCPToolSchema[], request: AIRequest): Promise<any> {
   if (!activeTools.some(tool => tool.name === name)) {
     return { error: `Tool "${name}" is not approved for this request.` };
   }
-  return await MCPManager.executeTool(name, args);
+  let safeArgs = args;
+  if (name === MAILBOX_SEARCH_TOOL_NAME) {
+    const allowedAccounts = Array.from(new Set((request.toolPolicy?.mailboxAccountIds || [])
+      .map(accountId => accountId.trim().toLowerCase())
+      .filter(Boolean)));
+    const requestedAccount = typeof args?.accountId === 'string'
+      ? args.accountId.trim().toLowerCase()
+      : null;
+    if (requestedAccount && allowedAccounts.length > 0 && !allowedAccounts.includes(requestedAccount)) {
+      return { error: 'Mailbox search is not allowed for that account in the current Operator scope.' };
+    }
+    if (allowedAccounts.length === 1) {
+      safeArgs = {
+        ...(args && typeof args === 'object' && !Array.isArray(args) ? args : {}),
+        accountId: allowedAccounts[0],
+      };
+    }
+  }
+  return await MCPManager.executeTool(name, safeArgs);
 }
 
 function collectMailboxSources(result: any): MailboxSearchSource[] {
@@ -125,6 +162,54 @@ function rememberToolSources(name: string, result: any, sources: MailboxSearchSo
   }
 }
 
+function finalizeAIResponse({
+  text,
+  sources,
+  request,
+  requestId,
+  now,
+  proposalCapabilityWarning,
+}: {
+  text: string;
+  sources: MailboxSearchSource[];
+  request: AIRequest;
+  requestId: string;
+  now: Date;
+  proposalCapabilityWarning?: string;
+}): AIResponse {
+  if (request.toolPolicy?.allowActionProposals !== true) return { text, sources };
+
+  const parsed = parseAgentActionProposalResponse(text, now);
+  const warnings = [
+    ...(parsed.warning ? [parsed.warning] : []),
+    ...(proposalCapabilityWarning ? [proposalCapabilityWarning] : []),
+  ];
+  let proposedActions: AgentPlanItem[] = [];
+  if (!proposalCapabilityWarning && parsed.proposals.length > 0) {
+    const resolved = resolveAgentActionProposals({
+      proposals: parsed.proposals,
+      sources,
+      requestId,
+      proposedAt: now.toISOString(),
+    });
+    proposedActions = resolved.items;
+    warnings.push(...resolved.warnings);
+  }
+
+  const visibleText = parsed.visibleText
+    || (proposedActions.length > 0
+      ? `Prepared ${proposedActions.length} action proposal${proposedActions.length === 1 ? '' : 's'} for your Review Queue.`
+      : warnings.length > 0
+        ? 'I could not safely add the proposed actions to your Review Queue.'
+        : text);
+  return {
+    text: visibleText,
+    sources,
+    ...(proposedActions.length > 0 ? { proposedActions } : {}),
+    ...(warnings.length > 0 ? { proposalWarnings: warnings } : {}),
+  };
+}
+
 export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
   const descriptor = await getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
@@ -133,7 +218,9 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
 
   const env = await loadAIConfigAsync();
   const promptText = buildPrompt(request);
-  const sysInstruction = 'You are an email operating assistant. Return only user-visible useful output. When using the searchMailbox tool, treat it as read-only local-cache search, cite the returned snippets/sources, and do not claim you searched remote Gmail or the full mailbox beyond the local cache.';
+  const proposalNow = new Date();
+  const proposalRequestId = randomUUID();
+  const sysInstruction = `You are an email operating assistant. Return only user-visible useful output. When using the searchMailbox tool, treat it as read-only local-cache search, cite the returned snippets/sources, and do not claim you searched remote Gmail or the full mailbox beyond the local cache.${request.toolPolicy?.allowActionProposals === true ? buildAgentActionProposalInstruction(proposalNow.toISOString()) : ''}`;
   await MCPManager.whenReady();
   const activeTools = resolveRequestTools(request);
   const mailboxSources: MailboxSearchSource[] = [];
@@ -156,7 +243,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ model: resolvedModel, input: promptText })
+          body: JSON.stringify({ model: resolvedModel, input: `${sysInstruction}\n\n${promptText}` })
         });
         if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
         const data = await res.json() as any;
@@ -167,7 +254,14 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           text = data.output.flatMap((o: any) => o.content || []).map((c: any) => c.text || '').join('\n');
         }
         if (!text) throw new Error('Empty response from OpenAI API.');
-        return { text };
+        return finalizeAIResponse({
+          text,
+          sources: mailboxSources,
+          request,
+          requestId: proposalRequestId,
+          now: proposalNow,
+          proposalCapabilityWarning: 'Action proposals are unavailable for the OpenAI Responses endpoint because source-bound mailbox search tools are not supported there.',
+        });
       }
 
       // Standard Chat Completions with Tool Calling Loop
@@ -229,7 +323,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             console.log(`[AI] OpenAI requested tool "${name}".`);
             let result;
             try {
-              result = await executeAllowedTool(name, args, activeTools);
+              result = await executeAllowedTool(name, args, activeTools, request);
               rememberToolSources(name, result, mailboxSources);
             } catch (err: any) {
               console.error(`[AI] Tool execution failed:`, err);
@@ -249,7 +343,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from OpenAI.');
-      return { text: finalResponseText, sources: mailboxSources };
+      return finalizeAIResponse({ text: finalResponseText, sources: mailboxSources, request, requestId: proposalRequestId, now: proposalNow });
     }
 
     case 'anthropic': {
@@ -321,7 +415,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
               console.log(`[AI] Anthropic requested tool "${name}".`);
               let result;
               try {
-                result = await executeAllowedTool(name, input, activeTools);
+                result = await executeAllowedTool(name, input, activeTools, request);
                 rememberToolSources(name, result, mailboxSources);
               } catch (err: any) {
                 console.error(`[AI] Tool execution failed:`, err);
@@ -342,7 +436,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from Anthropic.');
-      return { text: finalResponseText, sources: mailboxSources };
+      return finalizeAIResponse({ text: finalResponseText, sources: mailboxSources, request, requestId: proposalRequestId, now: proposalNow });
     }
 
     case 'gemini': {
@@ -416,7 +510,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
               console.log(`[AI] Gemini requested tool "${name}".`);
               let result;
               try {
-                result = await executeAllowedTool(name, args, activeTools);
+                result = await executeAllowedTool(name, args, activeTools, request);
                 rememberToolSources(name, result, mailboxSources);
               } catch (err: any) {
                 console.error(`[AI] Tool execution failed:`, err);
@@ -438,7 +532,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from Gemini.');
-      return { text: finalResponseText, sources: mailboxSources };
+      return finalizeAIResponse({ text: finalResponseText, sources: mailboxSources, request, requestId: proposalRequestId, now: proposalNow });
     }
 
     case 'openRouter':
@@ -538,7 +632,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             console.log(`[AI] Chat completions requested tool "${name}".`);
             let result;
             try {
-              result = await executeAllowedTool(name, args, activeTools);
+              result = await executeAllowedTool(name, args, activeTools, request);
               rememberToolSources(name, result, mailboxSources);
             } catch (err: any) {
               console.error(`[AI] Tool execution failed:`, err);
@@ -558,7 +652,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
       }
 
       if (!finalResponseText) throw new Error('Empty response from Chat completions API.');
-      return { text: finalResponseText, sources: mailboxSources };
+      return finalizeAIResponse({ text: finalResponseText, sources: mailboxSources, request, requestId: proposalRequestId, now: proposalNow });
     }
 
     default:

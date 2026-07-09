@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
-import { Account, MailThread, MailMessage, MailLabelDefinition, MailSyncCompletion, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness } from '../../../shared/types';
+import { Account, MailThread, MailMessage, MailLabelDefinition, MailSyncCompletion, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness, MailActionExecutionResult } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
 import { resolveAIModelForPurpose } from '../../../shared/aiModelPurpose';
+import { withAIRequestTimeout } from '../../../shared/aiRequest';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 import { MailTriagePlanner } from '../../../shared/triagePlanner';
@@ -11,6 +12,7 @@ import { normalizeDailyBriefingSettings } from '../../../shared/dailyBriefing';
 import { buildAgentPlanFromDailyBriefingItem, buildAgentPlanFromTriagePlan, mergeAgentPlanItem } from '../../../shared/agentPlan';
 import {
   dailyBriefingRefreshWindowKey,
+  filterAgentPlanItemsForOperatorScope,
   isOperatorRequestCurrent,
   normalizeOperatorHomeScopeId,
   type OperatorRequestToken,
@@ -29,7 +31,7 @@ interface UseAIStateProps {
   lastSuccessfulSync: MailSyncCompletion | null;
   openThread: (thread: MailThread | null) => Promise<void>;
   startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => any;
-  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<void>;
+  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<MailActionExecutionResult>;
   setSpeedProof: React.Dispatch<React.SetStateAction<SpeedProof>>;
 }
 
@@ -105,6 +107,8 @@ export function useAIState({
   const operatorScopeGenerationRef = useRef(0);
   const dailyBriefingRequestGenerationRef = useRef(0);
   const triageRequestGenerationRef = useRef(0);
+  const aiChatRequestGenerationRef = useRef(0);
+  const aiChatInFlightRef = useRef(false);
   const autoRefreshInFlightRef = useRef<string | null>(null);
   const lastAutoRefreshAttemptRef = useRef<string | null>(null);
 
@@ -114,6 +118,11 @@ export function useAIState({
     operatorScopeGenerationRef.current += 1;
     dailyBriefingRequestGenerationRef.current += 1;
     triageRequestGenerationRef.current += 1;
+    aiChatRequestGenerationRef.current += 1;
+    aiChatInFlightRef.current = false;
+    setAiPanelLoading(false);
+    setActiveAIConversation(null);
+    setActiveAIMessages([]);
     autoRefreshInFlightRef.current = null;
     lastAutoRefreshAttemptRef.current = null;
   }, [operatorScopeId]);
@@ -260,26 +269,47 @@ export function useAIState({
   }, [loadAIConversations]);
 
   const startNewAIConversation = () => {
+    aiChatRequestGenerationRef.current += 1;
+    aiChatInFlightRef.current = false;
+    setAiPanelLoading(false);
     setActiveAIConversation(null);
     setActiveAIMessages([]);
   };
 
   const selectAIConversation = async (conv: AIConversation) => {
-    setActiveAIConversation(conv);
+    const scopeId = operatorScopeId;
+    const scopeGeneration = operatorScopeGenerationRef.current;
+    const requestGeneration = ++aiChatRequestGenerationRef.current;
+    aiChatInFlightRef.current = false;
+    setAiPanelLoading(false);
     const msgs = await window.electronAPI.getConversationMessages(conv.id);
+    if (scopeId !== currentOperatorScopeRef.current
+      || scopeGeneration !== operatorScopeGenerationRef.current
+      || requestGeneration !== aiChatRequestGenerationRef.current) return;
+    setActiveAIConversation(conv);
     setActiveAIMessages(msgs);
   };
 
-  const persistAIConversation = async (conv: AIConversation, messages: AIChatMessage[]) => {
-    if (!settings.ai.savePromptHistory) return;
-    await window.electronAPI.saveConversation(conv, messages);
-    loadAIConversations();
-  };
-
   const sendAIMessage = async (text: string) => {
-    if (!activeAccount) return;
+    if (!activeAccount || !operatorScopeId || aiChatInFlightRef.current) return;
+
+    const requestToken: OperatorRequestToken = {
+      scopeId: operatorScopeId,
+      scopeGeneration: operatorScopeGenerationRef.current,
+      requestGeneration: ++aiChatRequestGenerationRef.current,
+    };
+    const requestIsCurrent = () => isOperatorRequestCurrent(
+      requestToken,
+      currentOperatorScopeRef.current,
+      operatorScopeGenerationRef.current,
+      aiChatRequestGenerationRef.current,
+    );
+    const proposalAccountIds = activeAccount.id === 'unified'
+      ? accounts.map(account => account.email)
+      : [activeAccount.email];
 
     const start = performance.now();
+    aiChatInFlightRef.current = true;
     setAiPanelLoading(true);
 
     const userMsg: AIChatMessage = {
@@ -308,7 +338,7 @@ export function useAIState({
     }
 
     try {
-      const response = await window.electronAPI.completeAI({
+      const response = await withAIRequestTimeout(window.electronAPI.completeAI({
         action: 'chat',
         context: openedThread
           ? buildThreadContext(openedThread, openedThreadMessages, settings.ai)
@@ -318,10 +348,13 @@ export function useAIState({
         toolPolicy: {
           enabled: settings.ai.externalToolsEnabled,
           allowMailboxSearch: true,
+          allowActionProposals: true,
+          mailboxAccountIds: proposalAccountIds,
         },
       }, aiProvider, resolveAIModelForPurpose('interactive', {
         interactiveModel: settings.ai.globalDefaultModel,
-      }, aiModel));
+      }, aiModel)));
+      if (!requestIsCurrent()) return;
 
       const assistantMsg: AIChatMessage = {
         id: crypto.randomUUID(),
@@ -332,17 +365,49 @@ export function useAIState({
 
       const finalMsgs = [...newMsgs, assistantMsg];
       setActiveAIMessages(finalMsgs);
-      await persistAIConversation(conv, finalMsgs);
+      if (settings.ai.savePromptHistory) {
+        await window.electronAPI.saveConversation(conv, finalMsgs);
+        if (!requestIsCurrent()) return;
+        loadAIConversations();
+      }
+      if (!requestIsCurrent()) return;
+      if (response.proposedActions && response.proposedActions.length > 0) {
+        const scoped = filterAgentPlanItemsForOperatorScope(
+          response.proposedActions,
+          requestToken.scopeId,
+          proposalAccountIds,
+        );
+        if (scoped.accepted.length > 0) addAgentPlanItems(scoped.accepted);
+        if (scoped.rejected.length > 0) {
+          emitToast({
+            type: 'warning',
+            message: `${scoped.rejected.length} proposal${scoped.rejected.length === 1 ? ' was' : 's were'} rejected because the account is outside the current operator scope.`,
+          });
+        }
+        if (scoped.accepted.length > 0) {
+          emitToast({
+            type: 'success',
+            message: `Added ${scoped.accepted.length} AI proposal${scoped.accepted.length === 1 ? '' : 's'} to the Review Queue.`,
+          });
+        }
+      }
+      for (const warning of response.proposalWarnings || []) {
+        emitToast({ type: 'warning', message: warning });
+      }
 
       setSpeedProof((prev: SpeedProof) => ({
         ...prev,
         aiMs: Math.round(performance.now() - start)
       }));
     } catch (e) {
+      if (!requestIsCurrent()) return;
       console.error('AI chat completion failed:', e);
       emitToast({ type: 'error', message: formatAIUserError(e) });
     } finally {
-      setAiPanelLoading(false);
+      if (requestIsCurrent()) {
+        aiChatInFlightRef.current = false;
+        setAiPanelLoading(false);
+      }
     }
   };
 
@@ -392,7 +457,9 @@ export function useAIState({
       .filter(({ preview }) => selectedAgentPlanItemIds.has(preview.itemId));
     if (selected.length === 0) return null;
 
-    const executable = selected.filter(({ preview }) => preview.eligibility === 'ready');
+    const executable = selected.filter(({ item, preview }) => (
+      preview.eligibility === 'ready' && item.selectionPolicy !== 'manualOnly'
+    ));
     const blocked = selected.length - executable.length;
     const gmailCount = executable.filter(({ preview }) => preview.scope === 'gmail').length;
     const localCount = executable.filter(({ preview }) => preview.scope === 'local').length;
@@ -463,6 +530,7 @@ export function useAIState({
 
   const payloadForAgentPlanItem = (item: AgentPlanItem, extra: Record<string, unknown> = {}) => JSON.stringify({
     source: 'agentReviewQueue',
+    accountId: item.accountId,
     planId: agentPlan?.id || null,
     itemId: item.id,
     action: item.action,
@@ -473,6 +541,12 @@ export function useAIState({
       messageId: item.citation.messageId || null,
       evidence: item.citation.evidence,
     },
+    provenance: item.provenance || null,
+    sourceSnapshot: item.sourceSnapshot || null,
+    ...(item.provenance?.origin === 'aiAssistant'
+      && (item.action === 'archive' || item.action === 'applyLabel' || item.action === 'setReminder')
+      ? { proposalValidationItem: item }
+      : {}),
     ...extra,
   });
 
@@ -501,7 +575,15 @@ export function useAIState({
       emitToast({ type: 'warning', message: 'Choose a label before approving this action.' });
       return;
     }
+    if (item.provenance?.origin === 'aiAssistant') {
+      const validation = await window.electronAPI.validateAgentActionProposal(item);
+      if (!validation.valid) {
+        emitToast({ type: 'warning', message: validation.message });
+        return;
+      }
+    }
 
+    try {
     if (item.action === 'openThread') {
       await openThread(thread);
     } else if (item.action === 'markRead') {
@@ -546,7 +628,7 @@ export function useAIState({
         return;
       }
       await openThread(thread);
-      const draft = startReplyWithBody(sourceMessage, '');
+      const draft = startReplyWithBody(sourceMessage, item.payload?.bodyPlain || '');
       if (draft) {
         await executeMailAction(
           'applyAIDraftPreview',
@@ -557,6 +639,13 @@ export function useAIState({
         );
       }
     }
+    } catch (error) {
+      emitToast({
+        type: 'warning',
+        message: error instanceof Error ? error.message : 'The reviewed action could not be applied.',
+      });
+      return;
+    }
 
     rejectAgentPlanItem(item.id);
     emitToast({ type: 'success', message: 'Approved action applied.' });
@@ -565,7 +654,9 @@ export function useAIState({
   const applySelectedAgentPlanItems = async () => {
     if (!agentPlan || selectedAgentPlanItemIds.size === 0) return;
     const executableItems = agentPlan.items.filter(item => (
-      selectedAgentPlanItemIds.has(item.id) && agentPlanActionPreview(item).eligibility === 'ready'
+      selectedAgentPlanItemIds.has(item.id)
+      && item.selectionPolicy !== 'manualOnly'
+      && agentPlanActionPreview(item).eligibility === 'ready'
     ));
 
     for (const item of executableItems) {
@@ -610,7 +701,7 @@ export function useAIState({
     requiresThread: boolean;
   }) => {
     setAiPanelOpen(true);
-    if (!activeAccount) {
+    if (!activeAccount || !operatorScopeId) {
       emitToast({ type: 'warning', message: 'Connect an account before using AI actions.' });
       return;
     }
@@ -618,7 +709,21 @@ export function useAIState({
       emitToast({ type: 'warning', message: 'Open a thread before running this AI shortcut.' });
       return;
     }
+    if (aiChatInFlightRef.current) return;
 
+    const requestToken: OperatorRequestToken = {
+      scopeId: operatorScopeId,
+      scopeGeneration: operatorScopeGenerationRef.current,
+      requestGeneration: ++aiChatRequestGenerationRef.current,
+    };
+    const requestIsCurrent = () => isOperatorRequestCurrent(
+      requestToken,
+      currentOperatorScopeRef.current,
+      operatorScopeGenerationRef.current,
+      aiChatRequestGenerationRef.current,
+    );
+
+    aiChatInFlightRef.current = true;
     setAiPanelLoading(true);
     const start = performance.now();
     const notes = settings.ai.personalizationNotes ? `\nPersonalization notes: ${settings.ai.personalizationNotes}` : '';
@@ -628,14 +733,15 @@ export function useAIState({
 
     const userMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'user', text: label };
     const targetThreadId = requiresThread ? openedThread?.id || null : null;
-    const canReuseConversation = activeAIConversation?.threadId === targetThreadId;
+    const targetAccountId = requiresThread && openedThread
+      ? openedThread.accountId
+      : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
+    const canReuseConversation = activeAIConversation?.threadId === targetThreadId
+      && activeAIConversation.accountId === targetAccountId;
     const baseMessages = canReuseConversation ? activeAIMessages : [];
     const pending = [...baseMessages, userMsg];
     setActiveAIMessages(pending);
 
-    const targetAccountId = requiresThread && openedThread
-      ? openedThread.accountId
-      : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
     let conv = canReuseConversation ? activeAIConversation : null;
     if (!conv) {
       conv = {
@@ -651,7 +757,7 @@ export function useAIState({
     }
 
     try {
-      const response = await window.electronAPI.completeAI({
+      const response = await withAIRequestTimeout(window.electronAPI.completeAI({
         action: 'chat',
         context,
         conversationHistory: pending,
@@ -662,22 +768,32 @@ export function useAIState({
         },
       }, aiProvider, resolveAIModelForPurpose('interactive', {
         interactiveModel: settings.ai.globalDefaultModel,
-      }, aiModel));
+      }, aiModel)));
+      if (!requestIsCurrent()) return;
 
       const assistantMsg: AIChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: response.text, sources: response.sources };
       const finalMsgs = [...pending, assistantMsg];
       setActiveAIMessages(finalMsgs);
-      await persistAIConversation(conv, finalMsgs);
+      if (settings.ai.savePromptHistory) {
+        await window.electronAPI.saveConversation(conv, finalMsgs);
+        if (!requestIsCurrent()) return;
+        loadAIConversations();
+      }
+      if (!requestIsCurrent()) return;
 
       setSpeedProof((prev: SpeedProof) => ({
         ...prev,
         aiMs: Math.round(performance.now() - start)
       }));
     } catch (e) {
+      if (!requestIsCurrent()) return;
       console.error('AI action failed:', e);
       setActiveAIMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', text: formatAIUserError(e) }]);
     } finally {
-      setAiPanelLoading(false);
+      if (requestIsCurrent()) {
+        aiChatInFlightRef.current = false;
+        setAiPanelLoading(false);
+      }
     }
   };
 

@@ -30,6 +30,11 @@ import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } f
 import { GoogleWorkspaceService } from './googleWorkspace';
 import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
+import {
+  validateAgentActionProposalItem,
+  validateAgentActionProposalMutation,
+  type AgentActionProposalMutationAction,
+} from './agentActionProposalResolver';
 import { AgenticService } from './agentic';
 import { ReplyPipelineService } from './replyPipelineService';
 import { sendReplyPipelineUpdateSafely } from './replyPipelineNotifications';
@@ -50,6 +55,7 @@ import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline'
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
 import type {
   ActionKind,
+  AgentPlanItem,
   AppSettings,
   AttachmentOpenBlocked,
   AttachmentOpenResult,
@@ -682,6 +688,34 @@ app.whenReady().then(async () => {
       const state = ReplyPipelineService.markSentByDraftBestEffort(accountId, draftId);
       if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
     },
+    validateAgentProposalReplay: (action, payload) => {
+      const provenance = payload.provenance;
+      if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)
+        || (provenance as Record<string, unknown>).origin !== 'aiAssistant') return;
+      const item = payload.proposalValidationItem;
+      if (!item || typeof item !== 'object' || Array.isArray(item) || !action.threadId) {
+        throw new Error('This pending AI proposal is missing its replay validation proof.');
+      }
+      if (action.kind === 'markDone') {
+        assertAgentProposalReadyForMutation({
+          item: item as AgentPlanItem,
+          accountId: action.accountId,
+          threadId: action.threadId,
+          action: 'archive',
+          allowOptimisticState: true,
+        });
+        return;
+      }
+      const labelId = typeof payload.labelId === 'string' ? payload.labelId : null;
+      assertAgentProposalReadyForMutation({
+        item: item as AgentPlanItem,
+        accountId: action.accountId,
+        threadId: action.threadId,
+        action: 'applyLabel',
+        labelId,
+        allowOptimisticState: true,
+      });
+    },
   });
   startReminderNotificationWorker();
   startBackgroundMailboxSyncWorker();
@@ -823,7 +857,18 @@ registerSecureHandler('db:saveDraft', (_, draft) => {
 registerSecureHandler('db:deleteDraft', (_, id) => DraftsRepo.delete(id));
 
 registerSecureHandler('db:getReminder', (_, accountId, threadId) => RemindersRepo.get(accountId, threadId));
-registerSecureHandler('db:saveReminder', (_, accountId, threadId, reminderAt) => RemindersRepo.save(accountId, threadId, reminderAt));
+registerSecureHandler('db:saveReminder', (_, accountId, threadId, reminderAt, proposalItem?: AgentPlanItem) => {
+  if (proposalItem) {
+    assertAgentProposalReadyForMutation({
+      item: proposalItem,
+      accountId,
+      threadId,
+      action: 'setReminder',
+      reminderAt,
+    });
+  }
+  return RemindersRepo.save(accountId, threadId, reminderAt);
+});
 registerSecureHandler('db:deleteReminder', (_, accountId, threadId) => RemindersRepo.delete(accountId, threadId));
 
 registerSecureHandler('db:getSyncState', (_, accountId) => SyncStateRepo.get(accountId));
@@ -1248,6 +1293,73 @@ function inferLabelActionKind(addLabelIds: string[], removeLabelIds: string[]): 
   return 'applyLabel';
 }
 
+function proposalItemFromActionPayload(payloadJson?: string): AgentPlanItem | null {
+  if (!payloadJson) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadJson);
+  } catch {
+    throw new Error('The reviewed action payload is invalid.');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  if (record.source !== 'agentReviewQueue') return null;
+  const provenance = record.provenance;
+  if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)
+    || (provenance as Record<string, unknown>).origin !== 'aiAssistant') return null;
+  const proposalItem = record.proposalValidationItem;
+  if (!proposalItem || typeof proposalItem !== 'object' || Array.isArray(proposalItem)) {
+    throw new Error('This AI proposal is missing its mutation-boundary validation proof.');
+  }
+  return proposalItem as AgentPlanItem;
+}
+
+function assertAgentProposalReadyForMutation(input: {
+  item: AgentPlanItem;
+  accountId: string;
+  threadId: string;
+  action: AgentActionProposalMutationAction;
+  labelId?: string | null;
+  reminderAt?: string | null;
+  allowOptimisticState?: boolean;
+}): void {
+  const validation = validateAgentActionProposalMutation(input);
+  if (!validation.valid) throw new Error(validation.message);
+}
+
+function assertLabelProposalReadyForMutation(
+  payloadJson: string | undefined,
+  accountId: string,
+  threadId: string,
+  addLabelIds: string[],
+  removeLabelIds: string[],
+  actionKind: string,
+): void {
+  const item = proposalItemFromActionPayload(payloadJson);
+  if (!item) return;
+
+  if (actionKind === 'markDone'
+    && addLabelIds.length === 0
+    && removeLabelIds.length === 1
+    && removeLabelIds[0] === 'INBOX') {
+    assertAgentProposalReadyForMutation({ item, accountId, threadId, action: 'archive' });
+    return;
+  }
+  if (actionKind === 'applyLabel'
+    && addLabelIds.length === 1
+    && removeLabelIds.length === 0) {
+    assertAgentProposalReadyForMutation({
+      item,
+      accountId,
+      threadId,
+      action: 'applyLabel',
+      labelId: addLabelIds[0],
+    });
+    return;
+  }
+  throw new Error('The requested mailbox mutation does not match the reviewed AI proposal.');
+}
+
 async function runRemoteLabelAction(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], kind?: string) {
   if (kind === 'moveToTrash') {
     await GmailSyncService.trashThread(email, threadId);
@@ -1384,9 +1496,10 @@ async function runMailRulesForThreads(threads: MailThread[]) {
 }
 
 registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string, actionKind?: string, payloadJson?: string) => {
+  const resolvedKind = actionKind || inferLabelActionKind(addLabelIds, removeLabelIds);
+  assertLabelProposalReadyForMutation(payloadJson, email, threadId, addLabelIds, removeLabelIds, resolvedKind);
   // 1. Optimistically write to local SQLite database first for instant persistence
   ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
-  const resolvedKind = actionKind || inferLabelActionKind(addLabelIds, removeLabelIds);
   
   try {
     // 2. Perform the actual remote Gmail API sync
@@ -1465,6 +1578,7 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
 
 registerSecureHandler('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
 registerSecureHandler('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
+registerSecureHandler('api:validateAgentActionProposal', (_, item: AgentPlanItem) => validateAgentActionProposalItem(item));
 registerSecureHandler('api:getThreadAgentInsights', (_, accountId, threadId) => AgenticService.getThreadInsights(accountId, threadId));
 registerSecureHandler('api:buildDailyBriefing', (_, accountId, options) => AgenticService.buildDailyBriefing(accountId, options));
 registerSecureHandler('api:dismissAgentDraftSuggestion', (_, id) => AgenticService.dismissDraftSuggestion(id));

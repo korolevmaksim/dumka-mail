@@ -248,20 +248,21 @@ export function buildAgentPlanFromDailyBriefingItem({
 
 export function mergeAgentPlanItem(plan: AgentPlan | null, item: AgentPlanItem): AgentPlan {
   const generatedAt = new Date().toISOString();
+  const isAIProposal = item.provenance?.origin === 'aiAssistant';
   if (!plan) {
     return {
       id: `agent:manual:${generatedAt}`,
       title: 'Agent Review Queue',
       source: 'command',
-      sourceTitle: 'Manual additions',
+      sourceTitle: isAIProposal ? 'Ask Dumka' : 'Manual additions',
       generatedAt,
       accountId: item.accountId,
       items: [item],
       coverage: {
         sourceThreadCount: 1,
         proposedActionCount: 1,
-        aiAssisted: false,
-        privacyMode: 'localCache',
+        aiAssisted: isAIProposal,
+        privacyMode: isAIProposal ? 'aiAssisted' : 'localCache',
         bodyContextIncluded: false,
         warnings: [],
       },
@@ -269,12 +270,18 @@ export function mergeAgentPlanItem(plan: AgentPlan | null, item: AgentPlanItem):
   }
 
   const nextItems = [item, ...plan.items.filter(existing => existing.id !== item.id)];
+  const sourceTitle = isAIProposal && !plan.sourceTitle.split(' + ').includes('Ask Dumka')
+    ? `${plan.sourceTitle} + Ask Dumka`
+    : plan.sourceTitle;
   return {
     ...plan,
+    sourceTitle,
     generatedAt,
     items: nextItems,
     coverage: {
       ...plan.coverage,
+      aiAssisted: plan.coverage.aiAssisted || isAIProposal,
+      privacyMode: plan.coverage.aiAssisted || isAIProposal ? 'aiAssisted' : plan.coverage.privacyMode,
       proposedActionCount: nextItems.length,
     },
   };

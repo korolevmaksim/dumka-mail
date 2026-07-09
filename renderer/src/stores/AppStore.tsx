@@ -16,6 +16,7 @@ import {
   MailMessage,
   Draft,
   MailActionLog,
+  MailActionExecutionResult,
   AIConversation,
   AIChatMessage,
   AIProviderPreference,
@@ -427,7 +428,7 @@ interface AppStoreContextType {
   snoozeReplyPipelineItem: (item: ReplyPipelineState, snoozedUntil: string) => Promise<void>;
   suppressReplyPipelineItem: (item: ReplyPipelineState) => Promise<void>;
   resolveReplyPipelineItem: (item: ReplyPipelineState) => Promise<void>;
-  executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: (actionId: string) => Promise<any>, payloadJson?: string | null) => Promise<void>;
+  executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: (actionId: string) => Promise<any>, payloadJson?: string | null) => Promise<MailActionExecutionResult>;
   undoLastAction: () => Promise<void>;
   snoozeThread: (thread: MailThread, date: Date) => Promise<void>;
   clearThreadReminder: (thread: MailThread) => Promise<void>;

@@ -228,8 +228,8 @@ export function AICopilotPanel() {
   const aiInputRef = useRef<HTMLTextAreaElement>(null);
 
   const submitAIInput = () => {
-    if (!aiInput.trim()) return;
-    store.sendAIMessage(aiInput);
+    if (!aiInput.trim() || store.aiPanelLoading) return;
+    void store.sendAIMessage(aiInput);
     setAiInput('');
   };
 
@@ -726,9 +726,11 @@ export function AICopilotPanel() {
         >
           <textarea
             ref={aiInputRef}
+            aria-label="Ask assistant"
+            disabled={store.aiPanelLoading}
             rows={1}
             placeholder="Ask assistant…"
-            className="min-h-[34px] flex-1 resize-none bg-[var(--panel-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none focus:outline focus:outline-2 focus:outline-[var(--ai-accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] leading-[1.35] text-[var(--text-primary)]"
+            className="min-h-[34px] flex-1 resize-none bg-[var(--panel-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none focus:outline focus:outline-2 focus:outline-[var(--ai-accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] leading-[1.35] text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
             value={aiInput}
             onChange={(e) => setAiInput(e.target.value)}
             onKeyDown={(e) => {
@@ -739,7 +741,10 @@ export function AICopilotPanel() {
           />
           <button 
             type="submit" 
-            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center bg-[var(--ai-accent)] text-white rounded cursor-pointer hover:bg-[var(--ai-accent)]/95"
+            aria-label="Send message"
+            title="Send message"
+            disabled={store.aiPanelLoading || !aiInput.trim()}
+            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center bg-[var(--ai-accent)] text-white rounded cursor-pointer hover:bg-[var(--ai-accent)]/95 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Send className="w-4 h-4" />
           </button>

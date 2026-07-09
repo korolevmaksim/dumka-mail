@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionLog } from '../../../shared/types';
+import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionExecutionResult, MailActionLog } from '../../../shared/types';
 import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
 import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
@@ -11,7 +11,7 @@ interface UseDraftsStateProps {
   activeAccount: Account | null;
   openedThread: MailThread | null;
   openThread: (thread: MailThread | null) => Promise<void>;
-  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any) => Promise<void>;
+  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any) => Promise<MailActionExecutionResult>;
 }
 
 export function useDraftsState({

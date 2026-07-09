@@ -29,11 +29,15 @@ const RISK_TONE: Record<AgentPlanRiskLevel, string> = {
 };
 
 function actionDescription(item: AgentPlanItem): string {
-  if (item.action === 'draftReply') return 'Opens a local reply draft. It will not send anything.';
+  if (item.action === 'draftReply') return 'Creates this local reply draft for editing. It will not send anything.';
   if (item.action === 'archive') return 'Removes Inbox locally first, then syncs to Gmail.';
   if (item.action === 'markRead') return 'Marks the thread read locally first, then syncs to Gmail.';
-  if (item.action === 'setReminder') return 'Creates a local reminder for tomorrow morning.';
-  if (item.action === 'applyLabel') return 'Applies the selected Gmail label.';
+  if (item.action === 'setReminder') return item.payload?.reminderAt
+    ? `Creates a local reminder for ${formatTime(item.payload.reminderAt)}.`
+    : 'Creates a local reminder for tomorrow morning.';
+  if (item.action === 'applyLabel') return item.payload?.labelName
+    ? `Applies the Gmail label “${item.payload.labelName}”.`
+    : 'Applies the selected Gmail label.';
   if (item.action === 'unsubscribe') return "Send the sender's unsubscribe request.";
   return 'Opens the source thread for manual review.';
 }
@@ -125,8 +129,12 @@ export function AgentReviewQueueCard() {
               <div className="flex items-start gap-2">
                 <input
                   type="checkbox"
+                  aria-label={`Select ${item.title}`}
+                  title={item.selectionPolicy === 'manualOnly'
+                    ? 'AI proposals require individual approval'
+                    : `Select ${item.title}`}
                   checked={preview.isSelected}
-                  disabled={item.action === 'openThread'}
+                  disabled={item.action === 'openThread' || item.selectionPolicy === 'manualOnly'}
                   onChange={() => store.toggleAgentPlanItemSelection(item.id)}
                   className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-[var(--ai-accent)] disabled:cursor-not-allowed disabled:opacity-30"
                 />
@@ -163,6 +171,12 @@ export function AgentReviewQueueCard() {
                     )}
                     {item.citation.snippet && (
                       <p className="mt-0.5 line-clamp-2">{item.citation.snippet}</p>
+                    )}
+                    {item.action === 'draftReply' && item.payload?.bodyPlain && (
+                      <div className="mt-1.5 rounded border border-[var(--ai-accent)]/25 bg-[var(--ai-accent)]/8 p-1.5">
+                        <p className="mb-0.5 font-semibold text-[var(--text-primary)]">Proposed reply</p>
+                        <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-[var(--text-primary)]">{item.payload.bodyPlain}</p>
+                      </div>
                     )}
                     <p className="mt-0.5 text-[var(--text-tertiary)]">{actionDescription(item)}</p>
                   </div>

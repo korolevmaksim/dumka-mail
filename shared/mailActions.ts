@@ -1,4 +1,17 @@
-import type { ActionKind } from './types';
+import type { ActionKind, MailThread } from './types';
+
+export function applyOptimisticThreadReminder(
+  threads: MailThread[],
+  accountId: string,
+  threadId: string,
+  reminderAt: string | null,
+): MailThread[] {
+  return threads.map(thread => (
+    thread.accountId === accountId && thread.id === threadId
+      ? { ...thread, reminderAt }
+      : thread
+  ));
+}
 
 export function reverseMailActionKind(kind: ActionKind): ActionKind | null {
   switch (kind) {

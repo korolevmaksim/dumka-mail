@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isReversibleMailActionKind, reverseMailActionKind } from '../shared/mailActions';
+import {
+  applyOptimisticThreadReminder,
+  isReversibleMailActionKind,
+  reverseMailActionKind,
+} from '../shared/mailActions';
+import type { MailThread } from '../shared/types';
 
 describe('mail action helpers', () => {
   it('reverses destructive and ignore actions', () => {
@@ -17,5 +22,48 @@ describe('mail action helpers', () => {
     expect(reverseMailActionKind('applyLabel')).toBe('removeLabel');
     expect(isReversibleMailActionKind('sendDraft')).toBe(false);
     expect(reverseMailActionKind('calendarRSVP')).toBeNull();
+  });
+
+  it('updates reminder state only for the matching account and thread', () => {
+    const threads: MailThread[] = [
+      {
+        id: 'shared-thread-id',
+        accountId: 'first@example.com',
+        subject: 'First account',
+        snippet: '',
+        lastMessageAt: '2026-07-03T08:00:00.000Z',
+        senderNames: ['Sender'],
+        senderEmail: 'sender@example.com',
+        labelIds: ['INBOX'],
+        hasAttachments: false,
+        isUnread: false,
+        reminderAt: null,
+      },
+      {
+        id: 'shared-thread-id',
+        accountId: 'second@example.com',
+        subject: 'Second account',
+        snippet: '',
+        lastMessageAt: '2026-07-03T08:00:00.000Z',
+        senderNames: ['Sender'],
+        senderEmail: 'sender@example.com',
+        labelIds: ['INBOX'],
+        hasAttachments: false,
+        isUnread: false,
+        reminderAt: null,
+      },
+    ];
+
+    const reminderAt = '2026-07-10T09:00:00.000Z';
+    const updated = applyOptimisticThreadReminder(
+      threads,
+      'first@example.com',
+      'shared-thread-id',
+      reminderAt,
+    );
+
+    expect(updated[0].reminderAt).toBe(reminderAt);
+    expect(updated[1]).toBe(threads[1]);
+    expect(updated[1].reminderAt).toBeNull();
   });
 });

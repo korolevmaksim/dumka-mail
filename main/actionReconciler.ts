@@ -24,6 +24,7 @@ export interface ReconcilerDeps {
   buildForwardDraft(accountId: string, thread: MailThread, forwardTo: string): unknown;
   buildAutoReplyDraft(accountId: string, threadId: string, replyBody: string): unknown;
   onDraftSent?: (accountId: string, draftId: string) => void;
+  validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
   now?: () => Date;
   logger?: Pick<Console, 'log' | 'error'>;
 }
@@ -68,6 +69,12 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
 
     try {
       const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+      if ((action.kind === 'markDone' || action.kind === 'applyLabel')
+        && payload
+        && typeof payload === 'object'
+        && !Array.isArray(payload)) {
+        deps.validateAgentProposalReplay?.(action, payload as Record<string, unknown>);
+      }
       if (action.kind === 'markDone') {
         await deps.gmail.modifyLabels(action.accountId, action.threadId!, [], ['INBOX']);
       } else if (action.kind === 'restoreInbox') {

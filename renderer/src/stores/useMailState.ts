@@ -1,11 +1,11 @@
 import { startTransition, useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
 import { categorize } from '../../../shared/categoryEngine';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
-import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
+import { applyOptimisticThreadReminder, isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
@@ -791,19 +791,24 @@ export function useMailState({
     draftId?: string | null,
     customAction?: (actionId: string) => Promise<any>,
     payloadJson?: string | null
-  ) => {
-    if (!activeAccount) return;
+  ): Promise<MailActionExecutionResult> => {
+    if (!activeAccount) return { accepted: false, offline: false, errorMessage: 'No active account.' };
 
     const targetThreadId = threadId || openedThread?.id || focusedThreadId || null;
-    if (!targetThreadId && kind !== 'send') return;
+    if (!targetThreadId && kind !== 'send') return { accepted: false, offline: false, errorMessage: 'No target thread.' };
 
     const payload = payloadJson ? JSON.parse(payloadJson) : {};
+    const propagateReviewedFailure = Boolean(payload.proposalValidationItem);
     const payloadAccountId = typeof payload.accountId === 'string' ? payload.accountId : null;
     const actionId = crypto.randomUUID();
     const thread = targetThreadId
-      ? threads.find(t => t.id === targetThreadId && (!payloadAccountId || t.accountId === payloadAccountId))
-        || threads.find(t => t.id === targetThreadId)
+      ? payloadAccountId
+        ? threads.find(t => t.id === targetThreadId && t.accountId === payloadAccountId) || null
+        : threads.find(t => t.id === targetThreadId) || null
       : null;
+    if (targetThreadId && payloadAccountId && !thread) {
+      throw new Error('The account-scoped target thread is no longer available.');
+    }
     const targetAccountId = payloadAccountId || (thread ? thread.accountId : activeAccount.email);
     
     const log: MailActionLog = {
@@ -851,7 +856,7 @@ export function useMailState({
       fallbackReminder.setDate(fallbackReminder.getDate() + 1);
       fallbackReminder.setHours(9, 0, 0, 0);
       const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
-      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, reminderAt } : t));
+      setThreads(prev => applyOptimisticThreadReminder(prev, targetAccountId, targetThreadId || '', reminderAt));
       if (kind === 'autoMarkRead') {
         if (openedThread?.id === targetThreadId) {
           openThread(nextThread);
@@ -955,7 +960,7 @@ export function useMailState({
       )));
     }
 
-    (async () => {
+    return await (async (): Promise<MailActionExecutionResult> => {
       try {
         await window.electronAPI.saveActionLog(log);
         log.status = 'running';
@@ -965,10 +970,12 @@ export function useMailState({
         if (customAction) {
           res = await customAction(actionId);
         } else {
-          if (!targetThreadId && kind !== 'send') return;
+          if (!targetThreadId && kind !== 'send') {
+            return { accepted: false, offline: false, actionId, errorMessage: 'No target thread.' };
+          }
 
           if (kind === 'markDone' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId);
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId, kind, payloadJson || undefined);
           } else if (kind === 'restoreInbox' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], [], actionId);
             loadThreadsFromDB();
@@ -999,17 +1006,24 @@ export function useMailState({
             fallbackReminder.setDate(fallbackReminder.getDate() + 1);
             fallbackReminder.setHours(9, 0, 0, 0);
             const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
-            await window.electronAPI.saveReminder(targetAccountId, targetThreadId, reminderAt);
+            await window.electronAPI.saveReminder(
+              targetAccountId,
+              targetThreadId,
+              reminderAt,
+              payload.proposalValidationItem,
+            );
           }
         }
 
         if (res && res.offline) {
           loadActionLog();
+          return { accepted: true, offline: true, actionId };
         } else {
           log.status = 'completed';
           log.completedAt = new Date().toISOString();
           await window.electronAPI.saveActionLog(log);
           loadActionLog();
+          return { accepted: true, offline: false, actionId };
         }
       } catch (err: any) {
         console.error('Background mail action failed:', err);
@@ -1019,6 +1033,8 @@ export function useMailState({
         loadActionLog();
 
         loadThreadsFromDB();
+        if (propagateReviewedFailure) throw err;
+        return { accepted: false, offline: false, actionId, errorMessage: err.message };
       }
     })();
   };
@@ -1040,12 +1056,12 @@ export function useMailState({
     const reminderAt = date.toISOString();
     await executeMailAction('autoMarkRead', thread.id, null, async () => {
       await window.electronAPI.saveReminder(thread.accountId, thread.id, reminderAt);
-    }, JSON.stringify({ reminderAt }));
+    }, JSON.stringify({ accountId: thread.accountId, reminderAt }));
   };
 
   const clearThreadReminder = async (thread: MailThread) => {
     await window.electronAPI.deleteReminder(thread.accountId, thread.id);
-    setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, reminderAt: null } : t));
+    setThreads(prev => applyOptimisticThreadReminder(prev, thread.accountId, thread.id, null));
     loadThreadsFromDB();
   };
 
