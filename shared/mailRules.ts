@@ -1,5 +1,5 @@
 import { ruleMatches } from './categoryEngine';
-import type { MailAutomationRule, MailRuleAction, MailRulesSettings, MailThread } from './types';
+import type { MailActionLog, MailAutomationRule, MailRuleAction, MailRuleMode, MailRulesSettings, MailThread } from './types';
 
 export const DEFAULT_MAIL_RULES_SETTINGS: MailRulesSettings = {
   enabled: false,
@@ -10,6 +10,11 @@ export interface MailRuleEffect {
   rule: MailAutomationRule;
   action: MailRuleAction;
   actionId: string;
+}
+
+export function mailRuleMode(rule: Pick<MailAutomationRule, 'isEnabled' | 'mode'>): MailRuleMode {
+  if (rule.mode === 'disabled' || rule.mode === 'shadow' || rule.mode === 'active') return rule.mode;
+  return rule.isEnabled ? 'active' : 'disabled';
 }
 
 function normalizeIdPart(value: string): string {
@@ -30,6 +35,33 @@ export function mailRuleActionLogId(rule: MailAutomationRule, action: MailRuleAc
     normalizeIdPart(action.type),
     normalizeIdPart(target),
   ].join(':');
+}
+
+export function mailRuleShadowLogId(rule: MailAutomationRule, action: MailRuleAction, thread: MailThread): string {
+  return mailRuleActionLogId(rule, action, thread).replace(/^mail-rule:/, 'mail-rule-shadow:');
+}
+
+export function buildMailRuleShadowLog(
+  effect: MailRuleEffect,
+  thread: MailThread,
+  observedAt = new Date().toISOString(),
+): MailActionLog {
+  return {
+    id: mailRuleShadowLogId(effect.rule, effect.action, thread),
+    accountId: thread.accountId,
+    threadId: thread.id,
+    kind: 'ruleShadowMatch',
+    status: 'completed',
+    createdAt: observedAt,
+    completedAt: observedAt,
+    payloadJson: JSON.stringify({
+      source: 'mailRuleShadow',
+      ruleId: effect.rule.id,
+      ruleTitle: effect.rule.title,
+      mode: 'shadow',
+      action: effect.action,
+    }),
+  };
 }
 
 export function normalizeMailRulesSettings(value: unknown): MailRulesSettings {
@@ -68,10 +100,14 @@ export function normalizeMailRulesSettings(value: unknown): MailRulesSettings {
             : [];
 
           if (conditions.length === 0 || actions.length === 0) return null;
+          const mode = candidate.mode === 'disabled' || candidate.mode === 'shadow' || candidate.mode === 'active'
+            ? candidate.mode
+            : candidate.isEnabled === false ? 'disabled' : 'active';
           return {
             id: String(candidate.id || `rule-${index + 1}`),
             title: String(candidate.title || `Rule ${index + 1}`),
-            isEnabled: candidate.isEnabled !== false,
+            isEnabled: mode === 'active',
+            mode,
             accountId: typeof candidate.accountId === 'string' ? candidate.accountId : 'global',
             matchMode: candidate.matchMode === 'all' ? 'all' : 'any',
             conditions,
@@ -88,7 +124,11 @@ export function normalizeMailRulesSettings(value: unknown): MailRulesSettings {
 }
 
 export function mailAutomationRuleMatchesThread(rule: MailAutomationRule, thread: MailThread): boolean {
-  if (!rule.isEnabled) return false;
+  if (mailRuleMode(rule) !== 'active') return false;
+  return mailAutomationRuleConditionsMatchThread(rule, thread);
+}
+
+function mailAutomationRuleConditionsMatchThread(rule: MailAutomationRule, thread: MailThread): boolean {
   if (rule.accountId && rule.accountId !== 'global' && rule.accountId !== thread.accountId) return false;
   if (rule.conditions.length === 0) return false;
 
@@ -97,12 +137,16 @@ export function mailAutomationRuleMatchesThread(rule: MailAutomationRule, thread
     : rule.conditions.some(condition => ruleMatches(thread, condition));
 }
 
-export function evaluateMailRules(thread: MailThread, settings: MailRulesSettings): MailRuleEffect[] {
+function evaluateMailRulesForMode(
+  thread: MailThread,
+  settings: MailRulesSettings,
+  mode: Extract<MailRuleMode, 'active' | 'shadow'>,
+): MailRuleEffect[] {
   if (!settings.enabled) return [];
 
   const effects: MailRuleEffect[] = [];
   for (const rule of settings.rules) {
-    if (!mailAutomationRuleMatchesThread(rule, thread)) continue;
+    if (mailRuleMode(rule) !== mode || !mailAutomationRuleConditionsMatchThread(rule, thread)) continue;
     for (const action of rule.actions) {
       if ((action.type === 'applyLabel' || action.type === 'moveToLabel') && !action.labelId) continue;
       if (action.type === 'forward' && !action.forwardTo) continue;
@@ -110,9 +154,19 @@ export function evaluateMailRules(thread: MailThread, settings: MailRulesSetting
       effects.push({
         rule,
         action,
-        actionId: mailRuleActionLogId(rule, action, thread),
+        actionId: mode === 'shadow'
+          ? mailRuleShadowLogId(rule, action, thread)
+          : mailRuleActionLogId(rule, action, thread),
       });
     }
   }
   return effects;
+}
+
+export function evaluateMailRules(thread: MailThread, settings: MailRulesSettings): MailRuleEffect[] {
+  return evaluateMailRulesForMode(thread, settings, 'active');
+}
+
+export function evaluateShadowMailRules(thread: MailThread, settings: MailRulesSettings): MailRuleEffect[] {
+  return evaluateMailRulesForMode(thread, settings, 'shadow');
 }

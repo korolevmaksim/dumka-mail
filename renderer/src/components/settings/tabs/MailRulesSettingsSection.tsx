@@ -4,7 +4,8 @@ import { useAppStore } from '../../../stores/AppStore';
 import { RuleSimulatorPanel } from '../../automation/RuleSimulatorPanel';
 import { Toggle } from '../SettingsControls';
 import { labelDefinitionsForAccount, labelDisplayName } from '../../../../../shared/labels';
-import type { MailAutomationRule, MailCategoryRule, MailRuleAction, MailRuleActionType } from '../../../../../shared/types';
+import { mailRuleMode } from '../../../../../shared/mailRules';
+import type { MailAutomationRule, MailCategoryRule, MailRuleAction, MailRuleActionType, MailRuleMode } from '../../../../../shared/types';
 import { GLOBAL_CLASSIFICATION_SCOPE, normalizeClassificationScope, scopeDisplayLabel } from './classificationScope';
 
 interface MailRulesSettingsSectionProps {
@@ -42,6 +43,10 @@ function actionLabel(action: MailRuleAction): string {
     default:
       return action.type;
   }
+}
+
+function hasSendLikeAction(rule: MailAutomationRule): boolean {
+  return rule.actions.some(action => action.type === 'forward' || action.type === 'autoReply');
 }
 
 export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSectionProps) {
@@ -87,7 +92,8 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
       const rule: MailAutomationRule = {
         id: createRuleId(title, settings.mailRules.rules),
         title,
-        isEnabled: true,
+        isEnabled: false,
+        mode: 'shadow',
         accountId: normalizedScope,
         matchMode: 'all',
         conditions: [{
@@ -127,7 +133,7 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Automatic Mail Actions</span>
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Apply archive, label, forward, or auto-reply actions when synced threads match rules.</span>
+          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Observe new rules in shadow mode, then promote them when the evidence looks right.</span>
         </div>
         <Toggle
           checked={store.settings.mailRules.enabled}
@@ -230,30 +236,58 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {scopedRules.map(rule => (
-            <div key={rule.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2">
-              <div className="min-w-0 flex flex-col gap-0.5 text-[calc(10px*var(--font-scale))]">
-                <span className="truncate text-[var(--text-primary)]">{rule.title}</span>
-                <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
-                  {rule.actions.map(actionLabel).join(', ')} · {scopeLabel}
-                </span>
+          {scopedRules.map(rule => {
+            const mode = mailRuleMode(rule);
+            const sendLike = hasSendLikeAction(rule);
+            return (
+              <div key={rule.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2">
+                <div className="min-w-0 flex flex-col gap-0.5 text-[calc(10px*var(--font-scale))]">
+                  <span className="truncate text-[var(--text-primary)]">{rule.title}</span>
+                  <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+                    {rule.actions.map(actionLabel).join(', ')} · {scopeLabel}
+                  </span>
+                  {sendLike && mode === 'active' && (
+                    <span className="text-[calc(9px*var(--font-scale))] text-[var(--warning)]">
+                      Active mode can send mail automatically.
+                    </span>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <label className="sr-only" htmlFor={`mail-rule-mode-${rule.id}`}>Rule mode for {rule.title}</label>
+                  <select
+                    id={`mail-rule-mode-${rule.id}`}
+                    value={mode}
+                    onChange={(event) => {
+                      const nextMode = event.target.value as MailRuleMode;
+                      updateRule(rule.id, current => ({
+                        ...current,
+                        mode: nextMode,
+                        isEnabled: nextMode === 'active',
+                      }));
+                    }}
+                    title={sendLike ? 'Active mode can send mail automatically' : 'Choose whether this rule observes or applies matches'}
+                    className={`rounded border bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] ${
+                      sendLike && mode === 'active'
+                        ? 'border-[var(--warning)] text-[var(--warning)]'
+                        : 'border-[var(--border)] text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <option value="disabled">Disabled</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="active">{sendLike ? 'Active (can send)' : 'Active'}</option>
+                  </select>
+                  <button
+                    type="button"
+                    title="Delete rule"
+                    onClick={() => deleteRule(rule.id)}
+                    className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger)]"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Toggle
-                  checked={rule.isEnabled}
-                  onChange={(enabled) => updateRule(rule.id, current => ({ ...current, isEnabled: enabled }))}
-                />
-                <button
-                  type="button"
-                  title="Delete rule"
-                  onClick={() => deleteRule(rule.id)}
-                  className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger)]"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

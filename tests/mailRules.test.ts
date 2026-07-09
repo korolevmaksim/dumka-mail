@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildMailRuleShadowLog,
   evaluateMailRules,
+  evaluateShadowMailRules,
   mailAutomationRuleMatchesThread,
   mailRuleActionLogId,
+  mailRuleMode,
   normalizeMailRulesSettings,
 } from '../shared/mailRules';
 import type { MailAutomationRule, MailThread } from '../shared/types';
@@ -45,6 +48,15 @@ describe('mail automation rules', () => {
     expect(mailAutomationRuleMatchesThread(rule(), thread)).toBe(true);
     expect(mailAutomationRuleMatchesThread(rule({ accountId: 'other@example.com' }), thread)).toBe(false);
     expect(mailAutomationRuleMatchesThread(rule({ isEnabled: false }), thread)).toBe(false);
+  });
+
+  it('keeps active and shadow evaluation paths separate', () => {
+    const active = rule({ id: 'active', mode: 'active' });
+    const shadow = rule({ id: 'shadow', isEnabled: false, mode: 'shadow' });
+    const settings = { enabled: true, rules: [active, shadow] };
+
+    expect(evaluateMailRules(thread, settings).map(effect => effect.rule.id)).toEqual(['active']);
+    expect(evaluateShadowMailRules(thread, settings).map(effect => effect.rule.id)).toEqual(['shadow']);
   });
 
   it('evaluates archive, label, forward, and auto-reply actions for matching rules', () => {
@@ -94,6 +106,21 @@ describe('mail automation rules', () => {
     );
   });
 
+  it('builds durable shadow evidence without using an active action id', () => {
+    const shadowRule = rule({ isEnabled: false, mode: 'shadow' });
+    const [effect] = evaluateShadowMailRules(thread, { enabled: true, rules: [shadowRule] });
+    const observed = buildMailRuleShadowLog(effect, thread, '2026-07-09T12:00:00.000Z');
+
+    expect(observed.id).toBe('mail-rule-shadow:receipts:me@example.com:thread-1:archive:archive');
+    expect(observed.kind).toBe('ruleShadowMatch');
+    expect(observed.status).toBe('completed');
+    expect(JSON.parse(observed.payloadJson || '{}')).toMatchObject({
+      source: 'mailRuleShadow',
+      ruleId: 'receipts',
+      mode: 'shadow',
+    });
+  });
+
   it('normalizes persisted settings and drops empty rules', () => {
     const normalized = normalizeMailRulesSettings({
       enabled: true,
@@ -107,6 +134,23 @@ describe('mail automation rules', () => {
       enabled: true,
       rules: [expect.objectContaining({ id: 'valid', title: 'Receipts' })],
     });
+  });
+
+  it('normalizes legacy enabled flags and preserves explicit shadow mode', () => {
+    const normalized = normalizeMailRulesSettings({
+      enabled: true,
+      rules: [
+        rule({ id: 'legacy-active', mode: undefined, isEnabled: true }),
+        rule({ id: 'legacy-disabled', mode: undefined, isEnabled: false }),
+        rule({ id: 'observe', mode: 'shadow', isEnabled: true }),
+      ],
+    });
+
+    expect(normalized.rules.map(item => ({ id: item.id, mode: mailRuleMode(item), isEnabled: item.isEnabled }))).toEqual([
+      { id: 'legacy-active', mode: 'active', isEnabled: true },
+      { id: 'legacy-disabled', mode: 'disabled', isEnabled: false },
+      { id: 'observe', mode: 'shadow', isEnabled: false },
+    ]);
   });
 
   it('normalizes auto-reply action body from persisted settings', () => {

@@ -1,4 +1,4 @@
-import { mailAutomationRuleMatchesThread, mailRuleActionLogId } from './mailRules';
+import { mailAutomationRuleMatchesThread, mailRuleActionLogId, mailRuleMode } from './mailRules';
 import type {
   AutomationRuleCandidate,
   MailActionLog,
@@ -8,6 +8,7 @@ import type {
   MailRulesSettings,
   MailThread,
   AgentPlan,
+  MailRuleMode,
 } from './types';
 
 export type RuleSimulationActionStatus = 'wouldApply' | 'alreadyApplied' | 'skipped' | 'previewOnly';
@@ -76,6 +77,16 @@ export interface BuildAutomationCandidatesInput {
   actionLogs?: MailActionLog[];
 }
 
+export interface MailRuleMonitoringItem {
+  ruleId: string;
+  mode: MailRuleMode;
+  shadowMatchCount: number;
+  appliedCount: number;
+  failedCount: number;
+  pendingCount: number;
+  lastObservedAt: string | null;
+}
+
 const SAFE_ACTION_TYPES = new Set<MailRuleAction['type']>(['archive', 'applyLabel', 'moveToLabel']);
 const SEND_LIKE_ACTION_TYPES = new Set<MailRuleAction['type']>(['forward', 'autoReply']);
 
@@ -101,10 +112,13 @@ function actionSummary(action: MailRuleAction, thread: MailThread, labels: reado
   return `Would run ${action.type}`;
 }
 
-function parsePayloadJson(log: MailActionLog): any | null {
+function parsePayloadJson(log: MailActionLog): Record<string, unknown> | null {
   if (!log.payloadJson) return null;
   try {
-    return JSON.parse(log.payloadJson);
+    const parsed: unknown = JSON.parse(log.payloadJson);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
   } catch {
     return null;
   }
@@ -135,7 +149,7 @@ export function simulateMailRule({
 }: SimulateRuleInput): MailRuleSimulation {
   const effectsByThread = new Map<string, RuleSimulationEffect[]>();
   const warnings = new Set<string>();
-  const ruleForMatching = { ...rule, isEnabled: true };
+  const ruleForMatching = { ...rule, isEnabled: true, mode: 'active' as const };
 
   for (const thread of threads) {
     if (!mailAutomationRuleMatchesThread(ruleForMatching, thread)) continue;
@@ -203,6 +217,38 @@ export function simulateMailRule({
     warnings: [...warnings],
     samples,
   };
+}
+
+export function buildMailRuleMonitoring(
+  settings: MailRulesSettings,
+  actionLogs: readonly MailActionLog[],
+): MailRuleMonitoringItem[] {
+  const logsByRule = new Map<string, MailActionLog[]>();
+  for (const log of actionLogs) {
+    const payload = parsePayloadJson(log);
+    const ruleId = typeof payload?.ruleId === 'string' ? payload.ruleId : null;
+    if (!ruleId) continue;
+    const bucket = logsByRule.get(ruleId) || [];
+    bucket.push(log);
+    logsByRule.set(ruleId, bucket);
+  }
+
+  return settings.rules.map(rule => {
+    const logs = logsByRule.get(rule.id) || [];
+    const lastObservedAt = logs
+      .map(log => log.completedAt || log.createdAt)
+      .filter((value): value is string => Boolean(value) && Number.isFinite(Date.parse(value)))
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0] || null;
+    return {
+      ruleId: rule.id,
+      mode: mailRuleMode(rule),
+      shadowMatchCount: logs.filter(log => log.kind === 'ruleShadowMatch' && log.status === 'completed').length,
+      appliedCount: logs.filter(log => log.kind !== 'ruleShadowMatch' && log.status === 'completed').length,
+      failedCount: logs.filter(log => log.kind !== 'ruleShadowMatch' && log.status === 'failed').length,
+      pendingCount: logs.filter(log => log.kind !== 'ruleShadowMatch' && (log.status === 'queued' || log.status === 'running' || log.status === 'pending_sync')).length,
+      lastObservedAt,
+    };
+  });
 }
 
 export function simulateMailRules({
@@ -304,6 +350,7 @@ export function buildAutomationCandidatesFromAgentPlan({
         id: `candidate-${first.accountId.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${domain.replace(/[^a-z0-9]+/g, '-')}`,
         title: `Archive ${domain}`,
         isEnabled: false,
+        mode: 'shadow',
         accountId: first.accountId,
         matchMode: 'all',
         conditions: [conditionForThread(first)],

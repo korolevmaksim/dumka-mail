@@ -305,7 +305,8 @@ export type ActionKind =
   | 'applyAIDraftPreview'
   | 'insertSnippet'
   | 'forwardThread'
-  | 'autoReply';
+  | 'autoReply'
+  | 'ruleShadowMatch';
 export type ActionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'pending_sync';
 
 /** Human presentation for an action-log kind. `icon` is a lucide-react icon name
@@ -344,6 +345,7 @@ export const ACTION_KIND_META: Record<ActionKind, ActionKindMeta> = {
   insertSnippet: { title: 'Inserted snippet', icon: 'Braces' },
   forwardThread: { title: 'Forwarded thread', icon: 'Forward' },
   autoReply: { title: 'Auto replied', icon: 'Reply' },
+  ruleShadowMatch: { title: 'Rule shadow match', icon: 'FlaskConical' },
 };
 
 export interface MailActionLog {
@@ -824,6 +826,7 @@ export interface InboxSettings {
 }
 
 export type MailRuleActionType = 'archive' | 'applyLabel' | 'moveToLabel' | 'forward' | 'autoReply';
+export type MailRuleMode = 'disabled' | 'shadow' | 'active';
 
 export interface MailRuleAction {
   id: string;
@@ -837,6 +840,8 @@ export interface MailAutomationRule {
   id: string;
   title: string;
   isEnabled: boolean;
+  /** Explicit lifecycle mode. Missing values are normalized from legacy isEnabled. */
+  mode?: MailRuleMode;
   accountId?: string;
   matchMode: 'all' | 'any';
   conditions: MailCategoryRule[];

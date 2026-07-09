@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAutomationCandidatesFromAgentPlan,
+  buildMailRuleMonitoring,
   simulateMailRule,
   simulateMailRules,
 } from '../shared/mailRuleSimulator';
@@ -179,8 +180,54 @@ describe('simulateMailRules', () => {
   });
 });
 
+describe('buildMailRuleMonitoring', () => {
+  it('separates shadow observations from active outcomes and reports latest activity', () => {
+    const settings = {
+      enabled: true,
+      rules: [rule({ mode: 'shadow', isEnabled: false })],
+    };
+    const monitoring = buildMailRuleMonitoring(settings, [
+      log({
+        id: 'shadow-1',
+        kind: 'ruleShadowMatch',
+        createdAt: '2026-07-08T10:00:00.000Z',
+        completedAt: '2026-07-08T10:00:00.000Z',
+        payloadJson: JSON.stringify({ ruleId: 'rule-news' }),
+      }),
+      log({
+        id: 'active-complete',
+        completedAt: '2026-07-08T11:00:00.000Z',
+        payloadJson: JSON.stringify({ ruleId: 'rule-news' }),
+      }),
+      log({
+        id: 'active-failed',
+        status: 'failed',
+        completedAt: '2026-07-08T12:00:00.000Z',
+        payloadJson: JSON.stringify({ ruleId: 'rule-news' }),
+      }),
+      log({
+        id: 'active-pending',
+        status: 'pending_sync',
+        createdAt: '2026-07-08T13:00:00.000Z',
+        completedAt: null,
+        payloadJson: JSON.stringify({ ruleId: 'rule-news' }),
+      }),
+    ])[0];
+
+    expect(monitoring).toEqual({
+      ruleId: 'rule-news',
+      mode: 'shadow',
+      shadowMatchCount: 1,
+      appliedCount: 1,
+      failedCount: 1,
+      pendingCount: 1,
+      lastObservedAt: '2026-07-08T13:00:00.000Z',
+    });
+  });
+});
+
 describe('buildAutomationCandidatesFromAgentPlan', () => {
-  it('suggests a disabled archive rule from repeated approved archive actions by domain', () => {
+  it('suggests a shadow archive rule from repeated approved archive actions by domain', () => {
     const plan: AgentPlan = {
       id: 'agent:test',
       title: 'Agent Review Queue',
@@ -216,6 +263,7 @@ describe('buildAutomationCandidatesFromAgentPlan', () => {
 
     expect(candidates).toHaveLength(1);
     expect(candidates[0].rule.isEnabled).toBe(false);
+    expect(candidates[0].rule.mode).toBe('shadow');
     expect(candidates[0].rule.conditions[0].field).toBe('senderDomain');
     expect(candidates[0].sourceActionCount).toBe(2);
   });

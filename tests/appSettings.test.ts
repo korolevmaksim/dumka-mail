@@ -197,6 +197,7 @@ describe('AppSettings AI prompt shortcuts', () => {
 
     expect(merged.mailRules.enabled).toBe(true);
     expect(merged.mailRules.rules).toHaveLength(1);
+    expect(merged.mailRules.rules[0].mode).toBe('active');
     expect(merged.mailRules.rules[0].actions[0].type).toBe('archive');
   });
 });

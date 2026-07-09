@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FlaskConical, Plus, ShieldCheck } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
-import { buildAutomationCandidatesFromAgentPlan, simulateMailRules } from '../../../../shared/mailRuleSimulator';
+import { buildAutomationCandidatesFromAgentPlan, buildMailRuleMonitoring, simulateMailRules } from '../../../../shared/mailRuleSimulator';
 import type { AutomationRuleCandidate, MailAutomationRule } from '../../../../shared/types';
 
 function formatGeneratedAt(iso: string): string {
@@ -12,6 +12,13 @@ function formatGeneratedAt(iso: string): string {
 
 function formatCount(value: number): string {
   return value.toLocaleString();
+}
+
+function formatLastObserved(iso: string | null): string {
+  if (!iso) return 'No observed runs yet';
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return 'No observed runs yet';
+  return `Last ${date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function createUniqueRuleId(rule: MailAutomationRule, existing: MailAutomationRule[]): string {
@@ -57,6 +64,14 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
     threads: store.threads,
     actionLogs: store.actionLog,
   }), [store.actionLog, store.agentPlan, store.threads]);
+  const monitoringByRule = useMemo(() => new Map(
+    buildMailRuleMonitoring(store.settings.mailRules, store.actionLog)
+      .map(item => [item.ruleId, item] as const),
+  ), [store.actionLog, store.settings.mailRules]);
+  const existingRuleIds = useMemo(
+    () => new Set(store.settings.mailRules.rules.map(rule => rule.id)),
+    [store.settings.mailRules.rules],
+  );
   const visibleSimulations = simulation.simulations.slice(0, compact ? 3 : 6);
   const generatedAt = formatGeneratedAt(simulation.generatedAt);
   const hasRules = simulation.ruleCount > 0;
@@ -67,7 +82,9 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
         ...candidate.rule,
         id: createUniqueRuleId(candidate.rule, settings.mailRules.rules),
         isEnabled: false,
+        mode: 'shadow' as const,
       };
+      settings.mailRules.enabled = true;
       settings.mailRules.rules = [...settings.mailRules.rules, nextRule];
     });
     setCandidateAddedId(candidate.id);
@@ -80,7 +97,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
         <div className="flex min-w-0 items-center gap-1.5">
           <FlaskConical className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
           <h3 className="truncate font-semibold text-[var(--text-primary)]">
-            Automation
+            Automation monitor
           </h3>
         </div>
         {generatedAt ? (
@@ -133,47 +150,67 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
         </div>
       ) : (
         <ul className="flex flex-col gap-1.5" aria-label="Rule simulation results">
-          {visibleSimulations.map(result => (
-            <li
-              key={result.ruleId}
-              className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2"
-            >
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium text-[var(--text-primary)]">
-                    {result.ruleTitle}
+          {visibleSimulations.map(result => {
+            const monitoring = monitoringByRule.get(result.ruleId);
+            const mode = monitoring?.mode || 'disabled';
+            return (
+              <li
+                key={result.ruleId}
+                className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2"
+              >
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium text-[var(--text-primary)]">
+                      {result.ruleTitle}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                      <span className="tabular-nums">{formatCount(result.matchedThreadCount)} match{result.matchedThreadCount === 1 ? '' : 'es'}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="tabular-nums">{formatCount(result.effectCount)} apply</span>
+                      {result.alreadyAppliedCount > 0 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="tabular-nums">{formatCount(result.alreadyAppliedCount)} done</span>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
-                    <span className="tabular-nums">{formatCount(result.matchedThreadCount)} match{result.matchedThreadCount === 1 ? '' : 'es'}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="tabular-nums">{formatCount(result.effectCount)} apply</span>
-                    {result.alreadyAppliedCount > 0 && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="tabular-nums">{formatCount(result.alreadyAppliedCount)} done</span>
-                      </>
-                    )}
-                  </div>
+                  <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium ${
+                    mode === 'active'
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+                      : mode === 'shadow'
+                        ? 'border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 text-[var(--ai-accent)]'
+                        : 'border-[var(--border)] bg-[var(--rail-bg)] text-[var(--text-secondary)]'
+                  }`}>
+                    {mode}
+                  </span>
+                  {result.previewOnlyCount > 0 ? (
+                    <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium text-[var(--warning)]">
+                      review
+                    </span>
+                  ) : (
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" aria-label="Safe to apply" />
+                  )}
                 </div>
-                {result.previewOnlyCount > 0 ? (
-                  <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium text-[var(--warning)]">
-                    review
-                  </span>
-                ) : (
-                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" aria-label="Safe to apply" />
+                {result.samples[0]?.effects[0] && (
+                  <p className="mt-1.5 line-clamp-2 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+                    {result.samples[0].effects[0].summary}
+                    <span className="text-[var(--text-tertiary)]">
+                      {' · '}
+                      {result.samples[0].subject || 'untitled thread'}
+                    </span>
+                  </p>
                 )}
-              </div>
-              {result.samples[0]?.effects[0] && (
-                <p className="mt-1.5 line-clamp-2 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
-                  {result.samples[0].effects[0].summary}
-                  <span className="text-[var(--text-tertiary)]">
-                    {' · '}
-                    {result.samples[0].subject || 'untitled thread'}
-                  </span>
-                </p>
-              )}
-            </li>
-          ))}
+                {monitoring && (
+                  <p className="mt-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                    {monitoring.shadowMatchCount} shadow · {monitoring.appliedCount} applied · {monitoring.failedCount} failed
+                    {monitoring.pendingCount > 0 ? ` · ${monitoring.pendingCount} pending` : ''}
+                    {' · '}{formatLastObserved(monitoring.lastObservedAt)}
+                  </p>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -184,7 +221,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
             From approved work
           </div>
           {candidates.slice(0, compact ? 2 : 4).map(candidate => {
-            const isAdded = candidateAddedId === candidate.id;
+            const isAdded = candidateAddedId === candidate.id || existingRuleIds.has(candidate.rule.id);
             return (
               <div
                 key={candidate.id}
@@ -200,11 +237,11 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                   type="button"
                   onClick={() => void addCandidate(candidate)}
                   disabled={isAdded}
-                  title={isAdded ? 'Already added as a disabled rule' : 'Add as a disabled rule'}
+                  title={isAdded ? 'Already added in shadow mode' : 'Add in shadow mode without changing mail'}
                   className="flex shrink-0 items-center gap-1 rounded-md bg-[var(--accent)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Plus className="h-3 w-3" aria-hidden="true" />
-                  {isAdded ? 'Added' : 'Add'}
+                  {isAdded ? 'Shadow added' : 'Add shadow'}
                 </button>
               </div>
             );

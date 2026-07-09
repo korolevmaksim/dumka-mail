@@ -49,7 +49,7 @@ import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import { checkForAppUpdates, getAutoUpdateStatus, initializeAutoUpdates, installDownloadedAppUpdate } from './autoUpdate';
 import { shouldNotifyForMessage } from '../shared/mailSecurity';
 import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoReply';
-import { evaluateMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
+import { buildMailRuleShadowLog, evaluateMailRules, evaluateShadowMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
@@ -1390,8 +1390,10 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
 
   const now = new Date().toISOString();
   const payloadJson = JSON.stringify({
+    source: 'mailRule',
     ruleId: effect.rule.id,
     ruleTitle: effect.rule.title,
+    mode: 'active',
     action: effect.action,
   });
 
@@ -1489,6 +1491,11 @@ async function runMailRulesForThreads(threads: MailThread[]) {
   if (!settings.enabled || settings.rules.length === 0) return;
 
   for (const thread of threads) {
+    for (const effect of evaluateShadowMailRules(thread, settings)) {
+      if (!ActionLogRepo.get(effect.actionId)) {
+        ActionLogRepo.save(buildMailRuleShadowLog(effect, thread));
+      }
+    }
     for (const effect of evaluateMailRules(thread, settings)) {
       await applyMailRuleEffect(thread, effect);
     }
