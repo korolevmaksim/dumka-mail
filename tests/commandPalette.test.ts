@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  DEFAULT_COMMAND_GROUP_ORDER,
+  formatCommandGroupLabel,
   fuzzyScore,
+  groupRankedCommands,
   rankCommands,
   remapCyrillicToLatin,
   PaletteCommand,
@@ -162,5 +165,60 @@ describe('rankCommands', () => {
     const ranked = rankCommands('search', catalog);
     expect(ranked[0]).toMatchObject({ id: 'search' });
     expect(typeof ranked[0].score).toBe('number');
+  });
+});
+
+describe('formatCommandGroupLabel', () => {
+  it('maps known group ids to display labels', () => {
+    expect(formatCommandGroupLabel('navigation')).toBe('Navigation');
+    expect(formatCommandGroupLabel('mail')).toBe('Mail');
+    expect(formatCommandGroupLabel('ai')).toBe('AI');
+    expect(formatCommandGroupLabel('sync')).toBe('Sync');
+    expect(formatCommandGroupLabel('settings')).toBe('Settings');
+    expect(formatCommandGroupLabel('compose')).toBe('Compose');
+  });
+
+  it('title-cases unknown groups', () => {
+    expect(formatCommandGroupLabel('custom')).toBe('Custom');
+  });
+});
+
+describe('groupRankedCommands', () => {
+  it('groups by group and preserves within-group order from ranked input', () => {
+    const ranked = rankCommands('', [
+      cmd({ id: 'a', title: 'A', group: 'mail' }),
+      cmd({ id: 'b', title: 'B', group: 'navigation' }),
+      cmd({ id: 'c', title: 'C', group: 'mail' }),
+    ]);
+    const sections = groupRankedCommands(ranked);
+    expect(sections.map((s) => s.group)).toEqual(['mail', 'navigation']);
+    expect(sections[0].commands.map((c) => c.id)).toEqual(['a', 'c']);
+    expect(sections[0].label).toBe('Mail');
+  });
+
+  it('honors preferred section order for empty browse', () => {
+    const ranked = rankCommands('', [
+      cmd({ id: 'settings-cmd', title: 'Theme', group: 'settings' }),
+      cmd({ id: 'nav-cmd', title: 'Today', group: 'navigation' }),
+      cmd({ id: 'mail-cmd', title: 'Done', group: 'mail' }),
+    ]);
+    const sections = groupRankedCommands(ranked, DEFAULT_COMMAND_GROUP_ORDER);
+    expect(sections.map((s) => s.group)).toEqual(['navigation', 'mail', 'settings']);
+  });
+
+  it('does not drop or re-score commands when grouping filtered results', () => {
+    const ranked = rankCommands('mark', catalog);
+    const sections = groupRankedCommands(ranked);
+    const flatIds = sections.flatMap((s) => s.commands.map((c) => c.id));
+    expect(flatIds.sort()).toEqual(ranked.map((c) => c.id).sort());
+    for (const section of sections) {
+      for (const command of section.commands) {
+        expect(command.score).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('returns empty sections for empty ranked input', () => {
+    expect(groupRankedCommands([])).toEqual([]);
   });
 });

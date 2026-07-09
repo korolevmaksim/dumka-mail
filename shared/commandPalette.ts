@@ -119,6 +119,92 @@ export function rankCommands<T extends PaletteCommand>(query: string, commands: 
     .map((entry) => ({ ...entry.command, score: entry.score }));
 }
 
+/** Stable browse order for empty-query palette sections. */
+export const DEFAULT_COMMAND_GROUP_ORDER = [
+  'navigation',
+  'mail',
+  'compose',
+  'ai',
+  'sync',
+  'settings',
+] as const;
+
+export interface CommandGroupSection<T extends PaletteCommand = PaletteCommand> {
+  group: string;
+  label: string;
+  commands: RankedCommand<T>[];
+}
+
+/**
+ * Human-readable section title for a command `group` id.
+ * Unknown groups are title-cased from the raw id.
+ */
+export function formatCommandGroupLabel(group: string): string {
+  const labels: Record<string, string> = {
+    navigation: 'Navigation',
+    mail: 'Mail',
+    compose: 'Compose',
+    ai: 'AI',
+    sync: 'Sync',
+    settings: 'Settings',
+    general: 'General',
+  };
+  if (labels[group]) return labels[group];
+  if (!group) return 'Other';
+  return group.charAt(0).toUpperCase() + group.slice(1);
+}
+
+/**
+ * Group ranked commands into labeled sections for the palette UI.
+ *
+ * - Within each section, command order is preserved from `ranked`.
+ * - When `preferredOrder` is provided, sections follow that order; any remaining
+ *   groups appear after in first-seen order.
+ * - When omitted, section order is first-seen in `ranked` (score order when
+ *   filtering).
+ * Presentation-only — does not change match scores.
+ */
+export function groupRankedCommands<T extends PaletteCommand>(
+  ranked: RankedCommand<T>[],
+  preferredOrder?: readonly string[],
+): CommandGroupSection<T>[] {
+  const byGroup = new Map<string, RankedCommand<T>[]>();
+  for (const command of ranked) {
+    const existing = byGroup.get(command.group);
+    if (existing) {
+      existing.push(command);
+    } else {
+      byGroup.set(command.group, [command]);
+    }
+  }
+
+  const sections: CommandGroupSection<T>[] = [];
+  const emitted = new Set<string>();
+
+  if (preferredOrder) {
+    for (const group of preferredOrder) {
+      const commands = byGroup.get(group);
+      if (!commands || commands.length === 0) continue;
+      sections.push({ group, label: formatCommandGroupLabel(group), commands });
+      emitted.add(group);
+    }
+  }
+
+  for (const command of ranked) {
+    if (emitted.has(command.group)) continue;
+    const commands = byGroup.get(command.group);
+    if (!commands || commands.length === 0) continue;
+    sections.push({
+      group: command.group,
+      label: formatCommandGroupLabel(command.group),
+      commands,
+    });
+    emitted.add(command.group);
+  }
+
+  return sections;
+}
+
 // --- internal helpers -------------------------------------------------------
 
 function queryVariants(normalizedQuery: string): string[] {
