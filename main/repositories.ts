@@ -295,6 +295,38 @@ export const ThreadsRepo = {
     return rows.map(mapThreadRow);
   },
 
+  listMany(accountIds: string[]): MailThread[] {
+    const ids = Array.from(new Set(accountIds.map(id => id.trim()).filter(Boolean)));
+    if (ids.length === 0) return [];
+
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT t.*, r.reminder_at
+      FROM threads t
+      LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE t.account_id IN (${placeholders})
+      ORDER BY t.last_message_at DESC
+    `).all(...ids) as any[];
+
+    return rows.map(mapThreadRow);
+  },
+
+  listRecentInbox(accountId: string, limit = 8): MailThread[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT t.*, r.reminder_at
+      FROM threads t
+      LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE t.account_id = ?
+        AND instr(upper(t.label_ids_json), '"INBOX"') > 0
+      ORDER BY t.last_message_at DESC
+      LIMIT ?
+    `).all(accountId, Math.max(1, Math.min(100, limit))) as any[];
+
+    return rows.map(mapThreadRow);
+  },
+
   get(accountId: string, threadId: string): MailThread | null {
     const db = getDatabase();
     const row = db.prepare(`
@@ -605,11 +637,11 @@ export const MessagesRepo = {
     const rows = db.prepare(`
       SELECT * FROM messages
       WHERE account_id = ?
-        AND lower(sender_email) = lower(?)
+        AND sender_email = ? COLLATE NOCASE
         AND received_at < ?
       ORDER BY received_at DESC
       LIMIT ?
-    `).all(accountId, senderEmail, beforeReceivedAt, Math.max(1, Math.min(50, limit))) as any[];
+    `).all(accountId, senderEmail, beforeReceivedAt, Math.max(1, Math.min(1000, limit))) as any[];
     return rows.reverse().map(mapMessageRow);
   },
 

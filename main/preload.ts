@@ -13,6 +13,7 @@ import {
   MailLabelDefinition,
   MailThread,
   MailMessage,
+  MailboxDelta,
   Draft,
   SyncState,
   MailActionLog,
@@ -29,6 +30,7 @@ import {
   ReplyPipelineCandidate,
   ReplyPipelineDraftResult,
   ReplyPipelineState,
+  ThreadReaderPayload,
   MCPServerConfig
 } from '../shared/types';
 import { AIRequest } from './ai';
@@ -43,11 +45,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Threads
   listThreads: (accountId: string) => ipcRenderer.invoke('db:listThreads', accountId),
+  listThreadsForAccounts: (accountIds: string[]) => ipcRenderer.invoke('db:listThreadsForAccounts', accountIds),
   saveThreads: (threads: MailThread[]) => ipcRenderer.invoke('db:saveThreads', threads),
   deleteThread: (accountId: string, threadId: string) => ipcRenderer.invoke('db:deleteThread', accountId, threadId),
 
   // Messages
   listMessagesForThread: (accountId: string, threadId: string) => ipcRenderer.invoke('db:listMessagesForThread', accountId, threadId),
+  getThreadReaderPayload: (accountId: string, threadId: string): Promise<ThreadReaderPayload> => ipcRenderer.invoke('api:getThreadReaderPayload', accountId, threadId),
   saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => ipcRenderer.invoke('db:saveMessages', messages, options),
   listEmailSuggestions: (accountId?: string, limit?: number) => ipcRenderer.invoke('db:listEmailSuggestions', accountId, limit),
 
@@ -114,6 +118,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resolveReplyPipelineItem: (accountId: string, threadId: string): Promise<ReplyPipelineState> => ipcRenderer.invoke('api:resolveReplyPipelineItem', accountId, threadId),
 
   // Gmail sync & mutations
+  syncMailboxNow: (accountIds: string[]): Promise<MailboxDelta[]> => ipcRenderer.invoke('api:syncMailboxNow', accountIds),
   syncInbox: (email: string) => ipcRenderer.invoke('api:syncInbox', email),
   syncSent: (email: string) => ipcRenderer.invoke('api:syncSent', email),
   syncIncremental: (email: string, startHistoryId: string) => ipcRenderer.invoke('api:syncIncremental', email, startHistoryId),
@@ -217,6 +222,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('api:replyPipelineUpdated', listener);
     return () => {
       ipcRenderer.off('api:replyPipelineUpdated', listener);
+    };
+  },
+  onMailboxDelta: (callback: (delta: MailboxDelta) => void) => {
+    const listener = (_: unknown, delta: MailboxDelta) => callback(delta);
+    ipcRenderer.on('api:mailboxDelta', listener);
+    return () => {
+      ipcRenderer.off('api:mailboxDelta', listener);
     };
   },
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => {

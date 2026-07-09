@@ -702,6 +702,29 @@ export interface MailSyncCompletion {
   completedAt: string;
 }
 
+export interface MailboxDelta {
+  accountId: AccountID;
+  upserts: MailThread[];
+  deletedThreadIds: ThreadID[];
+  revision: number;
+  completedAt: string;
+}
+
+export type NavigationActivityPhase =
+  | 'idle'
+  | 'loadingAccount'
+  | 'buildingMailbox'
+  | 'loadingThread'
+  | 'renderingMessages'
+  | 'refreshing';
+
+export interface NavigationActivity {
+  phase: NavigationActivityPhase;
+  label: string;
+  scopeKey: string | null;
+  startedAt: number | null;
+}
+
 export interface TabCategory {
   id: string;
   displayName: string;
@@ -1239,6 +1262,13 @@ export interface ThreadAgentInsights {
   draftSuggestion: AgentDraftSuggestion | null;
   securityInsights: MessageSecurityInsight[];
   unsubscribeCandidate: UnsubscribeCandidate | null;
+}
+
+export interface ThreadReaderPayload {
+  accountId: AccountID;
+  threadId: ThreadID;
+  messages: MailMessage[];
+  insights: ThreadAgentInsights;
 }
 
 export interface SenderCleanupStat {

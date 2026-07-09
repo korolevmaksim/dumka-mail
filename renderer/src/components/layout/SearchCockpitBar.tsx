@@ -9,6 +9,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
   const { searchQuery, searchStatus, setSearchQuery, settingsOpen, setSettingsOpen, cleanupOpen, setCleanupOpen, setWorkspaceView } = store;
   const [draftQuery, setDraftQuery] = useState(searchQuery);
+  const [showNavigationActivity, setShowNavigationActivity] = useState(false);
   const committedQueryRef = useRef(searchQuery);
   const commitRef = useRef<(value: string) => void>(() => undefined);
   const controllerRef = useRef<SearchCommitController | null>(null);
@@ -32,6 +33,15 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   useEffect(() => () => {
     commitController.cancel();
   }, [commitController]);
+
+  useEffect(() => {
+    if (store.navigationActivity.phase === 'idle') {
+      setShowNavigationActivity(false);
+      return;
+    }
+    const timer = globalThis.setTimeout(() => setShowNavigationActivity(true), 120);
+    return () => globalThis.clearTimeout(timer);
+  }, [store.navigationActivity.phase, store.navigationActivity.scopeKey]);
 
   const commitSearchImmediately = useCallback((value: string) => {
     commitController.cancel();
@@ -173,6 +183,15 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
 
         {/* Status & Sync text */}
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          {showNavigationActivity && store.navigationActivity.phase !== 'idle' && (
+            <span
+              aria-live="polite"
+              className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]"
+            >
+              <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-[var(--accent)] motion-reduce:animate-none" />
+              {store.navigationActivity.label}
+            </span>
+          )}
           {store.syncStatusText && (
             <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] font-normal tracking-wide">
               {store.syncStatusText}

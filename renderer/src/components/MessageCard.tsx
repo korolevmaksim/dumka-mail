@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { memo, useState, useEffect, useMemo, useRef } from 'react';
 import { AttachmentMetadata, MailMessage } from '../../../shared/types';
 import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, ExternalLink } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
@@ -9,7 +9,7 @@ import { CalendarInviteCard } from './CalendarInviteCard';
 import { canOpenExternally, formatByteSize } from '../../../shared/attachments';
 import { emitToast } from '../lib/toastBus';
 
-export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
+export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
   const [copied, setCopied] = useState(false);
   const [showRawModal, setShowRawModal] = useState(false);
@@ -192,7 +192,7 @@ export function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defa
       )}
     </div>
   );
-}
+});
 
 function attachmentFetchId(att: AttachmentMetadata): string | null {
   return att.attachmentId || att.id || null;

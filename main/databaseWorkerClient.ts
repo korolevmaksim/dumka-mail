@@ -5,6 +5,9 @@ import type { MailMessage, MailThread, SenderCleanupStat } from '../shared/types
 type WorkerPayload =
   | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { type: 'saveThreads'; threads: MailThread[] }
+  | { type: 'listThreads'; accountIds: string[] }
+  | { type: 'listMessagesForThread'; accountId: string; threadId: string }
+  | { type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
   | { type: 'senderCleanupStats'; accountId: string };
 
 type WorkerResponse =
@@ -132,6 +135,18 @@ class DatabaseWorkerClient {
         await yieldToEventLoop();
       }
     }
+  }
+
+  listThreads(accountIds: string[]): Promise<MailThread[]> {
+    return this.request<MailThread[]>({ type: 'listThreads', accountIds });
+  }
+
+  listMessagesForThread(accountId: string, threadId: string): Promise<MailMessage[]> {
+    return this.request<MailMessage[]>({ type: 'listMessagesForThread', accountId, threadId });
+  }
+
+  listMessageMetadataForThread(accountId: string, threadId: string): Promise<MailMessage[]> {
+    return this.request<MailMessage[]>({ type: 'listMessageMetadataForThread', accountId, threadId });
   }
 
   senderCleanupStats(accountId: string): Promise<SenderCleanupStat[]> {

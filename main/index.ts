@@ -66,6 +66,7 @@ import type {
   DailyBriefing,
   FollowUpRadarListOptions,
   MailMessage,
+  MailboxDelta,
   MailNotificationSettings,
   MailRuleAction,
   MailRulesSettings,
@@ -813,11 +814,17 @@ registerSecureHandler('db:getAccount', (_, id) => AccountsRepo.get(id));
 registerSecureHandler('db:saveAccount', (_, account) => AccountsRepo.save(account));
 registerSecureHandler('db:deleteAccount', (_, id, options?: { purgeCache?: boolean }) => AccountsRepo.delete(id, options));
 
-registerSecureHandler('db:listThreads', (_, accountId) => ThreadsRepo.list(accountId));
+registerSecureHandler('db:listThreads', (_, accountId) => databaseWorkerClient.listThreads([accountId]));
+registerSecureHandler('db:listThreadsForAccounts', (_, accountIds: string[]) => databaseWorkerClient.listThreads(accountIds));
 registerSecureHandler('db:saveThreads', (_, threads) => saveThreadsToDatabase(threads));
 registerSecureHandler('db:deleteThread', (_, accountId, threadId) => ThreadsRepo.delete(accountId, threadId));
 
-registerSecureHandler('db:listMessagesForThread', (_, accountId, threadId) => MessagesRepo.listForThread(accountId, threadId));
+registerSecureHandler('db:listMessagesForThread', (_, accountId, threadId) => databaseWorkerClient.listMessagesForThread(accountId, threadId));
+registerSecureHandler('api:getThreadReaderPayload', async (_, accountId: string, threadId: string) => {
+  const messages = await databaseWorkerClient.listMessagesForThread(accountId, threadId);
+  const insights = await AgenticService.getThreadInsights(accountId, threadId, messages);
+  return { accountId, threadId, messages, insights };
+});
 registerSecureHandler('db:saveMessages', async (_, messages: MailMessage[], options?: { notifyOfNew?: boolean }) => {
   await saveMessagesToDatabase(messages, options);
 });
@@ -1142,6 +1149,18 @@ registerSecureHandler('api:deleteCalendarEvent', async (_, email, calendarId: st
 });
 
 registerSecureHandler('api:syncInbox', (_, email) => GmailSyncService.syncInbox(email));
+registerSecureHandler('api:syncMailboxNow', async (_, accountIds: string[]): Promise<MailboxDelta[]> => {
+  const connected = new Set(AccountsRepo.list().map(account => account.email));
+  const requested = Array.from(new Set((Array.isArray(accountIds) ? accountIds : [])
+    .map(accountId => accountId.trim())
+    .filter(accountId => connected.has(accountId))));
+  const targets = requested.length > 0 ? requested : Array.from(connected);
+  const results: MailboxDelta[] = [];
+  for (const accountId of targets) {
+    results.push(await runMailboxSyncForAccount(accountId));
+  }
+  return results;
+});
 registerSecureHandler('api:syncSent', (_, email) => GmailSyncService.syncSent(email));
 registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
@@ -1586,7 +1605,10 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
 registerSecureHandler('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
 registerSecureHandler('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
 registerSecureHandler('api:validateAgentActionProposal', (_, item: AgentPlanItem) => validateAgentActionProposalItem(item));
-registerSecureHandler('api:getThreadAgentInsights', (_, accountId, threadId) => AgenticService.getThreadInsights(accountId, threadId));
+registerSecureHandler('api:getThreadAgentInsights', async (_, accountId, threadId) => {
+  const messages = await databaseWorkerClient.listMessageMetadataForThread(accountId, threadId);
+  return AgenticService.getThreadInsights(accountId, threadId, messages);
+});
 registerSecureHandler('api:buildDailyBriefing', (_, accountId, options) => AgenticService.buildDailyBriefing(accountId, options));
 registerSecureHandler('api:dismissAgentDraftSuggestion', (_, id) => AgenticService.dismissDraftSuggestion(id));
 registerSecureHandler('api:markAgentDraftSuggestionApplied', (_, id) => AgenticService.markDraftSuggestionApplied(id));
@@ -1669,6 +1691,24 @@ let mailboxSyncWorkerActive = false;
 let agenticWorkerActive = false;
 let reminderWorkerActive = false;
 const activeBackfillAccounts = new Set<string>();
+const mailboxSyncInFlight = new Map<string, Promise<MailboxDelta>>();
+let mailboxSyncRevision = 0;
+
+function publishMailboxDelta(
+  accountId: string,
+  upserts: MailThread[],
+  deletedThreadIds: string[],
+): MailboxDelta {
+  const delta: MailboxDelta = {
+    accountId,
+    upserts,
+    deletedThreadIds: Array.from(new Set(deletedThreadIds)),
+    revision: ++mailboxSyncRevision,
+    completedAt: new Date().toISOString(),
+  };
+  mainWindow?.webContents.send('api:mailboxDelta', delta);
+  return delta;
+}
 
 function startReminderNotificationWorker() {
   const run = async () => {
@@ -1739,6 +1779,9 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
     const page = await GmailSyncService.syncBackfillPage(email, syncState?.historyBackfillPageToken || undefined);
     await saveThreadsToDatabase(page.threads);
     await saveMessagesToDatabase(page.messages);
+    if (page.threads.length > 0) {
+      publishMailboxDelta(email, page.threads, []);
+    }
 
     const now = new Date().toISOString();
     const nextPagesSynced = (syncState?.historyBackfillPagesSynced || 0) + 1;
@@ -1766,15 +1809,18 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
   }
 }
 
-async function runMailboxSyncForAccount(email: string) {
+async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
   const syncState = SyncStateRepo.get(email);
+  const upserts: MailThread[] = [];
+  const deletedThreadIds: string[] = [];
 
   if (!syncState?.historyId) {
     const fullSync = await GmailSyncService.syncInbox(email);
     await saveThreadsToDatabase(fullSync.threads);
     await saveMessagesToDatabase(fullSync.messages);
     SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
-    return;
+    upserts.push(...fullSync.threads);
+    return publishMailboxDelta(email, upserts, deletedThreadIds);
   }
 
   try {
@@ -1788,17 +1834,20 @@ async function runMailboxSyncForAccount(email: string) {
         const thread = buildThreadFromMessages(email, threadId, messages);
         if (thread) {
           await saveThreadsToDatabase([thread]);
+          upserts.push(thread);
         }
       } catch (err: any) {
         console.warn(`[Mailbox Sync] Failed to fetch thread detail for ${threadId}:`, err);
         if (err.message?.includes('not found') || err.message?.includes('404')) {
           ThreadsRepo.delete(email, threadId);
+          deletedThreadIds.push(threadId);
         }
       }
     }
 
     for (const threadId of incrementalSync.deletedThreadIds) {
       ThreadsRepo.delete(email, threadId);
+      deletedThreadIds.push(threadId);
     }
 
     SyncStateRepo.save(nextSyncState(email, syncState, incrementalSync.historyId));
@@ -1808,10 +1857,26 @@ async function runMailboxSyncForAccount(email: string) {
       await saveThreadsToDatabase(fullSync.threads);
       await saveMessagesToDatabase(fullSync.messages);
       SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
-      return;
+      upserts.push(...fullSync.threads);
+      return publishMailboxDelta(email, upserts, deletedThreadIds);
     }
     throw err;
   }
+
+  return publishMailboxDelta(email, upserts, deletedThreadIds);
+}
+
+function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
+  const existing = mailboxSyncInFlight.get(email);
+  if (existing) return existing;
+
+  const task = performMailboxSyncForAccount(email).finally(() => {
+    if (mailboxSyncInFlight.get(email) === task) {
+      mailboxSyncInFlight.delete(email);
+    }
+  });
+  mailboxSyncInFlight.set(email, task);
+  return task;
 }
 
 function startBackgroundMailboxSyncWorker() {

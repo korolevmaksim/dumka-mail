@@ -320,6 +320,7 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model_received ON mail_embeddings(account_id, model, received_at DESC);
     CREATE INDEX IF NOT EXISTS idx_threads_account_last_message_at ON threads(account_id, last_message_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_account_thread_received_at ON messages(account_id, thread_id, received_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_account_sender_received_at ON messages(account_id, sender_email COLLATE NOCASE, received_at);
     CREATE INDEX IF NOT EXISTS idx_contacts_account_email ON contacts(account_id, email);
     CREATE INDEX IF NOT EXISTS idx_calendar_events_account_start ON calendar_events(account_id, start_at);
     CREATE VIRTUAL TABLE IF NOT EXISTS mail_search USING fts5(account_id, thread_id, message_id, subject, sender, snippet, body_plain);

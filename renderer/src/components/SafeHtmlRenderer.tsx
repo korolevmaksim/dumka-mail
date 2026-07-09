@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { stripTrackingPixelsFromHtml } from '../../../shared/mailSecurity';
 
 function findNextMediaRule(css: string, from: number): number {
@@ -180,6 +180,7 @@ export function hasRemoteImages(html: string): boolean {
 // not an escape vector.
 export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loadRemoteImages: boolean }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -188,9 +189,12 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
     let timers: any[] = [];
     let docRef: Document | null = null;
     let handleIframeKeyDown: ((e: KeyboardEvent) => void) | null = null;
+    let frameId: number | null = null;
+    setReady(false);
 
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (doc) {
+    const prepareIframe = () => {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!doc) return;
       docRef = doc;
       const imgSrc = loadRemoteImages ? 'data: cid: blob: https: http:' : 'data: cid: blob:';
       const csp = `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src ${imgSrc}; font-src data:; media-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none';`;
@@ -267,9 +271,13 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
       iframe.onload = resizeIframe;
       resizeIframe();
       timers = [50, 300, 1000].map(ms => setTimeout(resizeIframe, ms));
-    }
+      setReady(true);
+    };
+
+    frameId = globalThis.requestAnimationFrame(prepareIframe);
 
     return () => {
+      if (frameId !== null) globalThis.cancelAnimationFrame(frameId);
       timers.forEach(clearTimeout);
       if (docRef && handleIframeKeyDown) {
         docRef.removeEventListener('keydown', handleIframeKeyDown);
@@ -278,11 +286,18 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
   }, [html, loadRemoteImages]);
 
   return (
-    <iframe
-      ref={iframeRef}
-      sandbox="allow-popups allow-same-origin"
-      className="w-full bg-white rounded text-black overflow-hidden"
-      style={{ minHeight: '40px', height: 'auto', display: 'block', border: 'none' }}
-    />
+    <div className="relative min-h-10">
+      {!ready && (
+        <div className="absolute inset-0 animate-pulse rounded bg-[var(--hover-row)] motion-reduce:animate-none" />
+      )}
+      <iframe
+        ref={iframeRef}
+        title="Email message content"
+        sandbox="allow-popups allow-same-origin"
+        aria-busy={!ready}
+        className={`w-full bg-white rounded text-black overflow-hidden transition-opacity ${ready ? 'opacity-100' : 'opacity-0'}`}
+        style={{ minHeight: '40px', height: 'auto', display: 'block', border: 'none' }}
+      />
+    </div>
   );
 }

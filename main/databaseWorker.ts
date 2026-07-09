@@ -5,6 +5,9 @@ import type { MailMessage, MailThread } from '../shared/types';
 type WorkerRequest =
   | { id: number; type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { id: number; type: 'saveThreads'; threads: MailThread[] }
+  | { id: number; type: 'listThreads'; accountIds: string[] }
+  | { id: number; type: 'listMessagesForThread'; accountId: string; threadId: string }
+  | { id: number; type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
   | { id: number; type: 'senderCleanupStats'; accountId: string };
 
 type WorkerResponse =
@@ -51,6 +54,29 @@ parentPort?.on('message', (request: WorkerRequest) => {
 
     if (request.type === 'senderCleanupStats') {
       send({ id: request.id, ok: true, result: MessagesRepo.senderCleanupStats(request.accountId) });
+      return;
+    }
+
+    if (request.type === 'listThreads') {
+      send({ id: request.id, ok: true, result: ThreadsRepo.listMany(request.accountIds) });
+      return;
+    }
+
+    if (request.type === 'listMessagesForThread') {
+      send({
+        id: request.id,
+        ok: true,
+        result: MessagesRepo.listForThread(request.accountId, request.threadId),
+      });
+      return;
+    }
+
+    if (request.type === 'listMessageMetadataForThread') {
+      send({
+        id: request.id,
+        ok: true,
+        result: MessagesRepo.listMetadataForThreads(request.accountId, [request.threadId]).get(request.threadId) || [],
+      });
       return;
     }
 

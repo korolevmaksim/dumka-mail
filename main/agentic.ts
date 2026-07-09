@@ -369,8 +369,33 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
 }
 
 function analyzeThreadMessages(accountId: string, messages: MailMessage[]): void {
+  const bySender = new Map<string, MailMessage[]>();
+  for (const message of messages) {
+    const key = message.senderEmail.trim().toLowerCase();
+    const group = bySender.get(key) || [];
+    group.push(message);
+    bySender.set(key, group);
+  }
+
+  const historyBySender = new Map<string, MailMessage[]>();
+  for (const [key, group] of bySender) {
+    const latest = group.reduce((candidate, message) => (
+      message.receivedAt > candidate.receivedAt ? message : candidate
+    ));
+    historyBySender.set(
+      key,
+      MessagesRepo.listRecentBySender(
+        accountId,
+        latest.senderEmail,
+        latest.receivedAt,
+        Math.min(1000, group.length + 24),
+      ),
+    );
+  }
+
   const insights = messages.map(message => {
-    const previous = MessagesRepo.listRecentBySender(accountId, message.senderEmail, message.receivedAt, 8);
+    const history = historyBySender.get(message.senderEmail.trim().toLowerCase()) || [];
+    const previous = history.filter(candidate => candidate.receivedAt < message.receivedAt).slice(-8);
     return analyzeMessageSecurity(message, previous);
   });
   MessageSecurityRepo.saveMany(insights);
@@ -654,7 +679,7 @@ async function performUnsubscribe(accountId: string, method: UnsubscribeMethod):
 }
 
 async function processThreadInternal(accountId: string, threadId: string): Promise<void> {
-  const thread = ThreadsRepo.list(accountId).find(item => item.id === threadId);
+  const thread = ThreadsRepo.get(accountId, threadId);
   if (!thread) return;
   const messages = MessagesRepo.listForThread(accountId, threadId);
   analyzeThreadMessages(accountId, messages);
@@ -745,9 +770,7 @@ export const AgenticService = {
 
   async runBackgroundPass(maxThreadsPerAccount = 8): Promise<void> {
     for (const account of AccountsRepo.list()) {
-      const recentThreads = ThreadsRepo.list(account.email)
-        .filter(thread => thread.labelIds.some(label => label.toUpperCase() === 'INBOX'))
-        .slice(0, maxThreadsPerAccount);
+      const recentThreads = ThreadsRepo.listRecentInbox(account.email, maxThreadsPerAccount);
 
       for (const thread of recentThreads) {
         await processThreadInternal(account.email, thread.id);
@@ -759,18 +782,14 @@ export const AgenticService = {
     }
   },
 
-  async getThreadInsights(accountId: string, threadId: string): Promise<ThreadAgentInsights> {
-    const messages = MessagesRepo.listForThread(accountId, threadId);
-    if (messages.length > 0) {
-      analyzeThreadMessages(accountId, messages);
-    }
-
+  async getThreadInsights(accountId: string, threadId: string, messages?: MailMessage[]): Promise<ThreadAgentInsights> {
+    const threadMessages = messages || MessagesRepo.listForThread(accountId, threadId);
     return {
       accountId,
       threadId,
       draftSuggestion: AgentDraftsRepo.getReadyForThread(accountId, threadId),
       securityInsights: MessageSecurityRepo.listForThread(accountId, threadId),
-      unsubscribeCandidate: chooseUnsubscribeCandidate(messages),
+      unsubscribeCandidate: chooseUnsubscribeCandidate(threadMessages),
     };
   },
 

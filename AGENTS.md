@@ -43,8 +43,9 @@ Channel naming convention: `db:*` channels are thin wrappers over the repositori
 
 - DB lives at `~/Library/Application Support/dumka-mail/database.sqlite`, opened with WAL + `foreign_keys=ON`. The app migrates the pre-rename `dumka-mail-agy` support directory on first launch when the new directory does not exist.
 - Repositories are plain object literals (`AccountsRepo`, `ThreadsRepo`, `MessagesRepo`, `DraftsRepo`, `RemindersRepo`, `SyncStateRepo`, `ActionLogRepo`, `AIConversationsRepo`, `SearchRepo`, `SettingsRepo`) that map snake_case DB rows ↔ camelCase `shared/types.ts` interfaces. Full-text search uses an FTS5 virtual table `mail_search`.
-- Bulk thread/message writes must go through `main/databaseWorkerClient.ts` (`main/databaseWorker.ts` is a separate Vite Electron entry). Do not call `MessagesRepo.save` directly from IPC handlers or sync loops for large batches; it updates the FTS index synchronously and will freeze the app if run on the main event loop.
+- Bulk thread/message writes and interactive full-mailbox/thread-detail reads must go through `main/databaseWorkerClient.ts` (`main/databaseWorker.ts` is a separate Vite Electron entry). Do not run archive-sized `ThreadsRepo.list`, `MessagesRepo.listForThread`, or `MessagesRepo.save` work from IPC handlers or sync loops on the Electron main event loop.
 - History backfill is owned by `api:runBackfillPage` in `main/index.ts`: it fetches the Gmail page, persists it through the database worker, saves `sync_state`, and returns only progress. The renderer should not shuttle full backfill `MailMessage` pages over IPC.
+- Scheduled Gmail reconciliation is main-process-owned. `runMailboxSyncForAccount` coalesces concurrent requests per account and publishes `MailboxDelta` events after persistence; the renderer applies those deltas to its cached mailbox snapshots instead of running a second 60-second sync loop or reloading the full archive.
 - **Migrations are idempotent, not versioned.** `runMigrations` runs on every launch: `CREATE TABLE IF NOT EXISTS` for base schema, plus an `addColumnIfMissing`-style loop (`tablesInfo`) that `ALTER TABLE ADD COLUMN` for newer columns. There is no `user_version` counter. To evolve the schema, add to the `CREATE` block and/or append to the `tablesInfo` array — never assume a migration runs exactly once.
 
 ### Offline-first action model
@@ -68,6 +69,8 @@ OAuth is a loopback PKCE flow (`startOAuthFlow` spins a temporary `http` server,
 ### Renderer (`renderer/src/`)
 
 State is centralized in a single large React context store, `stores/AppStore.tsx` (~2k lines: accounts, threads, drafts, split inbox, search, action log, AI conversations, settings). The UI is one large `App.tsx` (~3.2k lines). Keyboard-driven UX (Superhuman/Gmail/Apple-Mail shortcut modes) lives in `hooks/useKeyboard.ts`. The split-inbox tabs (Important / Purchases / LinkedIn / Automation / Other) and classification are driven by `shared/classifier.ts`, so inbox-categorization changes belong in `shared/`, not the renderer.
+
+Mailbox navigation is cache-first: `stores/mailboxIndex.ts` classifies a loaded scope once into mailbox/split buckets, and split switches select prepared buckets rather than rescanning the archive. Thread reading initially expands the latest three messages, reveals earlier history in batches, and defers offscreen HTML iframes; preserve these responsiveness boundaries when extending the list or reader.
 
 ## Configuration & secrets (no `.env` in repo)
 

@@ -1,10 +1,9 @@
 import { startTransition, useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem, MailboxDelta, NavigationActivity } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
 import { categorize } from '../../../shared/categoryEngine';
-import { isThreadInMailbox } from '../../../shared/mailboxView';
 import { applyOptimisticThreadReminder, isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
@@ -19,6 +18,14 @@ import {
 } from './mailSearchHelpers';
 import { filterVisibleThreadsCooperatively } from './mailThreadFilter';
 import { IDLE_SEARCH_STATE, type MailSearchState } from './mailSearchStatus';
+import {
+  buildMailboxIndexCooperatively,
+  categoryFromMailboxIndex,
+  replaceThreadInMailboxIndex,
+  threadsForMailboxIndex,
+  type MailboxIndex,
+} from './mailboxIndex';
+import { applyDeltaToThreads } from './mailboxDelta';
 
 export interface SpeedProof {
   cacheReadyMs?: number;
@@ -40,6 +47,33 @@ interface UseMailStateProps {
   labelDefinitions: MailLabelDefinition[];
   mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
+}
+
+interface CachedMailboxSnapshot {
+  accountIds: string[];
+  threads: MailThread[];
+  index: MailboxIndex;
+  indexConfigKey: string;
+}
+
+const IDLE_NAVIGATION_ACTIVITY: NavigationActivity = {
+  phase: 'idle',
+  label: '',
+  scopeKey: null,
+  startedAt: null,
+};
+
+function accountScopeKey(account: Account | null, accounts: Account[]): string | null {
+  if (!account) return null;
+  if (account.id !== 'unified') return account.email;
+  return `unified:${accounts.map(item => item.email).filter(Boolean).sort().join('|')}`;
+}
+
+function accountIdsForScope(account: Account | null, accounts: Account[]): string[] {
+  if (!account) return [];
+  return account.id === 'unified'
+    ? accounts.map(item => item.email).filter(Boolean)
+    : [account.email];
 }
 
 function shouldRefreshInlineCidMetadata(messages: MailMessage[]): boolean {
@@ -90,6 +124,9 @@ export function useMailState({
   const [activeAccount, setActiveAccountState] = useState<Account | null>(null);
   
   const [threads, setThreads] = useState<MailThread[]>([]);
+  const [mailboxIndex, setMailboxIndex] = useState<MailboxIndex | null>(null);
+  const [loadedThreadScopeKey, setLoadedThreadScopeKey] = useState<string | null>(null);
+  const [navigationActivity, setNavigationActivity] = useState<NavigationActivity>(IDLE_NAVIGATION_ACTIVITY);
   const [visibleThreads, setVisibleThreads] = useState<MailThread[]>([]);
   const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
   const [openedThread, setOpenedThread] = useState<MailThread | null>(null);
@@ -99,6 +136,12 @@ export function useMailState({
   const [threadAgentInsights, setThreadAgentInsights] = useState<ThreadAgentInsights | null>(null);
   const [agentInsightsLoading, setAgentInsightsLoading] = useState(false);
   const openedThreadKeyRef = useRef<string | null>(null);
+  const mailboxSnapshotCacheRef = useRef<Map<string, CachedMailboxSnapshot>>(new Map());
+  const mailboxLoadGenerationRef = useRef(0);
+  const threadsRef = useRef<MailThread[]>(threads);
+  const mailboxIndexRef = useRef<MailboxIndex | null>(mailboxIndex);
+  threadsRef.current = threads;
+  mailboxIndexRef.current = mailboxIndex;
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchCoverage] = useState<string>('Local Cache');
@@ -118,6 +161,10 @@ export function useMailState({
 
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
+  const activeScopeKey = accountScopeKey(activeAccount, accounts);
+  const mailboxIndexConfigKey = JSON.stringify({ categorySettings, tabCategories, mutedLabelIdsByAccount });
+  const activeScopeKeyRef = useRef<string | null>(activeScopeKey);
+  activeScopeKeyRef.current = activeScopeKey;
 
   const updateSearchState = useCallback((state: MailSearchState) => {
     if (searchStatusResetRef.current !== null) {
@@ -148,18 +195,44 @@ export function useMailState({
     setOpenedThreadMessagesStatus('idle');
     setThreadAgentInsights(null);
     setAgentInsightsLoading(false);
+    setNavigationActivity(current => (
+      current.phase === 'loadingThread' || current.phase === 'renderingMessages'
+        ? IDLE_NAVIGATION_ACTIVITY
+        : current
+    ));
   };
 
   const startOpenedThreadMessagesLoad = (key: string) => {
     setOpenedThreadMessagesState([]);
     setOpenedThreadMessagesKey(key);
     setOpenedThreadMessagesStatus('loading');
+    setNavigationActivity({
+      phase: 'loadingThread',
+      label: 'Loading conversation…',
+      scopeKey: key,
+      startedAt: performance.now(),
+    });
   };
 
   const acceptOpenedThreadMessages = (key: string, messages: MailMessage[]) => {
     setOpenedThreadMessagesState(messages);
     setOpenedThreadMessagesKey(key);
     setOpenedThreadMessagesStatus('ready');
+    setNavigationActivity(current => (
+      current.scopeKey === key ? IDLE_NAVIGATION_ACTIVITY : current
+    ));
+  };
+
+  const rejectOpenedThreadMessages = (key: string, error: unknown) => {
+    console.error('Failed to load conversation:', error);
+    if (openedThreadKeyRef.current !== key) return;
+    setOpenedThreadMessagesState([]);
+    setOpenedThreadMessagesKey(key);
+    setOpenedThreadMessagesStatus('ready');
+    setThreadAgentInsights(null);
+    setAgentInsightsLoading(false);
+    setNavigationActivity(current => current.scopeKey === key ? IDLE_NAVIGATION_ACTIVITY : current);
+    emitToast({ type: 'error', message: 'Conversation details could not be loaded.' });
   };
 
   const setOpenedThreadMessages = (messages: MailMessage[]) => {
@@ -213,6 +286,10 @@ export function useMailState({
   const setActiveSplit = (split: SplitInboxKind) => {
     setMailboxViewState('inbox');
     setActiveSplitState(split);
+    if (mailboxIndex && !searchQuery.trim()) {
+      setVisibleThreads(threadsForMailboxIndex(mailboxIndex, 'inbox', split));
+      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+    }
     setOpenedThread(null);
     resetOpenedThreadMessages();
     setFocusedThreadId(null);
@@ -221,16 +298,71 @@ export function useMailState({
 
   const setMailboxView = useCallback((view: MailboxView) => {
     setMailboxViewState(view);
+    if (mailboxIndex && !searchQuery.trim()) {
+      setVisibleThreads(threadsForMailboxIndex(mailboxIndex, view, activeSplit));
+      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+    }
     setOpenedThread(null);
     resetOpenedThreadMessages();
     setFocusedThreadId(null);
     setSelectedThreadIds(new Set());
-  }, []);
+  }, [activeSplit, mailboxIndex, searchQuery]);
 
 
   const getThreadCategory = useCallback((t: MailThread): string => (
     categorize(t, categorySettings.builtIn, categorySettings.custom, 'other')
   ), [categorySettings]);
+
+  const patchThread = useCallback((
+    accountId: string,
+    threadId: string,
+    patch: (thread: MailThread) => MailThread,
+  ) => {
+    const previousThreads = threadsRef.current;
+    const threadIndex = previousThreads.findIndex(thread => thread.accountId === accountId && thread.id === threadId);
+    if (threadIndex < 0) return;
+    const previousThread = previousThreads[threadIndex];
+    const nextThread = patch(previousThread);
+    const nextThreads = previousThreads.slice();
+    nextThreads[threadIndex] = nextThread;
+
+    let nextIndex = mailboxIndexRef.current;
+    if (nextIndex) {
+      nextIndex = replaceThreadInMailboxIndex({
+        index: nextIndex,
+        previousThread,
+        nextThread,
+        tabCategories,
+        mutedLabelIdsByAccount,
+        getThreadCategory,
+      });
+    }
+
+    threadsRef.current = nextThreads;
+    mailboxIndexRef.current = nextIndex;
+    setThreads(nextThreads);
+    setMailboxIndex(nextIndex);
+    if (nextIndex) {
+      setSplitCounts(nextIndex.splitCounts);
+      setMailboxCounts(nextIndex.mailboxCounts);
+      const scopeKey = activeScopeKeyRef.current;
+      if (scopeKey) {
+        mailboxSnapshotCacheRef.current.set(scopeKey, {
+          accountIds: accountIdsForScope(activeAccount, accounts),
+          threads: nextThreads,
+          index: nextIndex,
+          indexConfigKey: mailboxIndexConfigKey,
+        });
+      }
+    }
+  }, [
+    accounts,
+    activeAccount,
+    getThreadCategory,
+    mailboxIndexConfigKey,
+    mutedLabelIdsByAccount,
+    tabCategories,
+  ]);
 
   // Load accounts initially
   const loadAccounts = useCallback(async () => {
@@ -246,13 +378,35 @@ export function useMailState({
   }, [loadAccounts]);
 
   const setActiveAccount = useCallback((account: Account | null) => {
+    mailboxLoadGenerationRef.current += 1;
+    const nextScopeKey = accountScopeKey(account, accounts);
+    const cachedCandidate = nextScopeKey ? mailboxSnapshotCacheRef.current.get(nextScopeKey) : null;
+    const cached = cachedCandidate?.indexConfigKey === mailboxIndexConfigKey ? cachedCandidate : null;
     setActiveAccountState(account);
+    setThreads(cached?.threads || []);
+    setMailboxIndex(cached?.index || null);
+    setLoadedThreadScopeKey(cached ? nextScopeKey : null);
+    setVisibleThreads([]);
+    if (cached) {
+      setSplitCounts(cached.index.splitCounts);
+      setMailboxCounts(cached.index.mailboxCounts);
+      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+    } else {
+      setSplitCounts({});
+      setMailboxCounts({ inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
+      setNavigationActivity(account ? {
+        phase: 'loadingAccount',
+        label: 'Loading account…',
+        scopeKey: nextScopeKey,
+        startedAt: performance.now(),
+      } : IDLE_NAVIGATION_ACTIVITY);
+    }
     setOpenedThread(null);
     resetOpenedThreadMessages();
     setFocusedThreadId(null);
     setSearchQuery('');
     setSelectedThreadIds(new Set());
-  }, []);
+  }, [accounts, mailboxIndexConfigKey]);
 
 
   // Listen to open thread requests from push notification click
@@ -288,13 +442,21 @@ export function useMailState({
         setOpenedThread(thread);
         setFocusedThreadId(thread.id);
         startOpenedThreadMessagesLoad(nextThreadKey);
+        setAgentInsightsLoading(true);
 
-        const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
-        if (openedThreadKeyRef.current !== nextThreadKey) return;
-        acceptOpenedThreadMessages(nextThreadKey, msgs);
+        try {
+          const payload = await window.electronAPI.getThreadReaderPayload(thread.accountId, thread.id);
+          if (openedThreadKeyRef.current !== nextThreadKey) return;
+          acceptOpenedThreadMessages(nextThreadKey, payload.messages);
+          setThreadAgentInsights(payload.insights);
+          setAgentInsightsLoading(false);
+        } catch (error) {
+          rejectOpenedThreadMessages(nextThreadKey, error);
+          return;
+        }
 
         if (thread.isUnread && inboxSettings.autoMarkReadOnOpen) {
-          setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, isUnread: false } : t));
+          patchThread(thread.accountId, thread.id, current => ({ ...current, isUnread: false }));
           window.electronAPI.modifyLabels(thread.accountId, thread.id, [], ['UNREAD']).catch(err => {
             console.error('Failed to mark thread as read from notification:', err);
           });
@@ -319,59 +481,145 @@ export function useMailState({
     })();
 
     return unsubscribe;
-  }, [accounts, getThreadCategory, inboxSettings.autoMarkReadOnOpen, setActiveAccount]);
+  }, [accounts, getThreadCategory, inboxSettings.autoMarkReadOnOpen, patchThread, setActiveAccount]);
 
   // Main threads load & sync loop
-  const loadThreadsFromDB = useCallback(async () => {
+  const loadThreadsFromDB = useCallback(async (force = false) => {
     if (!activeAccount) return;
-    const start = performance.now();
-    
-    let list: MailThread[] = [];
-    if (activeAccount.id === 'unified') {
-      const allThreads: MailThread[] = [];
-      for (const acc of accounts) {
-        const accThreads = await window.electronAPI.listThreads(acc.email);
-        allThreads.push(...accThreads);
-      }
-      allThreads.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
-      list = allThreads;
-    } else {
-      list = await window.electronAPI.listThreads(activeAccount.email);
+    const scopeKey = accountScopeKey(activeAccount, accounts);
+    if (!scopeKey) return;
+    const cachedCandidate = mailboxSnapshotCacheRef.current.get(scopeKey);
+    const cached = cachedCandidate?.indexConfigKey === mailboxIndexConfigKey ? cachedCandidate : null;
+    if (cached && !force) {
+      setThreads(cached.threads);
+      setMailboxIndex(cached.index);
+      setSplitCounts(cached.index.splitCounts);
+      setMailboxCounts(cached.index.mailboxCounts);
+      setLoadedThreadScopeKey(scopeKey);
+      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+      return;
     }
+
+    const generation = ++mailboxLoadGenerationRef.current;
+    const start = performance.now();
+    setNavigationActivity({
+      phase: cached ? 'refreshing' : 'loadingAccount',
+      label: cached ? 'Refreshing…' : 'Loading account…',
+      scopeKey,
+      startedAt: performance.now(),
+    });
+
+    const accountIds = accountIdsForScope(activeAccount, accounts);
+    const list = await window.electronAPI.listThreadsForAccounts(accountIds);
+    if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
     
     setThreads(list);
+    setMailboxIndex(null);
+    setLoadedThreadScopeKey(scopeKey);
     
     setSpeedProof((prev: SpeedProof) => ({
       ...prev,
       cacheReadyMs: Math.round(performance.now() - start)
     }));
 
-    const total = list.length;
-    if (total > 0) {
-      const messages = await Promise.all(list.slice(0, 30).map(t => window.electronAPI.listMessagesForThread(t.accountId, t.id)));
-      const detailHydrated = messages.filter(m => m.length > 0).length;
-      const bodiesReady = messages.filter(m => m.some(msg => msg.bodyPlain || msg.bodyHtml)).length;
-      
-      const detailPct = Math.round((detailHydrated / Math.min(total, 30)) * 100);
-      const bodyPct = Math.round((bodiesReady / Math.min(total, 30)) * 100);
-
-      setSpeedProof((prev: SpeedProof) => ({
-        ...prev,
-        detailCacheCoverage: `${detailPct}% detail · ${bodyPct}% bodies`
-      }));
-    }
-  }, [activeAccount, accounts]);
+    setSpeedProof((prev: SpeedProof) => ({
+      ...prev,
+      detailCacheCoverage: 'Bodies load on open',
+    }));
+  }, [activeAccount, accounts, mailboxIndexConfigKey]);
 
   useEffect(() => {
     loadThreadsFromDB();
   }, [loadThreadsFromDB]);
 
   useEffect(() => {
+    if (!activeScopeKey || loadedThreadScopeKey !== activeScopeKey) return;
+
+    const cached = mailboxSnapshotCacheRef.current.get(activeScopeKey);
+    if (cached && cached.threads === threads && cached.indexConfigKey === mailboxIndexConfigKey) {
+      setMailboxIndex(cached.index);
+      setSplitCounts(cached.index.splitCounts);
+      setMailboxCounts(cached.index.mailboxCounts);
+      setNavigationActivity(current => (
+        current.phase === 'loadingThread' ? current : IDLE_NAVIGATION_ACTIVITY
+      ));
+      return;
+    }
+
+    let cancelled = false;
+    setNavigationActivity(current => current.phase === 'loadingThread' ? current : {
+      phase: 'buildingMailbox',
+      label: 'Organizing mail…',
+      scopeKey: activeScopeKey,
+      startedAt: performance.now(),
+    });
+
+    void buildMailboxIndexCooperatively({
+      threads,
+      tabCategories,
+      mutedLabelIdsByAccount,
+      getThreadCategory,
+      isCancelled: () => cancelled,
+    }).then(index => {
+      if (!index || cancelled || activeScopeKeyRef.current !== activeScopeKey) return;
+      setMailboxIndex(index);
+      setSplitCounts(index.splitCounts);
+      setMailboxCounts(index.mailboxCounts);
+      mailboxSnapshotCacheRef.current.set(activeScopeKey, {
+        accountIds: accountIdsForScope(activeAccount, accounts),
+        threads,
+        index,
+        indexConfigKey: mailboxIndexConfigKey,
+      });
+      setNavigationActivity(current => (
+        current.phase === 'loadingThread' ? current : IDLE_NAVIGATION_ACTIVITY
+      ));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accounts,
+    activeAccount,
+    activeScopeKey,
+    getThreadCategory,
+    loadedThreadScopeKey,
+    mailboxIndexConfigKey,
+    mutedLabelIdsByAccount,
+    tabCategories,
+    threads,
+  ]);
+
+  useEffect(() => {
     const unsubscribe = window.electronAPI.onRemindersDue(() => {
-      loadThreadsFromDB();
+      loadThreadsFromDB(true);
     });
     return unsubscribe;
   }, [loadThreadsFromDB]);
+
+  const applyMailboxDelta = useCallback((delta: MailboxDelta) => {
+    if (delta.upserts.length === 0 && delta.deletedThreadIds.length === 0) return;
+    for (const [scopeKey, snapshot] of mailboxSnapshotCacheRef.current) {
+      if (!snapshot.accountIds.includes(delta.accountId)) continue;
+      const nextThreads = applyDeltaToThreads(snapshot.threads, delta);
+      mailboxSnapshotCacheRef.current.delete(scopeKey);
+      if (scopeKey === activeScopeKeyRef.current) {
+        setThreads(nextThreads);
+        setMailboxIndex(null);
+      }
+    }
+
+    if (!accountIdsForScope(activeAccount, accounts).includes(delta.accountId)) return;
+    setNavigationActivity({
+      phase: 'refreshing',
+      label: 'Refreshing…',
+      scopeKey: activeScopeKeyRef.current,
+      startedAt: performance.now(),
+    });
+    setThreads(current => applyDeltaToThreads(current, delta));
+    setMailboxIndex(null);
+  }, [activeAccount, accounts]);
 
   const {
     syncHealth,
@@ -393,7 +641,7 @@ export function useMailState({
     clearCacheOnDisconnect: privacySettings.clearCacheOnDisconnect,
     loadAccounts,
     setActiveAccountState,
-    loadThreadsFromDB,
+    applyMailboxDelta,
     setSpeedProof,
     applyGmailSignatureSyncResult,
   });
@@ -417,13 +665,22 @@ export function useMailState({
         setSyncHealth('syncing');
         setSyncStatusText('Syncing sent mail...');
 
-        await Promise.all(targetAccounts.map(async account => {
+        const sentResults = await Promise.all(targetAccounts.map(async account => {
           const result = await window.electronAPI.syncSent(account.email);
           await window.electronAPI.saveThreads(result.threads);
           await window.electronAPI.saveMessages(result.messages);
+          return { accountId: account.email, threads: result.threads };
         }));
 
-        await loadThreadsFromDB();
+        for (const result of sentResults) {
+          applyMailboxDelta({
+            accountId: result.accountId,
+            upserts: result.threads,
+            deletedThreadIds: [],
+            revision: 0,
+            completedAt: new Date().toISOString(),
+          });
+        }
         sentSyncAtRef.current.set(syncKey, Date.now());
         if (cancelled) return;
         setSyncHealth('ready');
@@ -442,7 +699,7 @@ export function useMailState({
     return () => {
       cancelled = true;
     };
-  }, [mailboxView, activeAccount, accounts, loadThreadsFromDB, setSyncHealth, setSyncStatusText]);
+  }, [mailboxView, activeAccount, accounts, applyMailboxDelta, setSyncHealth, setSyncStatusText]);
 
   // Sync Action Log
   const loadActionLog = useCallback(async () => {
@@ -578,8 +835,20 @@ export function useMailState({
       return;
     }
 
+    if (!searchQuery.trim()) {
+      if (!mailboxIndex) return;
+      publishVisibleThreads(threadsForMailboxIndex(mailboxIndex, mailboxView, activeSplit));
+      updateSearchState(IDLE_SEARCH_STATE);
+      setSearchTopCount(0);
+      setSemanticMatchThreadIds(prev => (prev.size === 0 ? prev : new Set()));
+      return;
+    }
+
     let cancelled = false;
     const isCancelled = () => cancelled;
+    const indexedThreadCategory = (thread: MailThread) => (
+      mailboxIndex ? categoryFromMailboxIndex(mailboxIndex, thread) || getThreadCategory(thread) : getThreadCategory(thread)
+    );
 
     const filterThreads = async () => {
       const start = performance.now();
@@ -609,7 +878,7 @@ export function useMailState({
           tabCategories,
           labelDefinitions,
           mutedLabelIdsByAccount,
-          getThreadCategory,
+          getThreadCategory: indexedThreadCategory,
           isCancelled,
         });
 
@@ -693,6 +962,7 @@ export function useMailState({
     searchQuery,
     activeSplit,
     mailboxView,
+    mailboxIndex,
     activeAccount,
     accounts,
     getThreadCategory,
@@ -701,43 +971,6 @@ export function useMailState({
     publishVisibleThreads,
     updateSearchState,
   ]);
-
-  // Recalculate Split Tabs counters
-  useEffect(() => {
-    const counts: Record<string, number> = {};
-    const nextMailboxCounts: Record<MailboxView, number> = { inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 };
-    const now = new Date();
-    for (const c of tabCategories) {
-      counts[c.id] = 0;
-    }
-
-    for (const t of threads) {
-      if (isThreadInMailbox(t, 'sent', now, { mutedLabelIdsByAccount })) {
-        nextMailboxCounts.sent++;
-      }
-      if (isThreadInMailbox(t, 'trash', now, { mutedLabelIdsByAccount })) {
-        nextMailboxCounts.trash++;
-      }
-      if (isThreadInMailbox(t, 'spam', now, { mutedLabelIdsByAccount })) {
-        nextMailboxCounts.spam++;
-      }
-      if (isThreadInMailbox(t, 'muted', now, { mutedLabelIdsByAccount })) {
-        nextMailboxCounts.muted++;
-      }
-
-      if (!isThreadInMailbox(t, 'inbox', now, { mutedLabelIdsByAccount })) continue;
-      nextMailboxCounts.inbox++;
-      const split = getThreadCategory(t);
-      if (counts[split] !== undefined) {
-        counts[split]++;
-      } else {
-        counts[split] = 1;
-      }
-    }
-
-    setSplitCounts(counts);
-    setMailboxCounts(nextMailboxCounts);
-  }, [threads, getThreadCategory, tabCategories, mutedLabelIdsByAccount]);
 
   // Open Thread Detail
   const openThread = async (thread: MailThread | null) => {
@@ -759,10 +992,19 @@ export function useMailState({
       startOpenedThreadMessagesLoad(nextThreadKey);
     }
 
-    const msgs = await window.electronAPI.listMessagesForThread(thread.accountId, thread.id);
-    if (openedThreadKeyRef.current !== nextThreadKey) return;
-    acceptOpenedThreadMessages(nextThreadKey, msgs);
-    void refreshThreadAgentInsights(thread);
+    setAgentInsightsLoading(true);
+    let msgs: MailMessage[];
+    try {
+      const payload = await window.electronAPI.getThreadReaderPayload(thread.accountId, thread.id);
+      if (openedThreadKeyRef.current !== nextThreadKey) return;
+      msgs = payload.messages;
+      acceptOpenedThreadMessages(nextThreadKey, msgs);
+      setThreadAgentInsights(payload.insights);
+      setAgentInsightsLoading(false);
+    } catch (error) {
+      rejectOpenedThreadMessages(nextThreadKey, error);
+      return;
+    }
 
     if (shouldRefreshInlineCidMetadata(msgs)) {
       void (async () => {
@@ -868,9 +1110,9 @@ export function useMailState({
         }
       }
     } else if (kind === 'markRead') {
-      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, isUnread: false } : t));
+      if (targetThreadId) patchThread(targetAccountId, targetThreadId, current => ({ ...current, isUnread: false }));
     } else if (kind === 'markUnread') {
-      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, isUnread: true } : t));
+      if (targetThreadId) patchThread(targetAccountId, targetThreadId, current => ({ ...current, isUnread: true }));
     } else if (kind === 'moveToTrash') {
       setThreads(prev => prev.map(t => (
         t.id === targetThreadId && t.accountId === targetAccountId
@@ -978,7 +1220,7 @@ export function useMailState({
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId, kind, payloadJson || undefined);
           } else if (kind === 'restoreInbox' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], [], actionId);
-            loadThreadsFromDB();
+            loadThreadsFromDB(true);
           } else if (kind === 'markRead' && targetThreadId) {
             res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
           } else if (kind === 'markUnread' && targetThreadId) {
@@ -1032,7 +1274,7 @@ export function useMailState({
         await window.electronAPI.saveActionLog(log);
         loadActionLog();
 
-        loadThreadsFromDB();
+        loadThreadsFromDB(true);
         if (propagateReviewedFailure) throw err;
         return { accepted: false, offline: false, actionId, errorMessage: err.message };
       }
@@ -1243,6 +1485,7 @@ export function useMailState({
     mailboxView,
     setMailboxView,
     mailboxCounts,
+    navigationActivity,
     activeSplit,
     setActiveSplit,
     splitCounts,

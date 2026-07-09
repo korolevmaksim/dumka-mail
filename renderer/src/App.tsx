@@ -9,7 +9,7 @@ import {
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
 import { ToastHost } from './components/Toast';
-import { MessageCard } from './components/MessageCard';
+import { ThreadMessageList } from './components/ThreadMessageList';
 import { AgenticThreadPanel } from './components/AgenticThreadPanel';
 import { ThreadLabelMoveMenu } from './components/ThreadLabelMoveMenu';
 import { SettingsPanel } from './components/settings/SettingsPanel';
@@ -1431,19 +1431,12 @@ function AppContent() {
 
                         {/* Messages Body */}
                         <AgenticThreadPanel />
-                        <div className="flex-1 flex flex-col gap-6 select-text">
-                          {store.openedThreadMessages.length === 0 ? (
-                            <div className="text-[var(--text-secondary)] text-center py-10">
-                              Loading message details…
-                            </div>
-                          ) : (
-                            store.openedThreadMessages.map((msg) => (
-                              <div key={msg.id} data-message-id={msg.id}>
-                                <MessageCard msg={msg} defaultLoadImages={store.settings.privacy.loadRemoteImages} />
-                              </div>
-                            ))
-                          )}
-                        </div>
+                        <ThreadMessageList
+                          threadKey={`${store.openedThread.accountId}:${store.openedThread.id}`}
+                          messages={store.openedThreadMessages}
+                          status={store.openedThreadMessagesStatus}
+                          defaultLoadImages={store.settings.privacy.loadRemoteImages}
+                        />
 
                         {/* Inline Draft Reply Affordance */}
                         <InlineReplyComposer />

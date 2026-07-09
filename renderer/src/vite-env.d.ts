@@ -25,6 +25,7 @@ import {
   MailLabelDefinition,
   MailMessage,
   MailboxSearchSource,
+  MailboxDelta,
   MailThread,
   OnboardAccountResult,
   OperatorHomeStateSnapshot,
@@ -46,7 +47,8 @@ import {
   MCPServerConfig,
   SemanticSearchOutcome,
   SenderCleanupStat,
-  ThreadAgentInsights
+  ThreadAgentInsights,
+  ThreadReaderPayload
 } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 import type { AutoUpdateStatus } from '../../shared/autoUpdate';
@@ -60,11 +62,13 @@ export interface IElectronAPI {
 
   // Threads
   listThreads: (accountId: string) => Promise<MailThread[]>;
+  listThreadsForAccounts: (accountIds: string[]) => Promise<MailThread[]>;
   saveThreads: (threads: MailThread[]) => Promise<void>;
   deleteThread: (accountId: string, threadId: string) => Promise<void>;
 
   // Messages
   listMessagesForThread: (accountId: string, threadId: string) => Promise<MailMessage[]>;
+  getThreadReaderPayload: (accountId: string, threadId: string) => Promise<ThreadReaderPayload>;
   saveMessages: (messages: MailMessage[], options?: { notifyOfNew?: boolean }) => Promise<void>;
   listEmailSuggestions: (accountId?: string, limit?: number) => Promise<EmailAddressSuggestion[]>;
   getGoogleIntegrationStatus: (accountId: string) => Promise<GoogleIntegrationStatus>;
@@ -129,6 +133,7 @@ export interface IElectronAPI {
   resolveReplyPipelineItem: (accountId: string, threadId: string) => Promise<ReplyPipelineState>;
 
   // Gmail sync & mutations
+  syncMailboxNow: (accountIds: string[]) => Promise<MailboxDelta[]>;
   syncInbox: (email: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;
   syncSent: (email: string) => Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;
   syncIncremental: (email: string, startHistoryId: string) => Promise<{ updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string }>;
@@ -210,6 +215,7 @@ export interface IElectronAPI {
   onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => () => void;
   onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
+  onMailboxDelta: (callback: (delta: MailboxDelta) => void) => () => void;
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
   onExecuteCommand: (callback: (cmdId: string) => void) => () => void;

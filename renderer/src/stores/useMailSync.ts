@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailSyncCompletion } from '../../../shared/types';
+import { Account, GmailSignatureSyncResult, MailboxDelta, MailSyncCompletion } from '../../../shared/types';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 
@@ -9,7 +9,7 @@ interface UseMailSyncProps {
   clearCacheOnDisconnect: boolean;
   loadAccounts: () => Promise<void>;
   setActiveAccountState: (acc: Account | null) => void;
-  loadThreadsFromDB: () => Promise<void>;
+  applyMailboxDelta: (delta: MailboxDelta) => void;
   setSpeedProof: React.Dispatch<React.SetStateAction<SpeedProof>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
 }
@@ -20,7 +20,7 @@ export function useMailSync({
   clearCacheOnDisconnect,
   loadAccounts,
   setActiveAccountState,
-  loadThreadsFromDB,
+  applyMailboxDelta,
   setSpeedProof,
   applyGmailSignatureSyncResult,
 }: UseMailSyncProps) {
@@ -61,8 +61,18 @@ export function useMailSync({
     await triggerSilentBackfill();
   }, [triggerSilentBackfill]);
 
-  // Sync Inbox logic
-  const runSync = useCallback(async (silent = false, forceFull = false, syncAll = false) => {
+  useEffect(() => window.electronAPI.onMailboxDelta(delta => {
+    applyMailboxDelta(delta);
+    setLastSuccessfulSync(previous => ({
+      revision: Math.max(previous?.revision || 0, delta.revision),
+      accountIds: Array.from(new Set([...(previous?.accountIds || []), delta.accountId])),
+      completedAt: delta.completedAt,
+    }));
+  }), [applyMailboxDelta]);
+
+  // Main owns scheduled Gmail reconciliation. The renderer only requests a
+  // manual pass and applies the resulting mailbox deltas.
+  const runSync = useCallback(async (silent = false) => {
     if (isSyncingRef.current || !activeAccount) return;
     isSyncingRef.current = true;
     setIsSyncing(true);
@@ -74,88 +84,14 @@ export function useMailSync({
 
     try {
       const start = performance.now();
-      const targetAccounts = (syncAll || activeAccount.id === 'unified') ? accounts : [activeAccount];
+      const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
       const targetAccountIds = targetAccounts.map(account => account.email.trim().toLowerCase()).filter(Boolean);
-
-      for (const acc of targetAccounts) {
-        const syncState = await window.electronAPI.getSyncState(acc.email);
-        
-        let syncResult;
-        if (syncState && syncState.historyId && !forceFull) {
-          try {
-            const incResult = await window.electronAPI.syncIncremental(acc.email, syncState.historyId);
-            
-            for (const tid of incResult.updatedThreadIds) {
-              try {
-                const msgs = await window.electronAPI.fetchThreadDetail(acc.email, tid);
-                await window.electronAPI.saveMessages(msgs, { notifyOfNew: true });
-
-                if (msgs.length > 0) {
-                  const lastMsg = msgs[msgs.length - 1];
-                  const senderNames = Array.from(new Set(msgs.map(m => m.senderName || m.senderEmail)));
-                  const thread = {
-                    id: tid,
-                    accountId: acc.email,
-                    subject: lastMsg.subject || '',
-                    snippet: lastMsg.snippet || '',
-                    lastMessageAt: lastMsg.receivedAt,
-                    senderNames,
-                    senderEmail: lastMsg.senderEmail,
-                    labelIds: Array.from(new Set(msgs.flatMap(m => m.labelIds))),
-                    hasAttachments: msgs.some(m => m.hasAttachments),
-                    isUnread: msgs.some(m => m.isUnread)
-                  };
-                  await window.electronAPI.saveThreads([thread]);
-                }
-              } catch (e: any) {
-                console.warn(`Failed to fetch thread detail for ${tid} during incremental sync:`, e);
-                if (e.message?.includes('not found') || e.message?.includes('404')) {
-                  await window.electronAPI.deleteThread(acc.email, tid);
-                }
-              }
-            }
-            for (const tid of incResult.deletedThreadIds) {
-              await window.electronAPI.deleteThread(acc.email, tid);
-            }
-
-            await window.electronAPI.saveSyncState({
-              accountId: acc.email,
-              historyId: incResult.historyId,
-              lastFullSyncAt: syncState.lastFullSyncAt,
-              historyBackfillPagesSynced: syncState.historyBackfillPagesSynced,
-              historyBackfillThreadsSynced: syncState.historyBackfillThreadsSynced,
-              historyBackfillPageToken: syncState.historyBackfillPageToken
-            });
-          } catch (e: any) {
-            if (e.message === 'HISTORY_EXPIRED') {
-              syncResult = await window.electronAPI.syncInbox(acc.email);
-            } else {
-              throw e;
-            }
-          }
-        } else {
-          syncResult = await window.electronAPI.syncInbox(acc.email);
-        }
-
-        if (syncResult) {
-          await window.electronAPI.saveThreads(syncResult.threads);
-          await window.electronAPI.saveMessages(syncResult.messages);
-          await window.electronAPI.saveSyncState({
-            accountId: acc.email,
-            historyId: syncResult.historyId,
-            lastFullSyncAt: new Date().toISOString(),
-            historyBackfillPagesSynced: 0,
-            historyBackfillThreadsSynced: 0
-          });
-        }
-      }
-
-      await loadThreadsFromDB();
-      setLastSuccessfulSync(previous => ({
-        revision: (previous?.revision || 0) + 1,
+      const deltas = await window.electronAPI.syncMailboxNow(targetAccountIds);
+      setLastSuccessfulSync({
+        revision: deltas.reduce((max, delta) => Math.max(max, delta.revision), 0),
         accountIds: targetAccountIds,
         completedAt: new Date().toISOString(),
-      }));
+      });
       setSyncHealth('ready');
       setSyncStatusText('Ready');
       setSpeedProof((prev: SpeedProof) => ({
@@ -174,25 +110,10 @@ export function useMailSync({
       isSyncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [activeAccount, loadThreadsFromDB, accounts, triggerSilentBackfill, setSpeedProof]);
-
-  useEffect(() => {
-    if (!activeAccount) return;
-    // Do not force a full startup sync: it would advance the Gmail history cursor
-    // before incremental sync can notify about mail that arrived while the app was closed.
-    runSync(false, false);
-
-    const intervalId = setInterval(() => {
-      runSync(true, false, true);
-    }, 60000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [activeAccount, runSync]);
+  }, [activeAccount, accounts, triggerSilentBackfill, setSpeedProof]);
 
   const triggerSyncManual = useCallback(async () => {
-    await runSync(false, true);
+    await runSync(false);
   }, [runSync]);
 
   const onboardAccount = async (emailHint: string) => {

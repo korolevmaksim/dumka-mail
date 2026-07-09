@@ -11,6 +11,7 @@ import {
   ContactCard,
   ContactGroup,
   MailLabelDefinition,
+  NavigationActivity,
   GoogleIntegrationStatus,
   MailThread,
   MailMessage,
@@ -363,6 +364,7 @@ interface AppStoreContextType {
   mailboxView: MailboxView;
   setMailboxView: (view: MailboxView) => void;
   mailboxCounts: Record<MailboxView, number>;
+  navigationActivity: NavigationActivity;
   activeSplit: SplitInboxKind;
   setActiveSplit: (s: SplitInboxKind) => void;
   splitCounts: Record<string, number>;
