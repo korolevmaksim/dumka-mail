@@ -112,6 +112,22 @@ async function withIsolatedDatabase<T>(
 }
 
 describe('MessagesRepo.senderCleanupStats', () => {
+  repositoryIt('returns the newest bounded messages for a sender case-insensitively', async () => {
+    await withIsolatedDatabase(async ({ MessagesRepo }) => {
+      MessagesRepo.save([
+        message({ id: 'latest-1', senderEmail: 'News@Example.COM', receivedAt: isoDaysAgo(1) }),
+        message({ id: 'latest-2', senderEmail: 'news@example.com', receivedAt: isoDaysAgo(2) }),
+        message({ id: 'latest-3', senderEmail: 'news@example.com', receivedAt: isoDaysAgo(3) }),
+        message({ id: 'other-1', senderEmail: 'other@example.com', receivedAt: isoDaysAgo(0) }),
+      ]);
+
+      expect(MessagesRepo.listLatestBySender('me@example.com', ' NEWS@example.com ', 2).map(item => item.id)).toEqual([
+        'latest-1',
+        'latest-2',
+      ]);
+    });
+  });
+
   repositoryIt('groups senders case-insensitively with counts, unread and the 30-day window', async () => {
     await withIsolatedDatabase(async ({ MessagesRepo, ThreadsRepo }) => {
       const newest = isoDaysAgo(5);
@@ -324,6 +340,62 @@ describe('MessagesRepo.senderCleanupStats', () => {
       }
       MessagesRepo.save(bulk);
       expect(MessagesRepo.senderCleanupStats('me@example.com')).toHaveLength(200);
+    });
+  });
+
+  repositoryIt('persists account-scoped Cleanup exclusions with normalized sender identity', async () => {
+    await withIsolatedDatabase(async ({ CleanupExclusionsRepo }) => {
+      const saved = CleanupExclusionsRepo.save({
+        accountId: 'me@example.com',
+        senderEmail: ' News@Example.COM ',
+        senderName: 'Example News',
+        excludedAt: '2026-07-10T12:00:00.000Z',
+      });
+      CleanupExclusionsRepo.save({
+        accountId: 'other@example.com',
+        senderEmail: 'news@example.com',
+        senderName: 'Other account news',
+        excludedAt: '2026-07-10T13:00:00.000Z',
+      });
+
+      expect(saved.senderEmail).toBe('news@example.com');
+      expect(CleanupExclusionsRepo.list(['me@example.com'])).toEqual([saved]);
+      expect(CleanupExclusionsRepo.list(['me@example.com', 'other@example.com'])).toHaveLength(2);
+
+      CleanupExclusionsRepo.delete('me@example.com', ' NEWS@EXAMPLE.COM ');
+      expect(CleanupExclusionsRepo.list(['me@example.com'])).toEqual([]);
+      expect(CleanupExclusionsRepo.list(['other@example.com'])).toHaveLength(1);
+    });
+  });
+
+  repositoryIt('filters explicit Cleanup exclusions before results and restores them after deletion', async () => {
+    await withIsolatedDatabase(async ({ CleanupExclusionsRepo, MessagesRepo }) => {
+      MessagesRepo.save([
+        message({
+          senderEmail: 'keep@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+        message({
+          senderEmail: 'show@example.com',
+          headers: [{ name: 'List-Unsubscribe', value: '<https://example.com/unsub>' }],
+        }),
+      ]);
+
+      CleanupExclusionsRepo.save({
+        accountId: 'me@example.com',
+        senderEmail: 'KEEP@example.com',
+        senderName: 'Keep',
+        excludedAt: new Date().toISOString(),
+      });
+      expect(MessagesRepo.senderCleanupStats('me@example.com').map(item => item.senderEmail)).toEqual([
+        'show@example.com',
+      ]);
+
+      CleanupExclusionsRepo.delete('me@example.com', 'keep@example.com');
+      expect(MessagesRepo.senderCleanupStats('me@example.com').map(item => item.senderEmail).sort()).toEqual([
+        'keep@example.com',
+        'show@example.com',
+      ]);
     });
   });
 

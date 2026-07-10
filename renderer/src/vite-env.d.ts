@@ -15,6 +15,7 @@ import {
   CalendarFreeBusyRequest,
   CalendarFreeBusyResult,
   CalendarInvite,
+  CleanupSenderExclusion,
   ContactCard,
   ContactGroup,
   Draft,
@@ -98,6 +99,11 @@ export interface IElectronAPI {
   // Action Log
   listActionLog: (accountId: string) => Promise<MailActionLog[]>;
   saveActionLog: (log: MailActionLog) => Promise<void>;
+
+  // Cleanup exclusions
+  listCleanupExclusions: (accountIds: string[]) => Promise<CleanupSenderExclusion[]>;
+  saveCleanupExclusion: (exclusion: CleanupSenderExclusion) => Promise<CleanupSenderExclusion>;
+  deleteCleanupExclusion: (accountId: string, senderEmail: string) => Promise<void>;
 
   // Operator Home state
   getOperatorHomeState: (scopeId: string) => Promise<OperatorHomeStateSnapshot | null>;
@@ -195,6 +201,7 @@ export interface IElectronAPI {
   searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
   unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string) => Promise<{ method: string; archived: boolean; senderEmail?: string | null }>;
   listCleanupSenderStats: (accountId: string) => Promise<SenderCleanupStat[]>;
+  listRecentSenderMessages: (accountId: string, senderEmail: string, limit?: number) => Promise<MailMessage[]>;
   loadAIConfig: () => Promise<Record<string, string>>;
   saveAIConfig: (config: Record<string, string>) => Promise<void>;
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;

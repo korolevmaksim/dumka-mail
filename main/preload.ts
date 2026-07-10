@@ -8,6 +8,7 @@ import {
   CalendarEventUpdateInput,
   CalendarFreeBusyRequest,
   CalendarInvite,
+  CleanupSenderExclusion,
   ContactCard,
   ContactGroup,
   MailLabelDefinition,
@@ -83,6 +84,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Action Log
   listActionLog: (accountId: string) => ipcRenderer.invoke('db:listActionLog', accountId),
   saveActionLog: (log: MailActionLog) => ipcRenderer.invoke('db:saveActionLog', log),
+
+  // Cleanup exclusions
+  listCleanupExclusions: (accountIds: string[]): Promise<CleanupSenderExclusion[]> => ipcRenderer.invoke('db:listCleanupExclusions', accountIds),
+  saveCleanupExclusion: (exclusion: CleanupSenderExclusion): Promise<CleanupSenderExclusion> => ipcRenderer.invoke('db:saveCleanupExclusion', exclusion),
+  deleteCleanupExclusion: (accountId: string, senderEmail: string): Promise<void> => ipcRenderer.invoke('db:deleteCleanupExclusion', accountId, senderEmail),
 
   // Operator Home state
   getOperatorHomeState: (scopeId: string): Promise<OperatorHomeStateSnapshot | null> => ipcRenderer.invoke('db:getOperatorHomeState', scopeId),
@@ -180,6 +186,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchSemantic: (accountId: string, query: string, limit?: number) => ipcRenderer.invoke('api:searchSemantic', accountId, query, limit),
   unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string) => ipcRenderer.invoke('api:unsubscribeThread', email, threadId, actionId, sourceMessageId),
   listCleanupSenderStats: (accountId: string) => ipcRenderer.invoke('api:listCleanupSenderStats', accountId),
+  listRecentSenderMessages: (accountId: string, senderEmail: string, limit = 3): Promise<MailMessage[]> => ipcRenderer.invoke('api:listRecentSenderMessages', accountId, senderEmail, limit),
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),
   saveAIConfig: (config: Record<string, string>) => ipcRenderer.invoke('api:saveAIConfig', config),
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),

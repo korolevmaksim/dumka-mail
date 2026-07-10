@@ -1304,6 +1304,14 @@ export interface SenderCleanupStat {
   postUnsubscribeMessageCount?: number;
 }
 
+export interface CleanupSenderExclusion {
+  accountId: AccountID;
+  /** Lower-cased sender identity used by Cleanup grouping. */
+  senderEmail: string;
+  senderName: string;
+  excludedAt: string;
+}
+
 export interface SemanticSearchResult {
   threadId: ThreadID;
   messageId: MessageID;

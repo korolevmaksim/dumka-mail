@@ -1,46 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Archive, Eraser, MailMinus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import type { SenderCleanupStat } from '../../../shared/types';
+import { Eraser, ListFilter, RefreshCw, X } from 'lucide-react';
+import type { CleanupSenderExclusion, SenderCleanupStat } from '../../../shared/types';
 import {
   CLEANUP_ARCHIVE_BATCH_LIMIT,
   isCleanupSenderActionable,
   selectArchiveOldCandidates,
-  suggestCleanupAction,
-  type CleanupSuggestedAction,
 } from '../../../shared/cleanup';
 import { buildCleanupArchiveItem, buildCleanupUnsubscribeItem } from '../../../shared/agentPlan';
 import { parseUnsubscribeCandidate } from '../../../shared/mailSecurity';
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
+import { CleanupExcludedSenders } from './CleanupExcludedSenders';
+import { CleanupSenderPreview } from './CleanupSenderPreview';
+import { useCleanupExclusions } from '../hooks/useCleanupExclusions';
+import { CleanupSenderCard } from './CleanupSenderCard';
 
 const PRIVACY_NOTE = 'Computed locally from your cached mail. Nothing leaves your machine until you approve an action.';
 const UNSUBSCRIBE_THREAD_PROBE_LIMIT = 5;
 const EMPTY_ACTIONABLE =
   'Nothing to clean up right now. Senders appear here when they have old Inbox mail you can archive, or a List-Unsubscribe header.';
-
-const RISK_TONE: Record<'low' | 'medium' | 'high', string> = {
-  low: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600',
-  medium: 'border-[var(--warning)]/30 bg-[var(--warning)]/10 text-[var(--warning)]',
-  high: 'border-[var(--danger)]/30 bg-[var(--danger)]/10 text-[var(--danger)]',
-};
-
-const SUGGESTION_META: Record<Exclude<CleanupSuggestedAction, 'none'>, { label: string; tone: string }> = {
-  review: { label: 'Review', tone: 'border-[var(--danger)]/30 bg-[var(--danger)]/10 text-[var(--danger)]' },
-  unsubscribe: { label: 'Unsubscribe', tone: 'border-[var(--warning)]/30 bg-[var(--warning)]/10 text-[var(--warning)]' },
-  archiveOld: { label: 'Archive old', tone: 'border-[var(--accent)]/30 bg-[var(--accent)]/10 text-[var(--accent)]' },
-};
-
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return '';
-  return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function senderGroupKey(accountId: string, senderEmail: string): string {
   return `${accountId}:${senderEmail}`;
@@ -52,6 +30,10 @@ export function CleanupPanel() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [unsubscribeBusyKey, setUnsubscribeBusyKey] = useState<string | null>(null);
+  const [exclusionsOpen, setExclusionsOpen] = useState(false);
+  const [previewStat, setPreviewStat] = useState<SenderCleanupStat | null>(null);
+  const closeExclusions = useCallback(() => setExclusionsOpen(false), []);
+  const closePreview = useCallback(() => setPreviewStat(null), []);
 
   const accountsToLoad = useMemo(() => {
     if (!store.activeAccount) return [];
@@ -115,6 +97,20 @@ export function CleanupPanel() {
     return groups;
   }, [store.threads]);
 
+  const accountIds = useMemo(() => accountsToLoad.map(account => account.email), [accountsToLoad]);
+  const handleExcluded = useCallback((exclusion: CleanupSenderExclusion) => {
+    const key = senderGroupKey(exclusion.accountId, exclusion.senderEmail);
+    setStats(current => current?.filter(item => senderGroupKey(item.accountId, item.senderEmail) !== key) || current);
+    setPreviewStat(current => current && senderGroupKey(current.accountId, current.senderEmail) === key ? null : current);
+  }, []);
+  const {
+    exclusions,
+    excludeBusyKey,
+    restoreBusyKey,
+    excludeSender,
+    restoreExclusion,
+  } = useCleanupExclusions({ accountIds, refreshStats: loadStats, onExcluded: handleExcluded });
+
   const handleArchiveOld = async (stat: SenderCleanupStat) => {
     let candidates = selectArchiveOldCandidates(
       senderThreadGroups.get(senderGroupKey(stat.accountId, stat.senderEmail)) || [],
@@ -173,8 +169,23 @@ export function CleanupPanel() {
     }
   };
 
+  const previewContext = useMemo(() => {
+    if (!previewStat) return null;
+    const archiveCandidates = selectArchiveOldCandidates(
+      senderThreadGroups.get(senderGroupKey(previewStat.accountId, previewStat.senderEmail)) || [],
+    );
+    const canArchive = archiveCandidates.length > 0 || previewStat.archiveableOldCount > 0;
+    return {
+      canArchive,
+      canUnsubscribe: previewStat.hasUnsubscribeHeader,
+      archiveCount: archiveCandidates.length > 0
+        ? archiveCandidates.length
+        : Math.min(previewStat.archiveableOldCount, CLEANUP_ARCHIVE_BATCH_LIMIT),
+    };
+  }, [previewStat, senderThreadGroups]);
+
   return (
-    <div className="flex-1 flex flex-col bg-[var(--panel-bg)] h-full overflow-hidden select-none text-[calc(11px*var(--font-scale))]">
+    <div className="relative flex-1 flex flex-col bg-[var(--panel-bg)] h-full overflow-hidden select-none text-[calc(11px*var(--font-scale))]">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
         <div className="min-w-0 flex flex-col gap-0.5">
@@ -184,6 +195,14 @@ export function CleanupPanel() {
           <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{PRIVACY_NOTE}</span>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setExclusionsOpen(true)}
+            title="Manage excluded Cleanup senders"
+            className="flex items-center gap-1 rounded px-1.5 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+          >
+            <ListFilter className="h-3.5 w-3.5" /> Excluded ({exclusions.length})
+          </button>
           <button
             type="button"
             onClick={() => void loadStats()}
@@ -268,97 +287,54 @@ export function CleanupPanel() {
                 const archiveCount = archiveCandidates.length > 0
                   ? archiveCandidates.length
                   : Math.min(stat.archiveableOldCount, CLEANUP_ARCHIVE_BATCH_LIMIT);
-                const suggestion = suggestCleanupAction({
-                  ...stat,
-                  archiveableOldCount: Math.max(stat.archiveableOldCount, archiveCandidates.length),
-                });
                 const busyKey = `${stat.accountId}:${stat.senderEmail}`;
 
                 return (
-                  <article key={busyKey} className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex flex-col gap-0.5">
-                        <span className="truncate font-semibold text-[var(--text-primary)]">
-                          {stat.senderName || stat.senderEmail}
-                        </span>
-                        <span className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                          {stat.senderEmail}
-                        </span>
-                      </div>
-                      {suggestion !== 'none' && (
-                        <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[calc(8px*var(--font-scale))] font-semibold uppercase ${SUGGESTION_META[suggestion].tone}`}>
-                          {SUGGESTION_META[suggestion].label}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                      <span>{stat.messageCount} message{stat.messageCount === 1 ? '' : 's'}</span>
-                      <span>{stat.recent30dCount}/30d</span>
-                      <span>{stat.unreadCount} unread</span>
-                      <span>Last activity {formatDate(stat.lastReceivedAt)}</span>
-                      {stat.attachmentBytes > 0 && <span>{formatBytes(stat.attachmentBytes)} attachments</span>}
-                    </div>
-
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      {stat.trackerCount > 0 && (
-                        <span className="flex items-center gap-1 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--warning)]">
-                          <ShieldAlert className="h-3 w-3" /> {stat.trackerCount} tracker{stat.trackerCount === 1 ? '' : 's'} among analyzed
-                        </span>
-                      )}
-                      {stat.maxRiskLevel && (
-                        <span className={`rounded border px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-semibold uppercase ${RISK_TONE[stat.maxRiskLevel]}`}>
-                          {stat.maxRiskLevel} risk
-                        </span>
-                      )}
-                      {stat.previouslyUnsubscribed && (
-                        <span
-                          className="rounded border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--danger)]"
-                          title="This sender kept mailing after a previous in-app unsubscribe (past the 7-day grace window)."
-                        >
-                          Still sending
-                          {typeof stat.postUnsubscribeMessageCount === 'number' && stat.postUnsubscribeMessageCount > 0
-                            ? ` (${stat.postUnsubscribeMessageCount})`
-                            : ''}
-                        </span>
-                      )}
-                      {canUnsubscribe && (
-                        <span className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
-                          Unsubscribe available
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="mt-2 flex items-center gap-1.5">
-                      {canArchive && (
-                        <button
-                          type="button"
-                          onClick={() => void handleArchiveOld(stat)}
-                          title={`Add up to ${CLEANUP_ARCHIVE_BATCH_LIMIT} archive proposals to the review queue`}
-                          className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]"
-                        >
-                          <Archive className="h-3 w-3" /> Archive old ({archiveCount})
-                        </button>
-                      )}
-                      {canUnsubscribe && (
-                        <button
-                          type="button"
-                          disabled={unsubscribeBusyKey === busyKey}
-                          onClick={() => void handleUnsubscribe(stat)}
-                          title="Add an unsubscribe proposal to the review queue"
-                          className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <MailMinus className="h-3 w-3" /> {unsubscribeBusyKey === busyKey ? 'Resolving…' : 'Unsubscribe'}
-                        </button>
-                      )}
-                    </div>
-                  </article>
+                  <CleanupSenderCard
+                    key={busyKey}
+                    stat={stat}
+                    archiveCount={archiveCount}
+                    effectiveArchiveableOldCount={Math.max(stat.archiveableOldCount, archiveCandidates.length)}
+                    canArchive={canArchive}
+                    canUnsubscribe={canUnsubscribe}
+                    unsubscribeBusy={unsubscribeBusyKey === busyKey}
+                    excludeBusy={excludeBusyKey === busyKey}
+                    onPreview={() => setPreviewStat(stat)}
+                    onArchive={() => void handleArchiveOld(stat)}
+                    onUnsubscribe={() => void handleUnsubscribe(stat)}
+                    onExclude={() => void excludeSender(stat)}
+                  />
                 );
               })}
             </section>
           );
         })}
       </div>
+
+      {exclusionsOpen && (
+        <CleanupExcludedSenders
+          exclusions={exclusions}
+          restoringKey={restoreBusyKey}
+          showAccount={accountsToLoad.length > 1}
+          onRestore={exclusion => void restoreExclusion(exclusion)}
+          onClose={closeExclusions}
+        />
+      )}
+
+      {previewStat && previewContext && (
+        <CleanupSenderPreview
+          stat={previewStat}
+          canArchive={previewContext.canArchive}
+          canUnsubscribe={previewContext.canUnsubscribe}
+          archiveCount={previewContext.archiveCount}
+          unsubscribeBusy={unsubscribeBusyKey === senderGroupKey(previewStat.accountId, previewStat.senderEmail)}
+          excludeBusy={excludeBusyKey === senderGroupKey(previewStat.accountId, previewStat.senderEmail)}
+          onArchive={() => void handleArchiveOld(previewStat)}
+          onUnsubscribe={() => void handleUnsubscribe(previewStat)}
+          onExclude={() => void excludeSender(previewStat)}
+          onClose={closePreview}
+        />
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   AccountIntegrationsRepo,
   AccountsRepo,
   CalendarEventsRepo,
+  CleanupExclusionsRepo,
   ContactGroupsRepo,
   ContactsRepo,
   DraftsRepo,
@@ -63,6 +64,7 @@ import type {
   AttachmentSaveResult,
   CalendarAttendeeResponse,
   CalendarInvite,
+  CleanupSenderExclusion,
   DailyBriefing,
   FollowUpRadarListOptions,
   MailMessage,
@@ -884,6 +886,10 @@ registerSecureHandler('db:saveSyncState', (_, state) => SyncStateRepo.save(state
 registerSecureHandler('db:listActionLog', (_, accountId) => ActionLogRepo.list(accountId));
 registerSecureHandler('db:saveActionLog', (_, log) => ActionLogRepo.save(log));
 
+registerSecureHandler('db:listCleanupExclusions', (_, accountIds: string[]) => CleanupExclusionsRepo.list(accountIds));
+registerSecureHandler('db:saveCleanupExclusion', (_, exclusion: CleanupSenderExclusion) => CleanupExclusionsRepo.save(exclusion));
+registerSecureHandler('db:deleteCleanupExclusion', (_, accountId: string, senderEmail: string) => CleanupExclusionsRepo.delete(accountId, senderEmail));
+
 registerSecureHandler('db:getOperatorHomeState', (_, scopeId: string) => OperatorHomeStateRepo.get(scopeId));
 registerSecureHandler('db:saveOperatorHomeState', (_, snapshot: OperatorHomeStateSnapshot) => OperatorHomeStateRepo.saveSnapshot(snapshot));
 registerSecureHandler('db:finalizeOperatorHomeAutoRefreshWindow', (_, scopeId: string, windowKey: string, briefing: DailyBriefing) => OperatorHomeStateRepo.finalizeAutoRefreshWindow(scopeId, windowKey, briefing));
@@ -1671,6 +1677,8 @@ registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, action
   }
 });
 registerSecureHandler('api:listCleanupSenderStats', (_, accountId: string) => databaseWorkerClient.senderCleanupStats(accountId));
+registerSecureHandler('api:listRecentSenderMessages', (_, accountId: string, senderEmail: string, limit = 3) =>
+  databaseWorkerClient.recentSenderMessages(accountId, senderEmail, limit));
 registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
 registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
 registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));

@@ -8,6 +8,7 @@ type WorkerPayload =
   | { type: 'listThreads'; accountIds: string[] }
   | { type: 'listMessagesForThread'; accountId: string; threadId: string }
   | { type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
+  | { type: 'recentSenderMessages'; accountId: string; senderEmail: string; limit: number }
   | { type: 'senderCleanupStats'; accountId: string };
 
 type WorkerResponse =
@@ -147,6 +148,10 @@ class DatabaseWorkerClient {
 
   listMessageMetadataForThread(accountId: string, threadId: string): Promise<MailMessage[]> {
     return this.request<MailMessage[]>({ type: 'listMessageMetadataForThread', accountId, threadId });
+  }
+
+  recentSenderMessages(accountId: string, senderEmail: string, limit = 3): Promise<MailMessage[]> {
+    return this.request<MailMessage[]>({ type: 'recentSenderMessages', accountId, senderEmail, limit });
   }
 
   senderCleanupStats(accountId: string): Promise<SenderCleanupStat[]> {

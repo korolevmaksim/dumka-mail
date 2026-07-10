@@ -224,6 +224,16 @@ export function runMigrations(db: Database.Database) {
         PRIMARY KEY (account_id, sender_email)
     );
 
+    -- User-managed senders that should not appear in Cleanup suggestions.
+    -- This preference is account-scoped and does not mutate Gmail state.
+    CREATE TABLE IF NOT EXISTS cleanup_sender_exclusions (
+        account_id TEXT NOT NULL,
+        sender_email TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        excluded_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, sender_email)
+    );
+
     CREATE TABLE IF NOT EXISTS ai_conversations (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -314,6 +324,7 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_reply_pipeline_draft ON reply_pipeline_state(draft_id);
     CREATE INDEX IF NOT EXISTS idx_reply_pipeline_account_draft ON reply_pipeline_state(account_id, draft_id);
     CREATE INDEX IF NOT EXISTS idx_unsubscribed_senders_account ON unsubscribed_senders(account_id, unsubscribed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_cleanup_sender_exclusions_account ON cleanup_sender_exclusions(account_id, excluded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_drafts_thread ON agent_drafts(account_id, thread_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_message_security_thread ON message_security(account_id, thread_id);
     CREATE INDEX IF NOT EXISTS idx_mail_embeddings_account_model ON mail_embeddings(account_id, model, indexed_at DESC);

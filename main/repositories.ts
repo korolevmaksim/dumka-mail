@@ -32,6 +32,7 @@ import {
   ReplyPipelineState,
   MessageSecurityInsight,
   SenderCleanupStat,
+  CleanupSenderExclusion,
 } from '../shared/types';
 import { buildFollowUpRadarResult, normalizeFollowUpAgeWindow } from '../shared/followUpRadar';
 import {
@@ -148,6 +149,7 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM reply_pipeline_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM operator_home_state WHERE scope_id = ?').run(id.toLowerCase());
       db.prepare('DELETE FROM unsubscribed_senders WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM cleanup_sender_exclusions WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM ai_conversations WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_action_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_search WHERE account_id = ?').run(id);
@@ -645,6 +647,21 @@ export const MessagesRepo = {
     return rows.reverse().map(mapMessageRow);
   },
 
+  listLatestBySender(accountId: string, senderEmail: string, limit = 3): MailMessage[] {
+    const normalizedAccountId = accountId.trim();
+    const normalized = senderEmail.trim().toLowerCase();
+    if (!normalizedAccountId || !normalized) return [];
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM messages
+      WHERE account_id = ?
+        AND sender_email = ? COLLATE NOCASE
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(normalizedAccountId, normalized, Math.max(1, Math.min(10, limit))) as any[];
+    return rows.map(mapMessageRow);
+  },
+
   senderCleanupStats(accountId: string): SenderCleanupStat[] {
     const db = getDatabase();
     // NOTE: attachment bytes MUST stay a pre-aggregated json_each JOIN.
@@ -742,6 +759,12 @@ export const MessagesRepo = {
         ON pu.account_id = st.account_id AND pu.sender_key = st.sender_key
       WHERE (st.has_unsubscribe = 1
          OR COALESCE(arc.archiveable_old_count, 0) > 0)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM cleanup_sender_exclusions ce
+          WHERE ce.account_id = st.account_id
+            AND ce.sender_email = st.sender_key
+        )
         AND (
           us.sender_email IS NULL
           OR COALESCE(pu.post_grace_count, 0) >= 2
@@ -1779,6 +1802,73 @@ export const UnsubscribedSendersRepo = {
       ORDER BY unsubscribed_at DESC
     `).all(accountId) as { sender_email: string }[];
     return rows.map(row => row.sender_email);
+  },
+};
+
+// === Cleanup Sender Exclusions Repository ===
+export const CleanupExclusionsRepo = {
+  list(accountIds: string[]): CleanupSenderExclusion[] {
+    const normalizedAccountIds = Array.from(new Set(
+      accountIds.map(accountId => accountId.trim()).filter(Boolean),
+    ));
+    if (normalizedAccountIds.length === 0) return [];
+
+    const placeholders = normalizedAccountIds.map(() => '?').join(', ');
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT account_id, sender_email, sender_name, excluded_at
+      FROM cleanup_sender_exclusions
+      WHERE account_id IN (${placeholders})
+      ORDER BY excluded_at DESC, sender_name COLLATE NOCASE ASC
+    `).all(...normalizedAccountIds) as any[];
+
+    return rows.map(row => ({
+      accountId: row.account_id,
+      senderEmail: row.sender_email,
+      senderName: row.sender_name || row.sender_email,
+      excludedAt: row.excluded_at,
+    }));
+  },
+
+  save(exclusion: CleanupSenderExclusion): CleanupSenderExclusion {
+    const accountId = exclusion.accountId.trim();
+    const senderEmail = exclusion.senderEmail.trim().toLowerCase();
+    if (!accountId || !senderEmail) {
+      throw new Error('Cleanup exclusion requires an account and sender email.');
+    }
+
+    const normalized: CleanupSenderExclusion = {
+      accountId,
+      senderEmail,
+      senderName: exclusion.senderName.trim() || senderEmail,
+      excludedAt: exclusion.excludedAt || new Date().toISOString(),
+    };
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO cleanup_sender_exclusions (
+        account_id, sender_email, sender_name, excluded_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(account_id, sender_email) DO UPDATE SET
+        sender_name=excluded.sender_name,
+        excluded_at=excluded.excluded_at
+    `).run(
+      normalized.accountId,
+      normalized.senderEmail,
+      normalized.senderName,
+      normalized.excludedAt,
+    );
+    return normalized;
+  },
+
+  delete(accountId: string, senderEmail: string): void {
+    const normalizedAccountId = accountId.trim();
+    const normalizedSenderEmail = senderEmail.trim().toLowerCase();
+    if (!normalizedAccountId || !normalizedSenderEmail) return;
+    const db = getDatabase();
+    db.prepare(`
+      DELETE FROM cleanup_sender_exclusions
+      WHERE account_id = ? AND sender_email = ?
+    `).run(normalizedAccountId, normalizedSenderEmail);
   },
 };
 

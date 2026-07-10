@@ -44,6 +44,7 @@ export {
   OperatorHomeStateRepo,
   ReplyPipelineRepo,
   UnsubscribedSendersRepo,
+  CleanupExclusionsRepo,
   SyncStateRepo,
   ActionLogRepo,
   DraftsRepo,

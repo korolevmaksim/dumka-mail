@@ -8,6 +8,7 @@ type WorkerRequest =
   | { id: number; type: 'listThreads'; accountIds: string[] }
   | { id: number; type: 'listMessagesForThread'; accountId: string; threadId: string }
   | { id: number; type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
+  | { id: number; type: 'recentSenderMessages'; accountId: string; senderEmail: string; limit: number }
   | { id: number; type: 'senderCleanupStats'; accountId: string };
 
 type WorkerResponse =
@@ -67,6 +68,15 @@ parentPort?.on('message', (request: WorkerRequest) => {
         id: request.id,
         ok: true,
         result: MessagesRepo.listForThread(request.accountId, request.threadId),
+      });
+      return;
+    }
+
+    if (request.type === 'recentSenderMessages') {
+      send({
+        id: request.id,
+        ok: true,
+        result: MessagesRepo.listLatestBySender(request.accountId, request.senderEmail, request.limit),
       });
       return;
     }
