@@ -73,6 +73,7 @@ export function CalendarMonthView({
           const visibleLanes = Array.from({ length: laneCount }, (_, lane) => spansForDay.find(span => span.lane === lane) || null);
           const visibleTimed = timedEvents.slice(0, Math.max(0, 4 - laneCount));
           const isSelected = day.key === selectedKey;
+          const showMonthInDate = day.isToday || isSelected || day.date.getDate() === 1;
           const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
           const displayedCount = new Set([
             ...visibleLanes.filter(Boolean).map(span => `${span!.event.accountId}:${span!.event.calendarId}:${span!.event.id}`),
@@ -123,8 +124,8 @@ export function CalendarMonthView({
               className={`group min-h-0 overflow-hidden border-b border-r border-[var(--border)] p-1.5 outline-none transition-colors duration-150 focus-visible:relative focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${day.inMonth ? (isWeekend ? 'bg-[var(--rail-bg)]' : 'bg-[var(--app-bg)]') : 'bg-[var(--raised-surface)] text-[var(--text-tertiary)] opacity-45'} ${isSelected ? 'bg-[var(--selected-row)] ring-1 ring-inset ring-[var(--accent)]/35' : 'hover:bg-[var(--hover-row)]'}`}
             >
               <div className="mb-1 flex items-center justify-between">
-                <span className={`flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[calc(11px*var(--font-scale))] font-semibold ${day.isToday ? 'bg-[var(--accent)] text-white' : isSelected ? 'text-[var(--accent)]' : day.inMonth ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'}`}>
-                  {day.date.getDate() === 1 && !day.inMonth ? `${day.date.toLocaleDateString([], { month: 'short' })} 1` : day.date.getDate()}
+                <span className={`flex h-6 min-w-6 items-center justify-center rounded-full text-[calc(11px*var(--font-scale))] font-semibold ${showMonthInDate ? 'px-2' : 'px-1'} ${day.isToday ? 'bg-[var(--accent)] text-white' : isSelected ? 'text-[var(--accent)]' : day.inMonth ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'}`}>
+                  {showMonthInDate ? day.date.toLocaleDateString([], { month: 'short', day: 'numeric' }) : day.date.getDate()}
                 </span>
                 <button
                   type="button"

@@ -143,11 +143,14 @@ export function CalendarSidebar(props: CalendarSidebarProps) {
         {upcomingGroups.length === 0 ? (
           <button type="button" onClick={() => props.onCreate(props.selectedDate)} className="w-full cursor-pointer rounded-lg bg-[var(--panel-bg)] px-3 py-3 text-left text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)] shadow-[inset_0_0_0_1px_var(--border)] hover:text-[var(--accent)]">No upcoming events. Create one.</button>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3.5">
             {upcomingGroups.map(group => (
               <div key={localCalendarDateKey(group.date)}>
-                <div className="mb-1 px-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-tertiary)]">
-                  {group.date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                <div className="mb-1.5 flex items-center gap-2 px-1">
+                  <div className="shrink-0 text-[calc(11px*var(--font-scale))] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">
+                    {group.date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </div>
+                  <div aria-hidden="true" className="h-px min-w-3 flex-1 bg-[var(--border)]" />
                 </div>
                 <div className="space-y-0.5">
                   {group.events.map(event => {
