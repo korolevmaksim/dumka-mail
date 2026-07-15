@@ -1246,6 +1246,7 @@ export interface PrivacySettings {
 }
 
 export interface AppearanceSettings {
+  interfaceStyle: 'classic' | 'soft';
   theme: 'system' | 'light' | 'dark';
   density: 'compact' | 'comfortable' | 'spacious';
   accentColorHex: string;

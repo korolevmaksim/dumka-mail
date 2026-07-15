@@ -430,7 +430,7 @@ export function FloatingComposeDrawer() {
     : 'fixed bottom-10 right-6 h-[min(78vh,760px)] w-[min(880px,calc(100vw-96px))] min-h-[520px] min-w-[640px] resize';
 
   return (
-    <div className={`${containerClass} z-40 flex flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl select-text`}>
+    <div className={`dm-compose dm-overlay ${containerClass} z-40 flex flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl select-text`}>
       <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--rail-bg)] px-4 py-3 select-none">
         <div className="flex min-w-0 items-center gap-3">
           <span className="font-semibold text-[calc(13px*var(--font-scale))] text-[var(--text-primary)]">

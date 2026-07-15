@@ -150,7 +150,7 @@ export function CalendarMonthView({
                       }}
                       onClick={clickEvent => { clickEvent.stopPropagation(); onSelectEvent(span.event); }}
                       aria-label={`${span.event.summary}, ${span.event.startDate || new Date(span.event.startAt).toLocaleDateString()} through ${span.event.endDate || new Date(span.event.endAt).toLocaleDateString()}`}
-                      className="h-[18px] min-w-0 truncate px-1.5 text-left text-[calc(9px*var(--font-scale))] font-medium shadow-sm focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                      className="dm-calendar-event h-[18px] min-w-0 truncate px-1.5 text-left text-[calc(9px*var(--font-scale))] font-medium shadow-sm focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
                       style={{
                         backgroundColor: calendar?.backgroundColor || '#3b82f6',
                         color: calendar?.foregroundColor || '#ffffff',

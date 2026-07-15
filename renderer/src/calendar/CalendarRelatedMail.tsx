@@ -41,7 +41,7 @@ export function CalendarRelatedMail({ event, threads, onOpen }: CalendarRelatedM
 
   if (!sourceThread && suggestions.length === 0) return null;
   return (
-    <section className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5" aria-label="Related mail">
+    <section className="dm-inset mt-3 rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5" aria-label="Related mail">
       <h3 className="text-[calc(9px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">Related mail</h3>
       {sourceThread && <button type="button" onClick={() => onOpen(sourceThread)} className="mt-2 block w-full truncate text-left text-[calc(10px*var(--font-scale))] font-semibold text-[var(--accent)]">Source · {sourceThread.subject}</button>}
       {suggestions.length > 0 && <div className="mt-2 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">Suggested from participants or subject — not linked</div>}

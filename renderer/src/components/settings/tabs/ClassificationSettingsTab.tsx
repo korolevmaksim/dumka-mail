@@ -173,7 +173,7 @@ export function ClassificationSettingsTab() {
             aria-modal="true"
             aria-labelledby="delete-category-title"
             aria-describedby="delete-category-description"
-            className="bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[340px] w-full flex flex-col gap-4 scale-up-in select-text"
+            className="dm-overlay bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[340px] w-full flex flex-col gap-4 scale-up-in select-text"
           >
             <div className="flex flex-col gap-1.5">
               <span id="delete-category-title" className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Delete Custom Tab?</span>
@@ -216,7 +216,7 @@ export function ClassificationSettingsTab() {
             aria-modal="true"
             aria-labelledby="edit-category-title"
             aria-describedby="edit-category-description"
-            className="bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[360px] w-full flex flex-col gap-4 scale-up-in select-text"
+            className="dm-overlay bg-[var(--panel-bg)] border border-[var(--border)] rounded-xl shadow-2xl p-5 max-w-[360px] w-full flex flex-col gap-4 scale-up-in select-text"
           >
             <div className="flex flex-col gap-1">
               <span id="edit-category-title" className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Edit Tab Category</span>

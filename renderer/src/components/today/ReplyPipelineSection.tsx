@@ -70,7 +70,7 @@ function PipelineItem({ item }: { item: ReplyPipelineState }) {
   };
 
   return (
-    <article className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] p-3">
+    <article className="dm-inset rounded-md border border-[var(--border)] bg-[var(--app-bg)] p-3">
       <div className="flex items-start justify-between gap-3">
         <button type="button" onClick={() => void run('open', openThread)} disabled={Boolean(pending)} className="min-w-0 flex-1 text-left disabled:opacity-60">
           <div className="truncate font-medium text-[var(--text-primary)]">{thread?.subject || '(Thread unavailable)'}</div>
@@ -124,7 +124,7 @@ export function ReplyPipelineSection() {
   }, [store.replyPipelineItems]);
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+    <section className="dm-panel flex flex-col gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
           <PauseCircle className="h-4 w-4 text-[var(--accent)]" /> Reply Pipeline

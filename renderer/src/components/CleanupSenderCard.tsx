@@ -7,7 +7,7 @@ import {
 } from '../../../shared/cleanup';
 
 const RISK_TONE: Record<'low' | 'medium' | 'high', string> = {
-  low: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600',
+  low: 'border-[var(--success)]/25 bg-[var(--success)]/10 text-[var(--success)]',
   medium: 'border-[var(--warning)]/30 bg-[var(--warning)]/10 text-[var(--warning)]',
   high: 'border-[var(--danger)]/30 bg-[var(--danger)]/10 text-[var(--danger)]',
 };
@@ -60,7 +60,7 @@ export function CleanupSenderCard({
   const suggestion = suggestCleanupAction({ ...stat, archiveableOldCount: effectiveArchiveableOldCount });
 
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5">
+    <article className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex flex-col gap-0.5">
           <span className="truncate font-semibold text-[var(--text-primary)]">{stat.senderName || stat.senderEmail}</span>

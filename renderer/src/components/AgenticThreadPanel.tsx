@@ -44,7 +44,7 @@ export function AgenticThreadPanel() {
   return (
     <div className="mb-4 flex flex-col gap-2 select-none">
       {draft && (
-        <div className="rounded-[6px] border border-[var(--accent)]/25 bg-[var(--accent)]/10 px-3 py-2.5">
+        <div className="dm-inset rounded-[6px] border border-[var(--accent)]/25 bg-[var(--accent)]/10 px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" />
@@ -82,7 +82,7 @@ export function AgenticThreadPanel() {
       )}
 
       {(unsubscribe?.canOneClick || warnings.length > 0) && (
-        <div className="flex flex-col gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--raised-surface)] px-3 py-2.5">
+        <div className="dm-inset flex flex-col gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--raised-surface)] px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
               <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />

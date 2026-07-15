@@ -43,7 +43,7 @@ export function CalendarEventChip({ event, calendar, compact = false, draggable 
       }}
       title={`${event.summary}${event.location ? ` · ${event.location}` : ''}`}
       aria-label={accessibleEventLabel(event, calendar)}
-      className={`flex w-full min-w-0 items-center gap-1 rounded px-1.5 text-left font-medium shadow-sm outline-none ring-offset-1 ring-offset-[var(--app-bg)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${event.status === 'pending' ? 'border border-dashed border-white/70 opacity-80' : ''} ${
+      className={`dm-calendar-event flex w-full min-w-0 items-center gap-1 rounded px-1.5 text-left font-medium shadow-sm outline-none ring-offset-1 ring-offset-[var(--app-bg)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${event.status === 'pending' ? 'border border-dashed border-white/70 opacity-80' : ''} ${
         compact ? 'h-[18px] text-[calc(9px*var(--font-scale))]' : 'min-h-[22px] py-1 text-[calc(10px*var(--font-scale))]'
       }`}
       style={{ backgroundColor, color: foregroundColor }}

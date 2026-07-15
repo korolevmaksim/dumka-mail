@@ -8,10 +8,42 @@ export function AppearanceSettingsTab() {
     <div className="flex flex-col gap-4 max-w-[600px]">
       <div>
         <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">Appearance Settings</h2>
-        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Customize theme color templates, spacing density, and styling.</p>
+        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Choose an interface style, color mode, spacing density, and reading scale.</p>
       </div>
 
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3.5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Interface Style</span>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Switch the visual system without changing navigation or behavior</span>
+          </div>
+          <div className="flex rounded-lg bg-[var(--app-bg)] p-1" role="group" aria-label="Interface style">
+            {([
+              { value: 'classic', label: 'Classic' },
+              { value: 'soft', label: 'Soft' },
+            ] as const).map(option => {
+              const selected = store.settings.appearance.interfaceStyle === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => store.updateSettings(settings => { settings.appearance.interfaceStyle = option.value; })}
+                  className={`min-w-[72px] rounded-md px-3 py-1.5 text-[calc(10px*var(--font-scale))] font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1 ${
+                    selected
+                      ? 'bg-[var(--raised-surface)] text-[var(--text-primary)] shadow-sm'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">App Theme Mode</span>

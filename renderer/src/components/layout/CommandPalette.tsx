@@ -290,7 +290,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
         role="dialog"
         aria-modal="true"
         aria-labelledby="command-palette-title"
-        className="flex w-[min(560px,calc(100vw-32px))] max-h-[min(560px,calc(100vh-96px))] flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl scale-in"
+        className="dm-overlay flex w-[min(560px,calc(100vw-32px))] max-h-[min(560px,calc(100vh-96px))] flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl scale-in"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
@@ -324,7 +324,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
 
         {/* Search */}
         <div className="border-b border-[var(--border)] p-2.5">
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--raised-surface)] px-2.5 py-2 focus-within:border-[var(--accent)]">
+          <div className="dm-control flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--raised-surface)] px-2.5 py-2 focus-within:border-[var(--accent)]">
             <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
             <input
               ref={inputRef}

@@ -75,7 +75,7 @@ export function CalendarSidebar(props: CalendarSidebarProps) {
   }, [props.events, props.selectedDate]);
 
   return (
-    <aside className="w-[272px] shrink-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--rail-bg)] px-3 pb-4 pt-3">
+    <aside className="dm-calendar-sidebar w-[272px] shrink-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--rail-bg)] px-3 pb-4 pt-3">
       <div className="mb-3 flex items-center justify-between gap-2 px-1">
         <div className="min-w-0 text-[calc(19px*var(--font-scale))] font-semibold tracking-[-0.025em] text-[var(--text-primary)]">
           {props.anchor.toLocaleDateString([], { month: 'long' })}{' '}
@@ -205,7 +205,7 @@ export function CalendarSidebar(props: CalendarSidebarProps) {
         <h3 className="mb-2 px-1 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Mail tasks</h3>
         <div className="flex flex-col gap-1">{props.mailTasks.slice(0, 8).map(task => {
           const thread = props.threads.find(item => item.accountId === task.accountId && item.id === task.threadId);
-          return <div key={task.id} className="group flex items-start gap-2 rounded-md bg-[var(--panel-bg)] p-2 shadow-[inset_0_0_0_1px_var(--border)]">
+          return <div key={task.id} className="dm-inset group flex items-start gap-2 rounded-md bg-[var(--panel-bg)] p-2 shadow-[inset_0_0_0_1px_var(--border)]">
             <button type="button" onClick={() => props.onCompleteTask(task)} aria-label={`Complete ${task.title}`} className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer rounded border border-[var(--accent)] hover:bg-[var(--accent)]" />
             <button type="button" disabled={!thread} onClick={() => thread && props.onOpenThread(thread)} className="min-w-0 flex-1 cursor-pointer text-left"><span className="block truncate text-[calc(9px*var(--font-scale))] font-medium text-[var(--text-primary)]">{task.title}</span><span className="block text-[calc(8px*var(--font-scale))] text-[var(--text-tertiary)]">{new Date(task.dueAt).toLocaleString()} · {task.source === 'threadReminder' ? 'Reminder' : 'Reply pipeline'}</span></button>
             <button type="button" onClick={() => props.onSnoozeTask(task)} title="Snooze until tomorrow" className="cursor-pointer text-[calc(8px*var(--font-scale))] text-[var(--text-tertiary)] opacity-0 hover:text-[var(--accent)] group-hover:opacity-100">+1d</button>
@@ -213,7 +213,7 @@ export function CalendarSidebar(props: CalendarSidebarProps) {
         })}</div>
       </section>}
 
-      {props.settings.favoriteTimeZones.length > 0 && <section className="mt-3 rounded-md bg-[var(--panel-bg)] p-2 text-[calc(9px*var(--font-scale))] shadow-[inset_0_0_0_1px_var(--border)]"><h3 className="mb-1 font-semibold text-[var(--text-primary)]">World clock</h3>{props.settings.favoriteTimeZones.map(timeZone => { const label = secondaryCalendarTimeLabel(timeZone); return label ? <div key={timeZone} className="flex justify-between gap-2 text-[var(--text-secondary)]"><span className="truncate">{timeZone}</span><span className="shrink-0">{label.split(' ')[0]}</span></div> : null; })}</section>}
+      {props.settings.favoriteTimeZones.length > 0 && <section className="dm-inset mt-3 rounded-md bg-[var(--panel-bg)] p-2 text-[calc(9px*var(--font-scale))] shadow-[inset_0_0_0_1px_var(--border)]"><h3 className="mb-1 font-semibold text-[var(--text-primary)]">World clock</h3>{props.settings.favoriteTimeZones.map(timeZone => { const label = secondaryCalendarTimeLabel(timeZone); return label ? <div key={timeZone} className="flex justify-between gap-2 text-[var(--text-secondary)]"><span className="truncate">{timeZone}</span><span className="shrink-0">{label.split(' ')[0]}</span></div> : null; })}</section>}
       {props.syncIssues.length > 0 && <section className="mt-3 rounded-md border border-[var(--warning)]/35 bg-[var(--warning)]/10 p-2"><h3 className="mb-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--warning)]">Calendar sync issues</h3><div className="flex flex-col gap-1">{props.syncIssues.map(action => <div key={action.id} className="rounded bg-[var(--app-bg)]/70 px-2 py-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]"><div className="font-medium text-[var(--text-primary)]">{isConflict(action) ? 'Remote edit conflict' : action.status === 'pending_sync' ? 'Waiting for connection' : 'Change not applied'}</div>{action.failureMessage && <div className="mt-0.5 line-clamp-2">{action.failureMessage}</div>}{isConflict(action) && <div className="mt-1.5 flex gap-1"><button type="button" onClick={() => props.onResolveConflict(action, 'remote')} className="cursor-pointer rounded border border-[var(--border)] px-1.5 py-1 font-medium hover:text-[var(--accent)]">Use remote</button><button type="button" onClick={() => props.onResolveConflict(action, 'local')} className="cursor-pointer rounded border border-[var(--warning)]/50 px-1.5 py-1 font-medium text-[var(--warning)]">Use local</button></div>}</div>)}</div></section>}
     </aside>
   );

@@ -23,7 +23,7 @@ const ACTION_ICON = {
 };
 
 const RISK_TONE: Record<AgentPlanRiskLevel, string> = {
-  low: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-600',
+  low: 'border-[var(--success)]/25 bg-[var(--success)]/10 text-[var(--success)]',
   medium: 'border-[var(--warning)]/30 bg-[var(--warning)]/10 text-[var(--warning)]',
   high: 'border-[var(--danger)]/30 bg-[var(--danger)]/10 text-[var(--danger)]',
 };
@@ -72,7 +72,7 @@ export function AgentReviewQueueCard() {
   };
 
   return (
-    <div className="mb-4 flex flex-col gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--rail-bg)] p-3 text-[calc(11px*var(--font-scale))] shadow-md">
+    <div className="dm-panel mb-4 flex flex-col gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--rail-bg)] p-3 text-[calc(11px*var(--font-scale))] shadow-md">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex flex-col gap-0.5">
           <span className="flex items-center gap-1 font-semibold text-[var(--ai-accent)]">
@@ -120,7 +120,8 @@ export function AgentReviewQueueCard() {
           return (
             <article
               key={item.id}
-              className={`rounded-lg border p-2.5 transition-colors ${
+              data-selected={preview.isSelected}
+              className={`dm-review-item rounded-lg border p-2.5 transition-colors ${
                 preview.isSelected
                   ? 'border-[var(--ai-accent)]/35 bg-[var(--ai-accent)]/8'
                   : 'border-[var(--border)] bg-[var(--panel-bg)]'
@@ -164,7 +165,7 @@ export function AgentReviewQueueCard() {
                     </p>
                   </div>
 
-                  <div className="mt-1.5 rounded-md border border-[var(--border)]/60 bg-[var(--app-bg)] p-1.5 text-[calc(9px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+                  <div className="dm-inset mt-1.5 rounded-md border border-[var(--border)]/60 bg-[var(--app-bg)] p-1.5 text-[calc(9px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
                     <p className="text-[var(--text-primary)]">{item.reason}</p>
                     {item.citation.evidence && item.citation.evidence !== item.reason && (
                       <p className="mt-0.5 break-all">{item.citation.evidence}</p>
@@ -224,7 +225,7 @@ export function AgentReviewQueueCard() {
         })}
 
         {plan.items.length === 0 && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
             No proposed actions in the queue.
           </div>
         )}

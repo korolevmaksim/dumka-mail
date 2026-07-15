@@ -87,8 +87,8 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
   };
 
   return (
-    <div className="relative bg-[var(--raised-surface)] border border-[var(--border)] rounded-[6px] shadow-[0_5px_12px_rgba(0,0,0,0.07)] overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 70%, transparent)' }} />
+    <div className="dm-message-card dm-panel relative bg-[var(--raised-surface)] border border-[var(--border)] rounded-[6px] shadow-[0_5px_12px_rgba(0,0,0,0.07)] overflow-hidden">
+      <div className="dm-message-accent absolute left-0 top-0 bottom-0 w-[3px]" style={{ backgroundColor: 'color-mix(in srgb, var(--accent) 70%, transparent)' }} />
       <div className="pl-[20px] pr-[24px] py-[18px]">
         {/* Header: sender identity */}
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -519,7 +519,7 @@ function RawMessageModal({
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-fade-in" onClick={onClose}>
       <div 
-        className="w-full max-w-5xl h-[85vh] bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-xl shadow-2xl flex flex-col overflow-hidden scale-in"
+        className="dm-overlay w-full max-w-5xl h-[85vh] bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-xl shadow-2xl flex flex-col overflow-hidden scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -619,7 +619,7 @@ function RawMessageModal({
         <div className="flex-1 min-h-0 bg-[var(--app-bg)] relative flex flex-col">
           {/* Floating Search Bar */}
           {searchOpen && (
-            <div className="absolute top-4 right-6 z-20 flex items-center gap-2 px-3 py-1.5 bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-lg shadow-xl animate-fade-in select-none">
+            <div className="dm-overlay absolute top-4 right-6 z-20 flex items-center gap-2 px-3 py-1.5 bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-lg shadow-xl animate-fade-in select-none">
               <input
                 id="raw-search-input"
                 type="text"

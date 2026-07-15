@@ -10,7 +10,7 @@ export function RightContextPanel() {
   if (!store.settings.general.showRightContextPanel) return null;
 
   return (
-    <div className="w-[var(--right-panel-w)] min-w-[280px] border-l border-[var(--border)] panel-surface bg-[var(--panel-bg)] flex flex-col overflow-y-auto p-4 gap-5 select-none shrink-0">
+    <div className="dm-right-panel w-[var(--right-panel-w)] min-w-[280px] border-l border-[var(--border)] panel-surface bg-[var(--panel-bg)] flex flex-col overflow-y-auto p-4 gap-5 select-none shrink-0">
 
       {/* Thread context meta (RL-C3) */}
       {store.openedThread && (
@@ -43,7 +43,7 @@ export function RightContextPanel() {
           }`}></span>
         </h3>
         
-        <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--app-bg)] flex flex-col gap-1.5">
+        <div className="dm-inset border border-[var(--border)] rounded-lg p-3 bg-[var(--app-bg)] flex flex-col gap-1.5">
           <div className="flex items-center justify-between font-semibold">
             <span>Verdict:</span>
             <span className={`capitalize ${
@@ -75,7 +75,7 @@ export function RightContextPanel() {
       {/* Speed Proof Panel */}
       <div className="flex flex-col gap-2">
         <h3 className="text-chrome text-[var(--text-secondary)]">SPEED PROOF</h3>
-        <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--app-bg)] flex flex-col gap-1.5 text-[calc(11px*var(--font-scale))]">
+        <div className="dm-inset border border-[var(--border)] rounded-lg p-3 bg-[var(--app-bg)] flex flex-col gap-1.5 text-[calc(11px*var(--font-scale))]">
           <div className="flex justify-between items-center">
             <span>Local cache startup:</span>
             <span className="font-mono text-[var(--success)]">{store.speedProof.cacheReadyMs || 0}ms</span>
@@ -115,7 +115,7 @@ export function RightContextPanel() {
           </button>
         </h3>
         
-        <div className="flex-1 border border-[var(--border)] rounded-lg p-2.5 bg-[var(--app-bg)] overflow-y-auto max-h-[240px]">
+        <div className="dm-inset flex-1 border border-[var(--border)] rounded-lg p-2.5 bg-[var(--app-bg)] overflow-y-auto max-h-[240px]">
           <ActivityTimeline logs={store.actionLog} />
         </div>
       </div>

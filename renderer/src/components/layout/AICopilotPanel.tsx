@@ -492,15 +492,17 @@ export function AICopilotPanel() {
     <div 
       className={
         isAiUndocked
-          ? "panel-surface absolute max-h-[85vh] border border-[var(--strong-border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden rounded-xl shadow-2xl z-50"
-          : "panel-surface relative border-r border-[var(--border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden h-full shrink-0"
+          ? "dm-ai-panel dm-overlay panel-surface absolute max-h-[85vh] border border-[var(--strong-border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden rounded-xl shadow-2xl z-50"
+          : "dm-ai-panel panel-surface relative border-r border-[var(--border)] bg-[var(--panel-bg)] flex flex-col overflow-hidden h-full shrink-0"
       }
       style={isAiUndocked ? { 
         left: `${aiPosition.x}px`, 
         top: `${aiPosition.y}px`,
         width: `${aiPanelSize.width}px`,
         height: `${aiPanelSize.height}px`,
-        boxShadow: isAiDragging ? '0 25px 50px -12px rgb(0 0 0 / 0.5)' : '0 20px 25px -5px rgb(0 0 0 / 0.3)'
+        boxShadow: store.settings.appearance.interfaceStyle === 'soft'
+          ? 'var(--overlay-shadow)'
+          : isAiDragging ? '0 25px 50px -12px rgb(0 0 0 / 0.5)' : '0 20px 25px -5px rgb(0 0 0 / 0.3)'
       } : { width: `${aiPanelSize.width}px` }}
     >
       
@@ -565,7 +567,7 @@ export function AICopilotPanel() {
           <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
         </button>
         {aiControlsOpen && (
-          <div className="absolute left-3 right-3 top-[42px] z-50 rounded-lg border border-[var(--strong-border)] bg-[var(--raised-surface)] p-3 shadow-2xl">
+          <div className="dm-overlay absolute left-3 right-3 top-[42px] z-50 rounded-lg border border-[var(--strong-border)] bg-[var(--raised-surface)] p-3 shadow-2xl">
             <div className="flex flex-col gap-2 text-[calc(10px*var(--font-scale))]">
               <label className="flex items-center justify-between gap-3">
                 <span className="shrink-0 text-[var(--text-secondary)]">Provider</span>

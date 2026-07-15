@@ -20,7 +20,7 @@ const CATEGORY_META: Record<DailyBriefingCategory, { title: string; empty: strin
   fyi: {
     title: 'FYI',
     empty: 'No FYI messages in scope.',
-    tone: 'text-cyan-600 bg-cyan-500/10 border-cyan-500/20',
+    tone: 'text-[var(--info)] bg-[var(--info)]/10 border-[var(--info)]/20',
   },
   riskOrNoise: {
     title: 'Risk or noise',
@@ -185,7 +185,7 @@ export function DailyBriefingCard() {
   };
 
   return (
-    <div className="mb-4 flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--rail-bg)] p-3 text-[calc(11px*var(--font-scale))] shadow-md">
+    <div className="dm-panel mb-4 flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--rail-bg)] p-3 text-[calc(11px*var(--font-scale))] shadow-md">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex flex-col gap-0.5">
           <span className="flex items-center gap-1 font-semibold text-[var(--ai-accent)]">
@@ -244,7 +244,7 @@ export function DailyBriefingCard() {
                 const blockedPipelineState = blockingPipelineState(item);
                 const draftLabel = blockedPipelineState?.status === 'snoozed' ? 'Snoozed' : blockedPipelineState ? 'Handled' : 'Draft';
                 return (
-                  <article key={item.id} className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-2.5">
+                  <article key={item.id} className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex flex-col gap-0.5">
                         <span className="truncate font-semibold text-[var(--text-primary)]">{item.source.sender}</span>
@@ -259,7 +259,7 @@ export function DailyBriefingCard() {
                       {item.summary}
                     </p>
 
-                    <div className="mt-1.5 flex flex-col gap-0.5 rounded-md border border-[var(--border)]/60 bg-[var(--app-bg)] p-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+                    <div className="dm-inset mt-1.5 flex flex-col gap-0.5 rounded-md border border-[var(--border)]/60 bg-[var(--app-bg)] p-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
                       <span className="font-semibold text-[var(--text-primary)]">Source: {formatTime(item.source.receivedAt)}</span>
                       <span>{item.reason}</span>
                       {(item.trackerCount > 0 || item.phishingLinkCount > 0) && (
@@ -326,7 +326,7 @@ export function DailyBriefingCard() {
         })}
 
         {briefing.items.length === 0 && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
             No briefing items in the current scope.
           </div>
         )}

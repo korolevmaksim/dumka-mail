@@ -104,12 +104,12 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
 
   return (
     <div
-      className="panel-surface flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
+      className="dm-search-chrome dm-toolbar panel-surface flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
       style={{ WebkitAppRegion: 'drag' } as any}
     >
       <div className="flex items-center justify-between h-[var(--top-chrome-h)] min-h-[40px] px-4 gap-4 w-full">
         <div 
-          className="flex items-center flex-1 gap-2 bg-[var(--app-bg)] rounded-lg px-2 border border-[var(--border)] max-w-[600px] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-1"
+          className="dm-search-field dm-control flex items-center flex-1 gap-2 bg-[var(--app-bg)] rounded-lg px-2 border border-[var(--border)] max-w-[600px] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-1"
           style={{ WebkitAppRegion: 'no-drag' } as any}
         >
           <Search className="w-4 h-4 text-[var(--text-tertiary)]" />
@@ -157,7 +157,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
               ) : searchIndicator.kind === 'error' ? (
                 <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />
               ) : (
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
+                <Check className="h-3.5 w-3.5 text-[var(--success)]" />
               )}
               <span>{searchIndicator.label}</span>
             </span>
@@ -186,7 +186,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           {showNavigationActivity && store.navigationActivity.phase !== 'idle' && (
             <span
               aria-live="polite"
-              className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]"
+              className="dm-status-chip flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]"
             >
               <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-[var(--accent)] motion-reduce:animate-none" />
               {store.navigationActivity.label}
@@ -222,37 +222,37 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
             </span>
           )}
           {parsedSearch.hasAttachment !== undefined && (
-            <span className="flex items-center gap-1 bg-cyan-500/15 text-cyan-600 px-2 py-0.5 rounded-full border border-cyan-500/20">
+            <span className="flex items-center gap-1 bg-[var(--info)]/15 text-[var(--info)] px-2 py-0.5 rounded-full border border-[var(--info)]/20">
               {parsedSearch.hasAttachment ? 'Has Attachments' : 'No Attachments'}
               <button type="button" onClick={() => removeSearchField('hasAttachment')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.isUnread !== undefined && (
-            <span className="flex items-center gap-1 bg-emerald-500/15 text-emerald-600 px-2 py-0.5 rounded-full border border-emerald-500/20">
+            <span className="flex items-center gap-1 bg-[var(--success)]/15 text-[var(--success)] px-2 py-0.5 rounded-full border border-[var(--success)]/20">
               {parsedSearch.isUnread ? 'Unread' : 'Read'}
               <button type="button" onClick={() => removeSearchField('isUnread')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.label && (
-            <span className="flex items-center gap-1 bg-purple-500/15 text-purple-600 px-2 py-0.5 rounded-full border border-purple-500/20">
+            <span className="flex items-center gap-1 bg-[var(--ai-accent)]/15 text-[var(--ai-accent)] px-2 py-0.5 rounded-full border border-[var(--ai-accent)]/20">
               Label: {parsedSearch.label}
               <button type="button" onClick={() => removeSearchField('label')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.inSplit && (
-            <span className="flex items-center gap-1 bg-amber-500/15 text-amber-600 px-2 py-0.5 rounded-full border border-amber-500/20">
+            <span className="flex items-center gap-1 bg-[var(--warning)]/15 text-[var(--warning)] px-2 py-0.5 rounded-full border border-[var(--warning)]/20">
               Split: {parsedSearch.inSplit}
               <button type="button" onClick={() => removeSearchField('inSplit')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.after && (
-            <span className="flex items-center gap-1 bg-neutral-500/15 text-neutral-600 px-2 py-0.5 rounded-full border border-neutral-500/20">
+            <span className="flex items-center gap-1 bg-[var(--text-tertiary)]/15 text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               After: {parsedSearch.after}
               <button type="button" onClick={() => removeSearchField('after')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.before && (
-            <span className="flex items-center gap-1 bg-neutral-500/15 text-neutral-600 px-2 py-0.5 rounded-full border border-neutral-500/20">
+            <span className="flex items-center gap-1 bg-[var(--text-tertiary)]/15 text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               Before: {parsedSearch.before}
               <button type="button" onClick={() => removeSearchField('before')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>

@@ -19,7 +19,7 @@ export function ShortcutGuideOverlay({ isOpen, settings, onClose }: ShortcutGuid
         role="dialog"
         aria-modal="true"
         aria-labelledby="shortcut-guide-title"
-        className="flex max-h-[min(760px,calc(100vh-96px))] w-[min(860px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl"
+        className="dm-overlay flex max-h-[min(760px,calc(100vh-96px))] w-[min(860px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <div className="flex items-center gap-2">
@@ -51,7 +51,7 @@ export function ShortcutGuideOverlay({ isOpen, settings, onClose }: ShortcutGuid
               <h3 className="mb-2 text-[calc(11px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
                 {section.title}
               </h3>
-              <div className="overflow-hidden rounded-lg border border-[var(--border)]">
+              <div className="dm-inset overflow-hidden rounded-lg border border-[var(--border)]">
                 {section.items.map(item => (
                   <div key={`${section.title}:${item.label}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-2 last:border-b-0">
                     <span className="min-w-0 truncate text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]">{item.label}</span>

@@ -56,7 +56,7 @@ export function CalendarOverviewView({ anchor, events, mode, weekStartsOn, onSel
       {months.map(month => {
         const days = calendarMonthDays(month, weekStartsOn);
         return (
-          <section key={month.toISOString()} className="min-h-[220px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 shadow-sm">
+          <section key={month.toISOString()} className="dm-panel min-h-[220px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 shadow-sm">
             <button type="button" onClick={() => onSelectDate(month)} className="mb-3 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:text-[var(--accent)]">
               {month.toLocaleDateString([], { month: 'long', year: 'numeric' })}
             </button>

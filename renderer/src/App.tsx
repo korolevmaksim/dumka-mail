@@ -95,7 +95,7 @@ function DraftRow({
   return (
     <div
       role="listitem"
-      className="group flex w-full min-w-0 items-start gap-2 border-b border-[var(--border)] px-4 py-3 hover:bg-[var(--hover-row)]"
+      className="dm-mail-row group flex w-full min-w-0 items-start gap-2 border-b border-[var(--border)] px-4 py-3 hover:bg-[var(--hover-row)]"
     >
       <button
         type="button"
@@ -798,19 +798,19 @@ function AppContent() {
   );
 
   return (
-    <div className="flex flex-col h-screen w-full overflow-hidden select-none text-[calc(12px*var(--font-scale))] leading-tight">
+    <div className="dm-app-shell flex flex-col h-screen w-full overflow-hidden select-none text-[calc(12px*var(--font-scale))] leading-tight">
       {/* Main columns container */}
-      <div className="flex flex-row flex-1 overflow-hidden relative">
+      <div className="dm-app-layout flex flex-row flex-1 overflow-hidden relative">
         {/* 1. LEFT RAIL (Account Tabs switcher) */}
         <LeftRail />
 
         {/* MAIN LAYOUT SPLIT: Left Workspace | Right Context panels */}
-        <div className="flex flex-1 overflow-hidden bg-[var(--app-bg)]">
+        <div className="dm-workspace-frame flex flex-1 overflow-hidden bg-[var(--app-bg)]">
           {/* 3. AI COPILOT PANEL (Moved next to Left Rail & Undockable) */}
           {store.aiPanelOpen && <AICopilotPanel />}
 
           {/* LEFT WORKSPACE (Header + Split Tabs + Lists) */}
-          <div className="relative flex flex-col flex-1 overflow-hidden">
+          <div className="dm-workspace relative flex flex-col flex-1 overflow-hidden">
             {store.workspaceView === 'calendar' && (
               <div className="absolute inset-0 z-30">
                 <CalendarWorkspace />
@@ -822,14 +822,14 @@ function AppContent() {
             )}
 
             {/* SPLIT TABS BAR */}
-            <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
+            <div className="dm-mail-tabs dm-toolbar flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
               <div className="flex min-w-0 h-full items-end gap-2">
                 <div className="relative flex h-[var(--split-tab-h)] shrink-0 items-center" onClick={(event) => event.stopPropagation()}>
                   <button
                     type="button"
                     onClick={() => setMailboxMenuOpen(value => !value)}
                     title="Switch mailbox (G / Shift+G)"
-                    className="flex h-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-transparent px-2 text-tab text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+                    className="dm-mailbox-switcher flex h-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-transparent px-2 text-tab text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
                       <ActiveMailboxIcon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
@@ -843,7 +843,7 @@ function AppContent() {
                     <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
                   </button>
                   {mailboxMenuOpen && (
-                    <div className="absolute left-0 top-[calc(100%+4px)] z-40 w-48 rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] p-1 shadow-lg">
+                    <div className="dm-overlay absolute left-0 top-[calc(100%+4px)] z-40 w-48 rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] p-1 shadow-lg">
                       {mailboxTabs.map(mailbox => {
                         const Icon = mailbox.icon;
                         const isActive = store.mailboxView === mailbox.id;
@@ -887,6 +887,7 @@ function AppContent() {
                       return (
                         <button
                           key={category.id}
+                          aria-pressed={store.activeSplit === category.id}
                           draggable
                           onDragStart={(e) => handleDragStartTab(e, category.id)}
                           onDragOver={handleDragOverTab}
@@ -899,7 +900,7 @@ function AppContent() {
                             store.setSettingsOpen(false);
                             store.setCleanupOpen(false);
                           }}
-                          className={`flex h-full items-center gap-1.5 border-b-2 px-3 text-tab transition-all cursor-grab ${
+                          className={`dm-category-tab flex h-full items-center gap-1.5 border-b-2 px-3 text-tab transition-all cursor-grab ${
                             store.activeSplit === category.id
                               ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
                               : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -973,7 +974,7 @@ function AppContent() {
                 <>
                   {/* THREAD LIST CONTAINER */}
                   <div
-                    className="relative flex flex-col border-r border-[var(--border)] h-full overflow-hidden"
+                    className="dm-thread-list relative flex flex-col border-r border-[var(--border)] h-full overflow-hidden"
                     style={{
                       width: store.enablePreviewPane 
                         ? `${store.previewPaneWidth}px` 
@@ -1078,7 +1079,7 @@ function AppContent() {
 
                     {/* FLOATING BATCH ACTIONS BAR */}
                     {!isDraftsMailbox && store.selectedThreadIds.size > 0 && (
-                      <div className="absolute bottom-4 left-4 right-4 z-10 bg-[var(--panel-bg)]/90 backdrop-blur-md border border-[var(--strong-border)] shadow-xl rounded-xl px-3 py-2.5 flex items-center justify-between animate-fade-in gap-3">
+                      <div className="dm-overlay absolute bottom-4 left-4 right-4 z-10 bg-[var(--panel-bg)]/90 backdrop-blur-md border border-[var(--strong-border)] shadow-xl rounded-xl px-3 py-2.5 flex items-center justify-between animate-fade-in gap-3">
                         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
                           {store.selectedThreadIds.size} selected
                         </span>
@@ -1230,11 +1231,11 @@ function AppContent() {
 
                   {/* THREAD READER PANE */}
                   {(store.enablePreviewPane || store.openedThread) && (store.openedThread ? (
-                    <div id="thread-reader-pane" className="panel-surface flex-1 flex flex-col overflow-y-auto bg-[var(--panel-bg)] p-6 relative">
+                    <div id="thread-reader-pane" className="dm-thread-reader panel-surface flex-1 flex flex-col overflow-y-auto bg-[var(--panel-bg)] p-6 relative">
                       
                       {/* Floating Reader Find in Page Bar */}
                       {threadSearchOpen && (
-                        <div className="print-hidden absolute top-4 right-6 z-20 flex items-center gap-2 px-3 py-1.5 bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-lg shadow-xl animate-fade-in select-none">
+                        <div className="dm-overlay print-hidden absolute top-4 right-6 z-20 flex items-center gap-2 px-3 py-1.5 bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-lg shadow-xl animate-fade-in select-none">
                           <input
                             id="thread-search-input"
                             type="text"
@@ -1285,7 +1286,7 @@ function AppContent() {
                         style={{ maxWidth: getMaxWidthStyle(store.settings.appearance.readerMaxWidth) }}
                       >
                         {/* Header Info */}
-                        <div className="flex justify-between items-start border-b border-[var(--border)] pb-4 mb-4 select-text shrink-0">
+                        <div className="dm-reader-header flex justify-between items-start border-b border-[var(--border)] pb-4 mb-4 select-text shrink-0">
                           <div>
                             {!store.enablePreviewPane && (
                               <button
@@ -1507,7 +1508,7 @@ function AppContent() {
 
       {/* 4. UNDO SEND TRANSITIONAL BANNER */}
       {store.pendingSend && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 panel-surface bg-[var(--panel-bg)] border border-[var(--warning)]/40 rounded-xl shadow-2xl px-4 py-2.5 flex items-center gap-3.5 z-50 select-none fade-in-up">
+        <div className="dm-overlay absolute bottom-8 left-1/2 -translate-x-1/2 panel-surface bg-[var(--panel-bg)] border border-[var(--warning)]/40 rounded-xl shadow-2xl px-4 py-2.5 flex items-center gap-3.5 z-50 select-none fade-in-up">
           <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[var(--warning)]/15 text-[var(--warning)]">
             <Inbox className="w-3.5 h-3.5" />
           </span>
@@ -1556,7 +1557,7 @@ function AppContent() {
 
       {contextMenu && (
         <div
-          className="fixed z-50 w-[180px] bg-[var(--panel-bg)]/85 backdrop-blur-md border border-[var(--border)] rounded-xl shadow-2xl py-1.5 flex flex-col select-none scale-in"
+          className="dm-overlay fixed z-50 w-[180px] bg-[var(--panel-bg)]/85 backdrop-blur-md border border-[var(--border)] rounded-xl shadow-2xl py-1.5 flex flex-col select-none scale-in"
           style={{
             left: `${Math.min(contextMenu.x, window.innerWidth - 190)}px`,
             top: `${Math.min(contextMenu.y, window.innerHeight - 250)}px`,
@@ -1869,7 +1870,7 @@ function applyHighlights(root: HTMLElement, query: string, activeIdx: number): {
     const safeIdx = (activeIdx + elements.length) % elements.length;
     elements.forEach((el, idx) => {
       if (idx === safeIdx) {
-        el.style.backgroundColor = 'var(--accent)';
+        el.style.backgroundColor = 'var(--accent-solid)';
         el.style.color = '#ffffff';
         el.style.boxShadow = '0 0 0 2px var(--accent)';
         el.style.borderBottom = 'none';
