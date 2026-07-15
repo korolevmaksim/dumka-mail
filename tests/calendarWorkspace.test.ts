@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CalendarEvent, CalendarListEntry } from '../shared/types';
-import { calendarDuplicateInput, resolveCalendarAccountScope } from '../renderer/src/calendar/calendarWorkspaceUtils';
+import { calendarDuplicateInput, calendarEventFormKey, resolveCalendarAccountScope } from '../renderer/src/calendar/calendarWorkspaceUtils';
+import { attendeeRecipients, calendarSelectionKey, initialCalendarSelection } from '../renderer/src/lib/calendarEventFormHelpers';
 import { mergeCalendarRange } from '../renderer/src/stores/useCalendarState';
 import {
   calendarDateKey,
@@ -169,6 +170,36 @@ describe('calendar quick add', () => {
 });
 
 describe('calendar event actions', () => {
+  it('uses a fresh form identity whenever New Event is opened', () => {
+    const selected = event({ id: 'selected-event', summary: 'Existing event' });
+    const editKey = calendarEventFormKey('edit', selected, 1);
+    const firstCreateKey = calendarEventFormKey('create', null, 2);
+    const secondCreateKey = calendarEventFormKey('create', null, 3);
+
+    expect(firstCreateKey).not.toBe(editKey);
+    expect(secondCreateKey).not.toBe(firstCreateKey);
+  });
+
+  it('keeps same-named primary calendars distinct and defaults to the active account', () => {
+    const personal = calendar;
+    const work = { ...calendar, accountId: 'work@example.com', summary: 'Work' };
+
+    expect(calendarSelectionKey(personal)).not.toBe(calendarSelectionKey(work));
+    expect(initialCalendarSelection([personal, work], null, 'work@example.com', 'primary'))
+      .toBe(calendarSelectionKey(work));
+  });
+
+  it('preserves attendee names while deduplicating event participants', () => {
+    const recipients = attendeeRecipients(event({
+      attendees: [
+        { email: 'sarah@example.com', displayName: 'Sarah' },
+        { email: 'SARAH@example.com' },
+      ],
+    }));
+
+    expect(recipients).toEqual([{ name: 'Sarah', email: 'sarah@example.com' }]);
+  });
+
   it('duplicates event details without reusing conferencing or emailing guests', () => {
     const input = calendarDuplicateInput(event({
       summary: 'Customer review',

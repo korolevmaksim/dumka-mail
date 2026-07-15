@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Download, MailPlus, Video, X } from 'lucide-react';
 import type { CalendarAttendeeResponse, CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput, CalendarLocalTask, CalendarMutationScope, CalendarSettings, CalendarWorkspaceView, MailActionLog } from '../../../shared/types';
 import {
-  calendarEventDurationMinutes,
   calendarNavigationDate,
   calendarViewRange,
   filterCalendarEvents,
@@ -10,17 +8,15 @@ import {
 import { parseIcsInvite } from '../../../shared/calendar';
 import type { CalendarInvite } from '../../../shared/types';
 import { useAppStore } from '../stores/AppStore';
-import { CalendarEventForm } from '../components/CalendarEventForm';
 import { emitToast } from '../lib/toastBus';
 import { CalendarMonthView } from './CalendarMonthView';
 import { CalendarTimeGrid } from './CalendarTimeGrid';
 import { CalendarAgendaView, CalendarOverviewView } from './CalendarOverviewViews';
 import { CalendarSidebar } from './CalendarSidebar';
-import { calendarDuplicateInput, calendarEventUpdateInput, localCalendarDateKey, resolveCalendarAccountScope, restoredCalendarAnchor, secondaryCalendarTimeLabel } from './calendarWorkspaceUtils';
+import { calendarDuplicateInput, calendarEventFormKey, calendarEventUpdateInput, localCalendarDateKey, resolveCalendarAccountScope, restoredCalendarAnchor, secondaryCalendarTimeLabel } from './calendarWorkspaceUtils';
 import { CalendarHeader, CALENDAR_VIEW_OPTIONS } from './CalendarHeader';
-import { CalendarRsvpActions } from './CalendarRsvpActions';
 import { CalendarRelatedMail } from './CalendarRelatedMail';
-import { CalendarEventParticipants } from './CalendarEventParticipants';
+import { CalendarImportPreview, CalendarWorkspaceEventForm, CalendarWorkspaceEventSummary } from './CalendarWorkspaceInspector';
 
 export function CalendarWorkspace() {
   const store = useAppStore();
@@ -34,6 +30,7 @@ export function CalendarWorkspace() {
   const [selectedDate, setSelectedDate] = useState(() => restoredCalendarAnchor(store.settings.calendar.lastAnchorDate));
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null);
+  const [formSession, setFormSession] = useState(0);
   const [initialRange, setInitialRange] = useState<{ startAt: string; endAt: string } | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CalendarEvent[]>([]);
@@ -47,6 +44,7 @@ export function CalendarWorkspace() {
   const [icsCalendarId, setIcsCalendarId] = useState('primary');
   const [draftSeed, setDraftSeed] = useState<{ summary: string; attendees: string[]; sourceMessageId?: string | null; sourceThreadId?: string | null } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const loadedCalendarAccountsRef = useRef(new Set<string>());
   const settings = store.settings.calendar;
   const accountEmailsKey = useMemo(() => store.accounts.map(account => account.email).sort().join('\n'), [store.accounts]);
   const scopedAccountIds = useMemo(
@@ -85,13 +83,15 @@ export function CalendarWorkspace() {
       });
     return [...reminders, ...pipeline].sort((left, right) => Date.parse(left.dueAt) - Date.parse(right.dueAt));
   }, [accountEmail, store.replyPipelineItems, store.threads]);
-
   useEffect(() => {
     if (!accountEmail) return;
     let active = true;
     setIsSyncing(true);
     setSyncError(null);
     const emails = accountEmail === 'unified' ? store.accounts.map(account => account.email) : [accountEmail];
+    const calendarOnlyEmails = store.accounts.map(account => account.email).filter(email => !emails.includes(email) && !loadedCalendarAccountsRef.current.has(email));
+    calendarOnlyEmails.forEach(email => loadedCalendarAccountsRef.current.add(email));
+    void Promise.allSettled(calendarOnlyEmails.map(email => store.syncCalendarLists(email)));
     void Promise.allSettled(emails.map(email => store.syncCalendarAgenda(email, range)))
       .then(results => {
         if (!active) return;
@@ -104,14 +104,12 @@ export function CalendarWorkspace() {
       })
       .finally(() => { if (active) setIsSyncing(false); });
     return () => { active = false; };
-  }, [accountEmail, accountEmailsKey, range.endAt, range.startAt, store.syncCalendarAgenda]);
-
+  }, [accountEmail, accountEmailsKey, range.endAt, range.startAt, store.syncCalendarAgenda, store.syncCalendarLists]);
   useEffect(() => {
     const emails = store.accounts.map(account => account.email);
     if (accountEmail && (accountEmail === 'unified' || emails.includes(accountEmail))) return;
     setAccountEmail(resolveCalendarAccountScope(settings.lastAccountScope, emails));
   }, [accountEmailsKey, settings.lastAccountScope]);
-
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < 2 || scopedAccountIds.length === 0) {
@@ -135,7 +133,6 @@ export function CalendarWorkspace() {
     if (settings.lastAnchorDate === dateKey) return;
     void store.updateSettings(draft => { draft.calendar.lastAnchorDate = dateKey; });
   }, [anchor, settings.lastAnchorDate, store.updateSettings]);
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (store.workspaceView !== 'calendar') return;
@@ -187,7 +184,6 @@ export function CalendarWorkspace() {
     openCreate(new Date(), undefined, true);
     store.clearCalendarDraftSeed();
   }, [store.calendarDraftSeed]);
-
   useEffect(() => {
     const request = store.calendarFocusRequest;
     if (!request) return;
@@ -198,7 +194,6 @@ export function CalendarWorkspace() {
     openEdit(event);
     store.clearCalendarFocusRequest();
   }, [store.calendarEvents, store.calendarFocusRequest]);
-
   function changeView(next: CalendarWorkspaceView) {
     setViewState(next);
     void store.updateSettings(draft => { draft.calendar.defaultView = next; });
@@ -208,19 +203,18 @@ export function CalendarWorkspace() {
     setAccountEmail(next);
     void store.updateSettings(draft => { draft.calendar.lastAccountScope = next; });
   }
-
   function selectDate(date: Date) {
     setSelectedDate(date);
     setAnchor(date);
     if (view === 'quarter' || view === 'year') changeView('day');
   }
-
   function openCreate(date: Date, rangeOverride?: { startAt: string; endAt: string }, preserveSeed = false) {
     setIcsPreview(null);
     if (!preserveSeed) setDraftSeed(null);
     setSelectedDate(date);
     setSelectedEvent(null);
     setInitialRange(rangeOverride || null);
+    setFormSession(session => session + 1);
     setFormMode('create');
   }
 
@@ -230,6 +224,7 @@ export function CalendarWorkspace() {
     setSelectedDate(new Date(event.startAt));
     setInitialRange(null);
     const calendar = accountCalendars.find(item => item.accountId === event.accountId && item.id === event.calendarId);
+    setFormSession(session => session + 1);
     setFormMode(calendar?.accessRole === 'writer' || calendar?.accessRole === 'owner' ? 'edit' : null);
   }
 
@@ -249,12 +244,12 @@ export function CalendarWorkspace() {
     setIsSyncing(false);
   }
 
-  async function submitEvent(input: CalendarEventCreateInput | CalendarEventUpdateInput) {
+  async function submitEvent(input: CalendarEventCreateInput | CalendarEventUpdateInput, targetAccountId: string) {
     setIsSaving(true);
     try {
       const saved = formMode === 'edit'
-        ? await store.updateCalendarEvent(input as CalendarEventUpdateInput, selectedEvent?.accountId || mutationAccount)
-        : await store.createCalendarEvent(input as CalendarEventCreateInput, mutationAccount);
+        ? await store.updateCalendarEvent(input as CalendarEventUpdateInput, selectedEvent?.accountId || targetAccountId)
+        : await store.createCalendarEvent(input as CalendarEventCreateInput, targetAccountId);
       const savedDate = new Date(saved.startAt);
       setSelectedEvent(saved);
       setSelectedDate(savedDate);
@@ -573,51 +568,29 @@ export function CalendarWorkspace() {
         {(inspectorOpen || icsPreview) && (
           <aside className="dm-calendar-inspector w-[340px] shrink-0 overflow-y-auto border-l border-[var(--border)] bg-[var(--panel-bg)] p-3">
             {icsPreview && (
-              <div className="dm-panel rounded-lg border border-[var(--accent)]/35 bg-[var(--app-bg)] p-3">
-                <div className="mb-3 flex items-start justify-between gap-2"><div><div className="text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--accent)]">Import preview</div><div className="mt-1 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{icsPreview.invite.summary}</div></div><button type="button" onClick={() => setIcsPreview(null)} className="text-[var(--text-tertiary)]"><X className="h-4 w-4" /></button></div>
-                <div className="space-y-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                  <div>{new Date(icsPreview.invite.startAt).toLocaleString()} – {new Date(icsPreview.invite.endAt).toLocaleString()}</div>
-                  {icsPreview.invite.location && <div>{icsPreview.invite.location}</div>}
-                  {icsPreview.invite.description && <div className="max-h-28 overflow-y-auto whitespace-pre-wrap">{icsPreview.invite.description}</div>}
-                  <div>{icsPreview.invite.attendees.length} attendees · {icsPreview.filename}</div>
-                  <label className="flex flex-col gap-1"><span className="text-[var(--text-tertiary)]">Destination calendar</span><select value={icsCalendarId} onChange={event => setIcsCalendarId(event.target.value)} className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5">{mutationCalendars.filter(calendar => calendar.accessRole === 'owner' || calendar.accessRole === 'writer').map(calendar => <option key={calendar.id} value={calendar.id}>{calendar.summary}</option>)}</select></label>
-                  <div className="dm-inset rounded border border-[var(--border)] bg-[var(--raised-surface)] p-2 text-[calc(9px*var(--font-scale))]">No event will be written until you confirm. Guest emails are disabled for imports.</div>
-                  <button type="button" disabled={isSaving} onClick={() => void confirmIcsImport()} className="w-full rounded-md bg-[var(--accent)] px-3 py-2 font-semibold text-white disabled:opacity-50">{isSaving ? 'Importing…' : 'Import event'}</button>
-                </div>
-              </div>
+              <CalendarImportPreview preview={icsPreview} calendarId={icsCalendarId} calendars={mutationCalendars} isSaving={isSaving} onChangeCalendar={setIcsCalendarId} onClose={() => setIcsPreview(null)} onConfirm={() => void confirmIcsImport()} />
             )}
             {!formMode && selectedEvent && (
-              <div className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3">
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div><div className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{selectedEvent.summary}</div><div className="mt-1 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">Read-only calendar</div></div>
-                  <button type="button" onClick={() => setSelectedEvent(null)} aria-label="Close event" className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-row)]"><X className="h-4 w-4" /></button>
-                </div>
-                <div className="space-y-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                  <div>{selectedEvent.isAllDay ? 'All day' : new Date(selectedEvent.startAt).toLocaleString()}</div>
-                  {selectedEvent.location && <div>{selectedEvent.location}</div>}
-                  {selectedEvent.description && <div className="whitespace-pre-wrap">{selectedEvent.description}</div>}
-                  <CalendarEventParticipants event={selectedEvent} />
-                  {selectedEvent.selfResponseStatus && <CalendarRsvpActions currentStatus={selectedEvent.selfResponseStatus} disabled={isResponding} onRespond={status => void respondToEvent(status)} />}
-                  <button type="button" onClick={() => void duplicateEvent(selectedEvent)} className="flex items-center gap-1 font-semibold text-[var(--accent)]"><Copy className="h-3.5 w-3.5" />Duplicate to writable calendar</button>
-                  {selectedEvent.attendees.length > 0 && <button type="button" onClick={() => draftMeetingFollowUp(selectedEvent)} className="flex items-center gap-1 font-semibold text-[var(--accent)]"><MailPlus className="h-3.5 w-3.5" />Draft follow-up</button>}
-                  {selectedEvent.htmlLink && <a href={selectedEvent.htmlLink} target="_blank" rel="noreferrer" className="inline-block font-semibold text-[var(--accent)]">Open in Google Calendar</a>}
-                </div>
-              </div>
+              <CalendarWorkspaceEventSummary mode="readOnly" event={selectedEvent} isResponding={isResponding} travelTimeMinutes={settings.defaultTravelTimeMinutes} onClose={() => setSelectedEvent(null)} onRespond={status => void respondToEvent(status)} onDuplicate={() => void duplicateEvent(selectedEvent)} onDraftFollowUp={() => draftMeetingFollowUp(selectedEvent)} onAddTravel={() => void addTravelBlock(selectedEvent)} />
             )}
             {formMode === 'edit' && selectedEvent && (
-              <div className="dm-inset mb-2 rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                <div className="flex items-center justify-between gap-2">
-                  <span>{selectedEvent.isAllDay ? 'All day' : `${new Date(selectedEvent.startAt).toLocaleString()} · ${calendarEventDurationMinutes(selectedEvent)} min`}</span>
-                  <span className="flex items-center gap-2">{selectedEvent.conferenceUrl && <a href={selectedEvent.conferenceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[var(--accent)]"><Video className="h-3 w-3" />Join</a>}<button type="button" onClick={() => void window.electronAPI.exportCalendarEventIcs(selectedEvent)} title="Export .ics" className="text-[var(--text-tertiary)] hover:text-[var(--accent)]"><Download className="h-3.5 w-3.5" /></button></span>
-                </div>
-                <div className="mt-2"><CalendarEventParticipants event={selectedEvent} /></div>
-                {selectedEvent.selfResponseStatus && <div className="mt-2"><CalendarRsvpActions currentStatus={selectedEvent.selfResponseStatus} disabled={isResponding} onRespond={status => void respondToEvent(status)} /></div>}
-                <button type="button" onClick={() => void duplicateEvent(selectedEvent)} className="mt-2 flex items-center gap-1 font-semibold text-[var(--accent)]"><Copy className="h-3.5 w-3.5" />Duplicate</button>
-                {selectedEvent.attendees.length > 0 && <button type="button" onClick={() => draftMeetingFollowUp(selectedEvent)} className="mt-2 flex items-center gap-1 font-semibold text-[var(--accent)]"><MailPlus className="h-3.5 w-3.5" />Draft follow-up</button>}
-                {!selectedEvent.isAllDay && settings.defaultTravelTimeMinutes > 0 && <button type="button" onClick={() => void addTravelBlock(selectedEvent)} className="mt-2 block font-semibold text-[var(--accent)]">Add {settings.defaultTravelTimeMinutes}m travel block</button>}
-              </div>
+              <CalendarWorkspaceEventSummary mode="edit" event={selectedEvent} isResponding={isResponding} travelTimeMinutes={settings.defaultTravelTimeMinutes} onClose={() => setSelectedEvent(null)} onRespond={status => void respondToEvent(status)} onDuplicate={() => void duplicateEvent(selectedEvent)} onDraftFollowUp={() => draftMeetingFollowUp(selectedEvent)} onAddTravel={() => void addTravelBlock(selectedEvent)} />
             )}
-            {formMode && <CalendarEventForm mode={formMode} event={selectedEvent} selectedDate={selectedDate} defaultDurationMinutes={settings.defaultMeetingDurationMinutes} defaultConferenceProvider={settings.defaultConferenceProvider} calendarSettings={settings} calendarEvents={accountEvents} calendars={formMode === 'edit' && selectedEvent ? accountCalendars.filter(calendar => calendar.accountId === selectedEvent.accountId) : mutationCalendars} eventTemplates={settings.eventTemplates} contactEmails={store.contacts.filter(contact => contact.accountId === (selectedEvent?.accountId || mutationAccount)).map(contact => contact.email)} onSaveTemplate={saveEventTemplate} initialTitle={draftSeed?.summary} initialAttendees={draftSeed?.attendees} sourceMessageId={draftSeed?.sourceMessageId} sourceThreadId={draftSeed?.sourceThreadId} initialStartAt={initialRange?.startAt} initialEndAt={initialRange?.endAt} isSaving={isSaving} isDeleting={isDeleting} onCancel={() => { setFormMode(null); setSelectedEvent(null); setDraftSeed(null); }} onSubmit={submitEvent} onDelete={selectedEvent ? deleteSelectedEvent : undefined} onQueryFreeBusy={input => store.queryCalendarFreeBusy({ ...input, calendarIds: accountCalendars.filter(calendar => calendar.accountId === (selectedEvent?.accountId || mutationAccount) && !(settings.hiddenCalendarIds || []).includes(`${calendar.accountId}:${calendar.id}`) && calendar.accessRole !== 'none' && calendar.accessRole !== 'freeBusyReader').map(calendar => calendar.id) }, selectedEvent?.accountId || mutationAccount)} />}
+            {formMode && <CalendarWorkspaceEventForm
+              key={calendarEventFormKey(formMode, selectedEvent, formSession)}
+              mode={formMode}
+              event={selectedEvent}
+              selectedDate={selectedDate}
+              defaultAccountId={selectedEvent?.accountId || mutationAccount}
+              onSaveTemplate={saveEventTemplate}
+              draftSeed={draftSeed}
+              initialRange={initialRange}
+              isSaving={isSaving}
+              isDeleting={isDeleting}
+              onCancel={() => { setFormMode(null); setSelectedEvent(null); setDraftSeed(null); }}
+              onSubmit={submitEvent}
+              onDelete={selectedEvent ? deleteSelectedEvent : undefined}
+            />}
             {selectedEvent && <CalendarRelatedMail event={selectedEvent} threads={store.threads} onOpen={thread => void store.openThreadFromCalendar(thread)} />}
           </aside>
         )}

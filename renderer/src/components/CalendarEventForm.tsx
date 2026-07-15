@@ -1,7 +1,8 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertTriangle, CalendarPlus, Trash2, Video, X } from 'lucide-react';
 import type { CalendarAvailabilitySlot } from '../../../shared/calendarAvailability';
-import type { CalendarEvent, CalendarEventCreateInput, CalendarEventRecurrence, CalendarEventUpdateInput, CalendarFreeBusyRequest, CalendarFreeBusyResult, CalendarListEntry, CalendarMutationScope, CalendarSettings } from '../../../shared/types';
+import type { CalendarEvent, CalendarEventCreateInput, CalendarEventRecurrence, CalendarEventUpdateInput, CalendarFreeBusyRequest, CalendarFreeBusyResult, CalendarListEntry, CalendarMutationScope, CalendarSettings, Recipient } from '../../../shared/types';
+import { isValidEmail } from '../../../shared/compose';
 import { findAvailabilitySlotsFromBusyIntervals, findRecurringCalendarConflicts, freeBusyWarningMessage } from '../../../shared/calendarAvailability';
 import {
   calendarEventTimesFromLocalInput,
@@ -11,15 +12,19 @@ import {
   localDateInputValue,
   localTimeInputValue,
   normalizeCalendarRecurrenceRule,
-  parseCalendarAttendeeEmails,
   parseNaturalLanguageCalendarEvent,
 } from '../../../shared/calendarCreate';
 import { CalendarGuestAvailability } from './CalendarGuestAvailability';
+import { CalendarParticipantPicker } from './CalendarParticipantPicker';
 import {
   RECURRENCE_OPTIONS,
-  attendeeInputValue,
+  attendeeRecipients,
+  calendarSelectionKey,
   conflictTimeLabel,
+  EVENT_COLOR_OPTIONS,
   formDefaultsFromEvent,
+  initialCalendarSelection,
+  nextCalendarDateInput,
   quickDraftLabel,
   sameBusyInterval,
 } from '../lib/calendarEventFormHelpers';
@@ -33,8 +38,8 @@ interface CalendarEventFormProps {
   calendarSettings: CalendarSettings;
   calendarEvents: CalendarEvent[];
   calendars?: CalendarListEntry[];
+  defaultAccountId?: string;
   eventTemplates?: CalendarSettings['eventTemplates'];
-  contactEmails?: string[];
   onSaveTemplate?: (template: Omit<CalendarSettings['eventTemplates'][number], 'id'>) => void;
   initialTitle?: string;
   initialAttendees?: string[];
@@ -45,21 +50,9 @@ interface CalendarEventFormProps {
   isSaving: boolean;
   isDeleting?: boolean;
   onCancel: () => void;
-  onSubmit: (input: CalendarEventCreateInput | CalendarEventUpdateInput) => Promise<void>;
+  onSubmit: (input: CalendarEventCreateInput | CalendarEventUpdateInput, accountId: string) => Promise<void>;
   onDelete?: (scope: CalendarMutationScope) => Promise<void>;
-  onQueryFreeBusy?: (input: CalendarFreeBusyRequest) => Promise<CalendarFreeBusyResult>;
-}
-
-const EVENT_COLOR_OPTIONS = [
-  ['1', 'Lavender'], ['2', 'Sage'], ['3', 'Grape'], ['4', 'Flamingo'], ['5', 'Banana'], ['6', 'Tangerine'],
-  ['7', 'Peacock'], ['8', 'Graphite'], ['9', 'Blueberry'], ['10', 'Basil'], ['11', 'Tomato'],
-] as const;
-
-function nextCalendarDateInput(value: string, days = 1): string {
-  const date = new Date(`${value}T12:00:00`);
-  if (!Number.isFinite(date.getTime())) return value;
-  date.setDate(date.getDate() + days);
-  return localDateInputValue(date);
+  onQueryFreeBusy?: (input: CalendarFreeBusyRequest, accountId: string) => Promise<CalendarFreeBusyResult>;
 }
 
 export function CalendarEventForm({
@@ -71,8 +64,8 @@ export function CalendarEventForm({
   calendarSettings,
   calendarEvents,
   calendars = [],
+  defaultAccountId = '',
   eventTemplates = [],
-  contactEmails = [],
   onSaveTemplate,
   initialTitle = '',
   initialAttendees = [],
@@ -103,11 +96,23 @@ export function CalendarEventForm({
   const [startTime, setStartTime] = useState(defaults.startTime);
   const [duration, setDuration] = useState(defaults.durationMinutes);
   const [location, setLocation] = useState(event?.location || '');
-  const [guests, setGuests] = useState(event ? attendeeInputValue(event) : initialAttendees.join(', '));
+  const [participants, setParticipants] = useState<Recipient[]>(() => attendeeRecipients(event, initialAttendees));
   const [recurrence, setRecurrence] = useState<CalendarEventRecurrence | 'custom'>('none');
   const [customRecurrenceInput, setCustomRecurrenceInput] = useState('');
   const [mutationScope, setMutationScope] = useState<CalendarMutationScope>('single');
-  const [calendarId, setCalendarId] = useState(event?.calendarId || calendarSettings.defaultCalendarId || calendars.find(calendar => calendar.primary)?.id || 'primary');
+  const writableCalendars = useMemo(
+    () => calendars.filter(calendar => calendar.accessRole === 'writer' || calendar.accessRole === 'owner'),
+    [calendars],
+  );
+  const [calendarSelection, setCalendarSelection] = useState(() => initialCalendarSelection(
+    calendars,
+    event,
+    event?.accountId || defaultAccountId,
+    calendarSettings.defaultCalendarId,
+  ));
+  const selectedCalendar = writableCalendars.find(calendar => calendarSelectionKey(calendar) === calendarSelection);
+  const selectedAccountId = selectedCalendar?.accountId || event?.accountId || defaultAccountId;
+  const calendarId = selectedCalendar?.id || event?.calendarId || calendarSettings.defaultCalendarId || 'primary';
   const [isAllDay, setIsAllDay] = useState(event?.isAllDay === true);
   const [sendUpdates, setSendUpdates] = useState<'all' | 'none'>((event?.attendees.length || 0) > 0 ? 'all' : 'none');
   const [transparency, setTransparency] = useState<'opaque' | 'transparent'>(event?.transparency || 'opaque');
@@ -120,6 +125,16 @@ export function CalendarEventForm({
   const [isFindingTimes, setIsFindingTimes] = useState(false);
   const [suggestedSlots, setSuggestedSlots] = useState<CalendarAvailabilitySlot[]>([]);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedCalendar || writableCalendars.length === 0) return;
+    setCalendarSelection(initialCalendarSelection(
+      writableCalendars,
+      event,
+      event?.accountId || defaultAccountId,
+      calendarSettings.defaultCalendarId,
+    ));
+  }, [calendarSettings.defaultCalendarId, defaultAccountId, event, selectedCalendar, writableCalendars]);
 
   const quickEventDraft = useMemo(
     () => mode === 'create'
@@ -157,14 +172,15 @@ export function CalendarEventForm({
       : [],
     [calendarEvents, event?.id, proposedEventTimes, proposedRecurrence],
   );
-  const parsedGuests = useMemo(() => parseCalendarAttendeeEmails(guests), [guests]);
+  const participantEmails = useMemo(() => participants.map(participant => participant.email.trim()).filter(Boolean), [participants]);
+  const invalidParticipants = useMemo(() => participantEmails.filter(email => !isValidEmail(email)), [participantEmails]);
   const canSubmit = Boolean(title.trim() || quickEventDraft?.title)
-    && parsedGuests.invalid.length === 0
+    && invalidParticipants.length === 0
     && Boolean(proposedEventTimes)
     && (recurrence !== 'custom' || Boolean(normalizedCustomRecurrence));
   const canFindGuestTimes = Boolean(onQueryFreeBusy)
-    && parsedGuests.emails.length > 0
-    && parsedGuests.invalid.length === 0
+    && participantEmails.length > 0
+    && invalidParticipants.length === 0
     && Boolean(proposedEventTimes);
 
   function applyQuickEventDraft() {
@@ -175,7 +191,7 @@ export function CalendarEventForm({
     setStartTime(quickEventDraft.startTime);
     setDuration(quickEventDraft.durationMinutes);
     setLocation(quickEventDraft.location || '');
-    setGuests(quickEventDraft.attendees.join(', '));
+    setParticipants(attendeeRecipients(null, quickEventDraft.attendees));
     setRecurrence(quickEventDraft.recurrence);
     setQuickEventText('');
   }
@@ -185,9 +201,9 @@ export function CalendarEventForm({
     const quickValues = mode === 'create' && title.trim() ? null : quickEventDraft;
     const times = proposedEventTimes;
     const summary = title.trim() || quickValues?.title.trim() || '';
-    if (!times || !summary || parsedGuests.invalid.length > 0) return;
+    if (!times || !summary || invalidParticipants.length > 0) return;
     const conferenceProvider = addMeet && !hasExistingMeet ? 'googleMeet' : 'none';
-    const attendees = quickValues?.attendees.length ? quickValues.attendees : parsedGuests.emails;
+    const attendees = quickValues?.attendees.length ? quickValues.attendees : participantEmails;
     const baseInput: CalendarEventCreateInput = {
       calendarId,
       summary,
@@ -224,15 +240,15 @@ export function CalendarEventForm({
         originalStartAt: event.originalStartAt,
         mutationScope,
         etag: event.etag,
-      });
+      }, selectedAccountId);
       return;
     }
-    await onSubmit(baseInput);
+    await onSubmit(baseInput, selectedAccountId);
   }
 
   async function findGuestAvailability() {
     const times = proposedEventTimes;
-    if (!times || !onQueryFreeBusy || parsedGuests.emails.length === 0 || parsedGuests.invalid.length > 0) return;
+    if (!times || !onQueryFreeBusy || participantEmails.length === 0 || invalidParticipants.length > 0) return;
     setIsFindingTimes(true);
     setAvailabilityError(null);
     setSuggestedSlots([]);
@@ -243,10 +259,10 @@ export function CalendarEventForm({
       const result = await onQueryFreeBusy({
         timeMin: rangeStart.toISOString(),
         timeMax: rangeEnd.toISOString(),
-        attendees: parsedGuests.emails,
+        attendees: participantEmails,
         timeZone,
-      });
-      const warning = freeBusyWarningMessage(result, parsedGuests.emails);
+      }, selectedAccountId);
+      const warning = freeBusyWarningMessage(result, participantEmails);
       if (warning) {
         setAvailabilityError(`${warning} Ask the guest to share free/busy access or reauthorize Calendar in Settings.`);
         return;
@@ -369,12 +385,17 @@ export function CalendarEventForm({
         />
         {calendars.length > 0 && (mode === 'create' || !event?.recurringEventId) && (
           <select
-            value={calendarId}
-            onChange={(inputEvent) => setCalendarId(inputEvent.target.value)}
+            value={calendarSelection}
+            onChange={(inputEvent) => setCalendarSelection(inputEvent.target.value)}
+            aria-label="Calendar and account"
             className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           >
-            {calendars.filter(calendar => calendar.accessRole === 'writer' || calendar.accessRole === 'owner').map(calendar => (
-              <option key={calendar.id} value={calendar.id}>{calendar.summary}</option>
+            {[...new Set(writableCalendars.map(calendar => calendar.accountId))].map(accountId => (
+              <optgroup key={accountId} label={accountId}>
+                {writableCalendars.filter(calendar => calendar.accountId === accountId).map(calendar => (
+                  <option key={calendarSelectionKey(calendar)} value={calendarSelectionKey(calendar)}>{calendar.summary}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         )}
@@ -451,26 +472,14 @@ export function CalendarEventForm({
           rows={3}
           className="resize-y rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
         />
-        <label className="flex flex-col gap-1">
-          <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-tertiary)]">Participants</span>
-          <input
-            value={guests}
-            onChange={(inputEvent) => setGuests(inputEvent.target.value)}
-            placeholder="Add email addresses"
-            list="calendar-contact-emails"
-            className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-          />
-        </label>
-        <datalist id="calendar-contact-emails">
-          {contactEmails.slice(0, 250).map(email => <option key={email} value={email} />)}
-        </datalist>
-        {parsedGuests.invalid.length > 0 && (
+        <CalendarParticipantPicker accountId={selectedAccountId} recipients={participants} onChange={setParticipants} />
+        {invalidParticipants.length > 0 && (
           <div className="rounded-md border border-[var(--danger)]/35 bg-[var(--danger)]/10 px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--danger)]">
-            Invalid guest: {parsedGuests.invalid[0]}
+            Invalid guest: {invalidParticipants[0]}
           </div>
         )}
         {!isAllDay && <CalendarGuestAvailability
-          guestCount={parsedGuests.emails.length}
+          guestCount={participantEmails.length}
           canFindTimes={canFindGuestTimes}
           isFindingTimes={isFindingTimes}
           availabilityError={availabilityError}

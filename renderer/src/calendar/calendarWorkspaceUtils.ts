@@ -27,6 +27,10 @@ export function resolveCalendarAccountScope(persistedScope: string, accountEmail
   return accountEmails.length > 0 ? 'unified' : '';
 }
 
+export function calendarEventFormKey(mode: 'create' | 'edit', event: CalendarEvent | null, session: number): string {
+  return `${mode}:${event?.accountId || 'new'}:${event?.id || 'draft'}:${session}`;
+}
+
 export function secondaryCalendarTimeLabel(timeZone: string): string | null {
   if (!timeZone) return null;
   try {

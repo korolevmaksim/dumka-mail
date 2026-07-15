@@ -1,4 +1,4 @@
-import type { CalendarEvent, CalendarEventRecurrence } from '../../../shared/types';
+import type { CalendarEvent, CalendarEventRecurrence, CalendarListEntry, Recipient } from '../../../shared/types';
 import type { CalendarConflict } from '../../../shared/calendarAvailability';
 import {
   localDateInputValue,
@@ -13,6 +13,18 @@ export const RECURRENCE_OPTIONS: Array<{ value: CalendarEventRecurrence; label: 
   { value: 'monthly', label: 'Monthly' },
   { value: 'yearly', label: 'Yearly' },
 ];
+
+export const EVENT_COLOR_OPTIONS = [
+  ['1', 'Lavender'], ['2', 'Sage'], ['3', 'Grape'], ['4', 'Flamingo'], ['5', 'Banana'], ['6', 'Tangerine'],
+  ['7', 'Peacock'], ['8', 'Graphite'], ['9', 'Blueberry'], ['10', 'Basil'], ['11', 'Tomato'],
+] as const;
+
+export function nextCalendarDateInput(value: string, days = 1): string {
+  const date = new Date(`${value}T12:00:00`);
+  if (!Number.isFinite(date.getTime())) return value;
+  date.setDate(date.getDate() + days);
+  return localDateInputValue(date);
+}
 
 function recurrenceLabel(recurrence: CalendarEventRecurrence): string | null {
   return RECURRENCE_OPTIONS.find(option => option.value === recurrence)?.label || null;
@@ -56,11 +68,42 @@ export function formDefaultsFromEvent(event: CalendarEvent, fallbackDurationMinu
   };
 }
 
-export function attendeeInputValue(event: CalendarEvent | null | undefined): string {
-  return (event?.attendees || [])
-    .map(attendee => attendee.email)
-    .filter(Boolean)
-    .join(', ');
+export function attendeeRecipients(event: CalendarEvent | null | undefined, initialAttendees: string[] = []): Recipient[] {
+  const recipients = event
+    ? event.attendees.map(attendee => ({ name: attendee.displayName?.trim() || '', email: attendee.email.trim() }))
+    : initialAttendees.map(email => ({ name: '', email: email.trim() }));
+  const seen = new Set<string>();
+  return recipients.filter(recipient => {
+    const key = recipient.email.toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function calendarSelectionKey(calendar: Pick<CalendarListEntry, 'accountId' | 'id'>): string {
+  return JSON.stringify([calendar.accountId, calendar.id]);
+}
+
+export function initialCalendarSelection(
+  calendars: CalendarListEntry[],
+  event: CalendarEvent | null | undefined,
+  defaultAccountId: string,
+  defaultCalendarId: string | null | undefined,
+): string {
+  const writableCalendars = calendars.filter(calendar => calendar.accessRole === 'writer' || calendar.accessRole === 'owner');
+  const exactEventCalendar = event
+    ? writableCalendars.find(calendar => calendar.accountId === event.accountId && calendar.id === event.calendarId)
+    : null;
+  const accountCalendars = writableCalendars.filter(calendar => calendar.accountId === defaultAccountId);
+  const selected = exactEventCalendar
+    || accountCalendars.find(calendar => calendar.id === defaultCalendarId)
+    || accountCalendars.find(calendar => calendar.primary)
+    || accountCalendars[0]
+    || writableCalendars.find(calendar => calendar.id === defaultCalendarId)
+    || writableCalendars.find(calendar => calendar.primary)
+    || writableCalendars[0];
+  return selected ? calendarSelectionKey(selected) : '';
 }
 
 export function sameBusyInterval(startA: string, endA: string, startB: string, endB: string): boolean {

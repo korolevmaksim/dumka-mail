@@ -118,13 +118,13 @@ export function CalendarAgendaPanel() {
     setCreateSlot(null);
   }
 
-  async function submitEventForm(input: CalendarEventCreateInput | CalendarEventUpdateInput) {
+  async function submitEventForm(input: CalendarEventCreateInput | CalendarEventUpdateInput, targetAccountId: string) {
     if (!enabled || isSavingEvent) return;
     setIsSavingEvent(true);
     try {
       const saved = 'eventId' in input
-        ? await store.updateCalendarEvent(input)
-        : await store.createCalendarEvent(input);
+        ? await store.updateCalendarEvent(input, editingEvent?.accountId || targetAccountId)
+        : await store.createCalendarEvent(input, targetAccountId);
       const start = new Date(saved.startAt);
       setSelectedDate(start);
       setVisibleMonth(new Date(start.getFullYear(), start.getMonth(), 1));
@@ -346,6 +346,12 @@ export function CalendarAgendaPanel() {
             defaultConferenceProvider={store.settings.calendar.defaultConferenceProvider}
             calendarSettings={store.settings.calendar}
             calendarEvents={store.calendarEvents}
+            calendars={editingEvent
+              ? store.calendarLists.filter(calendar => calendar.accountId === editingEvent.accountId)
+              : store.calendarLists}
+            defaultAccountId={editingEvent?.accountId
+              || (store.activeAccount && store.activeAccount.id !== 'unified' ? store.activeAccount.email : store.accounts[0]?.email)
+              || ''}
             initialStartAt={createSlot?.startAt}
             initialEndAt={createSlot?.endAt}
             isSaving={isSavingEvent}
@@ -353,7 +359,7 @@ export function CalendarAgendaPanel() {
             onCancel={closeEventForm}
             onSubmit={submitEventForm}
             onDelete={editingEvent ? deleteEditingEvent : undefined}
-            onQueryFreeBusy={store.queryCalendarFreeBusy}
+            onQueryFreeBusy={(input, targetAccountId) => store.queryCalendarFreeBusy(input, targetAccountId)}
           />
         ) : selectedEvents.length === 0 ? (
           <div className="rounded-md border border-dashed border-[var(--border)] px-3 py-4 text-center text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">

@@ -6,6 +6,7 @@ import { filterEmailSuggestions, isValidEmail } from '../../../../shared/compose
 interface RecipientFieldProps {
   label: string;
   recipients: Recipient[];
+  variant?: 'compose' | 'form';
   placeholder?: string;
   autoFocus?: boolean;
   suggestions?: EmailAddressSuggestion[];
@@ -42,6 +43,7 @@ function mergeRecipients(existing: Recipient[], additions: Recipient[]): Recipie
 export function RecipientField({
   label,
   recipients,
+  variant = 'compose',
   placeholder,
   autoFocus,
   suggestions = [],
@@ -60,6 +62,7 @@ export function RecipientField({
     [excludedEmails, inputValue, recipients, suggestions],
   );
   const visibleSuggestions = suggestionsOpen ? filteredSuggestions : [];
+  const isFormField = variant === 'form';
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -89,8 +92,12 @@ export function RecipientField({
   };
 
   return (
-    <div className="flex items-start gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[calc(12px*var(--font-scale))]">
-      <span className="w-12 shrink-0 pt-1 text-[var(--text-secondary)] font-medium select-none">{label}</span>
+    <div className={isFormField
+      ? 'rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(12px*var(--font-scale))] focus-within:border-[var(--accent)]'
+      : 'flex items-start gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[calc(12px*var(--font-scale))]'}>
+      <span className={isFormField
+        ? 'mb-1 block text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-tertiary)]'
+        : 'w-12 shrink-0 pt-1 text-[var(--text-secondary)] font-medium select-none'}>{label}</span>
       <div className="flex flex-1 flex-wrap items-center gap-1.5 min-h-[28px]">
         {recipients.map((recipient) => {
           const valid = isValidEmail(recipient.email.trim());
@@ -104,7 +111,7 @@ export function RecipientField({
                   : 'border-[var(--danger)]/50 bg-[var(--danger)]/10 text-[var(--danger)]'
               }`}
             >
-              <span className="truncate">{recipient.email}</span>
+              <span className="truncate">{isFormField && recipient.name ? recipient.name : recipient.email}</span>
               <button
                 type="button"
                 onClick={() => onChange(recipients.filter(item => item.email !== recipient.email))}
@@ -164,12 +171,15 @@ export function RecipientField({
                 onChange(recipients.slice(0, -1));
               }
             }}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={visibleSuggestions.length > 0}
             className="w-full bg-transparent py-1 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
           />
           {visibleSuggestions.length > 0 && (
             <div
               role="listbox"
-              className="dm-overlay absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] py-1 shadow-xl"
+              className={`dm-overlay left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] py-1 shadow-xl ${isFormField ? '' : 'absolute'}`}
             >
               {visibleSuggestions.map((suggestion, index) => {
                 const isHighlighted = index === highlightedIndex;
@@ -203,7 +213,7 @@ export function RecipientField({
                       )}
                     </span>
                     <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-                      {isGroup ? 'Group' : suggestion.kind === 'contact' ? 'Contact' : suggestion.sourceCount}
+                      {isGroup ? 'Group' : suggestion.kind === 'contact' ? 'Contact' : isFormField ? 'Mail' : suggestion.sourceCount}
                     </span>
                   </button>
                 );
