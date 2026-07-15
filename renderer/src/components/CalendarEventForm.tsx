@@ -451,13 +451,16 @@ export function CalendarEventForm({
           rows={3}
           className="resize-y rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
         />
-        <input
-          value={guests}
-          onChange={(inputEvent) => setGuests(inputEvent.target.value)}
-          placeholder="Guests"
-          list="calendar-contact-emails"
-          className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-        />
+        <label className="flex flex-col gap-1">
+          <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-tertiary)]">Participants</span>
+          <input
+            value={guests}
+            onChange={(inputEvent) => setGuests(inputEvent.target.value)}
+            placeholder="Add email addresses"
+            list="calendar-contact-emails"
+            className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+          />
+        </label>
         <datalist id="calendar-contact-emails">
           {contactEmails.slice(0, 250).map(email => <option key={email} value={email} />)}
         </datalist>

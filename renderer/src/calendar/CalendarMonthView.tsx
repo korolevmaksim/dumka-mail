@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
+import { Users } from 'lucide-react';
 import type { CalendarEvent, CalendarListEntry } from '../../../shared/types';
 import { calendarDateKey, calendarEventsForDate, calendarMonthDays, layoutCalendarAllDayLanes, moveCalendarEventToDate } from '../../../shared/calendarWorkspace';
 import { CalendarEventChip } from './CalendarEventChip';
+import { calendarParticipantPreview, calendarParticipantsAccessibleLabel } from './calendarParticipants';
 
 interface CalendarMonthViewProps {
   anchor: Date;
@@ -140,6 +142,8 @@ export function CalendarMonthView({
                   const writable = calendar?.accessRole === 'writer' || calendar?.accessRole === 'owner';
                   const startsHere = span.startColumn === columnIndex;
                   const endsHere = span.endColumn === columnIndex;
+                  const participantPreview = calendarParticipantPreview(span.event);
+                  const participantLabel = calendarParticipantsAccessibleLabel(span.event);
                   return (
                     <button
                       key={`lane-${lane}:${span.event.accountId}:${span.event.calendarId}:${span.event.id}`}
@@ -150,7 +154,8 @@ export function CalendarMonthView({
                         dragEvent.dataTransfer.setData('application/x-dumka-calendar-event', JSON.stringify({ accountId: span.event.accountId, calendarId: span.event.calendarId, eventId: span.event.id }));
                       }}
                       onClick={clickEvent => { clickEvent.stopPropagation(); onSelectEvent(span.event); }}
-                      aria-label={`${span.event.summary}, ${span.event.startDate || new Date(span.event.startAt).toLocaleDateString()} through ${span.event.endDate || new Date(span.event.endAt).toLocaleDateString()}`}
+                      aria-label={[`${span.event.summary}, ${span.event.startDate || new Date(span.event.startAt).toLocaleDateString()} through ${span.event.endDate || new Date(span.event.endAt).toLocaleDateString()}`, participantLabel].filter(Boolean).join(', ')}
+                      title={[span.event.summary, participantLabel].filter(Boolean).join(' · ')}
                       className="dm-calendar-event h-[18px] min-w-0 truncate px-1.5 text-left text-[calc(9px*var(--font-scale))] font-medium shadow-sm focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
                       style={{
                         backgroundColor: calendar?.backgroundColor || '#3b82f6',
@@ -163,7 +168,17 @@ export function CalendarMonthView({
                         marginRight: endsHere ? 0 : -6,
                       }}
                     >
-                      {startsHere ? span.event.summary : '\u00a0'}
+                      {startsHere ? (
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="min-w-0 flex-1 truncate">{span.event.summary}</span>
+                          {participantPreview && (
+                            <span className="dm-calendar-participant-preview ml-auto flex min-w-0 max-w-[40%] shrink items-center gap-0.5 opacity-80">
+                              <Users className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                              <span className="dm-calendar-participant-preview-name truncate">{participantPreview}</span>
+                            </span>
+                          )}
+                        </span>
+                      ) : '\u00a0'}
                     </button>
                   );
                 })() : <div key={`empty-lane-${lane}`} className="h-[18px]" />)}

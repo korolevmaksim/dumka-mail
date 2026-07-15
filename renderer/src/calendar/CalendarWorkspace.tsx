@@ -20,6 +20,7 @@ import { calendarDuplicateInput, calendarEventUpdateInput, localCalendarDateKey,
 import { CalendarHeader, CALENDAR_VIEW_OPTIONS } from './CalendarHeader';
 import { CalendarRsvpActions } from './CalendarRsvpActions';
 import { CalendarRelatedMail } from './CalendarRelatedMail';
+import { CalendarEventParticipants } from './CalendarEventParticipants';
 
 export function CalendarWorkspace() {
   const store = useAppStore();
@@ -595,6 +596,7 @@ export function CalendarWorkspace() {
                   <div>{selectedEvent.isAllDay ? 'All day' : new Date(selectedEvent.startAt).toLocaleString()}</div>
                   {selectedEvent.location && <div>{selectedEvent.location}</div>}
                   {selectedEvent.description && <div className="whitespace-pre-wrap">{selectedEvent.description}</div>}
+                  <CalendarEventParticipants event={selectedEvent} />
                   {selectedEvent.selfResponseStatus && <CalendarRsvpActions currentStatus={selectedEvent.selfResponseStatus} disabled={isResponding} onRespond={status => void respondToEvent(status)} />}
                   <button type="button" onClick={() => void duplicateEvent(selectedEvent)} className="flex items-center gap-1 font-semibold text-[var(--accent)]"><Copy className="h-3.5 w-3.5" />Duplicate to writable calendar</button>
                   {selectedEvent.attendees.length > 0 && <button type="button" onClick={() => draftMeetingFollowUp(selectedEvent)} className="flex items-center gap-1 font-semibold text-[var(--accent)]"><MailPlus className="h-3.5 w-3.5" />Draft follow-up</button>}
@@ -608,6 +610,7 @@ export function CalendarWorkspace() {
                   <span>{selectedEvent.isAllDay ? 'All day' : `${new Date(selectedEvent.startAt).toLocaleString()} · ${calendarEventDurationMinutes(selectedEvent)} min`}</span>
                   <span className="flex items-center gap-2">{selectedEvent.conferenceUrl && <a href={selectedEvent.conferenceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[var(--accent)]"><Video className="h-3 w-3" />Join</a>}<button type="button" onClick={() => void window.electronAPI.exportCalendarEventIcs(selectedEvent)} title="Export .ics" className="text-[var(--text-tertiary)] hover:text-[var(--accent)]"><Download className="h-3.5 w-3.5" /></button></span>
                 </div>
+                <div className="mt-2"><CalendarEventParticipants event={selectedEvent} /></div>
                 {selectedEvent.selfResponseStatus && <div className="mt-2"><CalendarRsvpActions currentStatus={selectedEvent.selfResponseStatus} disabled={isResponding} onRespond={status => void respondToEvent(status)} /></div>}
                 <button type="button" onClick={() => void duplicateEvent(selectedEvent)} className="mt-2 flex items-center gap-1 font-semibold text-[var(--accent)]"><Copy className="h-3.5 w-3.5" />Duplicate</button>
                 {selectedEvent.attendees.length > 0 && <button type="button" onClick={() => draftMeetingFollowUp(selectedEvent)} className="mt-2 flex items-center gap-1 font-semibold text-[var(--accent)]"><MailPlus className="h-3.5 w-3.5" />Draft follow-up</button>}

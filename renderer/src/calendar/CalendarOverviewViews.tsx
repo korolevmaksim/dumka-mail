@@ -52,7 +52,7 @@ export function CalendarOverviewView({ anchor, events, mode, weekStartsOn, onSel
   const months = Array.from({ length: count }, (_, index) => new Date(anchor.getFullYear(), startMonth + index, 1));
   const weekdayLabels = Array.from({ length: 7 }, (_, index) => ['S', 'M', 'T', 'W', 'T', 'F', 'S'][(index + weekStartsOn) % 7]);
   return (
-    <div className={`grid h-full overflow-y-auto p-5 ${mode === 'quarter' ? 'grid-cols-3 gap-5' : 'grid-cols-3 gap-4 xl:grid-cols-4'}`}>
+    <div className={`grid h-full auto-rows-max content-start items-start overflow-y-auto p-5 ${mode === 'quarter' ? 'grid-cols-3 gap-5' : 'grid-cols-3 gap-4 xl:grid-cols-4'}`}>
       {months.map(month => {
         const days = calendarMonthDays(month, weekStartsOn);
         return (
@@ -70,7 +70,7 @@ export function CalendarOverviewView({ anchor, events, mode, weekStartsOn, onSel
                     key={day.key}
                     onClick={() => onSelectDate(day.date)}
                     onDoubleClick={() => onCreate(day.date)}
-                    className={`relative flex aspect-square items-center justify-center rounded text-[calc(9px*var(--font-scale))] ${day.inMonth ? 'text-[var(--text-secondary)] hover:bg-[var(--hover-row)]' : 'text-[var(--text-tertiary)] opacity-30'} ${day.isToday ? 'bg-[var(--accent)] text-white' : ''}`}
+                    className={`relative flex h-8 items-center justify-center rounded text-[calc(9px*var(--font-scale))] ${day.inMonth ? 'text-[var(--text-secondary)] hover:bg-[var(--hover-row)]' : 'text-[var(--text-tertiary)] opacity-30'} ${day.isToday ? 'bg-[var(--accent)] text-white' : ''}`}
                   >
                     {day.date.getDate()}
                     {countForDay > 0 && !day.isToday && <span className="absolute bottom-0.5 h-1 w-1 rounded-full bg-[var(--accent)]" />}
