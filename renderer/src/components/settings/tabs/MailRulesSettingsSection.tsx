@@ -150,6 +150,8 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
           >
             <option value="from">From</option>
             <option value="senderDomain">Sender domain</option>
+            <option value="to">To</option>
+            <option value="cc">Cc</option>
             <option value="subject">Subject</option>
             <option value="systemSignal">System signal</option>
           </select>

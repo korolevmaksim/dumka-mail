@@ -46,6 +46,20 @@ function senderDomain(senderEmail: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : senderEmail;
 }
 
+function recipientsMatch(
+  recipients: MailThread['to'],
+  expected: string,
+  operation: MailCategoryRule['operation'],
+): boolean {
+  return (recipients || []).some(recipient => {
+    const name = recipient.name.trim();
+    const email = recipient.email.trim();
+    return [email, name, `${name} ${email}`.trim()]
+      .filter(Boolean)
+      .some(candidate => textMatches(candidate, expected, operation));
+  });
+}
+
 /**
  * Text comparison used by every non-`systemSignal` field. Both sides are
  * trimmed and lowercased; an empty expected value never matches (Swift parity).
@@ -124,10 +138,10 @@ export function ruleMatches(thread: MailThread, rule: MailCategoryRule): boolean
       result = textMatches(thread.subject, rule.value, rule.operation);
       break;
     case 'to':
+      result = recipientsMatch(thread.to, rule.value, rule.operation);
+      break;
     case 'cc':
-      // `MailThread` carries no recipient lists, so these never match. The fields
-      // exist on the rule type for parity with per-message rule evaluation.
-      result = textMatches('', rule.value, rule.operation);
+      result = recipientsMatch(thread.cc, rule.value, rule.operation);
       break;
     default:
       result = false;

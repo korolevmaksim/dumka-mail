@@ -18,6 +18,8 @@ const thread: MailThread = {
   lastMessageAt: '2026-07-02T10:00:00.000Z',
   senderNames: ['Billing'],
   senderEmail: 'billing@vendor.com',
+  to: [{ name: 'Maksim Alias', email: 'alias@example.com' }],
+  cc: [],
   labelIds: ['INBOX', 'UNREAD'],
   hasAttachments: true,
   isUnread: true,
@@ -48,6 +50,21 @@ describe('mail automation rules', () => {
     expect(mailAutomationRuleMatchesThread(rule(), thread)).toBe(true);
     expect(mailAutomationRuleMatchesThread(rule({ accountId: 'other@example.com' }), thread)).toBe(false);
     expect(mailAutomationRuleMatchesThread(rule({ isEnabled: false }), thread)).toBe(false);
+  });
+
+  it('matches an automatic rule by the To alias', () => {
+    const aliasRule = rule({
+      conditions: [{
+        id: 'condition-to',
+        field: 'to',
+        operation: 'equals',
+        value: 'alias@example.com',
+        isNegated: false,
+        accountId: 'me@example.com',
+      }],
+    });
+
+    expect(mailAutomationRuleMatchesThread(aliasRule, thread)).toBe(true);
   });
 
   it('keeps active and shadow evaluation paths separate', () => {

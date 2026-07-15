@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
 import { Trash2, GripVertical, Pencil } from 'lucide-react';
 import { emitToast } from '../../../lib/toastBus';
-import type { TabCategory } from '../../../../../shared/types';
+import type { MailTextRuleField, TabCategory } from '../../../../../shared/types';
 import { MailRulesSettingsSection } from './MailRulesSettingsSection';
 import {
   GLOBAL_CLASSIFICATION_SCOPE,
@@ -18,6 +18,14 @@ import {
   ruleBelongsToScope,
   scopeDisplayLabel,
 } from './classificationScope';
+
+const CLASSIFICATION_FIELD_LABELS: Record<MailTextRuleField, string> = {
+  from: 'Sender (From)',
+  senderDomain: 'Sender Domain',
+  to: 'Recipient (To)',
+  cc: 'Carbon Copy (Cc)',
+  subject: 'Subject Line',
+};
 
 export function ClassificationSettingsTab() {
   const store = useAppStore();
@@ -474,6 +482,9 @@ export function ClassificationSettingsTab() {
               className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
             >
               <option value="from">Sender Email (From)</option>
+              <option value="senderDomain">Sender Domain</option>
+              <option value="to">Recipient Email (To)</option>
+              <option value="cc">Carbon Copy Email (Cc)</option>
               <option value="subject">Subject Line</option>
             </select>
           </div>
@@ -496,7 +507,7 @@ export function ClassificationSettingsTab() {
           <input
             id="new-rule-value-pref"
             type="text"
-            placeholder="e.g. no-reply, billing@, notification"
+            placeholder="e.g. alias@example.com, billing@, invoice"
             className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
           />
         </div>
@@ -524,7 +535,7 @@ export function ClassificationSettingsTab() {
             const target = document.getElementById('new-rule-target-pref') as HTMLSelectElement;
             if (!val.value.trim()) return;
             store.addCustomClassifierRule({
-              field: field.value as 'from' | 'subject',
+              field: field.value as MailTextRuleField,
               condition: cond.value as 'contains' | 'equals' | 'startsWith' | 'endsWith',
               value: val.value.trim(),
               targetCategory: target.value || routeTargetCategories[0]?.id || 'other',
@@ -556,7 +567,7 @@ export function ClassificationSettingsTab() {
                 className="w-3.5 h-3.5 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
               />
               <div className="flex flex-col text-[calc(10px*var(--font-scale))]">
-                <span>If <strong>{rule.field}</strong> {rule.condition} "{rule.value}"</span>
+                <span>If <strong>{CLASSIFICATION_FIELD_LABELS[rule.field]}</strong> {rule.condition} "{rule.value}"</span>
                 <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
                   <span>Route: <strong>{categoryRouteLabel(rule.targetCategory, store.tabCategories, store.accounts)}</strong></span>
                   <span>•</span>

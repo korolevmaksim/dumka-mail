@@ -13,7 +13,7 @@ This project is early alpha software. It is useful for local development and exp
 - Local SQLite mail cache with full-text search and optional opt-in semantic search.
 - Gmail OAuth onboarding with OS-backed token storage through macOS Keychain or Electron safeStorage.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
-- Split inbox categories, custom category rules, saved views, reminders, snooze notifications, and action history.
+- Split inbox categories, custom category rules with sender, domain, recipient (`To`/`Cc`), and subject filters, saved views, reminders, snooze notifications, and action history.
 - Search operators for sender, labels, attachments, date ranges, and mailbox scope.
 - Offline-first mailbox mutations with background reconciliation, including archive, read state, trash, spam, ignore, nested Gmail labels, scheduled sends, rule-driven forwarding, and safe auto-replies.
 - Address book sync with contact detail cards, local notes, display-name edits, mailing groups, internal compose handoff, and compose autocomplete.

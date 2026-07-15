@@ -48,6 +48,10 @@ export interface MailThread {
   lastMessageAt: string;
   senderNames: string[];
   senderEmail: string;
+  /** Unique recipients seen in the To header across cached messages in this thread. */
+  to?: Recipient[];
+  /** Unique recipients seen in the Cc header across cached messages in this thread. */
+  cc?: Recipient[];
   labelIds: MailLabel[];
   hasAttachments: boolean;
   isUnread: boolean;
@@ -734,9 +738,12 @@ export interface TabCategory {
   accountId?: string;
 }
 
+export type MailTextRuleField = 'from' | 'senderDomain' | 'to' | 'cc' | 'subject';
+export type MailCategoryRuleField = MailTextRuleField | 'systemSignal';
+
 export interface CustomClassifierRule {
   id: string;
-  field: 'from' | 'subject';
+  field: MailTextRuleField;
   condition: 'contains' | 'equals' | 'startsWith' | 'endsWith';
   value: string;
   targetCategory: string;
@@ -795,7 +802,7 @@ export interface AttachmentOpenBlocked {
 
 export interface MailCategoryRule {
   id: string;
-  field: 'senderDomain' | 'subject' | 'from' | 'to' | 'cc' | 'systemSignal';
+  field: MailCategoryRuleField;
   operation: 'contains' | 'equals' | 'startsWith' | 'endsWith';
   value: string;
   isNegated: boolean;

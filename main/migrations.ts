@@ -104,6 +104,8 @@ export function runMigrations(db: Database.Database) {
         last_message_at TEXT NOT NULL,
         sender_names_json TEXT NOT NULL,
         sender_email TEXT NOT NULL,
+        to_recipients_json TEXT NOT NULL DEFAULT '[]',
+        cc_recipients_json TEXT NOT NULL DEFAULT '[]',
         label_ids_json TEXT NOT NULL,
         has_attachments INTEGER NOT NULL,
         is_unread INTEGER NOT NULL,
@@ -355,6 +357,8 @@ export function runMigrations(db: Database.Database) {
     { table: 'messages', column: 'rfc_message_id', definition: 'rfc_message_id TEXT' },
     { table: 'messages', column: 'rfc_references', definition: 'rfc_references TEXT' },
     { table: 'messages', column: 'rfc_in_reply_to', definition: 'rfc_in_reply_to TEXT' },
+    { table: 'threads', column: 'to_recipients_json', definition: 'to_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
+    { table: 'threads', column: 'cc_recipients_json', definition: 'cc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'sync_state', column: 'history_backfill_page_token', definition: 'history_backfill_page_token TEXT' },
     { table: 'sync_state', column: 'last_history_backfill_at', definition: 'last_history_backfill_at TEXT' },
     { table: 'sync_state', column: 'history_backfill_completed_at', definition: 'history_backfill_completed_at TEXT' },
@@ -385,6 +389,96 @@ export function runMigrations(db: Database.Database) {
     } catch (e) {
       console.error(`Migration error for ${table}.${column}:`, e);
     }
+  }
+
+  // Existing installs already have recipient metadata on cached messages. Keep
+  // thread summaries fast by denormalizing those values once instead of joining
+  // every message while loading the mailbox.
+  try {
+    const backfillKey = 'migration:threadRecipientsBackfilled';
+    const completed = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(backfillKey);
+    if (!completed) {
+      db.transaction(() => {
+        db.exec(`
+          DROP TABLE IF EXISTS temp.thread_to_recipient_backfill;
+          CREATE TEMP TABLE thread_to_recipient_backfill (
+            account_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            recipients_json TEXT NOT NULL,
+            PRIMARY KEY (account_id, thread_id)
+          ) WITHOUT ROWID;
+
+          INSERT INTO thread_to_recipient_backfill (account_id, thread_id, recipients_json)
+          SELECT
+            message.account_id,
+            message.thread_id,
+            json_group_array(json(recipient.value))
+          FROM messages AS message,
+               json_each(CASE
+                 WHEN json_valid(message.to_recipients_json) THEN message.to_recipients_json
+                 ELSE '[]'
+               END) AS recipient
+          GROUP BY message.account_id, message.thread_id;
+
+          UPDATE threads AS thread
+          SET to_recipients_json = (
+            SELECT backfill.recipients_json
+            FROM thread_to_recipient_backfill AS backfill
+            WHERE backfill.account_id = thread.account_id
+              AND backfill.thread_id = thread.id
+          )
+          WHERE thread.to_recipients_json = '[]'
+            AND EXISTS (
+              SELECT 1
+              FROM thread_to_recipient_backfill AS backfill
+              WHERE backfill.account_id = thread.account_id
+                AND backfill.thread_id = thread.id
+            );
+
+          DROP TABLE thread_to_recipient_backfill;
+
+          DROP TABLE IF EXISTS temp.thread_cc_recipient_backfill;
+          CREATE TEMP TABLE thread_cc_recipient_backfill (
+            account_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            recipients_json TEXT NOT NULL,
+            PRIMARY KEY (account_id, thread_id)
+          ) WITHOUT ROWID;
+
+          INSERT INTO thread_cc_recipient_backfill (account_id, thread_id, recipients_json)
+          SELECT
+            message.account_id,
+            message.thread_id,
+            json_group_array(json(recipient.value))
+          FROM messages AS message,
+               json_each(CASE
+                 WHEN json_valid(message.cc_recipients_json) THEN message.cc_recipients_json
+                 ELSE '[]'
+               END) AS recipient
+          GROUP BY message.account_id, message.thread_id;
+
+          UPDATE threads AS thread
+          SET cc_recipients_json = (
+            SELECT backfill.recipients_json
+            FROM thread_cc_recipient_backfill AS backfill
+            WHERE backfill.account_id = thread.account_id
+              AND backfill.thread_id = thread.id
+          )
+          WHERE thread.cc_recipients_json = '[]'
+            AND EXISTS (
+              SELECT 1
+              FROM thread_cc_recipient_backfill AS backfill
+              WHERE backfill.account_id = thread.account_id
+                AND backfill.thread_id = thread.id
+            );
+
+          DROP TABLE thread_cc_recipient_backfill;
+        `);
+        db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(backfillKey, 'true');
+      })();
+    }
+  } catch (e) {
+    console.error('Migration error backfilling thread recipients:', e);
   }
 
   // Idempotent backfill: completed unsubscribe actions that predate the

@@ -47,6 +47,8 @@ function thread(id: string, accountId: string, labels: string[], minute: number)
     lastMessageAt: `2026-07-10T10:${String(minute).padStart(2, '0')}:00.000Z`,
     senderNames: ['Sender'],
     senderEmail: 'Sender@Example.com',
+    to: [{ name: 'Alias', email: `${accountId.split('@')[0]}+alias@example.com` }],
+    cc: [{ name: 'Copy', email: 'copy@example.com' }],
     labelIds: labels,
     hasAttachments: false,
     isUnread: false,
@@ -90,6 +92,10 @@ describe('mailbox repository hot paths', () => {
       ]);
       expect(ThreadsRepo.listMany(['a@example.com', 'b@example.com']).map(item => item.id)).toEqual(['a2', 'b1', 'a1']);
       expect(ThreadsRepo.listRecentInbox('a@example.com', 1).map(item => item.id)).toEqual(['a1']);
+      expect(ThreadsRepo.get('a@example.com', 'a1')).toMatchObject({
+        to: [{ name: 'Alias', email: 'a+alias@example.com' }],
+        cc: [{ name: 'Copy', email: 'copy@example.com' }],
+      });
     });
   });
 

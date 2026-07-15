@@ -275,6 +275,8 @@ function mapThreadRow(r: any): MailThread {
     lastMessageAt: r.last_message_at,
     senderNames: JSON.parse(r.sender_names_json),
     senderEmail: r.sender_email,
+    to: JSON.parse(r.to_recipients_json || '[]'),
+    cc: JSON.parse(r.cc_recipients_json || '[]'),
     labelIds: JSON.parse(r.label_ids_json),
     hasAttachments: r.has_attachments === 1,
     isUnread: r.is_unread === 1,
@@ -346,14 +348,17 @@ export const ThreadsRepo = {
     const insert = db.prepare(`
       INSERT INTO threads (
         id, account_id, subject, snippet, last_message_at,
-        sender_names_json, sender_email, label_ids_json, has_attachments, is_unread
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sender_names_json, sender_email, to_recipients_json, cc_recipients_json,
+        label_ids_json, has_attachments, is_unread
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, id) DO UPDATE SET
         subject=excluded.subject,
         snippet=excluded.snippet,
         last_message_at=excluded.last_message_at,
         sender_names_json=excluded.sender_names_json,
         sender_email=excluded.sender_email,
+        to_recipients_json=excluded.to_recipients_json,
+        cc_recipients_json=excluded.cc_recipients_json,
         label_ids_json=excluded.label_ids_json,
         has_attachments=excluded.has_attachments,
         is_unread=excluded.is_unread
@@ -369,6 +374,8 @@ export const ThreadsRepo = {
           t.lastMessageAt,
           JSON.stringify(t.senderNames),
           t.senderEmail,
+          JSON.stringify(t.to || []),
+          JSON.stringify(t.cc || []),
           JSON.stringify(t.labelIds),
           t.hasAttachments ? 1 : 0,
           t.isUnread ? 1 : 0

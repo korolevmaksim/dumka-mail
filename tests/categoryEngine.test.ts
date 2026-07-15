@@ -15,6 +15,8 @@ const baseThread: MailThread = {
   lastMessageAt: new Date('2026-06-26T14:30:00Z').toISOString(),
   senderNames: ['John Doe'],
   senderEmail: 'john@example.com',
+  to: [{ name: 'Personal Alias', email: 'personal+news@gmail.com' }],
+  cc: [{ name: 'Finance Alias', email: 'billing@example.org' }],
   labelIds: ['INBOX'],
   hasAttachments: false,
   isUnread: false,
@@ -78,9 +80,12 @@ describe('ruleMatches', () => {
     expect(ruleMatches(noName, rule({ field: 'from', operation: 'contains', value: 'john@example.com' }))).toBe(true);
   });
 
-  it('never matches `to` / `cc` (no recipient data on a thread)', () => {
-    expect(ruleMatches(baseThread, rule({ field: 'to', operation: 'contains', value: 'anyone' }))).toBe(false);
-    expect(ruleMatches(baseThread, rule({ field: 'cc', operation: 'contains', value: 'anyone' }))).toBe(false);
+  it('matches `to` / `cc` against each recipient name and email', () => {
+    expect(ruleMatches(baseThread, rule({ field: 'to', operation: 'contains', value: '+news@' }))).toBe(true);
+    expect(ruleMatches(baseThread, rule({ field: 'to', operation: 'equals', value: 'personal+news@gmail.com' }))).toBe(true);
+    expect(ruleMatches(baseThread, rule({ field: 'to', operation: 'contains', value: 'personal alias' }))).toBe(true);
+    expect(ruleMatches(baseThread, rule({ field: 'cc', operation: 'endsWith', value: '@example.org' }))).toBe(true);
+    expect(ruleMatches(baseThread, rule({ field: 'cc', operation: 'contains', value: 'someone else' }))).toBe(false);
   });
 
   it('honors isNegated', () => {

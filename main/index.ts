@@ -53,6 +53,7 @@ import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoRep
 import { buildMailRuleShadowLog, evaluateMailRules, evaluateShadowMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
+import { buildMailThreadFromMessages } from '../shared/mailThread';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
 import type {
   ActionKind,
@@ -783,24 +784,6 @@ async function saveMessagesToDatabase(messages: MailMessage[], options?: { notif
     notifyOfNewMessages(newMessages);
     void AgenticService.processNewMessages(newMessages);
   }
-}
-
-function buildThreadFromMessages(accountId: string, threadId: string, messages: MailMessage[]): MailThread | null {
-  if (messages.length === 0) return null;
-
-  const lastMessage = messages[messages.length - 1];
-  return {
-    id: threadId,
-    accountId,
-    subject: lastMessage.subject || '',
-    snippet: lastMessage.snippet || '',
-    lastMessageAt: lastMessage.receivedAt,
-    senderNames: Array.from(new Set(messages.map(message => message.senderName || message.senderEmail))),
-    senderEmail: lastMessage.senderEmail,
-    labelIds: Array.from(new Set(messages.flatMap(message => message.labelIds))),
-    hasAttachments: messages.some(message => message.hasAttachments),
-    isUnread: messages.some(message => message.isUnread)
-  };
 }
 
 // === Bind IPC Database Channels ===
@@ -1839,7 +1822,7 @@ async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta
         const messages = await GmailSyncService.fetchThreadDetail(email, threadId);
         await saveMessagesToDatabase(messages, { notifyOfNew: true });
 
-        const thread = buildThreadFromMessages(email, threadId, messages);
+        const thread = buildMailThreadFromMessages(email, threadId, messages);
         if (thread) {
           await saveThreadsToDatabase([thread]);
           upserts.push(thread);

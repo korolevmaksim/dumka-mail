@@ -1,7 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule } from '../../../shared/types';
+import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule, MailTextRuleField } from '../../../shared/types';
 import { CONFIGURABLE_AI_PROVIDERS } from '../../../shared/aiProviders';
 import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, SETTINGS_SCHEMA_VERSION, mergeSettings } from './AppStore';
+
+function customClassifierField(value: unknown): MailTextRuleField {
+  switch (value) {
+    case 'from':
+    case 'senderDomain':
+    case 'to':
+    case 'cc':
+    case 'subject':
+      return value;
+    default:
+      return 'subject';
+  }
+}
 
 export function useSettingsState() {
   const [settings, setSettingsState] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -55,7 +68,7 @@ export function useSettingsState() {
           .filter(r => r.targetCategory === bc.id)
           .map(r => ({
             id: r.id,
-            field: (r.field === 'from' ? 'from' : 'subject') as 'from' | 'subject',
+            field: r.field,
             operation: r.condition,
             value: r.value,
             isNegated: false,
@@ -78,7 +91,7 @@ export function useSettingsState() {
           .filter(r => r.targetCategory === cc.id)
           .map(r => ({
             id: r.id,
-            field: (r.field === 'from' ? 'from' : 'subject') as 'from' | 'subject',
+            field: r.field,
             operation: r.condition,
             value: r.value,
             isNegated: false,
@@ -146,7 +159,7 @@ export function useSettingsState() {
         b.extraRules.forEach((r: any) => {
           rules.push({
             id: r.id,
-            field: r.field === 'from' ? 'from' : 'subject',
+            field: customClassifierField(r.field),
             condition: r.operation,
             value: r.value,
             targetCategory: b.id,
@@ -159,7 +172,7 @@ export function useSettingsState() {
         c.rules.forEach((r: any) => {
           rules.push({
             id: r.id,
-            field: r.field === 'from' ? 'from' : 'subject',
+            field: customClassifierField(r.field),
             condition: r.operation,
             value: r.value,
             targetCategory: c.id,
@@ -223,7 +236,7 @@ export function useSettingsState() {
               rules.forEach(r => {
                 const rule = {
                   id: r.id,
-                  field: (r.field === 'from' ? 'from' : 'subject') as 'from' | 'subject',
+                  field: customClassifierField(r.field),
                   operation: r.condition,
                   value: r.value,
                   isNegated: false,
@@ -285,7 +298,7 @@ export function useSettingsState() {
           b.extraRules.forEach(r => {
             legacyRules.push({
               id: r.id,
-              field: r.field === 'from' ? 'from' : 'subject',
+              field: customClassifierField(r.field),
               condition: r.operation,
               value: r.value,
               targetCategory: b.id,
@@ -298,7 +311,7 @@ export function useSettingsState() {
           c.rules.forEach(r => {
             legacyRules.push({
               id: r.id,
-              field: r.field === 'from' ? 'from' : 'subject',
+              field: customClassifierField(r.field),
               condition: r.operation,
               value: r.value,
               targetCategory: c.id,

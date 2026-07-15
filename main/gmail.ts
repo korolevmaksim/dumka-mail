@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { GmailSignatureSyncResult, MailLabelDefinition, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
 import { getRefreshToken } from './keychain';
 import { compileMarkdownToHtml } from '../shared/markdown';
+import { buildMailThreadFromMessages } from '../shared/mailThread';
 import { gmailSignatureHtmlToPlainText, sanitizeGmailSignatureHtml } from '../shared/textNormalizer';
 import { loadGoogleConfig, startOAuthFlow, base64urlSafe } from './gmailOAuth';
 
@@ -279,26 +280,13 @@ function buildThreadsFromDetails(
 
     if (msgs.length === 0) continue;
 
-    const lastMsg = msgs[msgs.length - 1];
     const detailHistId = detail.messages?.[detail.messages.length - 1]?.historyId;
     if (detailHistId && BigInt(detailHistId) > BigInt(latestHistoryId)) {
       latestHistoryId = detailHistId;
     }
 
-    const senderNames = Array.from(new Set<string>(msgs.map((m: MailMessage) => m.senderName || m.senderEmail)));
-
-    threads.push({
-      id: detail.id,
-      accountId: email,
-      subject: lastMsg.subject,
-      snippet: lastMsg.snippet,
-      lastMessageAt: lastMsg.receivedAt,
-      senderNames,
-      senderEmail: lastMsg.senderEmail,
-      labelIds: Array.from(new Set(msgs.flatMap((m: MailMessage) => m.labelIds))),
-      hasAttachments: msgs.some((m: MailMessage) => m.hasAttachments),
-      isUnread: msgs.some((m: MailMessage) => m.isUnread)
-    });
+    const thread = buildMailThreadFromMessages(email, detail.id, msgs);
+    if (thread) threads.push(thread);
   }
 
   return { threads, messages, historyId: latestHistoryId };
@@ -566,21 +554,8 @@ export const GmailSyncService = {
       messages.push(...msgs);
 
       if (msgs.length > 0) {
-        const lastMsg = msgs[msgs.length - 1];
-        const senderNames = Array.from(new Set(msgs.map((m: any) => m.senderName || m.senderEmail))) as string[];
-
-        threads.push({
-          id: detail.id,
-          accountId: email,
-          subject: lastMsg.subject,
-          snippet: lastMsg.snippet,
-          lastMessageAt: lastMsg.receivedAt,
-          senderNames,
-          senderEmail: lastMsg.senderEmail,
-          labelIds: Array.from(new Set(msgs.flatMap((m: any) => m.labelIds))),
-          hasAttachments: msgs.some((m: any) => m.hasAttachments),
-          isUnread: msgs.some((m: any) => m.isUnread)
-        });
+        const thread = buildMailThreadFromMessages(email, detail.id, msgs);
+        if (thread) threads.push(thread);
       }
     }
 
