@@ -216,6 +216,7 @@ export interface IElectronAPI {
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => Promise<string[]>;
   verifyMCPServer: (config: MCPServerConfig) => Promise<{ success: boolean; toolsCount?: number; error?: string }>;
   setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => Promise<void>;
+  undoFocusedInput: () => Promise<void>;
   getAutoUpdateStatus: () => Promise<AutoUpdateStatus>;
   checkForAppUpdates: () => Promise<AutoUpdateStatus>;
   installDownloadedAppUpdate: () => Promise<AutoUpdateStatus>;

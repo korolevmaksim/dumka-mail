@@ -1884,6 +1884,7 @@ registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
 registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
 registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
 registerSecureHandler('api:setMenuCommandState', (_, state) => updateApplicationMenuCommandState(state));
+registerSecureHandler('api:undoFocusedInput', (event) => event.sender.undo());
 registerSecureHandler('api:getAutoUpdateStatus', () => getAutoUpdateStatus());
 registerSecureHandler('api:checkForAppUpdates', () => checkForAppUpdates());
 registerSecureHandler('api:installDownloadedAppUpdate', () => installDownloadedAppUpdate());

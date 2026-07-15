@@ -39,7 +39,7 @@ export function installApplicationMenu(getMainWindow: () => BrowserWindow | null
       label: 'Edit',
       submenu: [
         {
-          label: 'Undo Last Mail Action',
+          label: 'Undo',
           accelerator: 'CommandOrControl+Z',
           enabled: commandState.canUndo,
           click: () => sendCommand(getMainWindow, 'edit.undo')

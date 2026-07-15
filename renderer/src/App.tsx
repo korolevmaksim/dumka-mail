@@ -30,6 +30,7 @@ import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { shouldCloseReaderForSearchChange } from './lib/searchReaderBehavior';
+import { isTextEditingElement } from './lib/undoRouting';
 import { densityMetrics } from './lib/density';
 import { calculateVirtualWindow, scrollTopForIndex } from './lib/virtualList';
 import { buildLabelTree, flattenLabelTree, labelDefinitionsForAccount, labelPresenceInThreads } from '../../shared/labels';
@@ -256,6 +257,12 @@ function AppContent() {
           break;
         }
         case 'edit.undo':
+          if (isTextEditingElement(document.activeElement)) {
+            window.electronAPI.undoFocusedInput().catch(err => {
+              console.error('Failed to undo focused text input:', err);
+            });
+            break;
+          }
           if (store.workspaceView === 'today') break;
           store.undoLastAction();
           break;
@@ -277,16 +284,19 @@ function AppContent() {
     return unsubscribe;
   }, [store]);
 
+  const hasActiveDraft = Boolean(store.activeDraft);
+
   useEffect(() => {
     if (!window.electronAPI?.setMenuCommandState) return;
 
     const canCreateDraft = Boolean(resolveComposeAccountId(store.activeAccount, store.accounts));
-    const canUndo = store.actionLog.some(l => l.status === 'completed' && isReversibleMailActionKind(l.kind));
+    const canUndo = hasActiveDraft
+      || store.actionLog.some(l => l.status === 'completed' && isReversibleMailActionKind(l.kind));
 
     window.electronAPI.setMenuCommandState({ canCreateDraft, canUndo }).catch(err => {
       console.error('Failed to update native menu command state:', err);
     });
-  }, [store.activeAccount, store.accounts, store.actionLog]);
+  }, [store.activeAccount, store.accounts, store.actionLog, hasActiveDraft]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 

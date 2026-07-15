@@ -200,6 +200,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listProviderModels: (provider: string, apiKey: string, baseUrl?: string) => ipcRenderer.invoke('api:listProviderModels', provider, apiKey, baseUrl),
   verifyMCPServer: (config: MCPServerConfig) => ipcRenderer.invoke('api:verifyMCPServer', config),
   setMenuCommandState: (state: { canCreateDraft?: boolean; canUndo?: boolean }) => ipcRenderer.invoke('api:setMenuCommandState', state),
+  undoFocusedInput: () => ipcRenderer.invoke('api:undoFocusedInput'),
   getAutoUpdateStatus: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:getAutoUpdateStatus'),
   checkForAppUpdates: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:checkForAppUpdates'),
   installDownloadedAppUpdate: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:installDownloadedAppUpdate'),
