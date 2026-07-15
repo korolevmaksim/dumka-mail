@@ -1,6 +1,7 @@
 import { AppSettings, MCPServerConfig } from '../shared/types';
 import { redactSecrets } from '../shared/aiContext';
 import { MAILBOX_SEARCH_TOOL_NAME } from '../shared/mailboxSearchTool';
+import { CALENDAR_FREE_SLOTS_TOOL_NAME, CALENDAR_SEARCH_TOOL_NAME } from '../shared/calendarAssistant';
 
 let McpClient: any;
 let StdioClientTransport: any;
@@ -38,13 +39,14 @@ export interface MCPToolSchema {
     properties?: Record<string, any>;
     required?: string[];
   };
-  source: 'search' | 'mcp' | 'mailbox';
+  source: 'search' | 'mcp' | 'mailbox' | 'calendar';
   serverId?: string;
   serverName?: string;
   originalName?: string;
 }
 
 type MailboxSearchExecutor = (args: any) => Promise<any>;
+type CalendarAssistantExecutor = (name: string, args: Record<string, unknown>) => Promise<unknown>;
 
 export interface MCPManagerOptions {
   requestTimeoutMs?: number;
@@ -121,6 +123,7 @@ export class MCPManagerImpl {
   private requestTimeoutMs: number;
   private maxToolResultChars: number;
   private mailboxSearchExecutor: MailboxSearchExecutor | null = null;
+  private calendarAssistantExecutor: CalendarAssistantExecutor | null = null;
 
   constructor(options: MCPManagerOptions = {}) {
     this.requestTimeoutMs = validTimeoutMs(options.requestTimeoutMs, DEFAULT_MCP_REQUEST_TIMEOUT_MS);
@@ -139,6 +142,10 @@ export class MCPManagerImpl {
 
   setMailboxSearchExecutor(executor: MailboxSearchExecutor | null): void {
     this.mailboxSearchExecutor = executor;
+  }
+
+  setCalendarAssistantExecutor(executor: CalendarAssistantExecutor | null): void {
+    this.calendarAssistantExecutor = executor;
   }
 
   private async initializeNow(settings: AppSettings) {
@@ -267,7 +274,7 @@ export class MCPManagerImpl {
     return { client, transport, tools };
   }
 
-  getActiveTools(options: { includeMailboxSearch?: boolean } = {}): MCPToolSchema[] {
+  getActiveTools(options: { includeMailboxSearch?: boolean; includeCalendarSearch?: boolean } = {}): MCPToolSchema[] {
     const list: MCPToolSchema[] = [];
 
     if (options.includeMailboxSearch && this.mailboxSearchExecutor) {
@@ -292,6 +299,38 @@ export class MCPManagerImpl {
             },
           },
           required: ['query'],
+        },
+      });
+    }
+
+    if (options.includeCalendarSearch && this.calendarAssistantExecutor) {
+      list.push({
+        name: CALENDAR_SEARCH_TOOL_NAME,
+        description: 'Read-only full-text search over the local Dumka Calendar cache. Returns a bounded list of event sources and never mutates Google Calendar.',
+        source: 'calendar',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Concise local calendar search text.' },
+            accountId: { type: 'string', description: 'Optional account email, or all for the current operator scope.' },
+            limit: { type: 'number', description: 'Maximum number of cached events, clamped to 20.' },
+          },
+          required: ['query'],
+        },
+      });
+      list.push({
+        name: CALENDAR_FREE_SLOTS_TOOL_NAME,
+        description: 'Read-only free-slot calculation over cached Dumka Calendar events in a bounded ISO date range.',
+        source: 'calendar',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            accountId: { type: 'string', description: 'Optional account email, or all for the current operator scope.' },
+            startAt: { type: 'string', description: 'Inclusive ISO 8601 range start.' },
+            endAt: { type: 'string', description: 'Exclusive ISO 8601 range end, at most 31 days after start.' },
+            durationMinutes: { type: 'number', description: 'Requested slot duration from 15 to 480 minutes.' },
+          },
+          required: ['startAt', 'endAt', 'durationMinutes'],
         },
       });
     }
@@ -354,6 +393,11 @@ export class MCPManagerImpl {
     if (name === MAILBOX_SEARCH_TOOL_NAME) {
       if (!this.mailboxSearchExecutor) throw new Error('Local mailbox search is not available.');
       return await this.mailboxSearchExecutor(args);
+    }
+    if (name === CALENDAR_SEARCH_TOOL_NAME || name === CALENDAR_FREE_SLOTS_TOOL_NAME) {
+      if (!this.calendarAssistantExecutor) throw new Error('Local calendar tools are not available.');
+      const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {};
+      return this.calendarAssistantExecutor(name, safeArgs);
     }
 
     // 1. Check if it's a built-in search tool

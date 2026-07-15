@@ -41,6 +41,18 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       },
     },
     {
+      id: 'open-calendar',
+      group: 'navigation',
+      title: 'Open Calendar',
+      shortcut: '⌘⇧C',
+      keywords: ['calendar', 'schedule', 'agenda', 'events'],
+      action: () => {
+        store.setWorkspaceView('calendar');
+        store.setSettingsOpen(false);
+        store.setCleanupOpen(false);
+      },
+    },
+    {
       id: 'mark-done',
       group: 'mail',
       title: 'Mark Done (Archive)',
@@ -127,6 +139,13 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
           emitToast({ type: 'warning', message: 'Connect an account before composing.' });
         }
       },
+    },
+    {
+      id: 'create-calendar-event-from-thread',
+      group: 'compose',
+      title: 'Create Calendar Event from Thread',
+      keywords: ['calendar', 'meeting', 'schedule', 'thread'],
+      action: () => store.startCalendarEventFromThread(),
     },
     {
       id: 'toggle-unified-inbox',

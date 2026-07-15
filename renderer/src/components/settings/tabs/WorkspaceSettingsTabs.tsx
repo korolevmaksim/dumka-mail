@@ -303,6 +303,8 @@ export function CalendarSettingsTab() {
     ? store.activeAccount.email
     : store.accounts[0]?.email;
   const enabled = store.googleIntegrationStatus?.calendarEnabled === true;
+  const writableCalendars = store.calendarLists.filter(calendar =>
+    calendar.accountId === activeEmail && (calendar.accessRole === 'owner' || calendar.accessRole === 'writer'));
 
   return (
     <div className="flex max-w-[680px] flex-col gap-4 select-text">
@@ -338,6 +340,15 @@ export function CalendarSettingsTab() {
           </div>
         </div>
 
+        {writableCalendars.length > 0 && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default calendar</span>
+            <select value={store.settings.calendar.defaultCalendarId} onChange={event => { const value = event.target.value; store.updateSettings(s => { s.calendar.defaultCalendarId = value; }); }} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none">
+              {writableCalendars.map(calendar => <option key={`${calendar.accountId}:${calendar.id}`} value={calendar.id}>{calendar.summary}</option>)}
+            </select>
+          </label>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Calendly URL</span>
@@ -365,6 +376,36 @@ export function CalendarSettingsTab() {
           </label>
         </div>
 
+        <label className="flex flex-col gap-1">
+          <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Secondary display time zone</span>
+          <input value={store.settings.calendar.secondaryTimeZone} onChange={event => { const value = event.target.value; store.updateSettings(s => { s.calendar.secondaryTimeZone = value; }); }} placeholder="America/New_York" className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none" />
+        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Favorite time zones</span>
+            <input value={store.settings.calendar.favoriteTimeZones.join(', ')} onChange={event => { const values = event.target.value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 8); store.updateSettings(s => { s.calendar.favoriteTimeZones = values; }); }} placeholder="Europe/London, Asia/Tokyo" className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default travel block</span>
+            <select value={store.settings.calendar.defaultTravelTimeMinutes} onChange={event => { const value = Number(event.target.value); store.updateSettings(s => { s.calendar.defaultTravelTimeMinutes = value; }); }} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none">
+              <option value={0}>Disabled</option><option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>1 hour</option>
+            </select>
+          </label>
+        </div>
+
+        {store.settings.calendar.eventTemplates.length > 0 && (
+          <div className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] p-2">
+            <div className="mb-1 text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">Event templates</div>
+            {store.settings.calendar.eventTemplates.map(template => (
+              <div key={template.id} className="flex items-center justify-between gap-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+                <span className="truncate">{template.name} · {template.durationMinutes} min</span>
+                <button type="button" onClick={() => store.updateSettings(s => { s.calendar.eventTemplates = s.calendar.eventTemplates.filter(item => item.id !== template.id); })} className="text-[var(--danger)]">Delete</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default duration</span>
@@ -385,7 +426,7 @@ export function CalendarSettingsTab() {
             <select
               value={store.settings.calendar.defaultConferenceProvider}
               onChange={(event) => {
-                const value = event.target.value as any;
+                const value = event.target.value as 'googleMeet' | 'calendly' | 'calCom' | 'none';
                 store.updateSettings(s => { s.calendar.defaultConferenceProvider = value; });
               }}
               className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
@@ -397,6 +438,45 @@ export function CalendarSettingsTab() {
             </select>
           </label>
         </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default workspace view</span>
+            <select
+              value={store.settings.calendar.defaultView}
+              onChange={(event) => {
+                const value = event.target.value as typeof store.settings.calendar.defaultView;
+                store.updateSettings(s => { s.calendar.defaultView = value; });
+              }}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            >
+              <option value="day">Day</option><option value="week">Week</option><option value="month">Month</option>
+              <option value="agenda">Agenda</option><option value="quarter">Quarter</option><option value="year">Year</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default reminder</span>
+            <select
+              value={store.settings.calendar.defaultReminderMinutes}
+              onChange={(event) => store.updateSettings(s => { s.calendar.defaultReminderMinutes = Number(event.target.value); })}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            >
+              <option value={0}>At start time</option><option value={5}>5 minutes</option><option value={10}>10 minutes</option>
+              <option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={60}>1 hour</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.weekStartsOn === 1} onChange={event => store.updateSettings(s => { s.calendar.weekStartsOn = event.target.checked ? 1 : 0; })} className="accent-[var(--accent)]" />Week starts Monday</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.showWeekends} onChange={event => store.updateSettings(s => { s.calendar.showWeekends = event.target.checked; })} className="accent-[var(--accent)]" />Show weekends</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.showAgendaInRightPanel} onChange={event => store.updateSettings(s => { s.calendar.showAgendaInRightPanel = event.target.checked; })} className="accent-[var(--accent)]" />Mail sidebar agenda</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.hideNotificationDetails} onChange={event => store.updateSettings(s => { s.calendar.hideNotificationDetails = event.target.checked; })} className="accent-[var(--accent)]" />Hide event details in notifications</label>
+        </div>
+
+        <button type="button" onClick={() => { store.setSettingsOpen(false); store.setWorkspaceView('calendar'); }} className="flex w-fit items-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-2 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--accent)]">
+          <CalendarDays className="h-3.5 w-3.5" />Open Calendar workspace
+        </button>
 
         <div className="grid grid-cols-4 gap-3">
           <label className="flex flex-col gap-1">

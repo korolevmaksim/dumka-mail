@@ -6,6 +6,7 @@ import {
   defaultCalendarEventFormForDate,
   localDateInputValue,
   localTimeInputValue,
+  normalizeCalendarRecurrenceRule,
   normalizeCalendarTimeZone,
   parseCalendarAttendeeEmails,
   parseNaturalLanguageCalendarEvent,
@@ -193,6 +194,12 @@ describe('calendar create helpers', () => {
     expect(recurrenceRuleForCalendarCreate('weekly')).toEqual(['RRULE:FREQ=WEEKLY']);
     expect(recurrenceRuleForCalendarCreate('monthly')).toEqual(['RRULE:FREQ=MONTHLY']);
     expect(recurrenceRuleForCalendarCreate('yearly')).toEqual(['RRULE:FREQ=YEARLY']);
+  });
+
+  it('normalizes safe custom recurrence rules', () => {
+    expect(normalizeCalendarRecurrenceRule('freq=weekly;interval=2;byday=mo,we')).toBe('RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE');
+    expect(normalizeCalendarRecurrenceRule('RRULE:FREQ=MONTHLY;BYMONTHDAY=15')).toBe('RRULE:FREQ=MONTHLY;BYMONTHDAY=15');
+    expect(normalizeCalendarRecurrenceRule('every other Tuesday')).toBeNull();
   });
 
   it('normalizes create-event time zones for Google recurring events', () => {

@@ -11,7 +11,9 @@ import {
   CalendarAttendeeResponse,
   CalendarEvent,
   CalendarEventCreateInput,
+  CalendarEventDeleteOptions,
   CalendarEventUpdateInput,
+  CalendarListEntry,
   CalendarFreeBusyRequest,
   CalendarFreeBusyResult,
   CalendarInvite,
@@ -80,6 +82,7 @@ export interface IElectronAPI {
   saveContactGroup: (group: ContactGroup) => Promise<void>;
   deleteContactGroup: (accountId: string, groupId: string) => Promise<void>;
   listCalendarEvents: (accountId: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
+  listCalendars: (accountId: string) => Promise<CalendarListEntry[]>;
 
   // Drafts
   listDrafts: (accountId: string) => Promise<Draft[]>;
@@ -176,13 +179,19 @@ export interface IElectronAPI {
   uploadAttachment: () => Promise<AttachmentMetadata | null>;
   syncContacts: (email: string) => Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }>;
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
+  syncCalendarLists: (email: string) => Promise<CalendarListEntry[]>;
+  searchCalendarEvents: (accountIds: string[], query: string, limit?: number) => Promise<CalendarEvent[]>;
+  pickCalendarIcsFile: () => Promise<{ filename: string; text: string } | null>;
+  exportCalendarEventIcs: (event: CalendarEvent) => Promise<string | null>;
   queryCalendarFreeBusy: (email: string, input: CalendarFreeBusyRequest) => Promise<CalendarFreeBusyResult>;
   respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => Promise<CalendarEvent>;
+  respondToCalendarEvent: (email: string, calendarId: string, eventId: string, responseStatus: CalendarAttendeeResponse, actionId?: string) => Promise<CalendarEvent>;
   addCalendarEvent: (email: string, invite: CalendarInvite, actionId?: string) => Promise<CalendarEvent>;
+  importCalendarInvite: (email: string, invite: CalendarInvite, calendarId: string) => Promise<CalendarEvent>;
   createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => Promise<CalendarEvent>;
   createCalendarEvent: (email: string, input: CalendarEventCreateInput, actionId?: string) => Promise<CalendarEvent>;
   updateCalendarEvent: (email: string, input: CalendarEventUpdateInput, actionId?: string) => Promise<CalendarEvent>;
-  deleteCalendarEvent: (email: string, calendarId: string, eventId: string, actionId?: string) => Promise<void>;
+  deleteCalendarEvent: (email: string, calendarId: string, eventId: string, actionId?: string, options?: CalendarEventDeleteOptions) => Promise<void>;
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => Promise<AIProviderDescriptor>;
@@ -220,6 +229,8 @@ export interface IElectronAPI {
   stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => Promise<void>;
   onFoundInPageResult: (callback: (result: any) => void) => () => void;
   onOpenThread: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
+  onCalendarChanged: (callback: (data: { accountId: string }) => void) => () => void;
+  onOpenCalendar: (callback: (data: { accountId: string; eventId?: string }) => void) => () => void;
   onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => () => void;
   onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onMailboxDelta: (callback: (delta: MailboxDelta) => void) => () => void;

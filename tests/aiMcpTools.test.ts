@@ -253,6 +253,44 @@ describe('completeAI MCP tool policy', () => {
     expect(mcpMock.executeTool).not.toHaveBeenCalled();
   });
 
+  it('scopes read-only calendar tools to the active operator account', async () => {
+    mcpMock.getActiveTools.mockReturnValue([
+      { name: 'searchCalendar', description: 'Search local calendar', inputSchema: { type: 'object' }, source: 'calendar' },
+      { name: 'delete_external_record', description: 'Mutate an external system', inputSchema: { type: 'object' }, source: 'mcp' },
+    ]);
+    mcpMock.executeTool.mockResolvedValue({ privacyNote: 'Local cache', sources: [] });
+    let fetchCount = 0;
+    const fetchMock = vi.fn(async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify({
+        choices: [{ message: fetchCount === 1 ? {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: 'calendar-tool', type: 'function', function: { name: 'searchCalendar', arguments: '{"query":"planning","accountId":"all"}' } }],
+        } : { content: 'No cached planning events were found.' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeAI({
+      action: 'chat',
+      context: 'No thread open.',
+      conversationHistory: [],
+      userInstruction: 'Find planning events.',
+      toolPolicy: {
+        enabled: true,
+        allowCalendarSearch: true,
+        allowActionProposals: true,
+        calendarAccountIds: ['me@example.com'],
+      },
+    }, 'openAI');
+
+    const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(firstCall[1].body));
+    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['searchCalendar']);
+    expect(mcpMock.executeTool).toHaveBeenCalledWith('searchCalendar', { query: 'planning', accountId: 'me@example.com' });
+  });
+
   it('fails proposal capability closed on the OpenAI Responses endpoint', async () => {
     mockAIConfig = {
       OPENAI_API_KEY: 'fixture-openai-key',

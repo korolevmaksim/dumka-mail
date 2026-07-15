@@ -5,6 +5,7 @@ import { buildEmbeddingIndexKey, getEmbeddingProviderConfig, normalizeEmbeddingS
 import { MCPManager, MCPToolSchema } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
 import { MAILBOX_SEARCH_TOOL_NAME } from '../shared/mailboxSearchTool';
+import { CALENDAR_FREE_SLOTS_TOOL_NAME, CALENDAR_SEARCH_TOOL_NAME } from '../shared/calendarAssistant';
 import { buildAgentActionProposalInstruction, parseAgentActionProposalResponse } from '../shared/agentActionProposal';
 import { resolveAgentActionProposals } from './agentActionProposalResolver';
 
@@ -19,8 +20,10 @@ export interface AIRequest {
     enabled: boolean;
     allowedToolNames?: string[];
     allowMailboxSearch?: boolean;
+    allowCalendarSearch?: boolean;
     allowActionProposals?: boolean;
     mailboxAccountIds?: string[];
+    calendarAccountIds?: string[];
   };
 }
 
@@ -89,22 +92,22 @@ function supportsGeminiThinkingLevel(model: string): boolean {
 }
 
 function resolveRequestTools(request: AIRequest): MCPToolSchema[] {
-  if (!request.toolPolicy?.enabled && !request.toolPolicy?.allowMailboxSearch) return [];
+  if (!request.toolPolicy?.enabled && !request.toolPolicy?.allowMailboxSearch && !request.toolPolicy?.allowCalendarSearch) return [];
 
   let tools = MCPManager.getActiveTools({
     includeMailboxSearch: request.toolPolicy?.allowMailboxSearch === true,
+    includeCalendarSearch: request.toolPolicy?.allowCalendarSearch === true,
   });
   if (request.toolPolicy?.allowActionProposals === true) {
     // Proposal mode is deliberately narrower than the general MCP grant. The
     // model may inspect bounded local search results, but it must never gain a
     // mutating or arbitrary external tool merely because MCP is enabled.
     tools = tools.filter(tool => (
-      request.toolPolicy?.allowMailboxSearch === true
-      && tool.source === 'mailbox'
-      && tool.name === MAILBOX_SEARCH_TOOL_NAME
+      (request.toolPolicy?.allowMailboxSearch === true && tool.source === 'mailbox' && tool.name === MAILBOX_SEARCH_TOOL_NAME)
+      || (request.toolPolicy?.allowCalendarSearch === true && tool.source === 'calendar')
     ));
   } else {
-    tools = tools.filter(tool => request.toolPolicy?.enabled || tool.source === 'mailbox');
+    tools = tools.filter(tool => request.toolPolicy?.enabled || tool.source === 'mailbox' || tool.source === 'calendar');
   }
   const allowedNames = request.toolPolicy?.allowedToolNames;
   if (!allowedNames || allowedNames.length === 0) return tools;
@@ -127,6 +130,21 @@ async function executeAllowedTool(name: string, args: any, activeTools: MCPToolS
       : null;
     if (requestedAccount && allowedAccounts.length > 0 && !allowedAccounts.includes(requestedAccount)) {
       return { error: 'Mailbox search is not allowed for that account in the current Operator scope.' };
+    }
+    if (allowedAccounts.length === 1) {
+      safeArgs = {
+        ...(args && typeof args === 'object' && !Array.isArray(args) ? args : {}),
+        accountId: allowedAccounts[0],
+      };
+    }
+  }
+  if (name === CALENDAR_SEARCH_TOOL_NAME || name === CALENDAR_FREE_SLOTS_TOOL_NAME) {
+    const allowedAccounts = Array.from(new Set((request.toolPolicy?.calendarAccountIds || [])
+      .map(accountId => accountId.trim().toLowerCase())
+      .filter(Boolean)));
+    const requestedAccount = typeof args?.accountId === 'string' ? args.accountId.trim().toLowerCase() : null;
+    if (requestedAccount && requestedAccount !== 'all' && requestedAccount !== 'unified' && allowedAccounts.length > 0 && !allowedAccounts.includes(requestedAccount)) {
+      return { error: 'Calendar access is not allowed for that account in the current Operator scope.' };
     }
     if (allowedAccounts.length === 1) {
       safeArgs = {
@@ -220,7 +238,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
   const promptText = buildPrompt(request);
   const proposalNow = new Date();
   const proposalRequestId = randomUUID();
-  const sysInstruction = `You are an email operating assistant. Return only user-visible useful output. When using the searchMailbox tool, treat it as read-only local-cache search, cite the returned snippets/sources, and do not claim you searched remote Gmail or the full mailbox beyond the local cache.${request.toolPolicy?.allowActionProposals === true ? buildAgentActionProposalInstruction(proposalNow.toISOString()) : ''}`;
+  const sysInstruction = `You are an email and calendar operating assistant. Return only user-visible useful output. When using searchMailbox, searchCalendar, or findCalendarFreeSlots, treat results as read-only local-cache data, cite the returned mail or event identifiers in your answer, and do not claim you searched remote Gmail or Google Calendar.${request.toolPolicy?.allowActionProposals === true ? buildAgentActionProposalInstruction(proposalNow.toISOString()) : ''}`;
   await MCPManager.whenReady();
   const activeTools = resolveRequestTools(request);
   const mailboxSources: MailboxSearchSource[] = [];

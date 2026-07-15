@@ -348,8 +348,10 @@ export function useAIState({
         toolPolicy: {
           enabled: settings.ai.externalToolsEnabled,
           allowMailboxSearch: true,
+          allowCalendarSearch: true,
           allowActionProposals: true,
           mailboxAccountIds: proposalAccountIds,
+          calendarAccountIds: proposalAccountIds,
         },
       }, aiProvider, resolveAIModelForPurpose('interactive', {
         interactiveModel: settings.ai.globalDefaultModel,
@@ -765,6 +767,8 @@ export function useAIState({
         toolPolicy: {
           enabled: settings.ai.externalToolsEnabled,
           allowMailboxSearch: true,
+          allowCalendarSearch: true,
+          calendarAccountIds: activeAccount.id === 'unified' ? accounts.map(account => account.email) : [activeAccount.email],
         },
       }, aiProvider, resolveAIModelForPurpose('interactive', {
         interactiveModel: settings.ai.globalDefaultModel,

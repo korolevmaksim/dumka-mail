@@ -14,6 +14,7 @@ describe('OAuth account onboarding', () => {
     expect(GOOGLE_CALENDAR_SCOPES).toEqual([
       'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.freebusy',
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
     ]);
     expect(GOOGLE_CONTACTS_SCOPES).toEqual(['https://www.googleapis.com/auth/contacts.readonly']);
   });

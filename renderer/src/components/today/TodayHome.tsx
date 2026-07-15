@@ -24,6 +24,14 @@ export function TodayHome() {
     .filter(event => Date.parse(event.startAt) >= Date.now() - 15 * 60 * 1000)
     .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt))
     .slice(0, 4), [store.calendarEvents]);
+  const followUpEvents = useMemo(() => store.calendarEvents
+    .filter(event => event.attendees.length > 0 && Date.parse(event.endAt) < Date.now() && Date.parse(event.endAt) >= Date.now() - 6 * 60 * 60_000)
+    .sort((left, right) => Date.parse(right.endAt) - Date.parse(left.endAt))
+    .slice(0, 2), [store.calendarEvents]);
+  const calendarIssues = useMemo(() => store.actionLog.filter(action =>
+    ['createCalendarEvent', 'updateCalendarEvent', 'deleteCalendarEvent'].includes(action.kind)
+    && (action.status === 'failed' || action.status === 'pending_sync')
+  ).length, [store.actionLog]);
   const recentActions = useMemo(() => [...store.actionLog]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(0, 5), [store.actionLog]);
@@ -125,20 +133,27 @@ export function TodayHome() {
               </button>
             </section>
             <section className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-              <div className="mb-2 flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
-                <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
-                Calendar
-              </div>
-              {calendarEvents.length === 0 ? (
+              <button type="button" onClick={() => store.setWorkspaceView('calendar')} className="mb-2 flex w-full items-center justify-between gap-1.5 font-semibold text-[var(--text-primary)] hover:text-[var(--accent)]">
+                <span className="flex items-center gap-1.5"><CalendarDays className="h-4 w-4 text-[var(--accent)]" />Calendar</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+              {calendarEvents.length === 0 && followUpEvents.length === 0 && calendarIssues === 0 ? (
                 <div className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">No upcoming events in the local agenda.</div>
               ) : (
                 <div className="flex flex-col gap-2">
                   {calendarEvents.map(event => (
-                    <div key={event.id} className="rounded bg-[var(--app-bg)] px-2.5 py-2">
+                    <button type="button" onClick={() => store.openCalendarEvent(event)} key={`${event.accountId}:${event.calendarId}:${event.id}`} className="rounded bg-[var(--app-bg)] px-2.5 py-2 text-left hover:ring-1 hover:ring-[var(--accent)]">
                       <div className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]">{event.summary || 'Untitled event'}</div>
                       <div className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{formatCalendarTime(event.startAt)}</div>
-                    </div>
+                      <div className="mt-1 flex flex-wrap gap-1 text-[calc(8px*var(--font-scale))] font-semibold uppercase tracking-wide">
+                        {event.selfResponseStatus === 'needsAction' && <span className="text-amber-500">RSVP needed</span>}
+                        {event.sourceThreadId && Date.parse(event.startAt) <= Date.now() + 24 * 60 * 60_000 && <span className="text-[var(--accent)]">Prep · linked mail</span>}
+                        {event.conferenceUrl && <span className="text-emerald-500">Join ready</span>}
+                      </div>
+                    </button>
                   ))}
+                  {followUpEvents.map(event => <button type="button" onClick={() => store.openCalendarEvent(event)} key={`follow-up:${event.accountId}:${event.calendarId}:${event.id}`} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2 text-left text-[calc(10px*var(--font-scale))] text-[var(--accent)]">Draft follow-up · {event.summary}</button>)}
+                  {calendarIssues > 0 && <button type="button" onClick={() => store.setWorkspaceView('calendar')} className="rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-left text-[calc(10px*var(--font-scale))] font-semibold text-amber-500">{calendarIssues} calendar sync {calendarIssues === 1 ? 'issue' : 'issues'} need attention</button>}
                 </div>
               )}
             </section>

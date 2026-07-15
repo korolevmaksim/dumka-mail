@@ -8,7 +8,6 @@ import {
 import { isValidEmail } from '../shared/compose';
 import {
   Account,
-  CalendarEvent,
   ContactCard,
   ContactGroup,
   Draft,
@@ -142,6 +141,10 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM contacts WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM contact_groups WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM calendar_events WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM calendar_lists WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM calendar_sync_ranges WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM calendar_mutations WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM calendar_notification_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM drafts WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
@@ -1127,94 +1130,6 @@ export const ContactGroupsRepo = {
         }
       }
     })();
-  }
-};
-
-// === Calendar Events Repository ===
-export const CalendarEventsRepo = {
-  listBetween(accountId: string, startAt: string, endAt: string): CalendarEvent[] {
-    const db = getDatabase();
-    const rows = db.prepare(`
-      SELECT * FROM calendar_events
-      WHERE account_id = ? AND end_at >= ? AND start_at <= ?
-      ORDER BY start_at ASC, end_at ASC
-    `).all(accountId, startAt, endAt) as any[];
-
-    return rows.map(row => ({
-      id: row.id,
-      accountId: row.account_id,
-      calendarId: row.calendar_id,
-      iCalUID: row.ical_uid,
-      summary: row.summary,
-      description: row.description,
-      location: row.location,
-      startAt: row.start_at,
-      endAt: row.end_at,
-      isAllDay: row.is_all_day === 1,
-      status: row.status,
-      htmlLink: row.html_link,
-      conferenceUrl: row.conference_url,
-      organizerEmail: row.organizer_email,
-      attendees: JSON.parse(row.attendees_json),
-      sourceMessageId: row.source_message_id,
-      updatedAt: row.updated_at
-    }));
-  },
-
-  saveMany(events: CalendarEvent[]) {
-    const db = getDatabase();
-    const insert = db.prepare(`
-      INSERT INTO calendar_events (
-        id, account_id, calendar_id, ical_uid, summary, description, location,
-        start_at, end_at, is_all_day, status, html_link, conference_url,
-        organizer_email, attendees_json, source_message_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(account_id, calendar_id, id) DO UPDATE SET
-        ical_uid=excluded.ical_uid,
-        summary=excluded.summary,
-        description=excluded.description,
-        location=excluded.location,
-        start_at=excluded.start_at,
-        end_at=excluded.end_at,
-        is_all_day=excluded.is_all_day,
-        status=excluded.status,
-        html_link=excluded.html_link,
-        conference_url=excluded.conference_url,
-        organizer_email=excluded.organizer_email,
-        attendees_json=excluded.attendees_json,
-        source_message_id=excluded.source_message_id,
-        updated_at=excluded.updated_at
-    `);
-
-    db.transaction(() => {
-      for (const event of events) {
-        insert.run(
-          event.id,
-          event.accountId,
-          event.calendarId,
-          event.iCalUID || null,
-          event.summary,
-          event.description || null,
-          event.location || null,
-          event.startAt,
-          event.endAt,
-          event.isAllDay ? 1 : 0,
-          event.status || null,
-          event.htmlLink || null,
-          event.conferenceUrl || null,
-          event.organizerEmail || null,
-          JSON.stringify(event.attendees),
-          event.sourceMessageId || null,
-          event.updatedAt
-        );
-      }
-    })();
-  },
-
-  delete(accountId: string, calendarId: string, eventId: string) {
-    getDatabase()
-      .prepare('DELETE FROM calendar_events WHERE account_id = ? AND calendar_id = ? AND id = ?')
-      .run(accountId, calendarId, eventId);
   }
 };
 

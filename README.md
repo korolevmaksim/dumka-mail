@@ -13,14 +13,16 @@ This project is early alpha software. It is useful for local development and exp
 - Local SQLite mail cache with full-text search and optional opt-in semantic search.
 - Gmail OAuth onboarding with OS-backed token storage through macOS Keychain or Electron safeStorage.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
+- First-class local-first Calendar workspace with per-account and unified multi-calendar views, Google colors and access roles, cache-first Month/Week/Day/Agenda/Quarter/Year layouts, offline search, calendar sets, event templates, secondary time zones, and keyboard navigation.
 - Split inbox categories, custom category rules with sender, domain, recipient (`To`/`Cc`), and subject filters, saved views, reminders, snooze notifications, and action history.
 - Search operators for sender, labels, attachments, date ranges, and mailbox scope.
 - Offline-first mailbox mutations with background reconciliation, including archive, read state, trash, spam, ignore, nested Gmail labels, scheduled sends, rule-driven forwarding, and safe auto-replies.
 - Address book sync with contact detail cards, local notes, display-name edits, mailing groups, internal compose handoff, and compose autocomplete.
 - Compose, reply, forward, send later, draft mailbox restore, signatures, snippet templates, attachments, insert-link editing, print, and sent mail sync.
 - Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
+- Full Calendar event management includes all-day events, guests and notification choice, reminders, visibility/free-busy status, Google Meet, recurring instance/series/future-split operations, drag/move, `.ics` preview import/export, native reminders, ETag conflict protection, and a durable offline mutation queue. Mail-derived events keep an explicit source-thread link; mail reminders and Reply Pipeline deadlines appear as visually distinct local tasks.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
-- Local mailbox search tool for interactive AI assistant chats, plus opt-in MCP and web-search tools with secrets stored through OS-backed credential storage.
+- Local mailbox search plus read-only cached-calendar search/free-slot tools for interactive AI assistant chats, with bounded Operator account scope; opt-in MCP and web-search tools keep secrets in OS-backed credential storage.
 - Agentic mail layer with a durable Today operator workspace, locally persisted daily briefings and Agent Review Queue state, source-cited assistant proposals for reply drafts, reminders, archive, and existing user labels, and a stateful Reply Pipeline that combines inbound reply obligations with outbound follow-ups. Pipeline drafts use the normal draft mailbox, preserve user edits, fall back to deterministic templates, and are never sent without an explicit user send action. Source-cited AI-assisted triage, opt-in automation-model drafting, notification filtering and actions, monitored mail rules with disabled, shadow, and active modes, one-click unsubscribe support, local security snapshots, tracker stripping, and phishing-link warnings are also included.
 - Privacy & Cleanup sender review with locally computed volume/risk signals, recent-message preview, dry-run Archive/Unsubscribe proposals, and persistent account-scoped sender exclusions with Undo/Restore management.
 - Keyboard shortcut discovery overlay, fuzzy command palette matching, virtualized mailbox lists, and accessible thread/draft list semantics.
@@ -34,6 +36,8 @@ This project is early alpha software. It is useful for local development and exp
 - Node.js 22 or newer.
 - npm 10 or newer.
 - A Google OAuth desktop client JSON file with Gmail API access. Calendar and Contacts scopes are requested later from Settings only when those integrations are enabled.
+
+Calendar shortcuts: `⌘⇧C` opens Calendar, `N`/`C` creates an event, `T` returns to today, `/` searches the local event cache, arrow keys navigate, and `1`–`6` switch Day through Year views.
 
 ## Setup
 

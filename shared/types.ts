@@ -132,6 +132,27 @@ export interface CalendarAttendee {
   optional?: boolean | null;
 }
 
+export type WorkspaceView = 'today' | 'mail' | 'calendar';
+
+export type CalendarWorkspaceView = 'day' | 'week' | 'month' | 'agenda' | 'quarter' | 'year';
+
+export type CalendarAccessRole = 'none' | 'freeBusyReader' | 'reader' | 'writer' | 'owner';
+
+export interface CalendarListEntry {
+  id: string;
+  accountId: AccountID;
+  summary: string;
+  description?: string | null;
+  primary: boolean;
+  selected: boolean;
+  accessRole: CalendarAccessRole;
+  backgroundColor: string;
+  foregroundColor: string;
+  timeZone?: string | null;
+  deleted?: boolean;
+  updatedAt: string;
+}
+
 export interface CalendarEvent {
   id: string;
   accountId: AccountID;
@@ -143,18 +164,48 @@ export interface CalendarEvent {
   startAt: string;
   endAt: string;
   isAllDay: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+  timeZone?: string | null;
   status?: string | null;
+  etag?: string | null;
   htmlLink?: string | null;
   conferenceUrl?: string | null;
   organizerEmail?: string | null;
+  creatorEmail?: string | null;
+  recurringEventId?: string | null;
+  originalStartAt?: string | null;
+  recurrenceRules?: string[];
+  transparency?: 'opaque' | 'transparent' | null;
+  visibility?: 'default' | 'public' | 'private' | 'confidential' | null;
+  colorId?: string | null;
+  selfResponseStatus?: CalendarAttendeeResponse | null;
+  reminders?: { useDefault: boolean; overrides: Array<{ method: 'email' | 'popup'; minutes: number }> } | null;
   attendees: CalendarAttendee[];
   sourceMessageId?: MessageID | null;
+  sourceThreadId?: ThreadID | null;
   updatedAt: string;
 }
 
+export interface CalendarLocalTask {
+  kind: 'task';
+  id: string;
+  accountId: AccountID;
+  threadId: ThreadID;
+  title: string;
+  dueAt: string;
+  priority: number;
+  source: 'threadReminder' | 'replyPipeline';
+  status: 'pending' | 'completed';
+}
+
+export type CalendarItem = ({ kind: 'event'; event: CalendarEvent } | CalendarLocalTask);
+
 export type CalendarEventRecurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+export type CalendarMutationScope = 'single' | 'series' | 'following';
 
 export interface CalendarEventCreateInput {
+  calendarId?: string | null;
   summary: string;
   description?: string | null;
   location?: string | null;
@@ -164,11 +215,35 @@ export interface CalendarEventCreateInput {
   conferenceProvider?: 'none' | 'googleMeet';
   recurrence?: CalendarEventRecurrence;
   timeZone?: string | null;
+  isAllDay?: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+  sendUpdates?: 'all' | 'externalOnly' | 'none';
+  transparency?: 'opaque' | 'transparent';
+  visibility?: 'default' | 'public' | 'private' | 'confidential';
+  colorId?: string | null;
+  reminders?: { useDefault: boolean; overrides?: Array<{ method: 'email' | 'popup'; minutes: number }> };
+  recurrenceRules?: string[];
+  sourceMessageId?: MessageID | null;
+  sourceThreadId?: ThreadID | null;
 }
 
 export interface CalendarEventUpdateInput extends CalendarEventCreateInput {
   eventId: string;
   calendarId?: string | null;
+  originalCalendarId?: string | null;
+  recurringEventId?: string | null;
+  originalStartAt?: string | null;
+  mutationScope?: CalendarMutationScope;
+  etag?: string | null;
+}
+
+export interface CalendarEventDeleteOptions {
+  recurringEventId?: string | null;
+  originalStartAt?: string | null;
+  mutationScope?: CalendarMutationScope;
+  sendUpdates?: 'all' | 'externalOnly' | 'none';
+  isAllDay?: boolean;
 }
 
 export interface CalendarBusyInterval {
@@ -181,6 +256,7 @@ export interface CalendarFreeBusyRequest {
   timeMin: string;
   timeMax: string;
   attendees: string[];
+  calendarIds?: string[];
   timeZone?: string | null;
 }
 
@@ -1019,6 +1095,35 @@ export interface CalendarSettings {
   calendlyUrl: string;
   calComUrl: string;
   defaultConferenceProvider: 'googleMeet' | 'calendly' | 'calCom' | 'none';
+  defaultView: CalendarWorkspaceView;
+  lastAnchorDate: string;
+  weekStartsOn: 0 | 1;
+  showWeekends: boolean;
+  showWeekNumbers: boolean;
+  workingDays: number[];
+  hiddenCalendarIds: string[];
+  defaultCalendarId: string;
+  defaultReminderMinutes: number;
+  secondaryTimeZone: string;
+  favoriteTimeZones: string[];
+  defaultTravelTimeMinutes: number;
+  calendarSets: Array<{
+    id: string;
+    name: string;
+    calendarKeys: string[];
+    defaultCalendarKey?: string | null;
+  }>;
+  activeCalendarSetId: string | null;
+  eventTemplates: Array<{
+    id: string;
+    name: string;
+    summary: string;
+    durationMinutes: number;
+    location?: string | null;
+    recurrence?: CalendarEventRecurrence;
+  }>;
+  hideNotificationDetails: boolean;
+  mutedNotificationCalendarKeys: string[];
 }
 
 export interface ShortcutSettings {

@@ -5,6 +5,7 @@ import {
   AgentPlanValidationResult,
   CalendarAttendeeResponse,
   CalendarEventCreateInput,
+  CalendarEventDeleteOptions,
   CalendarEventUpdateInput,
   CalendarFreeBusyRequest,
   CalendarInvite,
@@ -65,6 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveContactGroup: (group: ContactGroup) => ipcRenderer.invoke('db:saveContactGroup', group),
   deleteContactGroup: (accountId: string, groupId: string) => ipcRenderer.invoke('db:deleteContactGroup', accountId, groupId),
   listCalendarEvents: (accountId: string, startAt: string, endAt: string) => ipcRenderer.invoke('db:listCalendarEvents', accountId, startAt, endAt),
+  listCalendars: (accountId: string) => ipcRenderer.invoke('db:listCalendars', accountId),
 
   // Drafts
   listDrafts: (accountId: string) => ipcRenderer.invoke('db:listDrafts', accountId),
@@ -161,13 +163,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   uploadAttachment: () => ipcRenderer.invoke('api:uploadAttachment'),
   syncContacts: (email: string) => ipcRenderer.invoke('api:syncContacts', email),
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => ipcRenderer.invoke('api:syncCalendarEvents', email, startAt, endAt),
+  syncCalendarLists: (email: string) => ipcRenderer.invoke('api:syncCalendarLists', email),
+  searchCalendarEvents: (accountIds: string[], query: string, limit?: number) => ipcRenderer.invoke('db:searchCalendarEvents', accountIds, query, limit),
+  pickCalendarIcsFile: () => ipcRenderer.invoke('api:pickCalendarIcsFile'),
+  exportCalendarEventIcs: (event: import('../shared/types').CalendarEvent) => ipcRenderer.invoke('api:exportCalendarEventIcs', event),
   queryCalendarFreeBusy: (email: string, input: CalendarFreeBusyRequest) => ipcRenderer.invoke('api:queryCalendarFreeBusy', email, input),
   respondToCalendarInvite: (email: string, invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, actionId?: string) => ipcRenderer.invoke('api:respondToCalendarInvite', email, invite, responseStatus, actionId),
+  respondToCalendarEvent: (email: string, calendarId: string, eventId: string, responseStatus: CalendarAttendeeResponse, actionId?: string) => ipcRenderer.invoke('api:respondToCalendarEvent', email, calendarId, eventId, responseStatus, actionId),
   addCalendarEvent: (email: string, invite: CalendarInvite, actionId?: string) => ipcRenderer.invoke('api:addCalendarEvent', email, invite, actionId),
+  importCalendarInvite: (email: string, invite: CalendarInvite, calendarId: string) => ipcRenderer.invoke('api:importCalendarInvite', email, invite, calendarId),
   createGoogleMeetDraftEvent: (email: string, input: { summary: string; attendees: string[]; durationMinutes: number }) => ipcRenderer.invoke('api:createGoogleMeetDraftEvent', email, input),
   createCalendarEvent: (email: string, input: CalendarEventCreateInput, actionId?: string) => ipcRenderer.invoke('api:createCalendarEvent', email, input, actionId),
   updateCalendarEvent: (email: string, input: CalendarEventUpdateInput, actionId?: string) => ipcRenderer.invoke('api:updateCalendarEvent', email, input, actionId),
-  deleteCalendarEvent: (email: string, calendarId: string, eventId: string, actionId?: string) => ipcRenderer.invoke('api:deleteCalendarEvent', email, calendarId, eventId, actionId),
+  deleteCalendarEvent: (email: string, calendarId: string, eventId: string, actionId?: string, options?: CalendarEventDeleteOptions) => ipcRenderer.invoke('api:deleteCalendarEvent', email, calendarId, eventId, actionId, options),
 
   // AI
   getAIProviderDescriptor: (preference: AIProviderPreference, overrideModel?: string) => ipcRenderer.invoke('api:getAIProviderDescriptor', preference, overrideModel),
@@ -216,6 +224,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.off('api:openThread', listener);
     };
+  },
+  onCalendarChanged: (callback: (data: { accountId: string }) => void) => {
+    const listener = (_: unknown, data: { accountId: string }) => callback(data);
+    ipcRenderer.on('api:calendarChanged', listener);
+    return () => ipcRenderer.off('api:calendarChanged', listener);
+  },
+  onOpenCalendar: (callback: (data: { accountId: string; eventId?: string }) => void) => {
+    const listener = (_: unknown, data: { accountId: string; eventId?: string }) => callback(data);
+    ipcRenderer.on('api:openCalendar', listener);
+    return () => ipcRenderer.off('api:openCalendar', listener);
   },
   onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => {
     const listener = (_: any, data: any) => callback(Array.isArray(data) ? data : []);

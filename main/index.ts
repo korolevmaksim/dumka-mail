@@ -7,7 +7,9 @@ import {
   initializeDatabase,
   AccountIntegrationsRepo,
   AccountsRepo,
+  CalendarListsRepo,
   CalendarEventsRepo,
+  CalendarMutationsRepo,
   CleanupExclusionsRepo,
   ContactGroupsRepo,
   ContactsRepo,
@@ -28,7 +30,9 @@ import {
 import { isNetworkError, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
-import { GoogleWorkspaceService } from './googleWorkspace';
+import { GoogleCalendarSyncTokenExpiredError, GoogleWorkspaceService } from './googleWorkspace';
+import { optimisticCalendarEvent, queueCalendarMutation, startCalendarMutationWorker } from './calendarMutationWorker';
+import { startCalendarNotificationWorker } from './calendarNotifications';
 import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
 import {
@@ -41,6 +45,7 @@ import { ReplyPipelineService } from './replyPipelineService';
 import { sendReplyPipelineUpdateSafely } from './replyPipelineNotifications';
 import { MCPManager } from './mcpManager';
 import { executeMailboxSearchTool } from './mailboxSearchTool';
+import { executeCalendarAssistantTool } from './calendarAssistantTools';
 import { prepareAppSettingsForStorage, resolveAppSettingsSecrets, resolveMCPServerConfigSecrets } from './mcpSettings';
 import { parseStoredAppSettings, settingsAffectMCPRuntime, settingsAffectSearchBodyIndexing } from './settingsSideEffects';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
@@ -53,6 +58,7 @@ import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoRep
 import { buildMailRuleShadowLog, evaluateMailRules, evaluateShadowMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
+import { calendarEventToIcs } from '../shared/calendar';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
 import type {
@@ -64,6 +70,10 @@ import type {
   AttachmentSaveCancelled,
   AttachmentSaveResult,
   CalendarAttendeeResponse,
+  CalendarEvent,
+  CalendarEventCreateInput,
+  CalendarEventDeleteOptions,
+  CalendarEventUpdateInput,
   CalendarInvite,
   CleanupSenderExclusion,
   DailyBriefing,
@@ -87,6 +97,7 @@ import {
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenThread: { accountId: string; threadId: string } | null = null;
 const activeNotifications = new Set<Notification>();
+const calendarSyncInFlight = new Map<string, Promise<CalendarEvent[]>>();
 const DEFAULT_WINDOW_WIDTH = 1280;
 const DEFAULT_WINDOW_HEIGHT = 832;
 const MIN_WINDOW_WIDTH = 900;
@@ -111,6 +122,7 @@ function notifyReplyPipelineUpdated(accountId: string, threadId: string): void {
 }
 
 MCPManager.setMailboxSearchExecutor(executeMailboxSearchTool);
+MCPManager.setCalendarAssistantExecutor(executeCalendarAssistantTool);
 
 interface RestoredWindowState {
   width: number;
@@ -722,6 +734,8 @@ app.whenReady().then(async () => {
     },
   });
   startReminderNotificationWorker();
+  startCalendarMutationWorker(() => mainWindow);
+  startCalendarNotificationWorker(() => mainWindow);
   startBackgroundMailboxSyncWorker();
   startBackgroundAgenticWorker();
 
@@ -792,6 +806,23 @@ function registerSecureHandler(channel: string, listener: (event: Electron.IpcMa
     assertTrustedSender(event.senderFrame);
     return listener(event, ...args);
   });
+}
+
+function requireCalendarText(value: unknown, field: string, maxLength = 512): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength || value.includes('\0')) {
+    throw new Error(`Invalid calendar ${field}.`);
+  }
+  return value;
+}
+
+function requireCalendarRange(startAt: unknown, endAt: unknown): { startAt: string; endAt: string } {
+  const start = new Date(requireCalendarText(startAt, 'range start', 64));
+  const end = new Date(requireCalendarText(endAt, 'range end', 64));
+  const duration = end.getTime() - start.getTime();
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || duration <= 0 || duration > 370 * 86_400_000) {
+    throw new Error('Invalid calendar date range.');
+  }
+  return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
 
 registerSecureHandler('db:listAccounts', () => AccountsRepo.list());
@@ -980,7 +1011,17 @@ registerSecureHandler('db:updateContactLocal', (_, accountId, contactId, patch) 
 registerSecureHandler('db:listContactGroups', (_, accountId) => ContactGroupsRepo.list(accountId));
 registerSecureHandler('db:saveContactGroup', (_, group) => ContactGroupsRepo.save(group));
 registerSecureHandler('db:deleteContactGroup', (_, accountId, groupId) => ContactGroupsRepo.delete(accountId, groupId));
-registerSecureHandler('db:listCalendarEvents', (_, accountId, startAt, endAt) => CalendarEventsRepo.listBetween(accountId, startAt, endAt));
+registerSecureHandler('db:listCalendarEvents', (_, accountId, startAt, endAt) => {
+  const range = requireCalendarRange(startAt, endAt);
+  return CalendarEventsRepo.listBetween(requireCalendarText(accountId, 'account'), range.startAt, range.endAt);
+});
+registerSecureHandler('db:listCalendars', (_, accountId) => CalendarListsRepo.list(requireCalendarText(accountId, 'account')));
+registerSecureHandler('db:searchCalendarEvents', (_, accountIds: unknown, query: unknown, limit?: number) => {
+  if (!Array.isArray(accountIds) || accountIds.length === 0 || accountIds.length > 20) throw new Error('Invalid calendar search accounts.');
+  const validatedAccounts = accountIds.map(accountId => requireCalendarText(accountId, 'account'));
+  const validatedQuery = requireCalendarText(query, 'search query', 256);
+  return CalendarEventsRepo.search(validatedAccounts, validatedQuery, limit);
+});
 
 registerSecureHandler('api:authorizeGoogleIntegration', async (_, email, integration: 'calendar' | 'contacts') => {
   const baseScopes = Array.from(GOOGLE_OAUTH_SCOPES);
@@ -1031,11 +1072,108 @@ registerSecureHandler('api:syncContacts', async (_, email) => {
   return result;
 });
 
-registerSecureHandler('api:syncCalendarEvents', async (_, email, startAt, endAt) => {
-  const events = await GoogleWorkspaceService.listPrimaryCalendarEvents(email, startAt, endAt);
-  CalendarEventsRepo.saveMany(events);
+registerSecureHandler('api:syncCalendarLists', async (_, accountId) => {
+  const email = requireCalendarText(accountId, 'account');
+  const calendars = await GoogleWorkspaceService.listCalendars(email);
+  CalendarListsRepo.replaceForAccount(email, calendars);
   AccountIntegrationsRepo.patch(email, { calendarEnabled: true });
-  return events;
+  return calendars;
+});
+
+registerSecureHandler('api:pickCalendarIcsFile', async () => {
+  if (!mainWindow) return null;
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Import Calendar File',
+    filters: [{ name: 'iCalendar', extensions: ['ics', 'ical'] }],
+  });
+  const filePath = filePaths?.[0];
+  if (!filePath) return null;
+  const stat = fs.statSync(filePath);
+  if (stat.size > 2 * 1024 * 1024) throw new Error('Calendar import is limited to 2 MB.');
+  return { filename: path.basename(filePath), text: fs.readFileSync(filePath, 'utf8') };
+});
+
+registerSecureHandler('api:exportCalendarEventIcs', async (_, event: CalendarEvent) => {
+  if (!mainWindow) return null;
+  const safeBase = sanitizeAttachmentFilename(`${event.summary || 'event'}.ics`);
+  const { filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Calendar Event',
+    defaultPath: path.join(app.getPath('downloads'), safeBase),
+    filters: [{ name: 'iCalendar', extensions: ['ics'] }],
+  });
+  if (!filePath) return null;
+  fs.writeFileSync(filePath, calendarEventToIcs(event), 'utf8');
+  return filePath;
+});
+
+async function performCalendarSync(email: string, startAt: string, endAt: string): Promise<CalendarEvent[]> {
+  let calendars = await GoogleWorkspaceService.listCalendars(email);
+  if (calendars.length === 0) {
+    calendars = [{
+      id: 'primary',
+      accountId: email,
+      summary: email,
+      primary: true,
+      selected: true,
+      accessRole: 'owner',
+      backgroundColor: '#3b82f6',
+      foregroundColor: '#ffffff',
+      updatedAt: new Date().toISOString(),
+    }];
+  }
+  CalendarListsRepo.replaceForAccount(email, calendars);
+  const allEvents = [];
+  for (const calendar of calendars) {
+    if (!calendar.selected || calendar.deleted || calendar.accessRole === 'none' || calendar.accessRole === 'freeBusyReader') continue;
+    try {
+      let syncToken = CalendarEventsRepo.getRangeSyncToken(email, calendar.id, startAt, endAt);
+      let result;
+      try {
+        result = await GoogleWorkspaceService.syncCalendarEvents(email, calendar.id, startAt, endAt, syncToken);
+      } catch (error) {
+        if (!(error instanceof GoogleCalendarSyncTokenExpiredError)) throw error;
+        CalendarEventsRepo.clearRangeSyncToken(email, calendar.id, startAt, endAt);
+        syncToken = null;
+        result = await GoogleWorkspaceService.syncCalendarEvents(email, calendar.id, startAt, endAt);
+      }
+      const pendingEventIds = new Set(CalendarMutationsRepo.list()
+        .filter(mutation => mutation.accountId === email && mutation.calendarId === calendar.id && mutation.eventId)
+        .map(mutation => mutation.eventId as string));
+      const syncEvents = result.events.filter(event => !pendingEventIds.has(event.id));
+      if (syncToken && result.nextSyncToken) {
+        CalendarEventsRepo.applyRangeDelta(email, calendar.id, startAt, endAt, syncEvents, result.nextSyncToken);
+      } else {
+        CalendarEventsRepo.replaceRange(email, calendar.id, startAt, endAt, syncEvents, result.nextSyncToken);
+      }
+      const cachedEvents = CalendarEventsRepo.listBetween(email, startAt, endAt)
+        .filter(event => event.calendarId === calendar.id);
+      allEvents.push(...cachedEvents.filter(event => event.status !== 'cancelled'));
+    } catch (error) {
+      console.warn(`Calendar sync skipped ${calendar.id}:`, error);
+      allEvents.push(...CalendarEventsRepo.listBetween(email, startAt, endAt)
+        .filter(event => event.calendarId === calendar.id && event.status !== 'cancelled'));
+    }
+  }
+  AccountIntegrationsRepo.patch(email, { calendarEnabled: true });
+  return Array.from(new Map(allEvents.map(event => [`${event.calendarId}:${event.id}`, event])).values());
+}
+
+function runCalendarSync(email: string, startAt: string, endAt: string): Promise<CalendarEvent[]> {
+  const key = `${email}\0${startAt}\0${endAt}`;
+  const existing = calendarSyncInFlight.get(key);
+  if (existing) return existing;
+  const task = performCalendarSync(email, startAt, endAt).finally(() => {
+    if (calendarSyncInFlight.get(key) === task) calendarSyncInFlight.delete(key);
+  });
+  calendarSyncInFlight.set(key, task);
+  return task;
+}
+
+registerSecureHandler('api:syncCalendarEvents', (_, accountId, startAt, endAt) => {
+  const email = requireCalendarText(accountId, 'account');
+  const range = requireCalendarRange(startAt, endAt);
+  return runCalendarSync(email, range.startAt, range.endAt);
 });
 
 registerSecureHandler('api:queryCalendarFreeBusy', async (_, email, input) => (
@@ -1060,6 +1198,28 @@ registerSecureHandler('api:respondToCalendarInvite', async (_, email, invite: Ca
   return event;
 });
 
+registerSecureHandler('api:respondToCalendarEvent', async (_, email, calendarId, eventId, responseStatus: CalendarAttendeeResponse, actionId?: string) => {
+  const accountId = requireCalendarText(email, 'account');
+  const targetCalendarId = requireCalendarText(calendarId, 'calendar');
+  const targetEventId = requireCalendarText(eventId, 'event');
+  if (!['needsAction', 'accepted', 'declined', 'tentative'].includes(responseStatus)) throw new Error('Invalid calendar response.');
+  const event = await GoogleWorkspaceService.respondToCalendarEvent(accountId, targetCalendarId, targetEventId, responseStatus);
+  CalendarEventsRepo.saveMany([event]);
+  if (actionId) {
+    const now = new Date().toISOString();
+    ActionLogRepo.save({
+      id: actionId,
+      accountId,
+      kind: 'calendarRSVP',
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      payloadJson: JSON.stringify({ calendarId: targetCalendarId, eventId: targetEventId, responseStatus }),
+    });
+  }
+  return event;
+});
+
 registerSecureHandler('api:addCalendarEvent', async (_, email, invite: CalendarInvite, actionId?: string) => {
   const event = await GoogleWorkspaceService.addInviteToCalendar(email, invite);
   CalendarEventsRepo.saveMany([event]);
@@ -1078,62 +1238,120 @@ registerSecureHandler('api:addCalendarEvent', async (_, email, invite: CalendarI
   return event;
 });
 
+registerSecureHandler('api:importCalendarInvite', async (_, email, invite: CalendarInvite, calendarId: string) => {
+  const event = await GoogleWorkspaceService.addInviteToCalendar(email, invite, calendarId || 'primary');
+  CalendarEventsRepo.saveMany([event]);
+  return event;
+});
+
 registerSecureHandler('api:createGoogleMeetDraftEvent', async (_, email, input) => {
   const event = await GoogleWorkspaceService.createGoogleMeetDraftEvent(email, input);
   CalendarEventsRepo.saveMany([event]);
   return event;
 });
 
-registerSecureHandler('api:createCalendarEvent', async (_, email, input, actionId?: string) => {
-  const event = await GoogleWorkspaceService.createCalendarEvent(email, input);
-  CalendarEventsRepo.saveMany([event]);
-  if (actionId) {
-    const now = new Date().toISOString();
-    ActionLogRepo.save({
-      id: actionId,
-      accountId: email,
-      kind: 'createCalendarEvent',
-      status: 'completed',
-      createdAt: now,
-      completedAt: now,
-      payloadJson: JSON.stringify({ eventId: event.id, summary: event.summary })
-    });
+registerSecureHandler('api:createCalendarEvent', async (_, email, input: CalendarEventCreateInput, actionId?: string) => {
+  try {
+    const event = await GoogleWorkspaceService.createCalendarEvent(email, input);
+    CalendarEventsRepo.saveMany([event]);
+    if (actionId) {
+      const now = new Date().toISOString();
+      ActionLogRepo.save({ id: actionId, accountId: email, kind: 'createCalendarEvent', status: 'completed', createdAt: now, completedAt: now, payloadJson: JSON.stringify({ eventId: event.id, summary: event.summary }) });
+    }
+    return event;
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    const event = optimisticCalendarEvent(email, input);
+    CalendarEventsRepo.saveMany([event]);
+    queueCalendarMutation({ actionId, accountId: email, kind: 'create', calendarId: event.calendarId, eventId: event.id, payload: { input, optimisticEventId: event.id }, actionKind: 'createCalendarEvent' });
+    return event;
   }
-  return event;
 });
 
-registerSecureHandler('api:updateCalendarEvent', async (_, email, input, actionId?: string) => {
-  const event = await GoogleWorkspaceService.updateCalendarEvent(email, input);
-  CalendarEventsRepo.saveMany([event]);
-  if (actionId) {
-    const now = new Date().toISOString();
-    ActionLogRepo.save({
-      id: actionId,
-      accountId: email,
-      kind: 'updateCalendarEvent',
-      status: 'completed',
-      createdAt: now,
-      completedAt: now,
-      payloadJson: JSON.stringify({ eventId: event.id, summary: event.summary })
-    });
+registerSecureHandler('api:updateCalendarEvent', async (_, email, input: CalendarEventUpdateInput, actionId?: string) => {
+  const calendarId = input.calendarId || 'primary';
+  const originalCalendarId = input.originalCalendarId || calendarId;
+  const previousEvent = CalendarEventsRepo.get(email, originalCalendarId, input.eventId);
+  if (input.eventId.startsWith('local-')) {
+    const createMutation = CalendarMutationsRepo.list().find(record => record.accountId === email && record.kind === 'create' && record.eventId === input.eventId);
+    if (createMutation) {
+      CalendarMutationsRepo.save({ ...createMutation, calendarId, payloadJson: JSON.stringify({ input, optimisticEventId: input.eventId }) });
+      const event = { ...optimisticCalendarEvent(email, input, input.eventId), updatedAt: new Date().toISOString() };
+      if (originalCalendarId !== calendarId) CalendarEventsRepo.delete(email, originalCalendarId, input.eventId);
+      CalendarEventsRepo.saveMany([event]);
+      return event;
+    }
   }
-  return event;
+  try {
+    const event = await GoogleWorkspaceService.updateCalendarEvent(email, input);
+    if (originalCalendarId !== event.calendarId) CalendarEventsRepo.delete(email, originalCalendarId, input.eventId);
+    CalendarEventsRepo.saveMany([event]);
+    if (actionId) {
+      const now = new Date().toISOString();
+      ActionLogRepo.save({ id: actionId, accountId: email, kind: 'updateCalendarEvent', status: 'completed', createdAt: now, completedAt: now, payloadJson: JSON.stringify({ eventId: event.id, summary: event.summary }) });
+    }
+    return event;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Calendar conflict:') && actionId) {
+      const now = new Date().toISOString();
+      ActionLogRepo.save({
+        id: actionId,
+        accountId: email,
+        kind: 'updateCalendarEvent',
+        status: 'failed',
+        createdAt: now,
+        completedAt: now,
+        failureMessage: error.message,
+        payloadJson: JSON.stringify({ conflict: true, input, previousEvent }),
+      });
+    }
+    if (!isNetworkError(error)) throw error;
+    if (input.mutationScope === 'following') {
+      throw new Error('Changing this and following events requires a network connection.');
+    }
+    const event: CalendarEvent = {
+      ...(previousEvent || optimisticCalendarEvent(email, input, input.eventId)),
+      ...optimisticCalendarEvent(email, input, input.eventId),
+      id: input.eventId,
+      accountId: email,
+      calendarId,
+      status: 'pending',
+      updatedAt: new Date().toISOString(),
+    };
+    if (originalCalendarId !== calendarId) CalendarEventsRepo.delete(email, originalCalendarId, input.eventId);
+    CalendarEventsRepo.saveMany([event]);
+    queueCalendarMutation({ actionId, accountId: email, kind: 'update', calendarId: originalCalendarId, eventId: input.eventId, payload: { input, previousEvent }, actionKind: 'updateCalendarEvent' });
+    return event;
+  }
 });
 
-registerSecureHandler('api:deleteCalendarEvent', async (_, email, calendarId: string, eventId: string, actionId?: string) => {
-  await GoogleWorkspaceService.deleteCalendarEvent(email, eventId, calendarId || 'primary');
-  CalendarEventsRepo.delete(email, calendarId || 'primary', eventId);
-  if (actionId) {
-    const now = new Date().toISOString();
-    ActionLogRepo.save({
-      id: actionId,
-      accountId: email,
-      kind: 'deleteCalendarEvent',
-      status: 'completed',
-      createdAt: now,
-      completedAt: now,
-      payloadJson: JSON.stringify({ calendarId: calendarId || 'primary', eventId })
-    });
+registerSecureHandler('api:deleteCalendarEvent', async (_, email, calendarId: string, eventId: string, actionId?: string, options: CalendarEventDeleteOptions = {}) => {
+  const normalizedCalendarId = calendarId || 'primary';
+  const deletedEvent = CalendarEventsRepo.get(email, normalizedCalendarId, eventId);
+  if (eventId.startsWith('local-')) {
+    const createMutation = CalendarMutationsRepo.list().find(record => record.accountId === email && record.kind === 'create' && record.eventId === eventId);
+    if (createMutation) {
+      CalendarMutationsRepo.delete(createMutation.id);
+      const originalAction = ActionLogRepo.get(createMutation.id);
+      if (originalAction) ActionLogRepo.save({ ...originalAction, status: 'completed', completedAt: new Date().toISOString(), failureMessage: null });
+      CalendarEventsRepo.delete(email, normalizedCalendarId, eventId);
+      return;
+    }
+  }
+  try {
+    await GoogleWorkspaceService.deleteCalendarEvent(email, eventId, normalizedCalendarId, options);
+    CalendarEventsRepo.delete(email, normalizedCalendarId, eventId);
+    if (actionId) {
+      const now = new Date().toISOString();
+      ActionLogRepo.save({ id: actionId, accountId: email, kind: 'deleteCalendarEvent', status: 'completed', createdAt: now, completedAt: now, payloadJson: JSON.stringify({ calendarId: normalizedCalendarId, eventId }) });
+    }
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    if (options.mutationScope === 'following') {
+      throw new Error('Deleting this and following events requires a network connection.');
+    }
+    CalendarEventsRepo.delete(email, normalizedCalendarId, eventId);
+    queueCalendarMutation({ actionId, accountId: email, kind: 'delete', calendarId: normalizedCalendarId, eventId, payload: { deletedEvent, deleteOptions: options }, actionKind: 'deleteCalendarEvent' });
   }
 });
 

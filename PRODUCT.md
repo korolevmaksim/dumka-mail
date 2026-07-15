@@ -10,7 +10,13 @@ People managing one or more Gmail accounts who want a fast, keyboard-friendly de
 
 ## Product Purpose
 
-Dumka Mail is a local-first mail operator. It turns cached Gmail data into explainable briefings, search results, reply obligations, cleanup suggestions, and reviewable mailbox actions. Success means the user can make faster decisions while always understanding the evidence, what remains local, and which action will occur before approving it.
+Dumka Mail is a local-first mail and schedule operator. It turns cached Gmail and Google Calendar data into explainable briefings, search results, reply obligations, calendar plans, cleanup suggestions, and reviewable actions. Success means the user can make faster decisions while always understanding the evidence, what remains local, and which external action will occur before approving it.
+
+## Calendar Workspace
+
+Calendar is a first-class workspace inside the same desktop application, not a separate service. It reads every selected Google calendar directly into the local SQLite cache and supports routine scheduling across Month, Week, Day, Agenda, Quarter, and Year. Event edits use Google access roles and attendee-notification choices; cached views, search, mail-derived tasks, and queued changes remain useful offline. Calendar sets, templates, reminders, `.ics` workflows, source-mail links, Today handoff, and unified account scope use the existing local state rather than introducing a second backend or sync engine.
+
+Ask Dumka can search the bounded local calendar cache and calculate free slots through read-only tools. It has no calendar mutation tool: creating or changing an event remains a visible user-reviewed action in Calendar, while email follow-ups remain drafts until the user sends them.
 
 ## Brand Personality
 

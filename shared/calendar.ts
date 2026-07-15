@@ -1,4 +1,4 @@
-import type { AttachmentMetadata, CalendarAttendee, CalendarInvite, MailMessage } from './types';
+import type { AttachmentMetadata, CalendarAttendee, CalendarEvent, CalendarEventCreateInput, CalendarInvite, MailMessage } from './types';
 
 interface IcsProperty {
   name: string;
@@ -292,4 +292,65 @@ export function calendarInvitesFromMessage(message: MailMessage): CalendarInvite
     if (invite) invites.push(invite);
   }
   return invites;
+}
+
+function escapeIcsValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+}
+
+function icsUtcDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) throw new Error('Cannot export an event with an invalid date.');
+  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function icsDateOnly(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Cannot export an event with an invalid all-day date.');
+  return value.replace(/-/g, '');
+}
+
+export function calendarEventToIcs(event: CalendarEvent): string {
+  const start = event.isAllDay
+    ? `DTSTART;VALUE=DATE:${icsDateOnly(event.startDate || event.startAt.slice(0, 10))}`
+    : `DTSTART:${icsUtcDateTime(event.startAt)}`;
+  const end = event.isAllDay
+    ? `DTEND;VALUE=DATE:${icsDateOnly(event.endDate || event.endAt.slice(0, 10))}`
+    : `DTEND:${icsUtcDateTime(event.endAt)}`;
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Dumka Mail//Calendar//EN',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:${escapeIcsValue(event.iCalUID || `${event.id}@dumka.local`)}`,
+    `DTSTAMP:${icsUtcDateTime(new Date().toISOString())}`,
+    start,
+    end,
+    `SUMMARY:${escapeIcsValue(event.summary || '(No title)')}`,
+  ];
+  if (event.description) lines.push(`DESCRIPTION:${escapeIcsValue(event.description)}`);
+  if (event.location) lines.push(`LOCATION:${escapeIcsValue(event.location)}`);
+  if (event.organizerEmail) lines.push(`ORGANIZER:mailto:${event.organizerEmail}`);
+  for (const attendee of event.attendees) lines.push(`ATTENDEE:mailto:${attendee.email}`);
+  lines.push(...(event.recurrenceRules || []), 'END:VEVENT', 'END:VCALENDAR', '');
+  return lines.join('\r\n');
+}
+
+export function calendarInviteToCreateInput(invite: CalendarInvite, calendarId: string): CalendarEventCreateInput {
+  return {
+    calendarId,
+    summary: invite.summary,
+    description: invite.description,
+    location: invite.location,
+    startAt: invite.startAt,
+    endAt: invite.endAt,
+    isAllDay: invite.isAllDay,
+    startDate: invite.startDate,
+    endDate: invite.endDate,
+    timeZone: invite.timeZone,
+    attendees: invite.attendees.map(attendee => attendee.email),
+    recurrenceRules: invite.recurrenceRules,
+    sendUpdates: 'none',
+    conferenceProvider: 'none',
+  };
 }

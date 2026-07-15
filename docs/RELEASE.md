@@ -27,6 +27,10 @@ npm run dist:linux
 
 Windows/Linux packages are not code-signed by default.
 
+## Calendar release QA
+
+Calendar changes require an existing-profile migration check plus installed-app verification. Reauthorize Calendar after upgrading so the CalendarList read scope is granted, verify at least one secondary calendar and a read-only calendar, then test cached restart, all six views, create/edit/delete and recurring scopes, `.ics` preview import/export, mail-to-event/source-mail navigation, offline queue replay, and a native reminder. Unsigned macOS development packages may have OS-level notification limitations; release evidence should use the installed application rather than only the Vite renderer.
+
 ## Signed and notarized macOS build
 
 Run preflight before a distribution build:

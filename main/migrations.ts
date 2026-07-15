@@ -96,6 +96,54 @@ export function runMigrations(db: Database.Database) {
         PRIMARY KEY (account_id, calendar_id, id)
     );
 
+    CREATE TABLE IF NOT EXISTS calendar_lists (
+        id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        description TEXT,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        is_selected INTEGER NOT NULL DEFAULT 1,
+        access_role TEXT NOT NULL DEFAULT 'reader',
+        background_color TEXT NOT NULL DEFAULT '#3b82f6',
+        foreground_color TEXT NOT NULL DEFAULT '#ffffff',
+        time_zone TEXT,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, id)
+    );
+
+    CREATE TABLE IF NOT EXISTS calendar_sync_ranges (
+        account_id TEXT NOT NULL,
+        calendar_id TEXT NOT NULL,
+        start_at TEXT NOT NULL,
+        end_at TEXT NOT NULL,
+        synced_at TEXT NOT NULL,
+        sync_token TEXT,
+        PRIMARY KEY (account_id, calendar_id, start_at, end_at)
+    );
+
+    CREATE TABLE IF NOT EXISTS calendar_mutations (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        calendar_id TEXT NOT NULL,
+        event_id TEXT,
+        payload_json TEXT,
+        created_at TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS calendar_notification_log (
+        account_id TEXT NOT NULL,
+        calendar_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        start_at TEXT NOT NULL,
+        notified_at TEXT NOT NULL,
+        snoozed_until TEXT,
+        PRIMARY KEY (account_id, calendar_id, event_id, start_at)
+    );
+
     CREATE TABLE IF NOT EXISTS threads (
         id TEXT NOT NULL,
         account_id TEXT NOT NULL,
@@ -336,7 +384,27 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_messages_account_sender_received_at ON messages(account_id, sender_email COLLATE NOCASE, received_at);
     CREATE INDEX IF NOT EXISTS idx_contacts_account_email ON contacts(account_id, email);
     CREATE INDEX IF NOT EXISTS idx_calendar_events_account_start ON calendar_events(account_id, start_at);
+    CREATE INDEX IF NOT EXISTS idx_calendar_events_account_calendar_start ON calendar_events(account_id, calendar_id, start_at);
+    CREATE INDEX IF NOT EXISTS idx_calendar_lists_account_selected ON calendar_lists(account_id, is_selected, is_deleted);
+    CREATE INDEX IF NOT EXISTS idx_calendar_mutations_created ON calendar_mutations(created_at);
+    CREATE INDEX IF NOT EXISTS idx_calendar_notification_start ON calendar_notification_log(start_at);
     CREATE VIRTUAL TABLE IF NOT EXISTS mail_search USING fts5(account_id, thread_id, message_id, subject, sender, snippet, body_plain);
+    CREATE VIRTUAL TABLE IF NOT EXISTS calendar_search USING fts5(
+        account_id UNINDEXED, calendar_id UNINDEXED, event_id UNINDEXED,
+        summary, description, location, attendees
+    );
+    CREATE TRIGGER IF NOT EXISTS calendar_events_search_insert AFTER INSERT ON calendar_events BEGIN
+        INSERT INTO calendar_search (account_id, calendar_id, event_id, summary, description, location, attendees)
+        VALUES (new.account_id, new.calendar_id, new.id, new.summary, COALESCE(new.description, ''), COALESCE(new.location, ''), new.attendees_json);
+    END;
+    CREATE TRIGGER IF NOT EXISTS calendar_events_search_update AFTER UPDATE ON calendar_events BEGIN
+        DELETE FROM calendar_search WHERE account_id = old.account_id AND calendar_id = old.calendar_id AND event_id = old.id;
+        INSERT INTO calendar_search (account_id, calendar_id, event_id, summary, description, location, attendees)
+        VALUES (new.account_id, new.calendar_id, new.id, new.summary, COALESCE(new.description, ''), COALESCE(new.location, ''), new.attendees_json);
+    END;
+    CREATE TRIGGER IF NOT EXISTS calendar_events_search_delete AFTER DELETE ON calendar_events BEGIN
+        DELETE FROM calendar_search WHERE account_id = old.account_id AND calendar_id = old.calendar_id AND event_id = old.id;
+    END;
   `);
 
   // Ensure newer columns are present (equivalent to addColumnIfMissing in Swift)
@@ -375,6 +443,22 @@ export function runMigrations(db: Database.Database) {
     { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
     { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },
     { table: 'calendar_events', column: 'source_message_id', definition: 'source_message_id TEXT' },
+    { table: 'calendar_events', column: 'source_thread_id', definition: 'source_thread_id TEXT' },
+    { table: 'calendar_events', column: 'start_date', definition: 'start_date TEXT' },
+    { table: 'calendar_events', column: 'end_date', definition: 'end_date TEXT' },
+    { table: 'calendar_events', column: 'time_zone', definition: 'time_zone TEXT' },
+    { table: 'calendar_events', column: 'etag', definition: 'etag TEXT' },
+    { table: 'calendar_events', column: 'creator_email', definition: 'creator_email TEXT' },
+    { table: 'calendar_events', column: 'recurring_event_id', definition: 'recurring_event_id TEXT' },
+    { table: 'calendar_events', column: 'original_start_at', definition: 'original_start_at TEXT' },
+    { table: 'calendar_events', column: 'recurrence_json', definition: 'recurrence_json TEXT NOT NULL DEFAULT \'[]\'' },
+    { table: 'calendar_events', column: 'transparency', definition: 'transparency TEXT' },
+    { table: 'calendar_events', column: 'visibility', definition: 'visibility TEXT' },
+    { table: 'calendar_events', column: 'color_id', definition: 'color_id TEXT' },
+    { table: 'calendar_events', column: 'self_response_status', definition: 'self_response_status TEXT' },
+    { table: 'calendar_events', column: 'reminders_json', definition: 'reminders_json TEXT' },
+    { table: 'calendar_notification_log', column: 'snoozed_until', definition: 'snoozed_until TEXT' },
+    { table: 'calendar_sync_ranges', column: 'sync_token', definition: 'sync_token TEXT' },
     { table: 'ai_messages', column: 'sources_json', definition: 'sources_json TEXT' },
     { table: 'reply_pipeline_state', column: 'has_placeholders', definition: 'has_placeholders INTEGER NOT NULL DEFAULT 0' }
   ];
@@ -389,6 +473,15 @@ export function runMigrations(db: Database.Database) {
     } catch (e) {
       console.error(`Migration error for ${table}.${column}:`, e);
     }
+  }
+
+  const indexedCalendarCount = db.prepare('SELECT COUNT(*) AS count FROM calendar_search').get() as { count: number };
+  if (indexedCalendarCount.count === 0) {
+    db.exec(`
+      INSERT INTO calendar_search (account_id, calendar_id, event_id, summary, description, location, attendees)
+      SELECT account_id, calendar_id, id, summary, COALESCE(description, ''), COALESCE(location, ''), attendees_json
+      FROM calendar_events;
+    `);
   }
 
   // Existing installs already have recipient metadata on cached messages. Keep

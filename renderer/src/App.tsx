@@ -4,7 +4,8 @@ import { useKeyboard } from './hooks/useKeyboard';
 import {
   ArchiveRestore, Bell, Inbox, Clock, CheckCircle, X, ArrowLeft,
   Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles, Send,
-  ChevronUp, ChevronDown, MailOpen, Trash2, OctagonAlert, BellOff, Tags, FileText, Printer
+  ChevronUp, ChevronDown, MailOpen, Trash2, OctagonAlert, BellOff, Tags, FileText, Printer,
+  CalendarPlus
 } from 'lucide-react';
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
@@ -24,6 +25,7 @@ import { InlineReplyComposer } from './components/layout/InlineReplyComposer';
 import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer';
 import { ShortcutGuideOverlay } from './components/layout/ShortcutGuideOverlay';
 import { TodayHome } from './components/today/TodayHome';
+import { CalendarWorkspace } from './calendar/CalendarWorkspace';
 import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
@@ -798,7 +800,12 @@ function AppContent() {
           {store.aiPanelOpen && <AICopilotPanel />}
 
           {/* LEFT WORKSPACE (Header + Split Tabs + Lists) */}
-          <div className="flex flex-col flex-1 overflow-hidden">
+          <div className="relative flex flex-col flex-1 overflow-hidden">
+            {store.workspaceView === 'calendar' && (
+              <div className="absolute inset-0 z-30">
+                <CalendarWorkspace />
+              </div>
+            )}
             {/* SEARCH COCKPIT BAR */}
             <SearchCockpitBar ref={searchInputRef} />
 
@@ -1312,6 +1319,13 @@ function AppContent() {
                               );
                             })()}
                             <button
+                              onClick={() => store.startCalendarEventFromThread(store.openedThread)}
+                              title="Create Calendar Event"
+                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--accent)]"
+                            >
+                              <CalendarPlus className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={printOpenedThread}
                               title="Print Thread"
                               className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
@@ -1475,7 +1489,7 @@ function AppContent() {
           </div>
 
           {/* 2. RIGHT PANEL (Context + Diagnostics + Health + Ledger) */}
-          <RightContextPanel />
+          {store.workspaceView !== 'calendar' && <RightContextPanel />}
         </div>
       </div>
 

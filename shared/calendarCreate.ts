@@ -151,6 +151,12 @@ export function recurrenceRuleForCalendarCreate(recurrence: CalendarEventRecurre
   return [RECURRENCE_RULES[recurrence]];
 }
 
+export function normalizeCalendarRecurrenceRule(value: string): string | null {
+  const normalized = value.trim().toUpperCase().replace(/^RRULE:/, '');
+  if (!normalized.startsWith('FREQ=') || !/^[A-Z0-9=,;+-]+$/.test(normalized)) return null;
+  return `RRULE:${normalized}`;
+}
+
 export function localCalendarTimeZone(): string {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return timeZone && isValidCalendarTimeZone(timeZone) ? timeZone : 'UTC';

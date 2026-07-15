@@ -4,7 +4,9 @@ import {
   CalendarAttendeeResponse,
   CalendarEvent,
   CalendarEventCreateInput,
+  CalendarEventDeleteOptions,
   CalendarEventUpdateInput,
+  CalendarListEntry,
   CalendarFreeBusyRequest,
   CalendarFreeBusyResult,
   CalendarInvite,
@@ -43,7 +45,8 @@ import {
   FollowUpRadarItem,
   ReplyPipelineDraftResult,
   ReplyPipelineState,
-  MailSyncCompletion
+  MailSyncCompletion,
+  WorkspaceView
 } from '../../../shared/types';
 import { getAIProviderConfig, isConfigurableAIProvider } from '../../../shared/aiProviders';
 import { getDefaultEmbeddingSettings } from '../../../shared/embeddingProviders';
@@ -57,6 +60,7 @@ import { useMailState } from './useMailState';
 import { useDraftsState } from './useDraftsState';
 import { useAIState } from './useAIState';
 import { useReplyPipelineState } from './useReplyPipelineState';
+import { useCalendarState, type CalendarEventRange } from './useCalendarState';
 import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import type { MailSearchState } from './mailSearchStatus';
@@ -77,7 +81,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 16;
+export const SETTINGS_SCHEMA_VERSION = 18;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -147,7 +151,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
     availabilitySlotStepMinutes: 30,
     calendlyUrl: '',
     calComUrl: '',
-    defaultConferenceProvider: 'googleMeet'
+    defaultConferenceProvider: 'googleMeet',
+    defaultView: 'month',
+    lastAnchorDate: '',
+    weekStartsOn: 1,
+    showWeekends: true,
+    showWeekNumbers: false,
+    workingDays: [1, 2, 3, 4, 5],
+    hiddenCalendarIds: [],
+    defaultCalendarId: 'primary',
+    defaultReminderMinutes: 10,
+    secondaryTimeZone: '',
+    favoriteTimeZones: [],
+    defaultTravelTimeMinutes: 15,
+    calendarSets: [],
+    activeCalendarSetId: null,
+    eventTemplates: [],
+    hideNotificationDetails: false,
+    mutedNotificationCalendarKeys: [],
   },
   shortcuts: {
     mode: 'superhuman',
@@ -332,9 +353,16 @@ interface SpeedProof {
   detailCacheCoverage: string;
 }
 
-interface CalendarEventRange {
-  startAt: string;
-  endAt: string;
+interface CalendarDraftSeed {
+  summary: string;
+  attendees: string[];
+  sourceMessageId?: string | null;
+  sourceThreadId?: string | null;
+}
+
+interface CalendarFocusRequest {
+  accountId: string;
+  eventId: string;
 }
 
 interface AppStoreContextType {
@@ -393,6 +421,13 @@ interface AppStoreContextType {
   contacts: ContactCard[];
   contactGroups: ContactGroup[];
   calendarEvents: CalendarEvent[];
+  calendarLists: CalendarListEntry[];
+  calendarDraftSeed: CalendarDraftSeed | null;
+  clearCalendarDraftSeed: () => void;
+  startCalendarEventFromThread: (thread?: MailThread | null) => void;
+  calendarFocusRequest: CalendarFocusRequest | null;
+  clearCalendarFocusRequest: () => void;
+  openCalendarEvent: (event: CalendarEvent) => void;
   authorizeGoogleIntegration: (integration: 'calendar' | 'contacts', email?: string) => Promise<void>;
   loadLabels: (email?: string) => Promise<MailLabelDefinition[]>;
   syncLabels: (email?: string) => Promise<void>;
@@ -408,12 +443,15 @@ interface AppStoreContextType {
   renameContactGroup: (groupId: string, name: string, email?: string) => Promise<void>;
   deleteContactGroup: (groupId: string, email?: string) => Promise<void>;
   syncCalendarAgenda: (email?: string, range?: CalendarEventRange) => Promise<CalendarEvent[]>;
+  syncCalendarLists: (email?: string) => Promise<CalendarListEntry[]>;
   queryCalendarFreeBusy: (input: CalendarFreeBusyRequest, email?: string) => Promise<CalendarFreeBusyResult>;
   respondToCalendarInvite: (invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, email?: string) => Promise<void>;
+  respondToCalendarEvent: (event: CalendarEvent, responseStatus: CalendarAttendeeResponse) => Promise<CalendarEvent>;
   addCalendarEvent: (invite: CalendarInvite, email?: string) => Promise<void>;
   createCalendarEvent: (input: CalendarEventCreateInput, email?: string) => Promise<CalendarEvent>;
   updateCalendarEvent: (input: CalendarEventUpdateInput, email?: string) => Promise<CalendarEvent>;
-  deleteCalendarEvent: (event: CalendarEvent, email?: string) => Promise<void>;
+  deleteCalendarEvent: (event: CalendarEvent, email?: string, options?: CalendarEventDeleteOptions) => Promise<void>;
+  resolveCalendarConflict: (action: MailActionLog, strategy: 'local' | 'remote') => Promise<void>;
   createGoogleMeetDraftEvent: () => Promise<CalendarEvent | null>;
   actionLog: MailActionLog[];
   followUpRadar: FollowUpRadarResult | null;
@@ -493,10 +531,10 @@ interface AppStoreContextType {
   setSettingsOpen: (open: boolean) => void;
   cleanupOpen: boolean;
   setCleanupOpen: (open: boolean) => void;
-  workspaceView: 'today' | 'mail';
-  setWorkspaceView: (view: 'today' | 'mail') => void;
+  workspaceView: WorkspaceView;
+  setWorkspaceView: (view: WorkspaceView) => void;
   /** When non-null, user-initiated thread close restores this workspace (Today / Follow-up Radar). */
-  returnWorkspaceView: 'today' | null;
+  returnWorkspaceView: Exclude<WorkspaceView, 'mail'> | null;
   /**
    * Enter mail workspace while remembering Today as the back target.
    * Use before openThread when the open path is not openThreadFromToday itself.
@@ -504,6 +542,7 @@ interface AppStoreContextType {
   beginTodayThreadNavigation: () => void;
   /** Open a thread from Today surfaces; Back/Escape returns to Today. */
   openThreadFromToday: (thread: MailThread) => Promise<void>;
+  openThreadFromCalendar: (thread: MailThread) => Promise<void>;
   /** Close the opened thread and restore returnWorkspaceView when present. */
   closeOpenedThread: () => Promise<void>;
   aiModel: string;
@@ -563,7 +602,8 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [labelDefinitions, setLabelDefinitions] = useState<MailLabelDefinition[]>([]);
   const [contacts, setContacts] = useState<ContactCard[]>([]);
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([]);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [calendarDraftSeed, setCalendarDraftSeed] = useState<CalendarDraftSeed | null>(null);
+  const [calendarFocusRequest, setCalendarFocusRequest] = useState<CalendarFocusRequest | null>(null);
 
   const applyGmailSignatureSyncResult = useCallback(async (result: GmailSignatureSyncResult) => {
     await settingsState.updateSettings(s => {
@@ -642,45 +682,29 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return mailState.accounts[0]?.email || '';
   }, [mailState.activeAccount, mailState.accounts]);
 
-  const agendaRange = useCallback((): CalendarEventRange => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 42);
-    return { startAt: start.toISOString(), endAt: end.toISOString() };
-  }, []);
-
-  const replaceCalendarRange = useCallback((
-    current: CalendarEvent[],
-    next: CalendarEvent[],
-    accountId: string,
-    range: CalendarEventRange,
-  ): CalendarEvent[] => {
-    const startMs = new Date(range.startAt).getTime();
-    const endMs = new Date(range.endAt).getTime();
-    const outsideRange = current.filter(event => {
-      if (event.accountId !== accountId) return true;
-      const eventStart = new Date(event.startAt).getTime();
-      return !Number.isFinite(eventStart) || eventStart < startMs || eventStart >= endMs;
-    });
-    return [...outsideRange, ...next]
-      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
-  }, []);
-
-  const upsertCalendarEvent = useCallback((event: CalendarEvent) => {
-    setCalendarEvents(current => [
-      ...current.filter(existing => !(existing.accountId === event.accountId && existing.calendarId === event.calendarId && existing.id === event.id)),
-      event
-    ].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()));
-  }, []);
-
-  const removeCalendarEvent = useCallback((event: CalendarEvent) => {
-    setCalendarEvents(current => current.filter(existing => !(
-      existing.accountId === event.accountId
-      && existing.calendarId === event.calendarId
-      && existing.id === event.id
-    )));
-  }, []);
+  const calendarState = useCalendarState({
+    primaryEmail: primaryWorkspaceEmail,
+    activeDraft: draftsState.activeDraft,
+    defaultMeetingDurationMinutes: settingsState.settings.calendar.defaultMeetingDurationMinutes,
+    loadActionLog: mailState.loadActionLog,
+    updateDraftBody: draftsState.updateDraftBody,
+    onIntegrationStatus: setGoogleIntegrationStatus,
+  });
+  const {
+    calendarEvents,
+    calendarLists,
+    syncCalendarAgenda,
+    syncCalendarLists,
+    queryCalendarFreeBusy,
+    respondToCalendarInvite,
+    respondToCalendarEvent,
+    addCalendarEvent,
+    createCalendarEvent,
+    updateCalendarEvent,
+    deleteCalendarEvent,
+    resolveCalendarConflict,
+    createGoogleMeetDraftEvent,
+  } = calendarState;
 
   const loadWorkspaceCache = useCallback(async (email?: string) => {
     const targetEmail = email || primaryWorkspaceEmail;
@@ -689,24 +713,22 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setLabelDefinitions([]);
       setContacts([]);
       setContactGroups([]);
-      setCalendarEvents([]);
+      calendarState.clearCalendarCache();
       return;
     }
 
-    const { startAt, endAt } = agendaRange();
-    const [status, labels, contactList, groups, events] = await Promise.all([
+    const [status, labels, contactList, groups] = await Promise.all([
       window.electronAPI.getGoogleIntegrationStatus(targetEmail),
       window.electronAPI.listLabels(targetEmail),
       window.electronAPI.listContacts(targetEmail),
       window.electronAPI.listContactGroups(targetEmail),
-      window.electronAPI.listCalendarEvents(targetEmail, startAt, endAt),
+      calendarState.loadCachedRange(targetEmail),
     ]);
     setGoogleIntegrationStatus(status);
     setLabelDefinitions(current => replaceLabelsForAccount(current, targetEmail, labels));
     setContacts(contactList);
     setContactGroups(groups);
-    setCalendarEvents(events);
-  }, [agendaRange, primaryWorkspaceEmail]);
+  }, [calendarState.clearCalendarCache, calendarState.loadCachedRange, primaryWorkspaceEmail]);
 
   useEffect(() => {
     void loadWorkspaceCache();
@@ -831,23 +853,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setContactGroups(await window.electronAPI.listContactGroups(targetEmail));
   }, [primaryWorkspaceEmail]);
 
-  const syncCalendarAgenda = useCallback(async (email?: string, range?: CalendarEventRange) => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) return [];
-    const { startAt, endAt } = range || agendaRange();
-    const events = await window.electronAPI.syncCalendarEvents(targetEmail, startAt, endAt);
-    setCalendarEvents(current => replaceCalendarRange(current, events, targetEmail, { startAt, endAt }));
-    const status = await window.electronAPI.getGoogleIntegrationStatus(targetEmail);
-    setGoogleIntegrationStatus(status);
-    return events;
-  }, [agendaRange, primaryWorkspaceEmail, replaceCalendarRange]);
-
-  const queryCalendarFreeBusy = useCallback(async (input: CalendarFreeBusyRequest, email?: string): Promise<CalendarFreeBusyResult> => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) throw new Error('Connect a Gmail account before checking calendar availability.');
-    return window.electronAPI.queryCalendarFreeBusy(targetEmail, input);
-  }, [primaryWorkspaceEmail]);
-
   const authorizeGoogleIntegration = useCallback(async (integration: 'calendar' | 'contacts', email?: string) => {
     const targetEmail = email || primaryWorkspaceEmail;
     if (!targetEmail) {
@@ -861,74 +866,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await syncContacts(targetEmail);
     }
   }, [primaryWorkspaceEmail, syncCalendarAgenda, syncContacts]);
-
-  const respondToCalendarInvite = useCallback(async (invite: CalendarInvite, responseStatus: CalendarAttendeeResponse, email?: string) => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) throw new Error('Connect a Gmail account before responding to invitations.');
-    const actionId = crypto.randomUUID();
-    await window.electronAPI.respondToCalendarInvite(targetEmail, invite, responseStatus, actionId);
-    await syncCalendarAgenda(targetEmail);
-    await mailState.loadActionLog();
-  }, [mailState.loadActionLog, primaryWorkspaceEmail, syncCalendarAgenda]);
-
-  const addCalendarEvent = useCallback(async (invite: CalendarInvite, email?: string) => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) throw new Error('Connect a Gmail account before adding calendar events.');
-    const actionId = crypto.randomUUID();
-    await window.electronAPI.addCalendarEvent(targetEmail, invite, actionId);
-    await syncCalendarAgenda(targetEmail);
-    await mailState.loadActionLog();
-  }, [mailState.loadActionLog, primaryWorkspaceEmail, syncCalendarAgenda]);
-
-  const createCalendarEvent = useCallback(async (input: CalendarEventCreateInput, email?: string): Promise<CalendarEvent> => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) throw new Error('Connect a Gmail account before creating calendar events.');
-    const actionId = crypto.randomUUID();
-    const event = await window.electronAPI.createCalendarEvent(targetEmail, input, actionId);
-    upsertCalendarEvent(event);
-    await mailState.loadActionLog();
-    return event;
-  }, [mailState.loadActionLog, primaryWorkspaceEmail, upsertCalendarEvent]);
-
-  const updateCalendarEvent = useCallback(async (input: CalendarEventUpdateInput, email?: string): Promise<CalendarEvent> => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) throw new Error('Connect a Gmail account before updating calendar events.');
-    const actionId = crypto.randomUUID();
-    const event = await window.electronAPI.updateCalendarEvent(targetEmail, input, actionId);
-    upsertCalendarEvent(event);
-    await mailState.loadActionLog();
-    return event;
-  }, [mailState.loadActionLog, primaryWorkspaceEmail, upsertCalendarEvent]);
-
-  const deleteCalendarEvent = useCallback(async (event: CalendarEvent, email?: string): Promise<void> => {
-    const targetEmail = email || primaryWorkspaceEmail;
-    if (!targetEmail) throw new Error('Connect a Gmail account before deleting calendar events.');
-    const actionId = crypto.randomUUID();
-    await window.electronAPI.deleteCalendarEvent(targetEmail, event.calendarId || 'primary', event.id, actionId);
-    removeCalendarEvent(event);
-    await mailState.loadActionLog();
-  }, [mailState.loadActionLog, primaryWorkspaceEmail, removeCalendarEvent]);
-
-  const createGoogleMeetDraftEvent = useCallback(async (): Promise<CalendarEvent | null> => {
-    const draft = draftsState.activeDraft;
-    if (!draft) return null;
-    const targetEmail = draft.accountId;
-    const attendees = [...draft.to, ...draft.cc].map(recipient => recipient.email).filter(Boolean);
-    const event = await window.electronAPI.createGoogleMeetDraftEvent(targetEmail, {
-      summary: draft.subject || 'Meeting',
-      attendees,
-      durationMinutes: settingsState.settings.calendar.defaultMeetingDurationMinutes
-    });
-    const link = event.conferenceUrl || event.htmlLink;
-    if (link) {
-      const plain = `${draft.bodyPlain.trimEnd()}\n\nGoogle Meet: ${link}`.trimStart();
-      const htmlLink = `<p>Google Meet: <a href="${link}" target="_blank">${link}</a></p>`;
-      const html = draft.bodyHtml ? `${draft.bodyHtml}${htmlLink}` : null;
-      draftsState.updateDraftBody(plain, html);
-    }
-    await syncCalendarAgenda(targetEmail);
-    return event;
-  }, [draftsState.activeDraft, draftsState.updateDraftBody, settingsState.settings.calendar.defaultMeetingDurationMinutes, syncCalendarAgenda]);
 
   const fetchModelsForProvider = useCallback(async (provider: string) => {
     let key = '';
@@ -968,6 +905,35 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return result;
   };
 
+  const startCalendarEventFromThread = useCallback((thread?: MailThread | null) => {
+    const target = thread || mailState.openedThread;
+    if (!target) return;
+    const sourceMessage = [...mailState.openedThreadMessages].reverse().find(message => message.threadId === target.id);
+    setCalendarDraftSeed({
+      summary: `Meeting: ${target.subject}`,
+      attendees: target.senderEmail ? [target.senderEmail] : [],
+      sourceMessageId: sourceMessage?.id || null,
+      sourceThreadId: target.id,
+    });
+    settingsState.setWorkspaceView('calendar');
+    settingsState.setSettingsOpen(false);
+    settingsState.setCleanupOpen(false);
+  }, [mailState.openedThread, mailState.openedThreadMessages, settingsState.setCleanupOpen, settingsState.setSettingsOpen, settingsState.setWorkspaceView]);
+
+  const openCalendarEvent = useCallback((event: CalendarEvent) => {
+    setCalendarFocusRequest({ accountId: event.accountId, eventId: event.id });
+    settingsState.setWorkspaceView('calendar');
+    settingsState.setSettingsOpen(false);
+    settingsState.setCleanupOpen(false);
+  }, [settingsState.setCleanupOpen, settingsState.setSettingsOpen, settingsState.setWorkspaceView]);
+
+  useEffect(() => window.electronAPI.onOpenCalendar(data => {
+    if (data.eventId) setCalendarFocusRequest({ accountId: data.accountId, eventId: data.eventId });
+    settingsState.setWorkspaceView('calendar');
+    settingsState.setSettingsOpen(false);
+    settingsState.setCleanupOpen(false);
+  }), [settingsState.setCleanupOpen, settingsState.setSettingsOpen, settingsState.setWorkspaceView]);
+
   const beginTodayThreadNavigation = useCallback(() => {
     settingsState.setReturnWorkspaceView('today');
     settingsState.enterMailWorkspacePreservingReturn();
@@ -984,6 +950,14 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     beginTodayThreadNavigation();
     await mailState.openThread(thread);
   }, [beginTodayThreadNavigation, mailState.openThread]);
+
+  const openThreadFromCalendar = useCallback(async (thread: MailThread) => {
+    settingsState.setReturnWorkspaceView('calendar');
+    settingsState.enterMailWorkspacePreservingReturn();
+    settingsState.setSettingsOpen(false);
+    settingsState.setCleanupOpen(false);
+    await mailState.openThread(thread);
+  }, [mailState.openThread, settingsState.enterMailWorkspacePreservingReturn, settingsState.setCleanupOpen, settingsState.setReturnWorkspaceView, settingsState.setSettingsOpen]);
 
   const closeOpenedThread = useCallback(async () => {
     const returnTo = settingsState.returnWorkspaceView;
@@ -1012,6 +986,13 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     contacts,
     contactGroups,
     calendarEvents,
+    calendarLists,
+    calendarDraftSeed,
+    clearCalendarDraftSeed: () => setCalendarDraftSeed(null),
+    startCalendarEventFromThread,
+    calendarFocusRequest,
+    clearCalendarFocusRequest: () => setCalendarFocusRequest(null),
+    openCalendarEvent,
     authorizeGoogleIntegration,
     loadLabels,
     syncLabels,
@@ -1027,17 +1008,21 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     renameContactGroup,
     deleteContactGroup,
     syncCalendarAgenda,
+    syncCalendarLists,
     queryCalendarFreeBusy,
     respondToCalendarInvite,
+    respondToCalendarEvent,
     addCalendarEvent,
     createCalendarEvent,
     updateCalendarEvent,
     deleteCalendarEvent,
+    resolveCalendarConflict,
     createGoogleMeetDraftEvent,
     fetchModelsForProvider,
     syncGmailSignature,
     beginTodayThreadNavigation,
     openThreadFromToday,
+    openThreadFromCalendar,
     closeOpenedThread,
   };
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule, MailTextRuleField } from '../../../shared/types';
+import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule, MailTextRuleField, WorkspaceView } from '../../../shared/types';
 import { CONFIGURABLE_AI_PROVIDERS } from '../../../shared/aiProviders';
 import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, SETTINGS_SCHEMA_VERSION, mergeSettings } from './AppStore';
 
@@ -27,12 +27,12 @@ export function useSettingsState() {
   const [modelsCache, setModelsCache] = useState<Record<string, string[]>>({});
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [cleanupOpen, setCleanupOpen] = useState<boolean>(false);
-  const [workspaceView, setWorkspaceViewState] = useState<'today' | 'mail'>('mail');
+  const [workspaceView, setWorkspaceViewState] = useState<WorkspaceView>('mail');
   /** When set, closing an opened thread restores this workspace (e.g. back from Follow-up Radar). */
-  const [returnWorkspaceView, setReturnWorkspaceView] = useState<'today' | null>(null);
+  const [returnWorkspaceView, setReturnWorkspaceView] = useState<Exclude<WorkspaceView, 'mail'> | null>(null);
   const [customEnv, setCustomEnv] = useState<Record<string, string>>({});
 
-  const setWorkspaceView = useCallback((view: 'today' | 'mail') => {
+  const setWorkspaceView = useCallback((view: WorkspaceView) => {
     // Explicit workspace switches abandon any pending "return to Today" stack entry.
     if (view === 'mail') {
       setReturnWorkspaceView(null);

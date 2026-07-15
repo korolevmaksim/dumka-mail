@@ -64,6 +64,12 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
   logger.log(`[Sync Worker] Found ${pendingActions.length} pending actions to sync`);
 
   for (const action of pendingActions) {
+    // Calendar mutations have their own replay worker because they need event-cache
+    // rollback and local-id replacement. Leaving them pending here prevents this
+    // mail-only reconciler from fabricating a successful no-op.
+    if (action.kind === 'createCalendarEvent' || action.kind === 'updateCalendarEvent' || action.kind === 'deleteCalendarEvent') {
+      continue;
+    }
     action.status = 'running';
     deps.actionLog.save(action);
 

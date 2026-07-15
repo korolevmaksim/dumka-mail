@@ -24,7 +24,8 @@ export const GOOGLE_OAUTH_SCOPES = [
 
 export const GOOGLE_CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/calendar.freebusy'
+  'https://www.googleapis.com/auth/calendar.freebusy',
+  'https://www.googleapis.com/auth/calendar.calendarlist.readonly'
 ] as const;
 
 export const GOOGLE_CONTACTS_SCOPES = [

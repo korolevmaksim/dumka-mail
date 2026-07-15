@@ -27,11 +27,17 @@ export function getDatabase(): Database.Database {
   return dbInstance;
 }
 
+export {
+  CalendarListsRepo,
+  CalendarEventsRepo,
+  CalendarMutationsRepo,
+  type CalendarMutationRecord,
+} from './calendarRepository';
+
 // Re-export all repository implementations
 export {
   AccountsRepo,
   AccountIntegrationsRepo,
-  CalendarEventsRepo,
   ContactGroupsRepo,
   ContactsRepo,
   ThreadsRepo,

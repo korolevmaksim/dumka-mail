@@ -1,4 +1,4 @@
-import { Eraser, Home, Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
+import { CalendarDays, Eraser, Home, Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { AccountAvatar } from '../AccountAvatar';
 
@@ -22,6 +22,23 @@ export function LeftRail() {
           }`}
         >
           <Home className="w-5 h-5" />
+        </button>
+        <div className="w-8 h-[1px] bg-[var(--border)] opacity-60" />
+        <button
+          onClick={() => {
+            store.setWorkspaceView('calendar');
+            store.setSettingsOpen(false);
+            store.setCleanupOpen(false);
+          }}
+          title="Calendar"
+          aria-label="Open Calendar"
+          className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 ${
+            store.workspaceView === 'calendar'
+              ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm'
+              : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] opacity-60 hover:text-[var(--text-primary)] hover:opacity-100'
+          }`}
+        >
+          <CalendarDays className="h-5 w-5" />
         </button>
         <div className="w-8 h-[1px] bg-[var(--border)] opacity-60" />
         {store.accounts.length > 0 && (

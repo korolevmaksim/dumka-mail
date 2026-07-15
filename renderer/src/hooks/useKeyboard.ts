@@ -53,12 +53,21 @@ export function useKeyboard(options: KeyboardOptions) {
         return;
       }
 
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.code === 'KeyC' || e.key.toLowerCase() === 'c')) {
+        e.preventDefault();
+        currentStore.setWorkspaceView('calendar');
+        currentStore.setSettingsOpen(false);
+        currentStore.setCleanupOpen(false);
+        return;
+      }
+
       // If typing in input, ignore single-key shortcuts
       if (isInputFocused) return;
 
       const isMetaOrCtrl = e.metaKey || e.ctrlKey;
       const noModifiers = !e.metaKey && !e.ctrlKey && !e.altKey;
       const isTodayWorkspace = currentStore.workspaceView === 'today';
+      const isCalendarWorkspace = currentStore.workspaceView === 'calendar';
 
       // Command/Ctrl + A: Select All Threads
       if (isMetaOrCtrl && (e.code === 'KeyA' || e.key === 'a')) {
@@ -75,6 +84,10 @@ export function useKeyboard(options: KeyboardOptions) {
         currentOptions.setCommandPaletteOpen(!currentOptions.commandPaletteOpen);
         return;
       }
+
+
+      // Calendar owns its navigation, creation, search, and view shortcuts.
+      if (isCalendarWorkspace) return;
 
       const sc = deriveShortcuts(currentStore.settings.shortcuts);
 

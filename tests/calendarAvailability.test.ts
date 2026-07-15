@@ -23,6 +23,23 @@ const settings: CalendarSettings = {
   calendlyUrl: '',
   calComUrl: '',
   defaultConferenceProvider: 'googleMeet',
+  defaultView: 'month',
+  lastAnchorDate: '',
+  weekStartsOn: 1,
+  showWeekends: true,
+  showWeekNumbers: false,
+  workingDays: [1, 2, 3, 4, 5],
+  hiddenCalendarIds: [],
+  defaultCalendarId: 'primary',
+  defaultReminderMinutes: 10,
+  secondaryTimeZone: '',
+  favoriteTimeZones: [],
+  defaultTravelTimeMinutes: 0,
+  calendarSets: [],
+  activeCalendarSetId: null,
+  eventTemplates: [],
+  hideNotificationDetails: false,
+  mutedNotificationCalendarKeys: [],
 };
 
 function event(startAt: string, endAt: string, status: string | null = null): CalendarEvent {
