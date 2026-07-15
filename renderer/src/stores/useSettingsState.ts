@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppSettings, CustomClassifierRule, TabCategory, MCPServerConfig, MailCategoryRule, MailTextRuleField, WorkspaceView } from '../../../shared/types';
 import { CONFIGURABLE_AI_PROVIDERS } from '../../../shared/aiProviders';
+import { canonicalRuleValueFields, ruleValues } from '../../../shared/classificationRules';
 import { DEFAULT_SETTINGS, DEFAULT_CATEGORIES, SETTINGS_SCHEMA_VERSION, mergeSettings } from './AppStore';
 
 function customClassifierField(value: unknown): MailTextRuleField {
@@ -71,6 +72,7 @@ export function useSettingsState() {
             field: r.field,
             operation: r.condition,
             value: r.value,
+            values: r.values,
             isNegated: false,
             accountId: r.accountId
           } as MailCategoryRule));
@@ -94,6 +96,7 @@ export function useSettingsState() {
             field: r.field,
             operation: r.condition,
             value: r.value,
+            values: r.values,
             isNegated: false,
             accountId: r.accountId
           } as MailCategoryRule));
@@ -111,11 +114,15 @@ export function useSettingsState() {
   };
 
   const saveRules = (rules: CustomClassifierRule[]) => {
-    setCustomClassifierRulesState(rules);
-    window.electronAPI.setSetting('customClassifierRules', JSON.stringify(rules)).catch(err => {
+    const normalizedRules = rules.map(rule => ({
+      ...rule,
+      ...canonicalRuleValueFields(rule.field, ruleValues(rule)),
+    }));
+    setCustomClassifierRulesState(normalizedRules);
+    window.electronAPI.setSetting('customClassifierRules', JSON.stringify(normalizedRules)).catch(err => {
       console.error('Failed to save customClassifierRules to SQLite:', err);
     });
-    syncToSettings(tabCategories, rules);
+    syncToSettings(tabCategories, normalizedRules);
   };
 
   const saveTabCategories = (categories: TabCategory[]) => {
@@ -162,6 +169,7 @@ export function useSettingsState() {
             field: customClassifierField(r.field),
             condition: r.operation,
             value: r.value,
+            values: r.values,
             targetCategory: b.id,
             active: b.isEnabled,
             accountId: r.accountId
@@ -175,6 +183,7 @@ export function useSettingsState() {
             field: customClassifierField(r.field),
             condition: r.operation,
             value: r.value,
+            values: r.values,
             targetCategory: c.id,
             active: c.isEnabled,
             accountId: r.accountId
@@ -239,6 +248,7 @@ export function useSettingsState() {
                   field: customClassifierField(r.field),
                   operation: r.condition,
                   value: r.value,
+                  values: r.values,
                   isNegated: false,
                   accountId: r.accountId
                 };
@@ -301,6 +311,7 @@ export function useSettingsState() {
               field: customClassifierField(r.field),
               condition: r.operation,
               value: r.value,
+              values: r.values,
               targetCategory: b.id,
               active: b.isEnabled,
               accountId: r.accountId
@@ -314,6 +325,7 @@ export function useSettingsState() {
               field: customClassifierField(r.field),
               condition: r.operation,
               value: r.value,
+              values: r.values,
               targetCategory: c.id,
               active: c.isEnabled,
               accountId: r.accountId

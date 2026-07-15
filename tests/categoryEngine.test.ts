@@ -72,6 +72,7 @@ describe('ruleMatches', () => {
   it('matches `from` against primary sender name + email', () => {
     expect(ruleMatches(baseThread, rule({ field: 'from', operation: 'contains', value: 'john doe' }))).toBe(true);
     expect(ruleMatches(baseThread, rule({ field: 'from', operation: 'contains', value: 'john@example.com' }))).toBe(true);
+    expect(ruleMatches(baseThread, rule({ field: 'from', operation: 'equals', value: 'john@example.com' }))).toBe(true);
     expect(ruleMatches(baseThread, rule({ field: 'from', operation: 'contains', value: 'someone else' }))).toBe(false);
   });
 
@@ -86,6 +87,55 @@ describe('ruleMatches', () => {
     expect(ruleMatches(baseThread, rule({ field: 'to', operation: 'contains', value: 'personal alias' }))).toBe(true);
     expect(ruleMatches(baseThread, rule({ field: 'cc', operation: 'endsWith', value: '@example.org' }))).toBe(true);
     expect(ruleMatches(baseThread, rule({ field: 'cc', operation: 'contains', value: 'someone else' }))).toBe(false);
+  });
+
+  it('OR-matches any value inside one sender rule', () => {
+    expect(ruleMatches(baseThread, rule({
+      field: 'from',
+      operation: 'equals',
+      value: 'first@example.com',
+      values: ['first@example.com', 'john@example.com', 'third@example.com'],
+    }))).toBe(true);
+    expect(ruleMatches(baseThread, rule({
+      field: 'from',
+      operation: 'contains',
+      value: 'first@example.com',
+      values: ['first@example.com', 'John Doe', 'third@example.com'],
+    }))).toBe(true);
+  });
+
+  it('OR-matches multiple recipient addresses inside one rule', () => {
+    expect(ruleMatches(baseThread, rule({
+      field: 'to',
+      operation: 'equals',
+      value: 'first@example.com',
+      values: ['first@example.com', 'personal+news@gmail.com'],
+    }))).toBe(true);
+  });
+
+  it('matches legacy comma-separated address rules without a migration', () => {
+    expect(ruleMatches(baseThread, rule({
+      field: 'from',
+      operation: 'contains',
+      value: 'first@example.com, john@example.com, third@example.com',
+    }))).toBe(true);
+  });
+
+  it('applies negation to the whole multi-value set', () => {
+    expect(ruleMatches(baseThread, rule({
+      field: 'from',
+      operation: 'contains',
+      value: 'first@example.com',
+      values: ['first@example.com', 'john@example.com'],
+      isNegated: true,
+    }))).toBe(false);
+    expect(ruleMatches(baseThread, rule({
+      field: 'from',
+      operation: 'contains',
+      value: 'first@example.com',
+      values: ['first@example.com', 'third@example.com'],
+      isNegated: true,
+    }))).toBe(true);
   });
 
   it('honors isNegated', () => {

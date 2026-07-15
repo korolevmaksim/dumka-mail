@@ -3,7 +3,9 @@ import { useAppStore } from '../../../stores/AppStore';
 import { Trash2, GripVertical, Pencil } from 'lucide-react';
 import { emitToast } from '../../../lib/toastBus';
 import type { MailTextRuleField, TabCategory } from '../../../../../shared/types';
+import { ruleValues } from '../../../../../shared/classificationRules';
 import { MailRulesSettingsSection } from './MailRulesSettingsSection';
+import { ClassificationRuleEditor } from './ClassificationRuleEditor';
 import {
   GLOBAL_CLASSIFICATION_SCOPE,
   accountDetail,
@@ -34,6 +36,7 @@ export function ClassificationSettingsTab() {
   const [dragOverSettingId, setDragOverSettingId] = useState<string | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<TabCategory | null>(null);
   const [categoryToEdit, setCategoryToEdit] = useState<TabCategory | null>(null);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const editDialogRef = useRef<HTMLDivElement>(null);
@@ -54,6 +57,7 @@ export function ClassificationSettingsTab() {
     category.active && routeTargetBelongsToScope(category, normalizedSelectedScope)
   ));
   const visibleRules = store.customClassifierRules.filter(rule => ruleBelongsToScope(rule, normalizedSelectedScope));
+  const editingRule = visibleRules.find(rule => rule.id === editingRuleId) || null;
 
   useEffect(() => {
     if (normalizedSelectedScope === GLOBAL_CLASSIFICATION_SCOPE) return;
@@ -318,7 +322,10 @@ export function ClassificationSettingsTab() {
                 key={option.id}
                 type="button"
                 aria-pressed={active}
-                onClick={() => setSelectedScope(option.id)}
+                onClick={() => {
+                  setEditingRuleId(null);
+                  setSelectedScope(option.id);
+                }}
                 title={option.detail ? `${option.label} · ${option.detail}` : option.label}
                 className={`min-w-[116px] max-w-[190px] h-[34px] px-2.5 rounded-md flex items-center gap-2 text-left shrink-0 transition-colors ${
                   active
@@ -468,87 +475,18 @@ export function ClassificationSettingsTab() {
         </div>
       </div>
 
-      {/* Create Custom Rule */}
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Add Custom Classification Rule</span>
-          <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)] truncate max-w-[260px]">{selectedScopeLabel}</span>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Match Field:</span>
-            <select
-              id="new-rule-field-pref"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
-            >
-              <option value="from">Sender Email (From)</option>
-              <option value="senderDomain">Sender Domain</option>
-              <option value="to">Recipient Email (To)</option>
-              <option value="cc">Carbon Copy Email (Cc)</option>
-              <option value="subject">Subject Line</option>
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Condition:</span>
-            <select
-              id="new-rule-condition-pref"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
-            >
-              <option value="contains">Contains</option>
-              <option value="equals">Equals</option>
-              <option value="startsWith">Starts With</option>
-              <option value="endsWith">Ends With</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Match Value:</span>
-          <input
-            id="new-rule-value-pref"
-            type="text"
-            placeholder="e.g. alias@example.com, billing@, invoice"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Target Split:</span>
-            <select
-              id="new-rule-target-pref"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer"
-            >
-              {routeTargetCategories.map(c => (
-                <option key={c.id} value={c.id}>{categoryRouteLabel(c.id, store.tabCategories, store.accounts)}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            const field = document.getElementById('new-rule-field-pref') as HTMLSelectElement;
-            const cond = document.getElementById('new-rule-condition-pref') as HTMLSelectElement;
-            const val = document.getElementById('new-rule-value-pref') as HTMLInputElement;
-            const target = document.getElementById('new-rule-target-pref') as HTMLSelectElement;
-            if (!val.value.trim()) return;
-            store.addCustomClassifierRule({
-              field: field.value as MailTextRuleField,
-              condition: cond.value as 'contains' | 'equals' | 'startsWith' | 'endsWith',
-              value: val.value.trim(),
-              targetCategory: target.value || routeTargetCategories[0]?.id || 'other',
-              active: true,
-              accountId: normalizedSelectedScope
-            });
-            val.value = '';
-          }}
-          className="w-fit px-4 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/90 h-[26px]"
-        >
-          Add Rule
-        </button>
-      </div>
+      <ClassificationRuleEditor
+        key={`${normalizedSelectedScope}:${editingRuleId || 'new'}`}
+        selectedScope={normalizedSelectedScope}
+        selectedScopeLabel={selectedScopeLabel}
+        routeTargetCategories={routeTargetCategories}
+        allCategories={store.tabCategories}
+        accounts={store.accounts}
+        editingRule={editingRule}
+        onCreate={store.addCustomClassifierRule}
+        onUpdate={store.updateCustomClassifierRule}
+        onCancelEdit={() => setEditingRuleId(null)}
+      />
 
       {/* Custom Rules list */}
       <div className="flex flex-col gap-2">
@@ -557,33 +495,72 @@ export function ClassificationSettingsTab() {
           <div className="bg-[var(--rail-bg)] border border-dashed border-[var(--border)] rounded-md px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
             No rules for {selectedScopeLabel}.
           </div>
-        ) : visibleRules.map(rule => (
-          <div key={rule.id} className="flex justify-between items-center bg-[var(--rail-bg)] border border-[var(--border)] rounded-md px-3 py-1.5">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={rule.active}
-                onChange={(e) => store.updateCustomClassifierRule(rule.id, { active: e.target.checked })}
-                className="w-3.5 h-3.5 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
-              />
-              <div className="flex flex-col text-[calc(10px*var(--font-scale))]">
-                <span>If <strong>{CLASSIFICATION_FIELD_LABELS[rule.field]}</strong> {rule.condition} "{rule.value}"</span>
-                <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
-                  <span>Route: <strong>{categoryRouteLabel(rule.targetCategory, store.tabCategories, store.accounts)}</strong></span>
-                  <span>•</span>
-                  <span>Scope: <strong>{scopeDisplayLabel(normalizeClassificationScope(rule.accountId), store.accounts, { compactGlobal: true })}</strong></span>
-                </span>
+        ) : visibleRules.map(rule => {
+          const values = ruleValues(rule);
+          const isEditing = editingRuleId === rule.id;
+          return (
+            <div
+              key={rule.id}
+              className={`flex justify-between items-start gap-3 border rounded-md px-3 py-2 ${
+                isEditing
+                  ? 'border-[var(--accent)] bg-[var(--accent)]/[0.04]'
+                  : 'border-[var(--border)] bg-[var(--rail-bg)]'
+              }`}
+            >
+              <div className="flex min-w-0 items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={rule.active}
+                  aria-label={`${rule.active ? 'Disable' : 'Enable'} classification rule`}
+                  onChange={(e) => store.updateCustomClassifierRule(rule.id, { active: e.target.checked })}
+                  className="mt-0.5 w-3.5 h-3.5 shrink-0 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
+                />
+                <div className="flex min-w-0 flex-col gap-1 text-[calc(10px*var(--font-scale))]">
+                  <span>
+                    If <strong>{CLASSIFICATION_FIELD_LABELS[rule.field]}</strong> {rule.condition}{values.length > 1 ? ' any of' : ''}
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {values.map(value => (
+                      <span
+                        key={value.toLowerCase()}
+                        className="max-w-full truncate rounded border border-[var(--border)] bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-primary)]"
+                        title={value}
+                      >
+                        {value}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
+                    <span>Route: <strong>{categoryRouteLabel(rule.targetCategory, store.tabCategories, store.accounts)}</strong></span>
+                    <span>•</span>
+                    <span>Scope: <strong>{scopeDisplayLabel(normalizeClassificationScope(rule.accountId), store.accounts, { compactGlobal: true })}</strong></span>
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setEditingRuleId(rule.id)}
+                  aria-label={`Edit classification rule for ${values.join(', ')}`}
+                  className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--accent)] cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingRuleId === rule.id) setEditingRuleId(null);
+                    store.deleteCustomClassifierRule(rule.id);
+                  }}
+                  aria-label={`Delete classification rule for ${values.join(', ')}`}
+                  className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => store.deleteCustomClassifierRule(rule.id)}
-              className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <MailRulesSettingsSection selectedScope={normalizedSelectedScope} />

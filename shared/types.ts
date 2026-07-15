@@ -822,6 +822,8 @@ export interface CustomClassifierRule {
   field: MailTextRuleField;
   condition: 'contains' | 'equals' | 'startsWith' | 'endsWith';
   value: string;
+  /** OR-matched values for multi-address rules. `value` remains the legacy fallback. */
+  values?: string[];
   targetCategory: string;
   active: boolean;
   accountId?: string;
@@ -881,6 +883,8 @@ export interface MailCategoryRule {
   field: MailCategoryRuleField;
   operation: 'contains' | 'equals' | 'startsWith' | 'endsWith';
   value: string;
+  /** OR-matched values for multi-address rules. `value` remains the legacy fallback. */
+  values?: string[];
   isNegated: boolean;
   accountId?: string;
 }

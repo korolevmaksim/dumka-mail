@@ -14,7 +14,7 @@ This project is early alpha software. It is useful for local development and exp
 - Gmail OAuth onboarding with OS-backed token storage through macOS Keychain or Electron safeStorage.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
 - First-class local-first Calendar workspace with per-account and unified multi-calendar views, Google colors and access roles, cache-first Month/Week/Day/Agenda/Quarter/Year layouts, offline search, calendar sets, event templates, secondary time zones, and keyboard navigation.
-- Split inbox categories, custom category rules with sender, domain, recipient (`To`/`Cc`), and subject filters, saved views, reminders, snooze notifications, and action history.
+- Split inbox categories, editable custom category rules with local email autocomplete, multi-address sender/recipient matching, domain and subject filters, saved views, reminders, snooze notifications, and action history.
 - Search operators for sender, labels, attachments, date ranges, and mailbox scope.
 - Offline-first mailbox mutations with background reconciliation, including archive, read state, trash, spam, ignore, nested Gmail labels, scheduled sends, rule-driven forwarding, and safe auto-replies.
 - Address book sync with contact detail cards, local notes, display-name edits, mailing groups, internal compose handoff, and compose autocomplete.

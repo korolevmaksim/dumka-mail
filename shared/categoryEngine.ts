@@ -5,6 +5,7 @@ import type {
   CustomMailCategorySettings,
 } from './types';
 import { MailSignalClassifier, SplitInboxRouter } from './classifier';
+import { ruleValues } from './classificationRules';
 
 /**
  * Deterministic category engine ported from the Swift `MailCategoryEngine` /
@@ -58,6 +59,18 @@ function recipientsMatch(
       .filter(Boolean)
       .some(candidate => textMatches(candidate, expected, operation));
   });
+}
+
+function senderMatches(
+  thread: MailThread,
+  expected: string,
+  operation: MailCategoryRule['operation'],
+): boolean {
+  const name = primarySenderName(thread).trim();
+  const email = thread.senderEmail.trim();
+  return [email, name, `${name} ${email}`.trim()]
+    .filter(Boolean)
+    .some(candidate => textMatches(candidate, expected, operation));
 }
 
 /**
@@ -119,33 +132,24 @@ export function ruleMatches(thread: MailThread, rule: MailCategoryRule): boolean
   if (rule.accountId && rule.accountId !== 'global' && thread.accountId !== rule.accountId) {
     return false;
   }
-  let result: boolean;
-  switch (rule.field) {
-    case 'systemSignal':
-      result = systemSignalMatches(thread, rule.value);
-      break;
-    case 'from':
-      result = textMatches(
-        `${primarySenderName(thread)} ${thread.senderEmail}`,
-        rule.value,
-        rule.operation,
-      );
-      break;
-    case 'senderDomain':
-      result = textMatches(senderDomain(thread.senderEmail), rule.value, rule.operation);
-      break;
-    case 'subject':
-      result = textMatches(thread.subject, rule.value, rule.operation);
-      break;
-    case 'to':
-      result = recipientsMatch(thread.to, rule.value, rule.operation);
-      break;
-    case 'cc':
-      result = recipientsMatch(thread.cc, rule.value, rule.operation);
-      break;
-    default:
-      result = false;
-  }
+  const result = ruleValues(rule).some(expected => {
+    switch (rule.field) {
+      case 'systemSignal':
+        return systemSignalMatches(thread, expected);
+      case 'from':
+        return senderMatches(thread, expected, rule.operation);
+      case 'senderDomain':
+        return textMatches(senderDomain(thread.senderEmail), expected, rule.operation);
+      case 'subject':
+        return textMatches(thread.subject, expected, rule.operation);
+      case 'to':
+        return recipientsMatch(thread.to, expected, rule.operation);
+      case 'cc':
+        return recipientsMatch(thread.cc, expected, rule.operation);
+      default:
+        return false;
+    }
+  });
   return rule.isNegated ? !result : result;
 }
 
