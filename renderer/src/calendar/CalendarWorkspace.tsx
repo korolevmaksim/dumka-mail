@@ -16,16 +16,17 @@ import { CalendarMonthView } from './CalendarMonthView';
 import { CalendarTimeGrid } from './CalendarTimeGrid';
 import { CalendarAgendaView, CalendarOverviewView } from './CalendarOverviewViews';
 import { CalendarSidebar } from './CalendarSidebar';
-import { calendarDuplicateInput, calendarEventUpdateInput, localCalendarDateKey, restoredCalendarAnchor, secondaryCalendarTimeLabel } from './calendarWorkspaceUtils';
+import { calendarDuplicateInput, calendarEventUpdateInput, localCalendarDateKey, resolveCalendarAccountScope, restoredCalendarAnchor, secondaryCalendarTimeLabel } from './calendarWorkspaceUtils';
 import { CalendarHeader, CALENDAR_VIEW_OPTIONS } from './CalendarHeader';
 import { CalendarRsvpActions } from './CalendarRsvpActions';
 import { CalendarRelatedMail } from './CalendarRelatedMail';
 
 export function CalendarWorkspace() {
   const store = useAppStore();
-  const initialAccount = store.activeAccount?.id === 'unified'
-    ? 'unified'
-    : store.activeAccount?.email || store.accounts[0]?.email || '';
+  const initialAccount = resolveCalendarAccountScope(
+    store.settings.calendar.lastAccountScope,
+    store.accounts.map(account => account.email),
+  );
   const [accountEmail, setAccountEmail] = useState(initialAccount);
   const [view, setViewState] = useState<CalendarWorkspaceView>(store.settings.calendar.defaultView || 'month');
   const [anchor, setAnchor] = useState(() => restoredCalendarAnchor(store.settings.calendar.lastAnchorDate));
@@ -90,15 +91,25 @@ export function CalendarWorkspace() {
     setIsSyncing(true);
     setSyncError(null);
     const emails = accountEmail === 'unified' ? store.accounts.map(account => account.email) : [accountEmail];
-    void Promise.all(emails.map(email => store.syncCalendarAgenda(email, range)))
-      .catch(error => {
+    void Promise.allSettled(emails.map(email => store.syncCalendarAgenda(email, range)))
+      .then(results => {
         if (!active) return;
-        console.error('Calendar workspace sync failed:', error);
-        setSyncError('Offline cache is shown. Reconnect or reauthorize Calendar to refresh.');
+        const failures = results.filter(result => result.status === 'rejected');
+        if (failures.length === 0) return;
+        console.error(`Calendar workspace sync failed for ${failures.length} of ${emails.length} accounts.`);
+        setSyncError(failures.length === emails.length
+          ? 'Offline cache is shown. Reconnect or reauthorize Calendar to refresh.'
+          : 'Some accounts could not refresh. Select one in the sidebar to reconnect Calendar.');
       })
       .finally(() => { if (active) setIsSyncing(false); });
     return () => { active = false; };
   }, [accountEmail, accountEmailsKey, range.endAt, range.startAt, store.syncCalendarAgenda]);
+
+  useEffect(() => {
+    const emails = store.accounts.map(account => account.email);
+    if (accountEmail && (accountEmail === 'unified' || emails.includes(accountEmail))) return;
+    setAccountEmail(resolveCalendarAccountScope(settings.lastAccountScope, emails));
+  }, [accountEmailsKey, settings.lastAccountScope]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -192,6 +203,11 @@ export function CalendarWorkspace() {
     void store.updateSettings(draft => { draft.calendar.defaultView = next; });
   }
 
+  function changeAccountScope(next: string) {
+    setAccountEmail(next);
+    void store.updateSettings(draft => { draft.calendar.lastAccountScope = next; });
+  }
+
   function selectDate(date: Date) {
     setSelectedDate(date);
     setAnchor(date);
@@ -220,15 +236,16 @@ export function CalendarWorkspace() {
     if (!accountEmail) return;
     setIsSyncing(true);
     setSyncError(null);
-    try {
-      const emails = accountEmail === 'unified' ? store.accounts.map(account => account.email) : [accountEmail];
-      await Promise.all(emails.map(email => store.syncCalendarAgenda(email, range)));
-    } catch (error) {
-      console.error('Calendar refresh failed:', error);
-      setSyncError('Refresh failed. Cached events remain available.');
-    } finally {
-      setIsSyncing(false);
+    const emails = accountEmail === 'unified' ? store.accounts.map(account => account.email) : [accountEmail];
+    const results = await Promise.allSettled(emails.map(email => store.syncCalendarAgenda(email, range)));
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length > 0) {
+      console.error(`Calendar refresh failed for ${failures.length} of ${emails.length} accounts.`);
+      setSyncError(failures.length === emails.length
+        ? 'Refresh failed. Cached events remain available.'
+        : 'Some accounts could not refresh. Select one in the sidebar to reconnect Calendar.');
     }
+    setIsSyncing(false);
   }
 
   async function submitEvent(input: CalendarEventCreateInput | CalendarEventUpdateInput) {
@@ -237,10 +254,17 @@ export function CalendarWorkspace() {
       const saved = formMode === 'edit'
         ? await store.updateCalendarEvent(input as CalendarEventUpdateInput, selectedEvent?.accountId || mutationAccount)
         : await store.createCalendarEvent(input as CalendarEventCreateInput, mutationAccount);
+      const savedDate = new Date(saved.startAt);
       setSelectedEvent(saved);
+      setSelectedDate(savedDate);
+      setAnchor(savedDate);
       setDraftSeed(null);
       setFormMode('edit');
       emitToast({ type: 'success', message: formMode === 'edit' ? 'Event updated.' : 'Event created.' });
+      const savedRange = calendarViewRange(savedDate, view, settings.weekStartsOn);
+      void store.syncCalendarAgenda(saved.accountId, savedRange).catch(error => {
+        console.error('Calendar post-save refresh failed:', error);
+      });
     } catch (error) {
       console.error('Calendar event save failed:', error);
       const message = error instanceof Error && (error.message.includes('Calendar conflict') || error.message.includes('requires a network connection'))
@@ -538,9 +562,9 @@ export function CalendarWorkspace() {
       />
       {syncError && <div role="status" className="shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">{syncError}</div>}
       <div className="flex min-h-0 flex-1">
-        {sidebarOpen && <CalendarSidebar accounts={store.accounts} accountEmail={accountEmail} anchor={anchor} calendars={accountCalendars} mutationAccount={mutationAccount} settings={settings} mailTasks={mailTasks} threads={store.threads} syncIssues={syncIssues} onAccountChange={setAccountEmail} onSelectDate={selectDate} onAuthorize={() => void store.authorizeGoogleIntegration('calendar', mutationAccount)} onApplyCalendarSet={applyCalendarSet} onCreateCalendarSet={createCalendarSet} onDeleteCalendarSet={deleteActiveCalendarSet} onToggleCalendar={toggleCalendar} onToggleCalendarAlerts={toggleCalendarAlerts} onCompleteTask={task => void completeMailTask(task)} onSnoozeTask={task => void snoozeMailTask(task)} onOpenThread={thread => void store.openThreadFromCalendar(thread)} onResolveConflict={(action, strategy) => void resolveConflict(action, strategy)} />}
+        {sidebarOpen && <CalendarSidebar accounts={store.accounts} accountEmail={accountEmail} anchor={anchor} selectedDate={selectedDate} events={visibleEvents} calendars={accountCalendars} mutationAccount={mutationAccount} settings={settings} mailTasks={mailTasks} threads={store.threads} syncIssues={syncIssues} onAccountChange={changeAccountScope} onSelectDate={selectDate} onSelectEvent={openEdit} onNavigateMonth={delta => { const next = calendarNavigationDate(anchor, 'month', delta); setAnchor(next); setSelectedDate(next); }} onCreate={openCreate} onAuthorize={() => void store.authorizeGoogleIntegration('calendar', mutationAccount)} onApplyCalendarSet={applyCalendarSet} onCreateCalendarSet={createCalendarSet} onDeleteCalendarSet={deleteActiveCalendarSet} onToggleCalendar={toggleCalendar} onToggleCalendarAlerts={toggleCalendarAlerts} onCompleteTask={task => void completeMailTask(task)} onSnoozeTask={task => void snoozeMailTask(task)} onOpenThread={thread => void store.openThreadFromCalendar(thread)} onResolveConflict={(action, strategy) => void resolveConflict(action, strategy)} />}
         <main className="min-w-0 flex-1 overflow-hidden">
-          {view === 'month' && <CalendarMonthView anchor={anchor} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} onSelectDate={selectDate} onCreate={openCreate} onSelectEvent={openEdit} onMoveEvent={(event, update) => void moveEvent(event, update.startAt, update.endAt, update.startDate, update.endDate)} />}
+          {view === 'month' && <CalendarMonthView anchor={anchor} selectedDate={selectedDate} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} onSelectDate={selectDate} onCreate={openCreate} onSelectEvent={openEdit} onMoveEvent={(event, update) => void moveEvent(event, update.startAt, update.endAt, update.startDate, update.endDate)} />}
           {(view === 'day' || view === 'week') && <CalendarTimeGrid anchor={anchor} mode={view} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} workingDays={settings.workingDays} workingHoursStart={settings.availabilityStartTime} workingHoursEnd={settings.availabilityEndTime} onSelectDate={selectDate} onCreateRange={(startAt, endAt) => openCreate(new Date(startAt), { startAt, endAt })} onSelectEvent={openEdit} onMoveEvent={(event, startAt, endAt) => void moveEvent(event, startAt, endAt)} onResizeEvent={(event, endAt) => void moveEvent(event, event.startAt, endAt)} />}
           {view === 'agenda' && <CalendarAgendaView anchor={anchor} events={visibleEvents} calendars={accountCalendars} onSelectDate={selectDate} onSelectEvent={openEdit} onCreate={openCreate} />}
           {(view === 'quarter' || view === 'year') && <CalendarOverviewView anchor={anchor} events={visibleEvents} mode={view} weekStartsOn={settings.weekStartsOn} onSelectDate={selectDate} onCreate={openCreate} />}

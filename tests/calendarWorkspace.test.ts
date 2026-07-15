@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CalendarEvent, CalendarListEntry } from '../shared/types';
-import { calendarDuplicateInput } from '../renderer/src/calendar/calendarWorkspaceUtils';
+import { calendarDuplicateInput, resolveCalendarAccountScope } from '../renderer/src/calendar/calendarWorkspaceUtils';
+import { mergeCalendarRange } from '../renderer/src/stores/useCalendarState';
 import {
   calendarDateKey,
   calendarEventOverlapsDay,
@@ -40,6 +41,15 @@ const calendar: CalendarListEntry = {
 };
 
 describe('calendar workspace date math', () => {
+  it('restores a valid account scope and falls back to all connected accounts', () => {
+    const accounts = ['one@example.com', 'two@example.com'];
+
+    expect(resolveCalendarAccountScope('two@example.com', accounts)).toBe('two@example.com');
+    expect(resolveCalendarAccountScope('unified', accounts)).toBe('unified');
+    expect(resolveCalendarAccountScope('removed@example.com', accounts)).toBe('unified');
+    expect(resolveCalendarAccountScope('', [])).toBe('');
+  });
+
   it('creates a stable 42-cell month grid with Monday week starts', () => {
     const days = calendarMonthDays(new Date(2026, 6, 15), 1);
     expect(days).toHaveLength(42);
@@ -71,6 +81,22 @@ describe('calendar workspace date math', () => {
 });
 
 describe('calendar workspace event layout', () => {
+  it('keeps local event mutations visible while an older range refresh finishes', () => {
+    const range = calendarViewRange(new Date(2026, 6, 15), 'month', 1);
+    const existing = event({ id: 'existing' });
+    const created = event({ id: 'created', updatedAt: '2026-07-15T10:00:00.000Z' });
+
+    expect(mergeCalendarRange([existing, created], [existing], 'me@example.com', range, [created]))
+      .toEqual(expect.arrayContaining([existing, created]));
+  });
+
+  it('does not resurrect a locally deleted event from a stale range refresh', () => {
+    const range = calendarViewRange(new Date(2026, 6, 15), 'month', 1);
+    const deleted = event({ id: 'deleted' });
+
+    expect(mergeCalendarRange([], [deleted], 'me@example.com', range, [], [deleted])).toEqual([]);
+  });
+
   it('keeps all-day exclusive end dates on the correct days', () => {
     const allDay = event({ isAllDay: true, startDate: '2026-07-15', endDate: '2026-07-17', startAt: '2026-07-15T00:00:00.000Z', endAt: '2026-07-17T00:00:00.000Z' });
     expect(calendarEventOverlapsDay(allDay, new Date(2026, 6, 15))).toBe(true);

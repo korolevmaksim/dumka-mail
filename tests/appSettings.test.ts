@@ -15,6 +15,11 @@ describe('AppSettings AI prompt shortcuts', () => {
     expect(DEFAULT_SETTINGS.general.attachmentDownloadFolder).toBe('');
   });
 
+  it('defaults calendar scope to all accounts and preserves an explicit account', () => {
+    expect(DEFAULT_SETTINGS.calendar.lastAccountScope).toBe('unified');
+    expect(mergeSettings({ calendar: { lastAccountScope: 'work@example.com' } }).calendar.lastAccountScope).toBe('work@example.com');
+  });
+
   it('fills attachmentDownloadFolder when migrating older settings blobs', () => {
     const merged = mergeSettings({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,

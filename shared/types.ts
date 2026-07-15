@@ -1097,6 +1097,7 @@ export interface CalendarSettings {
   defaultConferenceProvider: 'googleMeet' | 'calendly' | 'calCom' | 'none';
   defaultView: CalendarWorkspaceView;
   lastAnchorDate: string;
+  lastAccountScope: string;
   weekStartsOn: 0 | 1;
   showWeekends: boolean;
   showWeekNumbers: boolean;

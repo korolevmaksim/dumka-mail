@@ -5,6 +5,7 @@ import { CalendarEventChip } from './CalendarEventChip';
 
 interface CalendarMonthViewProps {
   anchor: Date;
+  selectedDate: Date;
   events: CalendarEvent[];
   calendars: CalendarListEntry[];
   weekStartsOn: 0 | 1;
@@ -19,6 +20,7 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function CalendarMonthView({
   anchor,
+  selectedDate,
   events,
   calendars,
   weekStartsOn,
@@ -38,6 +40,7 @@ export function CalendarMonthView({
     layoutCalendarAllDayLanes(events, visibleDays.slice(weekIndex * columns, (weekIndex + 1) * columns).map(day => day.date))
   )), [columns, events, visibleDays]);
   const anchorKey = calendarDateKey(anchor);
+  const selectedKey = calendarDateKey(selectedDate);
   const rovingKey = visibleDays.some(day => day.key === anchorKey) ? anchorKey : visibleDays[0]?.key;
 
   function focusDayAt(index: number) {
@@ -51,9 +54,9 @@ export function CalendarMonthView({
 
   return (
     <div className="flex h-full min-h-0 flex-col" role="grid" aria-label="Month calendar">
-      <div className="grid shrink-0 border-b border-[var(--border)] bg-[var(--panel-bg)]" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} role="row">
+      <div className="grid shrink-0 border-b border-[var(--strong-border)] bg-[var(--panel-bg)]" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} role="row">
         {weekdayOrder.map(day => (
-          <div key={day} role="columnheader" className="px-2 py-2 text-center text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+          <div key={day} role="columnheader" className="px-2 py-2.5 text-center text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-[0.06em] text-[var(--text-tertiary)]">
             {WEEKDAY_LABELS[day]}
           </div>
         ))}
@@ -69,6 +72,8 @@ export function CalendarMonthView({
           const laneCount = spansForDay.length > 0 ? Math.min(3, Math.max(...spansForDay.map(span => span.lane)) + 1) : 0;
           const visibleLanes = Array.from({ length: laneCount }, (_, lane) => spansForDay.find(span => span.lane === lane) || null);
           const visibleTimed = timedEvents.slice(0, Math.max(0, 4 - laneCount));
+          const isSelected = day.key === selectedKey;
+          const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
           const displayedCount = new Set([
             ...visibleLanes.filter(Boolean).map(span => `${span!.event.accountId}:${span!.event.calendarId}:${span!.event.id}`),
             ...visibleTimed.map(event => `${event.accountId}:${event.calendarId}:${event.id}`),
@@ -115,11 +120,11 @@ export function CalendarMonthView({
                   // Ignore drags from outside the calendar workspace.
                 }
               }}
-              className={`group min-h-0 overflow-hidden border-b border-r border-[var(--border)] p-1.5 outline-none focus-visible:relative focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${day.inMonth ? 'bg-[var(--app-bg)]' : 'bg-[var(--panel-bg)] opacity-60'}`}
+              className={`group min-h-0 overflow-hidden border-b border-r border-[var(--border)] p-1.5 outline-none transition-colors duration-150 focus-visible:relative focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${day.inMonth ? (isWeekend ? 'bg-[var(--rail-bg)]' : 'bg-[var(--app-bg)]') : 'bg-[var(--raised-surface)] text-[var(--text-tertiary)] opacity-45'} ${isSelected ? 'bg-[var(--selected-row)] ring-1 ring-inset ring-[var(--accent)]/35' : 'hover:bg-[var(--hover-row)]'}`}
             >
               <div className="mb-1 flex items-center justify-between">
-                <span className={`flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[calc(11px*var(--font-scale))] font-semibold ${day.isToday ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'}`}>
-                  {day.date.getDate()}
+                <span className={`flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[calc(11px*var(--font-scale))] font-semibold ${day.isToday ? 'bg-[var(--accent)] text-white' : isSelected ? 'text-[var(--accent)]' : day.inMonth ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'}`}>
+                  {day.date.getDate() === 1 && !day.inMonth ? `${day.date.toLocaleDateString([], { month: 'short' })} 1` : day.date.getDate()}
                 </span>
                 <button
                   type="button"

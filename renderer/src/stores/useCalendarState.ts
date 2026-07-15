@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CalendarAttendeeResponse,
   CalendarEvent,
@@ -32,17 +32,35 @@ function replaceCalendarsForAccount(current: CalendarListEntry[], accountId: str
   return [...current.filter(calendar => calendar.accountId !== accountId), ...next];
 }
 
-function replaceCalendarRange(current: CalendarEvent[], next: CalendarEvent[], accountId: string, range: CalendarEventRange): CalendarEvent[] {
+export function calendarEventStateKey(event: Pick<CalendarEvent, 'accountId' | 'calendarId' | 'id'>): string {
+  return `${event.accountId}\0${event.calendarId}\0${event.id}`;
+}
+
+function calendarEventOverlapsRange(event: CalendarEvent, range: CalendarEventRange): boolean {
   const startMs = new Date(range.startAt).getTime();
   const endMs = new Date(range.endAt).getTime();
+  const eventStart = new Date(event.startAt).getTime();
+  const eventEnd = new Date(event.endAt).getTime();
+  return Number.isFinite(eventStart) && Number.isFinite(eventEnd) && eventEnd > startMs && eventStart < endMs;
+}
+
+export function mergeCalendarRange(
+  current: CalendarEvent[],
+  next: CalendarEvent[],
+  accountId: string,
+  range: CalendarEventRange,
+  protectedEvents: CalendarEvent[] = [],
+  deletedEvents: CalendarEvent[] = [],
+): CalendarEvent[] {
+  const deletedKeys = new Set(deletedEvents.map(calendarEventStateKey));
   const outsideRange = current.filter(event => {
     if (event.accountId !== accountId) return true;
-    const eventStart = new Date(event.startAt).getTime();
-    const eventEnd = new Date(event.endAt).getTime();
-    return !Number.isFinite(eventStart) || !Number.isFinite(eventEnd) || eventEnd <= startMs || eventStart >= endMs;
+    return !calendarEventOverlapsRange(event, range);
   });
-  return Array.from(new Map([...outsideRange, ...next]
-    .map(event => [`${event.accountId}\0${event.calendarId}\0${event.id}`, event])).values())
+  const protectedInRange = protectedEvents.filter(event => event.accountId === accountId && calendarEventOverlapsRange(event, range));
+  return Array.from(new Map([...outsideRange, ...next, ...protectedInRange]
+    .filter(event => !deletedKeys.has(calendarEventStateKey(event)))
+    .map(event => [calendarEventStateKey(event), event])).values())
     .sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt));
 }
 
@@ -57,10 +75,19 @@ export function defaultCalendarAgendaRange(): CalendarEventRange {
 export function useCalendarState(options: UseCalendarStateOptions) {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarLists, setCalendarLists] = useState<CalendarListEntry[]>([]);
+  const protectedEventsRef = useRef(new Map<string, CalendarEvent>());
+  const deletedEventsRef = useRef(new Map<string, CalendarEvent>());
+  const syncQueuesRef = useRef(new Map<string, Promise<CalendarEvent[]>>());
+
+  const protectedEvents = useCallback(() => Array.from(protectedEventsRef.current.values()), []);
+  const deletedEvents = useCallback(() => Array.from(deletedEventsRef.current.values()), []);
 
   const upsertCalendarEvent = useCallback((event: CalendarEvent) => {
+    const key = calendarEventStateKey(event);
+    protectedEventsRef.current.set(key, event);
+    deletedEventsRef.current.delete(key);
     setCalendarEvents(current => [
-      ...current.filter(existing => !(existing.accountId === event.accountId && existing.calendarId === event.calendarId && existing.id === event.id)),
+      ...current.filter(existing => calendarEventStateKey(existing) !== key),
       event,
     ].sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt)));
   }, []);
@@ -70,27 +97,58 @@ export function useCalendarState(options: UseCalendarStateOptions) {
       window.electronAPI.listCalendarEvents(email, range.startAt, range.endAt),
       window.electronAPI.listCalendars(email),
     ]);
-    setCalendarEvents(current => replaceCalendarRange(current, events, email, range));
+    setCalendarEvents(current => mergeCalendarRange(current, events, email, range, protectedEvents(), deletedEvents()));
     setCalendarLists(current => replaceCalendarsForAccount(current, email, calendars));
     return { events, calendars };
-  }, []);
+  }, [deletedEvents, protectedEvents]);
 
   const clearCalendarCache = useCallback(() => {
+    protectedEventsRef.current.clear();
+    deletedEventsRef.current.clear();
     setCalendarEvents([]);
     setCalendarLists([]);
   }, []);
 
-  const syncCalendarAgenda = useCallback(async (email?: string, range: CalendarEventRange = defaultCalendarAgendaRange()) => {
-    const targetEmail = email || options.primaryEmail;
-    if (!targetEmail) return [];
+  const runCalendarAgendaSync = useCallback(async (targetEmail: string, range: CalendarEventRange): Promise<CalendarEvent[]> => {
     await loadCachedRange(targetEmail, range);
     const events = await window.electronAPI.syncCalendarEvents(targetEmail, range.startAt, range.endAt);
-    setCalendarEvents(current => replaceCalendarRange(current, events, targetEmail, range));
+    const remoteByKey = new Map(events.map(event => [calendarEventStateKey(event), event]));
+    for (const [key, localEvent] of protectedEventsRef.current) {
+      if (localEvent.accountId !== targetEmail || !calendarEventOverlapsRange(localEvent, range)) continue;
+      const remoteEvent = remoteByKey.get(key);
+      if (!remoteEvent) continue;
+      const remoteUpdatedAt = Date.parse(remoteEvent.updatedAt);
+      const localUpdatedAt = Date.parse(localEvent.updatedAt);
+      if ((remoteEvent.etag && remoteEvent.etag === localEvent.etag)
+        || (Number.isFinite(remoteUpdatedAt) && Number.isFinite(localUpdatedAt) && remoteUpdatedAt >= localUpdatedAt)) {
+        protectedEventsRef.current.delete(key);
+      }
+    }
+    for (const [key, deletedEvent] of deletedEventsRef.current) {
+      if (deletedEvent.accountId === targetEmail && calendarEventOverlapsRange(deletedEvent, range) && !remoteByKey.has(key)) {
+        deletedEventsRef.current.delete(key);
+      }
+    }
+    setCalendarEvents(current => mergeCalendarRange(current, events, targetEmail, range, protectedEvents(), deletedEvents()));
     const calendars = await window.electronAPI.listCalendars(targetEmail);
     setCalendarLists(current => replaceCalendarsForAccount(current, targetEmail, calendars));
     options.onIntegrationStatus(await window.electronAPI.getGoogleIntegrationStatus(targetEmail));
     return events;
-  }, [loadCachedRange, options.onIntegrationStatus, options.primaryEmail]);
+  }, [deletedEvents, loadCachedRange, options.onIntegrationStatus, protectedEvents]);
+
+  const syncCalendarAgenda = useCallback((email?: string, range: CalendarEventRange = defaultCalendarAgendaRange()): Promise<CalendarEvent[]> => {
+    const targetEmail = email || options.primaryEmail;
+    if (!targetEmail) return Promise.resolve([]);
+    const previous = syncQueuesRef.current.get(targetEmail);
+    const task = (previous ? previous.catch(() => []) : Promise.resolve([]))
+      .then(() => runCalendarAgendaSync(targetEmail, range));
+    syncQueuesRef.current.set(targetEmail, task);
+    const clearQueue = () => {
+      if (syncQueuesRef.current.get(targetEmail) === task) syncQueuesRef.current.delete(targetEmail);
+    };
+    void task.then(clearQueue, clearQueue);
+    return task;
+  }, [options.primaryEmail, runCalendarAgendaSync]);
 
   const syncCalendarLists = useCallback(async (email?: string): Promise<CalendarListEntry[]> => {
     const targetEmail = email || options.primaryEmail;
@@ -103,6 +161,9 @@ export function useCalendarState(options: UseCalendarStateOptions) {
   }, [options.primaryEmail]);
 
   useEffect(() => window.electronAPI.onCalendarChanged(({ accountId }) => {
+    for (const [key, event] of protectedEventsRef.current) {
+      if (event.accountId === accountId && event.id.startsWith('local-')) protectedEventsRef.current.delete(key);
+    }
     void syncCalendarAgenda(accountId).catch(error => console.error('Failed to refresh calendar after mutation reconciliation:', error));
     void options.loadActionLog();
   }), [options.loadActionLog, syncCalendarAgenda]);
@@ -156,6 +217,12 @@ export function useCalendarState(options: UseCalendarStateOptions) {
     if (!targetEmail) throw new Error('Connect a Gmail account before updating calendar events.');
     try {
       const event = await window.electronAPI.updateCalendarEvent(targetEmail, input, crypto.randomUUID());
+      const eventKey = calendarEventStateKey(event);
+      const originalEventKey = `${targetEmail}\0${input.originalCalendarId || input.calendarId || 'primary'}\0${input.eventId}`;
+      protectedEventsRef.current.delete(originalEventKey);
+      deletedEventsRef.current.delete(originalEventKey);
+      protectedEventsRef.current.set(eventKey, event);
+      deletedEventsRef.current.delete(eventKey);
       setCalendarEvents(current => [
         ...current.filter(existing => !(
           existing.accountId === event.accountId
@@ -174,6 +241,9 @@ export function useCalendarState(options: UseCalendarStateOptions) {
     const targetEmail = email || options.primaryEmail;
     if (!targetEmail) throw new Error('Connect a Gmail account before deleting calendar events.');
     await window.electronAPI.deleteCalendarEvent(targetEmail, event.calendarId || 'primary', event.id, crypto.randomUUID(), deleteOptions);
+    const key = calendarEventStateKey(event);
+    protectedEventsRef.current.delete(key);
+    deletedEventsRef.current.set(key, event);
     setCalendarEvents(current => current.filter(existing => !(existing.accountId === event.accountId && existing.calendarId === event.calendarId && existing.id === event.id)));
     await options.loadActionLog();
   }, [options.loadActionLog, options.primaryEmail]);

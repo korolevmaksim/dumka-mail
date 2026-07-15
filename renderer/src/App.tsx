@@ -817,7 +817,9 @@ function AppContent() {
               </div>
             )}
             {/* SEARCH COCKPIT BAR */}
-            <SearchCockpitBar ref={searchInputRef} />
+            {store.workspaceView !== 'calendar' && (
+              <SearchCockpitBar ref={searchInputRef} />
+            )}
 
             {/* SPLIT TABS BAR */}
             <div className="flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">

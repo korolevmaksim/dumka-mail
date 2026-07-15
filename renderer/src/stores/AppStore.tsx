@@ -154,6 +154,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultConferenceProvider: 'googleMeet',
     defaultView: 'month',
     lastAnchorDate: '',
+    lastAccountScope: 'unified',
     weekStartsOn: 1,
     showWeekends: true,
     showWeekNumbers: false,

@@ -21,6 +21,12 @@ export function localCalendarDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+export function resolveCalendarAccountScope(persistedScope: string, accountEmails: string[]): string {
+  if (persistedScope === 'unified') return 'unified';
+  if (accountEmails.includes(persistedScope)) return persistedScope;
+  return accountEmails.length > 0 ? 'unified' : '';
+}
+
 export function secondaryCalendarTimeLabel(timeZone: string): string | null {
   if (!timeZone) return null;
   try {
