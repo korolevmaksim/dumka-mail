@@ -6,7 +6,7 @@ export function LeftRail() {
   const store = useAppStore();
 
   return (
-    <div className="flex flex-col items-center justify-between w-[84px] border-r border-[var(--border)] bg-[var(--rail-bg)] py-4 traffic-light-margin shrink-0">
+    <div className="dm-left-rail flex flex-col items-center justify-between w-[84px] border-r border-[var(--border)] bg-[var(--rail-bg)] py-4 traffic-light-margin shrink-0">
       <div className="flex flex-col gap-3 items-center w-full">
         <button
           onClick={() => {
@@ -15,7 +15,8 @@ export function LeftRail() {
             store.setCleanupOpen(false);
           }}
           title="Today"
-          className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
+          aria-current={store.workspaceView === 'today' ? 'page' : undefined}
+          className={`dm-rail-button flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
             store.workspaceView === 'today'
               ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm'
               : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] opacity-60 hover:opacity-100'
@@ -32,7 +33,8 @@ export function LeftRail() {
           }}
           title="Calendar"
           aria-label="Open Calendar"
-          className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 ${
+          aria-current={store.workspaceView === 'calendar' ? 'page' : undefined}
+          className={`dm-rail-button flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 ${
             store.workspaceView === 'calendar'
               ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm'
               : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] opacity-60 hover:text-[var(--text-primary)] hover:opacity-100'
@@ -51,14 +53,15 @@ export function LeftRail() {
                 store.setCleanupOpen(false);
               }}
               title="Unified Inbox"
-              className={`relative flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
+              aria-current={store.activeAccount?.id === 'unified' ? 'page' : undefined}
+              className={`dm-rail-button relative flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
                 store.activeAccount?.id === 'unified' 
                   ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm' 
                   : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] opacity-60 hover:opacity-100'
               }`}
             >
               <Inbox className="w-5 h-5" />
-              <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/40 text-white rounded-full px-1">
+              <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/70 text-white rounded-full px-1">
                 ⌘0
               </span>
             </button>
@@ -76,7 +79,8 @@ export function LeftRail() {
               store.setCleanupOpen(false);
             }}
             title={acc.email}
-            className={`relative flex items-center justify-center w-10 h-10 rounded-xl font-semibold border text-white transition-[border-color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
+            aria-current={store.activeAccount?.id === acc.id ? 'page' : undefined}
+            className={`dm-account-button relative flex items-center justify-center w-10 h-10 rounded-xl font-semibold border text-white transition-[border-color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
               store.activeAccount?.id === acc.id 
                 ? 'border-[var(--accent)] shadow-sm' 
                 : 'border-[var(--border)] opacity-60 hover:opacity-100'
@@ -84,7 +88,7 @@ export function LeftRail() {
             style={{ backgroundColor: acc.colorHex }}
           >
             <AccountAvatar acc={acc} showAvatars={store.settings.appearance.showAvatars} />
-            <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/40 text-white rounded-full px-1">
+            <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/70 text-white rounded-full px-1">
               ⌘{index + 1}
             </span>
           </button>
@@ -93,7 +97,7 @@ export function LeftRail() {
         <button 
           onClick={() => store.onboardAccount('')}
           title="Connect Gmail Account"
-          className="flex items-center justify-center w-10 h-10 rounded-xl border border-dashed border-[var(--strong-border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-[border-color,color] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px"
+          className="dm-rail-button flex items-center justify-center w-10 h-10 rounded-xl border border-dashed border-[var(--strong-border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-[border-color,color] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px"
         >
           <Plus className="w-5 h-5" />
         </button>

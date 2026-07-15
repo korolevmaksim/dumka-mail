@@ -91,7 +91,7 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
   }
 
   return (
-    <div className="rounded-[6px] border border-[var(--accent)]/30 bg-[var(--accent)]/8 p-3 select-none">
+    <div className="dm-inset rounded-[6px] border border-[var(--accent)]/30 bg-[var(--accent)]/8 p-3 select-none">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

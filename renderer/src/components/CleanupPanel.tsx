@@ -185,9 +185,9 @@ export function CleanupPanel() {
   }, [previewStat, senderThreadGroups]);
 
   return (
-    <div className="relative flex-1 flex flex-col bg-[var(--panel-bg)] h-full overflow-hidden select-none text-[calc(11px*var(--font-scale))]">
+    <div className="dm-cleanup relative flex-1 flex flex-col bg-[var(--panel-bg)] h-full overflow-hidden select-none text-[calc(11px*var(--font-scale))]">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+      <div className="dm-page-header flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
         <div className="min-w-0 flex flex-col gap-0.5">
           <span className="flex items-center gap-1.5 font-semibold text-[var(--text-primary)] text-[calc(13px*var(--font-scale))]">
             <Eraser className="h-4 w-4 text-[var(--accent)]" /> Privacy &amp; Cleanup
@@ -226,7 +226,7 @@ export function CleanupPanel() {
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         {loading && stats === null && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
             Computing sender stats from the local cache…
           </div>
         )}
@@ -245,7 +245,7 @@ export function CleanupPanel() {
         )}
 
         {!error && stats !== null && accountsToLoad.length === 0 && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
             Connect a Gmail account to see cleanup stats.
           </div>
         )}
@@ -280,7 +280,7 @@ export function CleanupPanel() {
               )}
 
               {accountStats.length === 0 ? (
-                <div className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+                <div className="dm-inset rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
                   {EMPTY_ACTIONABLE}
                 </div>
               ) : accountStats.map(({ stat, archiveCandidates, canArchive, canUnsubscribe }) => {

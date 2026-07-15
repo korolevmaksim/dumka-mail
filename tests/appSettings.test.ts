@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, mergeSettings, SETTINGS_SCHEMA_VERSION } from '../renderer/src/stores/AppStore';
 
-describe('AppSettings AI prompt shortcuts', () => {
+describe('AppSettings defaults and migrations', () => {
+  it('keeps the existing Classic interface as the migration-safe default', () => {
+    expect(DEFAULT_SETTINGS.appearance.interfaceStyle).toBe('classic');
+    expect(mergeSettings({ settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1 }).appearance.interfaceStyle).toBe('classic');
+  });
+
+  it('preserves the Soft interface style independently from color mode', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      appearance: {
+        interfaceStyle: 'soft',
+        theme: 'dark',
+      },
+    });
+
+    expect(merged.appearance.interfaceStyle).toBe('soft');
+    expect(merged.appearance.theme).toBe('dark');
+  });
+
+  it('normalizes unknown interface styles back to Classic', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      appearance: { interfaceStyle: 'unknown' },
+    });
+
+    expect(merged.appearance.interfaceStyle).toBe('classic');
+  });
+
   it('ships with system language as the default interface locale', () => {
     expect(DEFAULT_SETTINGS.general.language).toBe('system');
   });

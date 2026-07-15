@@ -6,11 +6,11 @@ interface ToastItem extends ToastInput {
   id: string;
 }
 
-const TONE: Record<ToastType, { color: string; Icon: typeof Info }> = {
-  success: { color: 'var(--success)', Icon: CheckCircle },
-  error: { color: 'var(--danger)', Icon: AlertCircle },
-  warning: { color: 'var(--warning)', Icon: AlertCircle },
-  info: { color: 'var(--accent)', Icon: Info },
+const TONE: Record<ToastType, { color: string; solidColor: string; Icon: typeof Info }> = {
+  success: { color: 'var(--success)', solidColor: 'var(--success-solid)', Icon: CheckCircle },
+  error: { color: 'var(--danger)', solidColor: 'var(--danger-solid)', Icon: AlertCircle },
+  warning: { color: 'var(--warning)', solidColor: 'var(--warning-solid)', Icon: AlertCircle },
+  info: { color: 'var(--accent-ink)', solidColor: 'var(--accent-solid)', Icon: Info },
 };
 
 export function ToastHost() {
@@ -37,7 +37,7 @@ export function ToastHost() {
         return (
           <div
             key={t.id}
-            className="pointer-events-auto panel-surface bg-[var(--panel-bg)] border rounded-xl shadow-2xl px-3.5 py-2.5 flex items-center gap-3 min-w-[240px] max-w-[380px] fade-in-up select-none"
+            className="dm-overlay pointer-events-auto panel-surface bg-[var(--panel-bg)] border rounded-xl shadow-2xl px-3.5 py-2.5 flex items-center gap-3 min-w-[240px] max-w-[380px] fade-in-up select-none"
             style={{ borderColor: `color-mix(in srgb, ${tone.color} 40%, var(--border))` }}
           >
             <Icon className="w-4 h-4 shrink-0" style={{ color: tone.color }} />
@@ -46,7 +46,7 @@ export function ToastHost() {
               <button
                 onClick={() => { t.onAction?.(); dismiss(t.id); }}
                 className="text-[calc(11px*var(--font-scale))] font-semibold px-2 py-1 rounded-lg text-white cursor-pointer hover:opacity-90 transition-opacity shrink-0"
-                style={{ backgroundColor: tone.color }}
+                style={{ backgroundColor: tone.solidColor }}
               >
                 {t.actionLabel}
               </button>

@@ -282,7 +282,7 @@ export function CalendarEventForm({
   }
 
   return (
-    <form onSubmit={submitForm} className="rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2.5">
+    <form onSubmit={submitForm} className="dm-panel rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2.5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">
           {mode === 'edit' ? 'Edit event' : 'New event'}

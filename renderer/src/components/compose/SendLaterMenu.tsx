@@ -55,7 +55,7 @@ export function SendLaterMenu({ onSchedule, onClose, align = 'right', floating =
     onClose?.();
   };
   const surfaceClass = floating
-    ? `absolute bottom-10 z-50 w-[260px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl ${align === 'right' ? 'right-0' : 'left-0'}`
+    ? `dm-overlay absolute bottom-10 z-50 w-[260px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl ${align === 'right' ? 'right-0' : 'left-0'}`
     : 'w-full';
 
   return (

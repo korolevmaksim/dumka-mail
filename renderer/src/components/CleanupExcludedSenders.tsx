@@ -33,7 +33,7 @@ export function CleanupExcludedSenders({
         role="dialog"
         aria-modal="true"
         aria-labelledby="cleanup-exclusions-title"
-        className="flex h-full w-[min(520px,64vw)] min-w-[380px] flex-col border-l border-[var(--border)] bg-[var(--panel-bg)] shadow-[-6px_0_12px_rgba(0,0,0,0.08)]"
+        className="dm-side-sheet flex h-full w-[min(520px,64vw)] min-w-[380px] flex-col border-l border-[var(--border)] bg-[var(--panel-bg)] shadow-[-6px_0_12px_rgba(0,0,0,0.08)]"
       >
         <header className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
           <div>

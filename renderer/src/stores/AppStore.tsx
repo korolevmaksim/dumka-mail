@@ -81,7 +81,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 18;
+export const SETTINGS_SCHEMA_VERSION = 19;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -265,6 +265,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     diagnosticsEnabled: false
   },
   appearance: {
+    interfaceStyle: 'classic',
     theme: 'system',
     density: 'compact',
     accentColorHex: '#668FEA',
@@ -333,6 +334,9 @@ export function mergeSettings(parsed: any): AppSettings {
   merged.snippets.templates = normalizeSnippetTemplates(merged.snippets.templates);
   merged.mailRules = normalizeMailRulesSettings(merged.mailRules);
   merged.general.language = normalizeAppLanguage(merged.general.language);
+  if (!['classic', 'soft'].includes(merged.appearance.interfaceStyle)) {
+    merged.appearance.interfaceStyle = 'classic';
+  }
   if (!['today', 'inbox', 'lastSelectedAccount', 'commandPalette'].includes(merged.general.startupBehavior)) {
     merged.general.startupBehavior = 'inbox';
   }

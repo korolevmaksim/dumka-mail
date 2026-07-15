@@ -37,9 +37,9 @@ export function TodayHome() {
     .slice(0, 5), [store.actionLog]);
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-[var(--app-bg)]">
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+    <main className="dm-today-workspace flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-[var(--app-bg)]">
+      <div className="dm-page-content mx-auto flex w-full max-w-[1180px] flex-col gap-4 px-5 py-4">
+        <div className="dm-page-header flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
           <div className="min-w-0">
             <h1 className="text-[calc(18px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Today</h1>
             <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
@@ -51,7 +51,7 @@ export function TodayHome() {
               type="button"
               onClick={() => void store.runDailyBriefing(undefined, { openPanel: false })}
               disabled={store.dailyBriefingLoading}
-              className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-1.5 text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="dm-secondary-button flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-1.5 text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Sparkles className="h-3.5 w-3.5 text-[var(--ai-accent)]" />
               Briefing
@@ -60,7 +60,7 @@ export function TodayHome() {
               type="button"
               onClick={() => void store.loadFollowUpRadar()}
               disabled={store.followUpRadarLoading}
-              className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-1.5 text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="dm-secondary-button flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-1.5 text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${store.followUpRadarLoading ? 'animate-spin' : ''}`} />
               Refresh
@@ -69,19 +69,19 @@ export function TodayHome() {
         </div>
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
             <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Review queue</div>
             <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{store.agentPlan?.items.length || 0}</div>
           </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
             <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Reply pipeline</div>
             <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{store.replyPipelineItems.filter(item => !['resolved', 'snoozed', 'suppressed'].includes(item.status)).length}</div>
           </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
             <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Briefing items</div>
             <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{store.dailyBriefing?.items.length || 0}</div>
           </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
             <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Recent actions</div>
             <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{recentActions.length}</div>
           </div>
@@ -92,7 +92,7 @@ export function TodayHome() {
             {store.agentPlan ? (
               <AgentReviewQueueCard />
             ) : (
-              <section className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+              <section className="dm-panel rounded-lg border border-dashed border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 <div className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
                   <ShieldAlert className="h-4 w-4 text-[var(--ai-accent)]" />
                   Agent Review Queue
@@ -106,7 +106,7 @@ export function TodayHome() {
             {store.dailyBriefing ? (
               <DailyBriefingCard />
             ) : (
-              <section className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+              <section className="dm-panel rounded-lg border border-dashed border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 Run Briefing to build a focused daily mail digest.
               </section>
             )}
@@ -114,7 +114,7 @@ export function TodayHome() {
 
           <aside className="flex min-w-0 flex-col gap-4">
             <RuleSimulatorPanel compact />
-            <section className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+            <section className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
               <div className="mb-2 flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                 <Archive className="h-4 w-4 text-[var(--accent)]" />
                 Cleanup
@@ -126,13 +126,13 @@ export function TodayHome() {
                   store.setSettingsOpen(false);
                   store.setCleanupOpen(true);
                 }}
-                className="flex w-full items-center justify-between rounded border border-[var(--border)] bg-[var(--app-bg)] px-3 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]"
+                className="dm-inset flex w-full items-center justify-between rounded border border-[var(--border)] bg-[var(--app-bg)] px-3 py-2 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]"
               >
                 Open privacy and cleanup tools
                 <ExternalLink className="h-3.5 w-3.5" />
               </button>
             </section>
-            <section className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+            <section className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
               <button type="button" onClick={() => store.setWorkspaceView('calendar')} className="mb-2 flex w-full items-center justify-between gap-1.5 font-semibold text-[var(--text-primary)] hover:text-[var(--accent)]">
                 <span className="flex items-center gap-1.5"><CalendarDays className="h-4 w-4 text-[var(--accent)]" />Calendar</span>
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -142,24 +142,24 @@ export function TodayHome() {
               ) : (
                 <div className="flex flex-col gap-2">
                   {calendarEvents.map(event => (
-                    <button type="button" onClick={() => store.openCalendarEvent(event)} key={`${event.accountId}:${event.calendarId}:${event.id}`} className="rounded bg-[var(--app-bg)] px-2.5 py-2 text-left hover:ring-1 hover:ring-[var(--accent)]">
+                    <button type="button" onClick={() => store.openCalendarEvent(event)} key={`${event.accountId}:${event.calendarId}:${event.id}`} className="dm-inset rounded bg-[var(--app-bg)] px-2.5 py-2 text-left hover:ring-1 hover:ring-[var(--accent)]">
                       <div className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]">{event.summary || 'Untitled event'}</div>
                       <div className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{formatCalendarTime(event.startAt)}</div>
                       <div className="mt-1 flex flex-wrap gap-1 text-[calc(8px*var(--font-scale))] font-semibold uppercase tracking-wide">
-                        {event.selfResponseStatus === 'needsAction' && <span className="text-amber-500">RSVP needed</span>}
+                        {event.selfResponseStatus === 'needsAction' && <span className="text-[var(--warning)]">RSVP needed</span>}
                         {event.sourceThreadId && Date.parse(event.startAt) <= Date.now() + 24 * 60 * 60_000 && <span className="text-[var(--accent)]">Prep · linked mail</span>}
-                        {event.conferenceUrl && <span className="text-emerald-500">Join ready</span>}
+                        {event.conferenceUrl && <span className="text-[var(--success)]">Join ready</span>}
                       </div>
                     </button>
                   ))}
                   {followUpEvents.map(event => <button type="button" onClick={() => store.openCalendarEvent(event)} key={`follow-up:${event.accountId}:${event.calendarId}:${event.id}`} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2 text-left text-[calc(10px*var(--font-scale))] text-[var(--accent)]">Draft follow-up · {event.summary}</button>)}
-                  {calendarIssues > 0 && <button type="button" onClick={() => store.setWorkspaceView('calendar')} className="rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-left text-[calc(10px*var(--font-scale))] font-semibold text-amber-500">{calendarIssues} calendar sync {calendarIssues === 1 ? 'issue' : 'issues'} need attention</button>}
+                  {calendarIssues > 0 && <button type="button" onClick={() => store.setWorkspaceView('calendar')} className="rounded border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2.5 py-2 text-left text-[calc(10px*var(--font-scale))] font-semibold text-[var(--warning)]">{calendarIssues} calendar sync {calendarIssues === 1 ? 'issue' : 'issues'} need attention</button>}
                 </div>
               )}
             </section>
-            <section className="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
+            <section className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
               <div className="mb-2 flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
                 Recent Actions
               </div>
               {recentActions.length === 0 ? (
@@ -167,7 +167,7 @@ export function TodayHome() {
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {recentActions.map(action => (
-                    <div key={action.id} className="flex items-center justify-between gap-2 rounded bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))]">
+                    <div key={action.id} className="dm-inset flex items-center justify-between gap-2 rounded bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))]">
                       <span className="truncate text-[var(--text-primary)]">{actionLabel(action)}</span>
                       <span className="shrink-0 text-[var(--text-secondary)]">{action.status}</span>
                     </div>

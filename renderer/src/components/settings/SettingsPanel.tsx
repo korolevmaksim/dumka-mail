@@ -39,9 +39,9 @@ export function SettingsPanel() {
   ] as const;
 
   return (
-    <div className="flex-1 flex bg-[var(--panel-bg)] select-none h-full overflow-hidden">
+    <div className="dm-settings flex-1 flex bg-[var(--panel-bg)] select-none h-full overflow-hidden">
       {/* Sidebar Navigation */}
-      <div className="w-[180px] border-r border-[var(--border)] bg-[var(--rail-bg)] p-3 flex flex-col gap-1 overflow-y-auto">
+      <div className="dm-settings-sidebar w-[180px] border-r border-[var(--border)] bg-[var(--rail-bg)] p-3 flex flex-col gap-1 overflow-y-auto">
         <h2 className="font-semibold text-[var(--text-secondary)] text-[calc(10px*var(--font-scale))] px-2 mb-2 uppercase tracking-wider">{t('settings.panel.title')}</h2>
         {tabsList.map(tab => {
           const Icon = tab.icon;
@@ -50,6 +50,7 @@ export function SettingsPanel() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              aria-current={active ? 'page' : undefined}
               className={`w-full flex items-center gap-2.5 px-2.5 rounded-[6px] transition-colors text-[calc(12px*var(--font-scale))] font-medium text-left cursor-pointer h-[var(--settings-sidebar-row-h)] min-h-[28px] ${
                 active
                   ? 'bg-[var(--hover-row)] text-[var(--text-primary)] font-semibold'
@@ -73,7 +74,7 @@ export function SettingsPanel() {
       </div>
 
       {/* Pane Content */}
-      <div className="flex-1 flex flex-col overflow-y-auto p-6 bg-[var(--panel-bg)]">
+      <div className="dm-settings-content flex-1 flex flex-col overflow-y-auto p-6 bg-[var(--panel-bg)]">
         {activeTab === 'accounts' && <AccountsTab />}
         {activeTab === 'profile' && <ProfileTab />}
         {activeTab === 'general' && <GeneralTab />}

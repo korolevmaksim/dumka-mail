@@ -23,7 +23,7 @@ export function CalendarGuestAvailability({
   if (guestCount === 0) return null;
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5">
+    <div className="dm-inset rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5">
       <div className="flex items-center justify-between gap-2">
         <span className="min-w-0 truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
           {guestCount} guest{guestCount === 1 ? '' : 's'}

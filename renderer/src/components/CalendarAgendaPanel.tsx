@@ -214,7 +214,7 @@ export function CalendarAgendaPanel() {
         <span className={`w-2 h-2 rounded-full ${enabled ? 'bg-[var(--success)]' : 'bg-[var(--text-tertiary)]'}`} />
       </h3>
 
-      <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--app-bg)] flex flex-col gap-3">
+      <div className="dm-panel border border-[var(--border)] rounded-lg p-3 bg-[var(--app-bg)] flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
@@ -246,7 +246,7 @@ export function CalendarAgendaPanel() {
           </div>
         </div>
 
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2">
+        <div className="dm-inset rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2">
           <div className="mb-2 flex items-center justify-between">
             <button
               type="button"

@@ -138,7 +138,7 @@ export function SnoozeMenu({
 
   return (
     <div
-      className={`${containerClass} rounded-xl border border-[var(--strong-border)] bg-[var(--raised-surface)] shadow-2xl scale-in`}
+      className={`dm-overlay ${containerClass} rounded-xl border border-[var(--strong-border)] bg-[var(--raised-surface)] shadow-2xl scale-in`}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={handleKeyDown}
       role="dialog"
@@ -166,7 +166,7 @@ export function SnoozeMenu({
         </button>
       </div>
       <div className="border-b border-[var(--border)] p-2">
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-2 focus-within:border-[var(--accent)]">
+        <div className="dm-control flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-2 focus-within:border-[var(--accent)]">
           <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
           <input
             ref={inputRef}

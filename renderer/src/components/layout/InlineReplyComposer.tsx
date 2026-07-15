@@ -228,7 +228,7 @@ export function InlineReplyComposer() {
   return (
     <div
       ref={composerRef}
-      className="print-hidden mt-6 flex shrink-0 flex-col overflow-hidden rounded-[8px] border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-[0_10px_32px_rgba(0,0,0,0.08)]"
+      className="dm-compose dm-panel print-hidden mt-6 flex shrink-0 flex-col overflow-hidden rounded-[8px] border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-[0_10px_32px_rgba(0,0,0,0.08)]"
     >
       <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--rail-bg)] px-4 py-3 select-none">
         <div className="flex min-w-0 items-center gap-3">

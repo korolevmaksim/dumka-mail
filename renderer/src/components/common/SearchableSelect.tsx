@@ -61,7 +61,7 @@ export function SearchableSelect({
       <button
         type="button"
         onClick={() => setOpen(prev => !prev)}
-        className="w-full min-w-0 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)] flex items-center gap-1"
+        className="dm-control w-full min-w-0 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)] flex items-center gap-1"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -70,7 +70,7 @@ export function SearchableSelect({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-[260px] rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-xl overflow-hidden">
+        <div className="dm-overlay absolute right-0 top-full z-50 mt-1 w-[260px] rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-xl overflow-hidden">
           <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--border)] bg-[var(--rail-bg)]">
             <Search className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
             <input

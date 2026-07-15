@@ -17,7 +17,7 @@ export function ComposeSchedulingMenu({
   onInsertCalCom,
 }: ComposeSchedulingMenuProps) {
   return (
-    <div className="absolute bottom-10 right-16 z-50 w-[270px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
+    <div className="dm-overlay absolute bottom-10 right-16 z-50 w-[270px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
       <SendLaterMenu onSchedule={onScheduleSend} floating={false} />
       <div className="my-1 ml-1 h-[1px] bg-[var(--border)]" />
       <button

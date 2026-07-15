@@ -15,7 +15,7 @@ export function ComposeTemplatesMenu({
   onSaveBodyAsSnippet,
 }: ComposeTemplatesMenuProps) {
   return (
-    <div className="absolute bottom-10 right-8 z-50 w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
+    <div className="dm-overlay absolute bottom-10 right-8 z-50 w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
       <button
         type="button"
         onClick={onInsertDefaultSnippet}

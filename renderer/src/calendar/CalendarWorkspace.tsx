@@ -514,7 +514,7 @@ export function CalendarWorkspace() {
   const inspectorOpen = formMode !== null || selectedEvent !== null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]" aria-label="Calendar workspace">
+    <div className="dm-calendar-workspace flex h-full min-h-0 flex-col bg-[var(--app-bg)]" aria-label="Calendar workspace">
       <CalendarHeader
         anchor={anchor}
         view={view}
@@ -537,18 +537,18 @@ export function CalendarWorkspace() {
         onCreate={() => openCreate(selectedDate)}
       />
       {syncError && <div role="status" className="shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">{syncError}</div>}
-      <div className="flex min-h-0 flex-1">
+      <div className="dm-calendar-body flex min-h-0 flex-1">
         {sidebarOpen && <CalendarSidebar accounts={store.accounts} accountEmail={accountEmail} anchor={anchor} calendars={accountCalendars} mutationAccount={mutationAccount} settings={settings} mailTasks={mailTasks} threads={store.threads} syncIssues={syncIssues} onAccountChange={setAccountEmail} onSelectDate={selectDate} onAuthorize={() => void store.authorizeGoogleIntegration('calendar', mutationAccount)} onApplyCalendarSet={applyCalendarSet} onCreateCalendarSet={createCalendarSet} onDeleteCalendarSet={deleteActiveCalendarSet} onToggleCalendar={toggleCalendar} onToggleCalendarAlerts={toggleCalendarAlerts} onCompleteTask={task => void completeMailTask(task)} onSnoozeTask={task => void snoozeMailTask(task)} onOpenThread={thread => void store.openThreadFromCalendar(thread)} onResolveConflict={(action, strategy) => void resolveConflict(action, strategy)} />}
-        <main className="min-w-0 flex-1 overflow-hidden">
+        <main className="dm-calendar-canvas min-w-0 flex-1 overflow-hidden">
           {view === 'month' && <CalendarMonthView anchor={anchor} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} onSelectDate={selectDate} onCreate={openCreate} onSelectEvent={openEdit} onMoveEvent={(event, update) => void moveEvent(event, update.startAt, update.endAt, update.startDate, update.endDate)} />}
           {(view === 'day' || view === 'week') && <CalendarTimeGrid anchor={anchor} mode={view} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} workingDays={settings.workingDays} workingHoursStart={settings.availabilityStartTime} workingHoursEnd={settings.availabilityEndTime} onSelectDate={selectDate} onCreateRange={(startAt, endAt) => openCreate(new Date(startAt), { startAt, endAt })} onSelectEvent={openEdit} onMoveEvent={(event, startAt, endAt) => void moveEvent(event, startAt, endAt)} onResizeEvent={(event, endAt) => void moveEvent(event, event.startAt, endAt)} />}
           {view === 'agenda' && <CalendarAgendaView anchor={anchor} events={visibleEvents} calendars={accountCalendars} onSelectDate={selectDate} onSelectEvent={openEdit} onCreate={openCreate} />}
           {(view === 'quarter' || view === 'year') && <CalendarOverviewView anchor={anchor} events={visibleEvents} mode={view} weekStartsOn={settings.weekStartsOn} onSelectDate={selectDate} onCreate={openCreate} />}
         </main>
         {(inspectorOpen || icsPreview) && (
-          <aside className="w-[340px] shrink-0 overflow-y-auto border-l border-[var(--border)] bg-[var(--panel-bg)] p-3">
+          <aside className="dm-calendar-inspector w-[340px] shrink-0 overflow-y-auto border-l border-[var(--border)] bg-[var(--panel-bg)] p-3">
             {icsPreview && (
-              <div className="rounded-lg border border-[var(--accent)]/35 bg-[var(--app-bg)] p-3">
+              <div className="dm-panel rounded-lg border border-[var(--accent)]/35 bg-[var(--app-bg)] p-3">
                 <div className="mb-3 flex items-start justify-between gap-2"><div><div className="text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--accent)]">Import preview</div><div className="mt-1 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{icsPreview.invite.summary}</div></div><button type="button" onClick={() => setIcsPreview(null)} className="text-[var(--text-tertiary)]"><X className="h-4 w-4" /></button></div>
                 <div className="space-y-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
                   <div>{new Date(icsPreview.invite.startAt).toLocaleString()} – {new Date(icsPreview.invite.endAt).toLocaleString()}</div>
@@ -556,13 +556,13 @@ export function CalendarWorkspace() {
                   {icsPreview.invite.description && <div className="max-h-28 overflow-y-auto whitespace-pre-wrap">{icsPreview.invite.description}</div>}
                   <div>{icsPreview.invite.attendees.length} attendees · {icsPreview.filename}</div>
                   <label className="flex flex-col gap-1"><span className="text-[var(--text-tertiary)]">Destination calendar</span><select value={icsCalendarId} onChange={event => setIcsCalendarId(event.target.value)} className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5">{mutationCalendars.filter(calendar => calendar.accessRole === 'owner' || calendar.accessRole === 'writer').map(calendar => <option key={calendar.id} value={calendar.id}>{calendar.summary}</option>)}</select></label>
-                  <div className="rounded border border-[var(--border)] bg-[var(--raised-surface)] p-2 text-[calc(9px*var(--font-scale))]">No event will be written until you confirm. Guest emails are disabled for imports.</div>
+                  <div className="dm-inset rounded border border-[var(--border)] bg-[var(--raised-surface)] p-2 text-[calc(9px*var(--font-scale))]">No event will be written until you confirm. Guest emails are disabled for imports.</div>
                   <button type="button" disabled={isSaving} onClick={() => void confirmIcsImport()} className="w-full rounded-md bg-[var(--accent)] px-3 py-2 font-semibold text-white disabled:opacity-50">{isSaving ? 'Importing…' : 'Import event'}</button>
                 </div>
               </div>
             )}
             {!formMode && selectedEvent && (
-              <div className="rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3">
+              <div className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-3">
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div><div className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{selectedEvent.summary}</div><div className="mt-1 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">Read-only calendar</div></div>
                   <button type="button" onClick={() => setSelectedEvent(null)} aria-label="Close event" className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-row)]"><X className="h-4 w-4" /></button>
@@ -579,7 +579,7 @@ export function CalendarWorkspace() {
               </div>
             )}
             {formMode === 'edit' && selectedEvent && (
-              <div className="mb-2 rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <div className="dm-inset mb-2 rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
                 <div className="flex items-center justify-between gap-2">
                   <span>{selectedEvent.isAllDay ? 'All day' : `${new Date(selectedEvent.startAt).toLocaleString()} · ${calendarEventDurationMinutes(selectedEvent)} min`}</span>
                   <span className="flex items-center gap-2">{selectedEvent.conferenceUrl && <a href={selectedEvent.conferenceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[var(--accent)]"><Video className="h-3 w-3" />Join</a>}<button type="button" onClick={() => void window.electronAPI.exportCalendarEventIcs(selectedEvent)} title="Export .ics" className="text-[var(--text-tertiary)] hover:text-[var(--accent)]"><Download className="h-3.5 w-3.5" /></button></span>

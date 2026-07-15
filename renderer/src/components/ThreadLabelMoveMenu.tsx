@@ -26,7 +26,7 @@ export function ThreadLabelMoveMenu({
 
   return (
     <div
-      className={`z-30 w-[300px] max-h-[320px] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl ${className}`}
+      className={`dm-overlay z-30 w-[300px] max-h-[320px] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl ${className}`}
       onClick={(event) => event.stopPropagation()}
     >
       {nodes.length === 0 ? (

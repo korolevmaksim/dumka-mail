@@ -91,7 +91,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
   };
 
   return (
-    <section className="flex flex-col gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-[calc(11px*var(--font-scale))]">
+    <section className="dm-panel flex flex-col gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-[calc(11px*var(--font-scale))]">
       {/* Header: title + time only — never compete with stats for width */}
       <header className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -121,7 +121,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
       {/* Metrics: full-width strip so labels never clip */}
       {hasRules && (
         <div
-          className="grid grid-cols-3 divide-x divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--app-bg)]"
+          className="dm-inset grid grid-cols-3 divide-x divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--app-bg)]"
           role="group"
           aria-label="Simulation summary"
         >
@@ -156,7 +156,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
             return (
               <li
                 key={result.ruleId}
-                className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2"
+                className="dm-inset rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-2"
               >
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
@@ -177,7 +177,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                   </div>
                   <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium ${
                     mode === 'active'
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+                      ? 'border-[var(--success)]/30 bg-[var(--success)]/10 text-[var(--success)]'
                       : mode === 'shadow'
                         ? 'border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 text-[var(--ai-accent)]'
                         : 'border-[var(--border)] bg-[var(--rail-bg)] text-[var(--text-secondary)]'
@@ -189,7 +189,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                       review
                     </span>
                   ) : (
-                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" aria-label="Safe to apply" />
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--success)]" aria-label="Safe to apply" />
                   )}
                 </div>
                 {result.samples[0]?.effects[0] && (
@@ -217,7 +217,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
       {candidates.length > 0 && (
         <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
           <div className="flex items-center gap-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
+            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" aria-hidden="true" />
             From approved work
           </div>
           {candidates.slice(0, compact ? 2 : 4).map(candidate => {
@@ -225,7 +225,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
             return (
               <div
                 key={candidate.id}
-                className="flex items-center justify-between gap-2 rounded-md bg-[var(--app-bg)] px-2.5 py-2"
+                className="dm-inset flex items-center justify-between gap-2 rounded-md bg-[var(--app-bg)] px-2.5 py-2"
               >
                 <div className="min-w-0">
                   <div className="truncate text-[var(--text-primary)]">{candidate.title}</div>

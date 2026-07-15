@@ -448,6 +448,11 @@ export function useSettingsState() {
     return () => {};
   }, [theme]);
 
+  // Apply the visual skin independently from the light/dark color mode.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-interface-style', settings.appearance.interfaceStyle);
+  }, [settings.appearance.interfaceStyle]);
+
   // Apply layout density
   useEffect(() => {
     document.documentElement.setAttribute('data-density', settings.appearance.density);

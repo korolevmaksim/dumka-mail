@@ -169,7 +169,7 @@ export function RecipientField({
           {visibleSuggestions.length > 0 && (
             <div
               role="listbox"
-              className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] py-1 shadow-xl"
+              className="dm-overlay absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] py-1 shadow-xl"
             >
               {visibleSuggestions.map((suggestion, index) => {
                 const isHighlighted = index === highlightedIndex;

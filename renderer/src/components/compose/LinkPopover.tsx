@@ -40,7 +40,7 @@ export function LinkPopover({ selectedText, onSubmit, onCancel, className = '' }
   };
 
   return (
-    <div className={`absolute bottom-full left-0 z-[70] mb-2 w-[320px] rounded-xl border border-[var(--strong-border)] bg-[var(--raised-surface)] p-3 shadow-2xl ${className}`}>
+    <div className={`dm-overlay absolute bottom-full left-0 z-[70] mb-2 w-[320px] rounded-xl border border-[var(--strong-border)] bg-[var(--raised-surface)] p-3 shadow-2xl ${className}`}>
       <div className="mb-2 flex items-center gap-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
         <Link className="h-3.5 w-3.5 text-[var(--accent)]" />
         <span>{selectedText ? 'Link selected text' : 'Insert link'}</span>
