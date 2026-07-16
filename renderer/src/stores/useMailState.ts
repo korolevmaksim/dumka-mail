@@ -47,6 +47,7 @@ interface UseMailStateProps {
   labelDefinitions: MailLabelDefinition[];
   mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
   applyGmailSignatureSyncResult: (result: GmailSignatureSyncResult) => Promise<void>;
+  prepareNotificationThreadNavigation: () => void;
 }
 
 interface CachedMailboxSnapshot {
@@ -115,6 +116,7 @@ export function useMailState({
   labelDefinitions,
   mutedLabelIdsByAccount,
   applyGmailSignatureSyncResult,
+  prepareNotificationThreadNavigation,
 }: UseMailStateProps) {
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
@@ -426,6 +428,7 @@ export function useMailState({
       const acc = accounts.find(a => a.email === accountId);
       if (!acc) return;
 
+      prepareNotificationThreadNavigation();
       setActiveAccount(acc);
       setMailboxViewState('inbox');
       resetOpenedThreadMessages();
@@ -481,7 +484,7 @@ export function useMailState({
     })();
 
     return unsubscribe;
-  }, [accounts, getThreadCategory, inboxSettings.autoMarkReadOnOpen, patchThread, setActiveAccount]);
+  }, [accounts, getThreadCategory, inboxSettings.autoMarkReadOnOpen, patchThread, prepareNotificationThreadNavigation, setActiveAccount]);
 
   // Main threads load & sync loop
   const loadThreadsFromDB = useCallback(async (force = false) => {

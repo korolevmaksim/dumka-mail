@@ -638,6 +638,12 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     return result;
   }, [labelDefinitions]);
+
+  const prepareNotificationThreadNavigation = useCallback(() => {
+    settingsState.setWorkspaceView('mail');
+    settingsState.setSettingsOpen(false);
+    settingsState.setCleanupOpen(false);
+  }, [settingsState.setCleanupOpen, settingsState.setSettingsOpen, settingsState.setWorkspaceView]);
   
   const mailState = useMailState({
     tabCategories: settingsState.tabCategories,
@@ -647,6 +653,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     labelDefinitions,
     mutedLabelIdsByAccount,
     applyGmailSignatureSyncResult,
+    prepareNotificationThreadNavigation,
   });
 
   const draftsState = useDraftsState({

@@ -4,10 +4,10 @@ import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, Che
 import { colorFromString } from './AccountAvatar';
 import { hasRemoteImages, SafeHtmlRenderer } from './SafeHtmlRenderer';
 import { resolveInlineCids } from '../../../shared/messageBody';
-import { calendarInvitesFromMessage } from '../../../shared/calendar';
-import { CalendarInviteCard } from './CalendarInviteCard';
+import { isCalendarInviteAttachment } from '../../../shared/calendar';
 import { canOpenExternally, formatByteSize } from '../../../shared/attachments';
 import { emitToast } from '../lib/toastBus';
+import { CalendarAwareMessageBody } from './CalendarAwareMessageBody';
 
 export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
@@ -37,7 +37,10 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
     () => msg.attachments.filter(att => !shouldTreatAsInlineImage(att, htmlBody)),
     [msg.attachments, htmlBody]
   );
-  const calendarInvites = useMemo(() => calendarInvitesFromMessage(msg), [msg]);
+  const hasCalendarInvite = useMemo(
+    () => msg.attachments.some(isCalendarInviteAttachment),
+    [msg.attachments],
+  );
 
   useEffect(() => {
     setInlineAttachmentData({});
@@ -151,16 +154,14 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
           </button>
         )}
 
-        {calendarInvites.length > 0 && (
-          <div className="mb-3 flex flex-col gap-2">
-            {calendarInvites.map(invite => (
-              <CalendarInviteCard key={`${invite.uid}:${invite.startAt}`} invite={invite} accountId={msg.accountId} />
-            ))}
-          </div>
-        )}
-
         {/* Body */}
-        {msg.bodyHtml ? (
+        {hasCalendarInvite ? (
+          <CalendarAwareMessageBody
+            msg={msg}
+            html={renderedHtml}
+            loadRemoteImages={imagesAllowed}
+          />
+        ) : msg.bodyHtml ? (
           <SafeHtmlRenderer html={renderedHtml} loadRemoteImages={imagesAllowed} />
         ) : (
           <pre className="text-[calc(12px*var(--font-scale))] whitespace-pre-wrap font-sans text-[var(--text-primary)] select-text leading-relaxed">

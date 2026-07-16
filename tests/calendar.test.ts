@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calendarInvitesFromMessage, parseIcsInvite } from '../shared/calendar';
+import { calendarInvitesFromMessage, calendarResponseFromGoogleRsvpUrl, parseIcsInvite } from '../shared/calendar';
 import type { MailMessage } from '../shared/types';
 
 const sampleIcs = [
@@ -76,6 +76,32 @@ describe('parseIcsInvite', () => {
     expect(calendarInvitesFromMessage(msg)[0].uid).toBe('meeting-123@example.com');
   });
 
+  it('deduplicates equivalent calendar MIME attachments', () => {
+    const base64Data = Buffer.from(sampleIcs, 'utf-8').toString('base64');
+    const msg: MailMessage = {
+      id: 'm1',
+      threadId: 't1',
+      accountId: 'me@example.com',
+      senderName: 'Alex',
+      senderEmail: 'alex@example.com',
+      subject: 'Invite',
+      snippet: '',
+      receivedAt: '2026-06-30T12:00:00.000Z',
+      labelIds: ['INBOX'],
+      hasAttachments: true,
+      isUnread: true,
+      to: [],
+      cc: [],
+      bcc: [],
+      attachments: [
+        { id: 'invite-text', filename: 'invite.ics', mimeType: 'text/calendar', sizeBytes: sampleIcs.length, base64Data },
+        { id: 'invite-app', filename: 'invite.ics', mimeType: 'application/ics', sizeBytes: sampleIcs.length, base64Data },
+      ],
+    };
+
+    expect(calendarInvitesFromMessage(msg)).toHaveLength(1);
+  });
+
   it('converts TZID date-times and keeps recurrence rules for Google Calendar', () => {
     const invite = parseIcsInvite([
       'BEGIN:VCALENDAR',
@@ -118,5 +144,22 @@ describe('parseIcsInvite', () => {
       startDate: '2026-07-04',
       endDate: '2026-07-06',
     });
+  });
+});
+
+describe('Google Calendar RSVP links', () => {
+  it.each([
+    ['1', 'accepted'],
+    ['2', 'declined'],
+    ['3', 'tentative'],
+  ] as const)('maps rst=%s to %s', (rst, expected) => {
+    expect(calendarResponseFromGoogleRsvpUrl(`https://calendar.google.com/calendar/event?action=RESPOND&eid=redacted&rst=${rst}`)).toBe(expected);
+  });
+
+  it('rejects non-RSVP, non-Google, and insecure links', () => {
+    expect(calendarResponseFromGoogleRsvpUrl('https://calendar.google.com/calendar/event?action=VIEW&rst=1')).toBeNull();
+    expect(calendarResponseFromGoogleRsvpUrl('https://calendar.google.com.evil.example/calendar/event?action=RESPOND&rst=1')).toBeNull();
+    expect(calendarResponseFromGoogleRsvpUrl('http://calendar.google.com/calendar/event?action=RESPOND&rst=1')).toBeNull();
+    expect(calendarResponseFromGoogleRsvpUrl('not a url')).toBeNull();
   });
 });

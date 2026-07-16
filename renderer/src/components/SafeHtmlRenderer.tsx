@@ -178,7 +178,15 @@ export function hasRemoteImages(html: string): boolean {
 // `allow-same-origin` is retained ONLY to measure body height for auto-sizing —
 // with scripts disabled by both the sandbox and CSP `script-src 'none'`, this is
 // not an escape vector.
-export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loadRemoteImages: boolean }) {
+export function SafeHtmlRenderer({
+  html,
+  loadRemoteImages,
+  onLinkClick,
+}: {
+  html: string;
+  loadRemoteImages: boolean;
+  onLinkClick?: (url: string) => boolean;
+}) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
 
@@ -189,6 +197,7 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
     let timers: any[] = [];
     let docRef: Document | null = null;
     let handleIframeKeyDown: ((e: KeyboardEvent) => void) | null = null;
+    let handleIframeClick: ((e: MouseEvent) => void) | null = null;
     let frameId: number | null = null;
     setReady(false);
 
@@ -261,6 +270,23 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
 
       doc.addEventListener('keydown', handleIframeKeyDown);
 
+      handleIframeClick = (event: MouseEvent) => {
+        const target = event.target as { closest?: (selector: string) => Element | null } | null;
+        const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+        if (!anchor || !onLinkClick) return;
+
+        const url = anchor.href || anchor.getAttribute('href') || '';
+        if (!url) return;
+        try {
+          if (!onLinkClick(url)) return;
+          event.preventDefault();
+          event.stopPropagation();
+        } catch (error) {
+          console.error('Email link handler failed:', error);
+        }
+      };
+      doc.addEventListener('click', handleIframeClick);
+
       const resizeIframe = () => {
         if (iframe && iframe.contentWindow?.document.body) {
           const height = iframe.contentWindow.document.body.scrollHeight;
@@ -282,8 +308,11 @@ export function SafeHtmlRenderer({ html, loadRemoteImages }: { html: string; loa
       if (docRef && handleIframeKeyDown) {
         docRef.removeEventListener('keydown', handleIframeKeyDown);
       }
+      if (docRef && handleIframeClick) {
+        docRef.removeEventListener('click', handleIframeClick);
+      }
     };
-  }, [html, loadRemoteImages]);
+  }, [html, loadRemoteImages, onLinkClick]);
 
   return (
     <div className="relative min-h-10">

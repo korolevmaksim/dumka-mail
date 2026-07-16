@@ -278,6 +278,7 @@ function getNotificationIconPath(): string | undefined {
 function openThreadFromNotification(accountId: string, threadId: string) {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
     mainWindow.focus();
     mainWindow.webContents.send('api:openThread', { accountId, threadId });
     return;

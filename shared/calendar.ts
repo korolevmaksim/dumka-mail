@@ -1,4 +1,4 @@
-import type { AttachmentMetadata, CalendarAttendee, CalendarEvent, CalendarEventCreateInput, CalendarInvite, MailMessage } from './types';
+import type { AttachmentMetadata, CalendarAttendee, CalendarAttendeeResponse, CalendarEvent, CalendarEventCreateInput, CalendarInvite, MailMessage } from './types';
 
 interface IcsProperty {
   name: string;
@@ -264,6 +264,23 @@ export function parseIcsInvite(text: string): CalendarInvite | null {
   };
 }
 
+export function calendarResponseFromGoogleRsvpUrl(value: string): CalendarAttendeeResponse | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'calendar.google.com') return null;
+    if (url.pathname !== '/calendar/event' || url.searchParams.get('action')?.toUpperCase() !== 'RESPOND') return null;
+
+    switch (url.searchParams.get('rst')) {
+      case '1': return 'accepted';
+      case '2': return 'declined';
+      case '3': return 'tentative';
+      default: return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
 export function decodeIcsAttachment(attachment: AttachmentMetadata): string | null {
   if (!attachment.base64Data) return null;
   try {
@@ -279,17 +296,25 @@ export function decodeIcsAttachment(attachment: AttachmentMetadata): string | nu
   }
 }
 
+export function isCalendarInviteAttachment(attachment: Pick<AttachmentMetadata, 'filename' | 'mimeType'>): boolean {
+  return attachment.mimeType.toLowerCase().startsWith('text/calendar')
+    || attachment.filename.toLowerCase().endsWith('.ics')
+    || attachment.filename.toLowerCase().endsWith('.ical');
+}
+
 export function calendarInvitesFromMessage(message: MailMessage): CalendarInvite[] {
   const invites: CalendarInvite[] = [];
+  const inviteKeys = new Set<string>();
   for (const attachment of message.attachments || []) {
-    const isCalendar = attachment.mimeType.toLowerCase().startsWith('text/calendar')
-      || attachment.filename.toLowerCase().endsWith('.ics')
-      || attachment.filename.toLowerCase().endsWith('.ical');
-    if (!isCalendar) continue;
+    if (!isCalendarInviteAttachment(attachment)) continue;
     const decoded = decodeIcsAttachment(attachment);
     if (!decoded) continue;
     const invite = parseIcsInvite(decoded);
-    if (invite) invites.push(invite);
+    if (!invite) continue;
+    const key = `${invite.uid}\0${invite.startAt}\0${invite.sequence ?? ''}`;
+    if (inviteKeys.has(key)) continue;
+    inviteKeys.add(key);
+    invites.push(invite);
   }
   return invites;
 }
