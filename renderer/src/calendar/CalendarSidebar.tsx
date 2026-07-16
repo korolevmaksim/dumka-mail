@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Bell, BellOff, ChevronDown, ChevronLeft, ChevronRight, Plus, Users } from 'lucide-react';
 import type { Account, CalendarEvent, CalendarListEntry, CalendarLocalTask, CalendarSettings, MailActionLog, MailThread } from '../../../shared/types';
 import { calendarEventsForDate, calendarMonthDays } from '../../../shared/calendarWorkspace';
+import { agendaEventTime } from '../lib/calendarAgenda';
 import { localCalendarDateKey, secondaryCalendarTimeLabel } from './calendarWorkspaceUtils';
 
 interface CalendarSidebarProps {
@@ -159,7 +160,7 @@ export function CalendarSidebar(props: CalendarSidebarProps) {
                       <button key={`${event.accountId}:${event.calendarId}:${event.id}`} type="button" onClick={() => props.onSelectEvent(event)} className="group flex w-full cursor-pointer items-start gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-[var(--hover-row)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
                         <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: calendar?.backgroundColor || 'var(--accent)' }} />
                         <span className="min-w-0 flex-1">
-                          <span className="block text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{event.isAllDay ? 'All day' : new Date(event.startAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                          <span className="block text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{agendaEventTime(event)}</span>
                           <span className="block truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]">{event.summary}</span>
                         </span>
                       </button>
