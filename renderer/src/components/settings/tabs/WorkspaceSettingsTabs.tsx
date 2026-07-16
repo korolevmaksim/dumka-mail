@@ -27,6 +27,8 @@ export function LabelsTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingParentName, setEditingParentName] = useState('');
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [labelsSyncing, setLabelsSyncing] = useState(false);
   const accountLabels = useMemo(
     () => labelDefinitionsForAccount(store.labelDefinitions, selectedLabelEmail),
@@ -71,6 +73,8 @@ export function LabelsTab() {
     setEditingId(null);
     setEditingName('');
     setEditingParentName('');
+    setPendingDeleteId(null);
+    setDeletingId(null);
   }, [selectedLabelEmail]);
 
   const create = async () => {
@@ -112,6 +116,20 @@ export function LabelsTab() {
       emitToast({ type: 'error', message: `Could not sync labels for ${selectedLabelEmail}.` });
     } finally {
       setLabelsSyncing(false);
+    }
+  };
+
+  const deleteLabel = async (labelId: string) => {
+    if (!selectedLabelEmail || deletingId) return;
+    setDeletingId(labelId);
+    try {
+      await store.deleteLabel(labelId, selectedLabelEmail);
+      setPendingDeleteId(null);
+    } catch (err) {
+      console.error('Label delete failed:', err);
+      emitToast({ type: 'error', message: 'Could not delete Gmail label.' });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -196,7 +214,7 @@ export function LabelsTab() {
           ) : flattenedLabels.map(node => (
             <div
               key={node.fullName}
-              className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2"
+              className={`flex items-center justify-between rounded-md border px-3 py-2 ${pendingDeleteId === node.label?.id ? 'border-[var(--danger)]/35 bg-[var(--danger)]/10' : 'border-[var(--border)] bg-[var(--panel-bg)]'}`}
               style={{ paddingLeft: `${12 + node.depth * 18}px` }}
             >
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -232,47 +250,67 @@ export function LabelsTab() {
                 )}
               </div>
               {node.label ? (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    title={editingId === node.label.id ? 'Save label name' : 'Rename label'}
-                    onClick={() => {
-                      if (!node.label) return;
-                      if (editingId === node.label.id) void saveEdit();
-                      else {
-                        setEditingId(node.label.id);
-                        setEditingName(labelLeafName(node.label.name));
-                        setEditingParentName(labelParentName(node.label.name));
-                      }
+                pendingDeleteId === node.label.id ? (
+                  <div
+                    role="group"
+                    aria-label={`Confirm deletion of ${node.label.name}`}
+                    className="ml-3 flex shrink-0 items-center gap-1.5"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape' && !deletingId) setPendingDeleteId(null);
                     }}
-                    className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
                   >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Delete label"
-                    onClick={() => {
-                      if (!node.label) return;
-                      emitToast({
-                        type: 'warning',
-                        message: `Delete ${node.label.name}?`,
-                        actionLabel: 'Delete',
-                        onAction: () => {
-                          if (!selectedLabelEmail) return;
-                          void store.deleteLabel(node.label!.id, selectedLabelEmail).catch(err => {
-                            console.error('Label delete failed:', err);
-                            emitToast({ type: 'error', message: 'Could not delete Gmail label.' });
-                          });
-                        },
-                        duration: 6000,
-                      });
-                    }}
-                    className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                    <span className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--danger)]">Delete?</span>
+                    <button
+                      autoFocus
+                      type="button"
+                      disabled={deletingId === node.label.id}
+                      onClick={() => setPendingDeleteId(null)}
+                      className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingId === node.label.id}
+                      onClick={() => void deleteLabel(node.label!.id)}
+                      className="rounded bg-[var(--danger)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingId === node.label.id ? 'Deleting' : 'Delete'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title={editingId === node.label.id ? 'Save label name' : 'Rename label'}
+                      onClick={() => {
+                        if (!node.label) return;
+                        if (editingId === node.label.id) void saveEdit();
+                        else {
+                          setPendingDeleteId(null);
+                          setEditingId(node.label.id);
+                          setEditingName(labelLeafName(node.label.name));
+                          setEditingParentName(labelParentName(node.label.name));
+                        }
+                      }}
+                      className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete label"
+                      aria-label={`Delete ${node.label.name}`}
+                      onClick={() => {
+                        setEditingId(null);
+                        setPendingDeleteId(node.label!.id);
+                      }}
+                      className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )
               ) : (
                 <span className="rounded bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">folder</span>
               )}
