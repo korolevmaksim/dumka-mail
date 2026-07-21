@@ -152,7 +152,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 select-text">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-3 select-text">
       <header className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2.5 min-w-0">
           <button
@@ -264,11 +264,11 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
         </select>
       </div>
 
-      <div className="dm-panel min-h-[420px] flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--app-bg)]">
-        <div className="grid grid-cols-[88px_72px_130px_minmax(0,1fr)] border-b border-[var(--border)] bg-[var(--rail-bg)] px-2 py-1.5 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
+      <div className="dm-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--app-bg)]">
+        <div className="grid shrink-0 grid-cols-[88px_72px_130px_minmax(0,1fr)] border-b border-[var(--border)] bg-[var(--rail-bg)] px-2 py-1.5 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
           <span>Time</span><span>Level</span><span>Source</span><span>Message</span>
         </div>
-        <div ref={scrollRef} className="h-[min(62vh,620px)] overflow-y-auto">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           {hasMore && (
             <div className="flex justify-center border-b border-[var(--border)] py-2">
               <button type="button" onClick={() => void loadOlder()} disabled={loadingOlder} className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--accent-ink)] disabled:opacity-50 cursor-pointer">

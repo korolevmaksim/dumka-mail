@@ -76,7 +76,7 @@ export function SettingsPanel() {
       </div>
 
       {/* Pane Content */}
-      <div className="dm-settings-content flex-1 flex flex-col overflow-y-auto p-6 bg-[var(--panel-bg)]">
+      <div className="dm-settings-content flex min-h-0 flex-1 flex-col overflow-y-auto bg-[var(--panel-bg)] p-6">
         {activeTab === 'accounts' && <AccountsTab />}
         {activeTab === 'profile' && <ProfileTab />}
         {activeTab === 'general' && <GeneralTab />}
