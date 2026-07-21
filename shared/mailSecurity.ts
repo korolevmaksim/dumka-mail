@@ -8,45 +8,23 @@ import type {
   UnsubscribeMethod,
 } from './types';
 import { htmlToText } from './aiContext';
+import {
+  analyzeLinkSecurity,
+  detectTrackingPixelTags,
+} from './mailContentSecurity';
+
+export { detectTrackingPixelTags, stripTrackingPixelsFromHtml } from './mailContentSecurity';
 
 export interface NotificationFilterSettings {
   notifyImportantOnly?: boolean;
 }
 
+export const MAIL_SECURITY_ANALYSIS_VERSION = 2;
+
 export type AgentDraftRuleOptions = Pick<
   AgentRulesSettings,
   'proactiveDraftTrigger' | 'blockBulkAndAutomated' | 'maxDraftSourceWords'
 >;
-
-const TRACKING_HOST_HINTS = [
-  'mailchimp.com',
-  'list-manage.com',
-  'sendgrid.net',
-  'mandrillapp.com',
-  'hubspotemail.net',
-  'hubspotlinks.com',
-  'marketo.com',
-  'salesforce.com',
-  'pardot.com',
-  'customeriomail.com',
-  'intercom-mail.com',
-  'tracking',
-  'track',
-  'pixel',
-  'open',
-  'click',
-];
-
-const SHORT_LINK_HOSTS = new Set([
-  'bit.ly',
-  'tinyurl.com',
-  't.co',
-  'goo.gl',
-  'ow.ly',
-  'buff.ly',
-  'cutt.ly',
-  'is.gd',
-]);
 
 const BULK_HEADER_NAMES = new Set([
   'list-id',
@@ -311,149 +289,8 @@ export function isSafePublicHttpUrl(url: string): boolean {
   return true;
 }
 
-function quotedAttr(tag: string, attrName: string): string {
-  const pattern = new RegExp(`\\b${attrName}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
-  const match = tag.match(pattern);
-  return (match?.[2] || match?.[3] || match?.[4] || '').trim();
-}
-
-function numericAttr(tag: string, attrName: string): number | null {
-  const value = quotedAttr(tag, attrName);
-  if (!value) return null;
-  const match = value.match(/^(\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const parsed = Number(match[1]);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isTrackingUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value, 'https://example.invalid');
-    const haystack = `${parsed.hostname} ${parsed.pathname} ${parsed.search}`.toLowerCase();
-    return TRACKING_HOST_HINTS.some(hint => haystack.includes(hint)) ||
-      parsed.searchParams.has('utm_source') ||
-      parsed.searchParams.has('mc_eid') ||
-      parsed.searchParams.has('mkt_tok');
-  } catch {
-    return false;
-  }
-}
-
-function isHiddenPixelTag(tag: string): boolean {
-  const width = numericAttr(tag, 'width');
-  const height = numericAttr(tag, 'height');
-  const style = quotedAttr(tag, 'style').toLowerCase();
-  return (width !== null && width <= 2) ||
-    (height !== null && height <= 2) ||
-    style.includes('display:none') ||
-    style.includes('display: none') ||
-    style.includes('visibility:hidden') ||
-    style.includes('visibility: hidden') ||
-    style.includes('opacity:0') ||
-    style.includes('opacity: 0') ||
-    style.includes('max-height:0') ||
-    style.includes('max-height: 0');
-}
-
-export function detectTrackingPixelTags(html: string): string[] {
-  if (!html) return [];
-  const tags = html.match(/<img\b[^>]*>/gi) || [];
-  return tags.filter(tag => {
-    const src = quotedAttr(tag, 'src');
-    if (!src || !/^https?:\/\//i.test(src)) return false;
-    return isHiddenPixelTag(tag) || isTrackingUrl(src);
-  });
-}
-
-export function stripTrackingPixelsFromHtml(html: string): string {
-  if (!html) return html;
-  return html.replace(/<img\b[^>]*>/gi, tag => {
-    const src = quotedAttr(tag, 'src');
-    if (!src || !/^https?:\/\//i.test(src)) return tag;
-    return isHiddenPixelTag(tag) || isTrackingUrl(src) ? '' : tag;
-  });
-}
-
-function stripTags(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function domainFromUrl(value: string): string | null {
-  try {
-    const parsed = new URL(value);
-    return parsed.hostname.toLowerCase().replace(/^www\./, '');
-  } catch {
-    return null;
-  }
-}
-
-function visibleUrlFromText(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s<>()]+|(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s<>()]*)?/i);
-  if (!match) return null;
-  const value = match[0].startsWith('http') ? match[0] : `https://${match[0]}`;
-  return value;
-}
-
-function isIpHost(host: string): boolean {
-  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
-}
-
-function linkWarnings(html: string): MailSecurityWarning[] {
-  const warnings: MailSecurityWarning[] = [];
-  const links = html.matchAll(/<a\b[^>]*\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi);
-  for (const match of links) {
-    const href = (match[2] || match[3] || match[4] || '').trim();
-    if (!href) continue;
-    const lowerHref = href.toLowerCase();
-    if (lowerHref.startsWith('javascript:') || lowerHref.startsWith('data:')) {
-      warnings.push({
-        kind: 'unsafeProtocol',
-        severity: 'danger',
-        title: 'Unsafe link protocol',
-        detail: 'A link uses a script or data URL protocol.',
-        evidence: href.slice(0, 120),
-      });
-      continue;
-    }
-
-    const hrefDomain = domainFromUrl(href);
-    if (!hrefDomain) continue;
-    const text = stripTags(match[5] || '');
-    const visibleUrl = visibleUrlFromText(text);
-    const visibleDomain = visibleUrl ? domainFromUrl(visibleUrl) : null;
-    if (visibleDomain && visibleDomain !== hrefDomain && !hrefDomain.endsWith(`.${visibleDomain}`)) {
-      warnings.push({
-        kind: 'suspiciousLink',
-        severity: 'danger',
-        title: 'Link destination mismatch',
-        detail: `Visible link points to ${visibleDomain}, but the real destination is ${hrefDomain}.`,
-        evidence: href.slice(0, 160),
-      });
-      continue;
-    }
-
-    if (lowerHref.startsWith('http://') || hrefDomain.startsWith('xn--') || isIpHost(hrefDomain) || SHORT_LINK_HOSTS.has(hrefDomain)) {
-      warnings.push({
-        kind: 'suspiciousLink',
-        severity: 'warning',
-        title: 'Suspicious link',
-        detail: `The message contains a link through ${hrefDomain}.`,
-        evidence: href.slice(0, 160),
-      });
-    }
-  }
-  return warnings;
-}
-
 function senderMismatchWarning(message: MailMessage): MailSecurityWarning | null {
+  if (isLikelyBulkMessage(message) || isAutomatedSender(message)) return null;
   const headers = normalizeHeaders(message.headers);
   const replyTo = getHeader(headers, 'reply-to');
   if (!replyTo) return null;
@@ -473,6 +310,7 @@ function senderMismatchWarning(message: MailMessage): MailSecurityWarning | null
 }
 
 function styleShiftWarning(message: MailMessage, priorMessages: MailMessage[]): MailSecurityWarning | null {
+  if (isLikelyBulkMessage(message) || isAutomatedSender(message)) return null;
   const comparable = priorMessages
     .filter(item => item.senderEmail.toLowerCase() === message.senderEmail.toLowerCase() && item.id !== message.id)
     .slice(-8);
@@ -483,7 +321,7 @@ function styleShiftWarning(message: MailMessage, priorMessages: MailMessage[]): 
   if (previousTexts.length < 3 || current.length < 40) return null;
 
   const avgPrevLength = previousTexts.reduce((sum, item) => sum + item.length, 0) / previousTexts.length;
-  const urgent = /\b(urgent|asap|immediately|wire|payment|invoice|password|gift card|bank|login|verify)\b/i.test(current);
+  const urgent = /\b(wire transfer|bank transfer|gift cards?|password|login|verify (?:your )?(?:account|identity)|payment (?:is )?(?:due|overdue)|urgent invoice)\b/i.test(current);
   const currentPunctuation = (current.match(/[!?]/g) || []).length;
   const avgPrevPunctuation = previousTexts.reduce((sum, item) => sum + (item.match(/[!?]/g) || []).length, 0) / previousTexts.length;
 
@@ -512,9 +350,9 @@ export function analyzeMessageSecurity(message: MailMessage, priorMessages: Mail
   if (trackingTags.length > 0) {
     warnings.push({
       kind: 'trackingPixel',
-      severity: 'warning',
-      title: 'Tracking pixels detected',
-      detail: `${trackingTags.length} hidden or tracking image${trackingTags.length === 1 ? '' : 's'} found.`,
+      severity: 'info',
+      title: 'Tracking protection',
+      detail: `${trackingTags.length} hidden tracking pixel${trackingTags.length === 1 ? '' : 's'} blocked.`,
     });
   }
 
@@ -527,18 +365,12 @@ export function analyzeMessageSecurity(message: MailMessage, priorMessages: Mail
     });
   }
 
-  warnings.push(...linkWarnings(html));
+  const linkAnalysis = analyzeLinkSecurity(html, { isBulkMessage: isLikelyBulkMessage(message) });
+  warnings.push(...linkAnalysis.warnings);
   const mismatch = senderMismatchWarning(message);
   if (mismatch) warnings.push(mismatch);
   const styleShift = styleShiftWarning(message, priorMessages);
   if (styleShift) warnings.push(styleShift);
-
-  const phishingLinkCount = warnings.filter(warning => (
-    warning.kind === 'suspiciousLink' ||
-    warning.kind === 'senderMismatch' ||
-    warning.kind === 'styleShift' ||
-    warning.kind === 'unsafeProtocol'
-  )).length;
 
   return {
     accountId: message.accountId,
@@ -547,7 +379,8 @@ export function analyzeMessageSecurity(message: MailMessage, priorMessages: Mail
     riskLevel: riskLevelForWarnings(warnings),
     warnings,
     trackerCount: trackingTags.length,
-    phishingLinkCount,
+    phishingLinkCount: linkAnalysis.phishingLinkCount,
+    analysisVersion: MAIL_SECURITY_ANALYSIS_VERSION,
     analyzedAt: now.toISOString(),
   };
 }

@@ -90,9 +90,97 @@ describe('mail security and agent heuristics', () => {
     const insight = analyzeMessageSecurity(message({ bodyHtml: html, bodyPlain: '' }));
 
     expect(insight.trackerCount).toBe(1);
-    expect(insight.riskLevel).toBe('medium');
+    expect(insight.riskLevel).toBe('low');
+    expect(insight.warnings[0]).toMatchObject({
+      kind: 'trackingPixel',
+      severity: 'info',
+      title: 'Tracking protection',
+    });
     expect(stripTrackingPixelsFromHtml(html)).not.toContain('track.example.com');
     expect(stripTrackingPixelsFromHtml(html)).toContain('cdn.example.com');
+  });
+
+  it('keeps full-size campaign images with analytics parameters', () => {
+    const html = [
+      '<img src="https://client-data.example.com/hero.png?utm_source=newsletter" width="520" height="auto">',
+      '<img src="https://client-data.example.com/card.png?mc_eid=abc" width="114" style="display:block;width:100%;height:auto">',
+    ].join('');
+    const insight = analyzeMessageSecurity(message({ bodyHtml: html, bodyPlain: '' }));
+
+    expect(insight.trackerCount).toBe(0);
+    expect(insight.warnings).toEqual([]);
+    expect(stripTrackingPixelsFromHtml(html)).toBe(html);
+  });
+
+  it('does not flag ordinary HTTP campaign links as phishing', () => {
+    const links = Array.from({ length: 13 }, (_, index) => (
+      `<a href="http://url3243.email.openai.com/click/${index}">Read more</a>`
+    )).join('');
+    const insight = analyzeMessageSecurity(message({
+      senderEmail: 'noreply@email.openai.com',
+      bodyPlain: '',
+      bodyHtml: links,
+    }));
+
+    expect(insight.phishingLinkCount).toBe(0);
+    expect(insight.warnings).toEqual([]);
+  });
+
+  it('reduces a legitimate tracked newsletter to one privacy notice', () => {
+    const contentImages = Array.from({ length: 5 }, (_, index) => (
+      `<img src="https://client-data.example.com/image-${index}.png?utm_source=newsletter" width="${100 + index}" height="auto">`
+    )).join('');
+    const links = Array.from({ length: 13 }, (_, index) => (
+      `<a href="http://url3243.email.openai.com/click/${index}">Read more</a>`
+    )).join('');
+    const trackingPixel = '<img src="https://url3243.email.openai.com/open.gif" width="1" height="1">';
+    const html = `${contentImages}${links}${trackingPixel}`;
+    const insight = analyzeMessageSecurity(message({
+      senderEmail: 'noreply@email.openai.com',
+      bodyPlain: '',
+      bodyHtml: html,
+      headers: [{ name: 'List-Unsubscribe', value: '<mailto:unsubscribe@email.openai.com>' }],
+    }));
+    const rendered = stripTrackingPixelsFromHtml(html);
+
+    expect(insight).toMatchObject({
+      riskLevel: 'low',
+      trackerCount: 1,
+      phishingLinkCount: 0,
+    });
+    expect(insight.warnings).toHaveLength(1);
+    expect(insight.warnings[0].severity).toBe('info');
+    expect((rendered.match(/<img\b/gi) || [])).toHaveLength(5);
+    expect(rendered).not.toContain('open.gif');
+  });
+
+  it('does not interpret linked filenames or usernames as visible URLs', () => {
+    const insight = analyzeMessageSecurity(message({
+      bodyPlain: '',
+      bodyHtml: [
+        '<a href="https://docs.google.com/document/1">draft.docx</a>',
+        '<a href="https://netflix.com/profile">korolev.maksim</a>',
+      ].join(''),
+    }));
+
+    expect(insight.phishingLinkCount).toBe(0);
+    expect(insight.warnings).toEqual([]);
+  });
+
+  it('groups repeated shortened links while retaining their occurrence count', () => {
+    const insight = analyzeMessageSecurity(message({
+      bodyPlain: '',
+      bodyHtml: '<a href="https://bit.ly/first">One</a><a href="https://bit.ly/second">Two</a>',
+    }));
+
+    expect(insight.phishingLinkCount).toBe(2);
+    expect(insight.warnings).toHaveLength(1);
+    expect(insight.warnings[0]).toMatchObject({
+      kind: 'suspiciousLink',
+      severity: 'warning',
+      title: 'Obscured link destination',
+    });
+    expect(insight.warnings[0].detail).toContain('2 links');
   });
 
   it('flags visible link destination mismatches', () => {
@@ -103,6 +191,48 @@ describe('mail security and agent heuristics', () => {
 
     expect(insight.riskLevel).toBe('high');
     expect(insight.warnings.some(warning => warning.kind === 'suspiciousLink')).toBe(true);
+  });
+
+  it('ignores expected redirect-domain mismatches in bulk mail', () => {
+    const insight = analyzeMessageSecurity(message({
+      senderEmail: 'news@softarex.com',
+      bodyPlain: '',
+      bodyHtml: '<a href="https://softarex.us12.list-manage.com/click">https://softarex.com</a>',
+      headers: [{ name: 'List-Unsubscribe', value: '<mailto:unsubscribe@softarex.com>' }],
+    }));
+
+    expect(insight.riskLevel).toBe('low');
+    expect(insight.phishingLinkCount).toBe(0);
+  });
+
+  it('does not apply sender style or reply-to heuristics to automated bulk mail', () => {
+    const priorMessages = [1, 2, 3].map(index => message({
+      id: `prior-${index}`,
+      senderEmail: 'noreply@email.openai.com',
+      bodyPlain: 'A short product update.',
+    }));
+    const insight = analyzeMessageSecurity(message({
+      senderEmail: 'noreply@email.openai.com',
+      bodyPlain: 'Verify your account immediately! '.repeat(100),
+      headers: [
+        { name: 'List-Unsubscribe', value: '<mailto:unsubscribe@email.openai.com>' },
+        { name: 'Reply-To', value: 'support@campaign-provider.example' },
+      ],
+    }), priorMessages);
+
+    expect(insight.warnings.some(warning => warning.kind === 'styleShift')).toBe(false);
+    expect(insight.warnings.some(warning => warning.kind === 'senderMismatch')).toBe(false);
+  });
+
+  it('flags executable link protocols', () => {
+    const insight = analyzeMessageSecurity(message({
+      bodyPlain: '',
+      bodyHtml: '<a href="javascript:alert(1)">Open</a><a href="file:///etc/passwd">File</a>',
+    }));
+
+    expect(insight.riskLevel).toBe('high');
+    expect(insight.phishingLinkCount).toBe(2);
+    expect(insight.warnings.every(warning => warning.kind === 'unsafeProtocol')).toBe(true);
   });
 });
 

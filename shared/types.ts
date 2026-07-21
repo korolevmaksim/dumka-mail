@@ -1351,6 +1351,7 @@ export interface MessageSecurityInsight {
   warnings: MailSecurityWarning[];
   trackerCount: number;
   phishingLinkCount: number;
+  analysisVersion?: number;
   analyzedAt: string;
 }
 

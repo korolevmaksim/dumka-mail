@@ -340,6 +340,7 @@ export function runMigrations(db: Database.Database) {
         warnings_json TEXT NOT NULL DEFAULT '[]',
         tracker_count INTEGER NOT NULL DEFAULT 0,
         phishing_link_count INTEGER NOT NULL DEFAULT 0,
+        analysis_version INTEGER NOT NULL DEFAULT 1,
         analyzed_at TEXT NOT NULL,
         PRIMARY KEY (account_id, message_id)
     );
@@ -451,6 +452,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'drafts', column: 'send_at', definition: 'send_at TEXT' },
     { table: 'mail_action_log', column: 'scheduled_at', definition: 'scheduled_at TEXT' },
     { table: 'mail_action_log', column: 'payload_json', definition: 'payload_json TEXT' },
+    { table: 'message_security', column: 'analysis_version', definition: 'analysis_version INTEGER NOT NULL DEFAULT 1' },
     { table: 'mail_embeddings', column: 'vector_blob', definition: 'vector_blob BLOB' },
     { table: 'calendar_events', column: 'ical_uid', definition: 'ical_uid TEXT' },
     { table: 'calendar_events', column: 'conference_url', definition: 'conference_url TEXT' },

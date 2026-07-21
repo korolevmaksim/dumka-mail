@@ -30,7 +30,7 @@ Initial account onboarding requests Gmail modify access plus Google profile/emai
 
 ## Remote images
 
-HTML mail may reference sender-hosted remote images. The app exposes a privacy setting for remote image loading, strips likely tracking pixels from rendered HTML, and stores local warning snapshots for suspicious tracking or phishing signals.
+HTML mail may reference sender-hosted remote images. The app exposes a privacy setting for remote image loading, removes only hidden tracking pixels from rendered HTML, and keeps full-size content images intact. Tracking protection is reported as a privacy notice rather than a phishing risk. Suspicious-link warnings are reserved for explicit destination mismatches, unsafe protocols, IP or internationalized-domain destinations, and known URL shorteners; ordinary HTTP links are not treated as phishing on that fact alone.
 
 ## Diagnostics
 

@@ -1,7 +1,8 @@
-import { Check, MailMinus, ShieldAlert, Sparkles, X } from 'lucide-react';
+import { Check, MailMinus, ShieldAlert, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
 import type { MailSecurityWarning } from '../../../shared/types';
+import { selectThreadSecurityWarnings } from './threadSecurityWarnings';
 
 function severityClass(severity: MailSecurityWarning['severity']): string {
   if (severity === 'danger') return 'border-[var(--danger)]/35 bg-[var(--danger)]/10 text-[var(--danger)]';
@@ -14,9 +15,8 @@ export function AgenticThreadPanel() {
   const insights = store.threadAgentInsights;
   const draft = insights?.draftSuggestion || null;
   const unsubscribe = insights?.unsubscribeCandidate || null;
-  const warnings = (insights?.securityInsights || [])
-    .flatMap(insight => insight.warnings.map(warning => ({ ...warning, messageId: insight.messageId })))
-    .slice(0, 4);
+  const warnings = selectThreadSecurityWarnings(insights?.securityInsights || []);
+  const hasThreatWarning = warnings.some(warning => warning.severity !== 'info');
 
   if (!draft && !unsubscribe?.canOneClick && warnings.length === 0 && !store.agentInsightsLoading) {
     return null;
@@ -85,8 +85,12 @@ export function AgenticThreadPanel() {
         <div className="dm-inset flex flex-col gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--raised-surface)] px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-              <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />
-              Mail safety
+              {hasThreatWarning ? (
+                <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />
+              ) : (
+                <ShieldCheck className="h-4 w-4 text-[var(--accent)]" />
+              )}
+              {hasThreatWarning ? 'Mail safety' : 'Mail privacy'}
             </div>
             {unsubscribe?.canOneClick && (
               <button

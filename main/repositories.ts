@@ -1306,14 +1306,15 @@ export const MessageSecurityRepo = {
     db.prepare(`
       INSERT INTO message_security (
         account_id, message_id, thread_id, risk_level, warnings_json,
-        tracker_count, phishing_link_count, analyzed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        tracker_count, phishing_link_count, analysis_version, analyzed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, message_id) DO UPDATE SET
         thread_id=excluded.thread_id,
         risk_level=excluded.risk_level,
         warnings_json=excluded.warnings_json,
         tracker_count=excluded.tracker_count,
         phishing_link_count=excluded.phishing_link_count,
+        analysis_version=excluded.analysis_version,
         analyzed_at=excluded.analyzed_at
     `).run(
       insight.accountId,
@@ -1323,6 +1324,7 @@ export const MessageSecurityRepo = {
       JSON.stringify(insight.warnings),
       insight.trackerCount,
       insight.phishingLinkCount,
+      insight.analysisVersion || 1,
       insight.analyzedAt
     );
   },
@@ -1332,14 +1334,15 @@ export const MessageSecurityRepo = {
     const insert = db.prepare(`
       INSERT INTO message_security (
         account_id, message_id, thread_id, risk_level, warnings_json,
-        tracker_count, phishing_link_count, analyzed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        tracker_count, phishing_link_count, analysis_version, analyzed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, message_id) DO UPDATE SET
         thread_id=excluded.thread_id,
         risk_level=excluded.risk_level,
         warnings_json=excluded.warnings_json,
         tracker_count=excluded.tracker_count,
         phishing_link_count=excluded.phishing_link_count,
+        analysis_version=excluded.analysis_version,
         analyzed_at=excluded.analyzed_at
     `);
     db.transaction(() => {
@@ -1352,6 +1355,7 @@ export const MessageSecurityRepo = {
           JSON.stringify(insight.warnings),
           insight.trackerCount,
           insight.phishingLinkCount,
+          insight.analysisVersion || 1,
           insight.analyzedAt
         );
       }
@@ -1368,6 +1372,7 @@ function mapMessageSecurityRow(row: any): MessageSecurityInsight {
     warnings: JSON.parse(row.warnings_json || '[]'),
     trackerCount: row.tracker_count,
     phishingLinkCount: row.phishing_link_count,
+    analysisVersion: row.analysis_version || 1,
     analyzedAt: row.analyzed_at
   };
 }

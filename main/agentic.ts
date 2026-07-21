@@ -13,6 +13,7 @@ import {
 import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
 import { GmailSyncService } from './gmail';
 import {
+  MAIL_SECURITY_ANALYSIS_VERSION,
   analyzeMessageSecurity,
   isSafePublicHttpUrl,
   parseUnsubscribeCandidate,
@@ -819,11 +820,19 @@ export const AgenticService = {
 
   async getThreadInsights(accountId: string, threadId: string, messages?: MailMessage[]): Promise<ThreadAgentInsights> {
     const threadMessages = messages || MessagesRepo.listForThread(accountId, threadId);
+    let securityInsights = MessageSecurityRepo.listForThread(accountId, threadId);
+    const hasFullMessageBodies = threadMessages.some(message => message.bodyHtml !== null || message.bodyPlain !== null);
+    const needsSecurityRefresh = securityInsights.length !== threadMessages.length ||
+      securityInsights.some(insight => insight.analysisVersion !== MAIL_SECURITY_ANALYSIS_VERSION);
+    if (hasFullMessageBodies && needsSecurityRefresh) {
+      analyzeThreadMessages(accountId, threadMessages);
+      securityInsights = MessageSecurityRepo.listForThread(accountId, threadId);
+    }
     return {
       accountId,
       threadId,
       draftSuggestion: AgentDraftsRepo.getReadyForThread(accountId, threadId),
-      securityInsights: MessageSecurityRepo.listForThread(accountId, threadId),
+      securityInsights,
       unsubscribeCandidate: chooseUnsubscribeCandidate(threadMessages),
     };
   },
