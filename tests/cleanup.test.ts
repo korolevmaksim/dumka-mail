@@ -3,6 +3,7 @@ import { buildCleanupArchiveItem, buildCleanupUnsubscribeItem } from '../shared/
 import {
   CLEANUP_ARCHIVE_AGE_MS,
   CLEANUP_ARCHIVE_BATCH_LIMIT,
+  completedCleanupMutationKey,
   isCleanupSenderActionable,
   selectArchiveOldCandidates,
   shouldResurfaceUnsubscribedSender,
@@ -10,7 +11,7 @@ import {
   UNSUBSCRIBE_GRACE_PERIOD_MS,
   UNSUBSCRIBE_RESURFACE_MIN_MESSAGES,
 } from '../shared/cleanup';
-import type { MailThread, SenderCleanupStat, UnsubscribeCandidate } from '../shared/types';
+import type { MailActionLog, MailThread, SenderCleanupStat, UnsubscribeCandidate } from '../shared/types';
 
 function stat(partial: Partial<SenderCleanupStat> = {}): SenderCleanupStat {
   return {
@@ -58,6 +59,36 @@ describe('isCleanupSenderActionable', () => {
 
   it('is true when archiveable old threads exist', () => {
     expect(isCleanupSenderActionable(stat({ archiveableOldCount: 3 }))).toBe(true);
+  });
+});
+
+describe('completedCleanupMutationKey', () => {
+  function action(partial: Partial<MailActionLog> = {}): MailActionLog {
+    return {
+      id: partial.id || 'action-1',
+      accountId: partial.accountId || 'me@example.com',
+      threadId: partial.threadId || 'thread-1',
+      kind: partial.kind || 'markDone',
+      status: partial.status || 'completed',
+      createdAt: partial.createdAt || '2026-07-21T10:00:00.000Z',
+      completedAt: partial.completedAt ?? '2026-07-21T10:00:01.000Z',
+    };
+  }
+
+  it('changes for completed archive and unsubscribe actions', () => {
+    expect(completedCleanupMutationKey([
+      action({ id: 'archive-1', kind: 'markDone' }),
+      action({ id: 'unsubscribe-1', kind: 'unsubscribeSender' }),
+    ])).toBe(
+      'archive-1:2026-07-21T10:00:01.000Z|unsubscribe-1:2026-07-21T10:00:01.000Z',
+    );
+  });
+
+  it('ignores incomplete and unrelated actions', () => {
+    expect(completedCleanupMutationKey([
+      action({ id: 'pending-archive', kind: 'markDone', status: 'pending_sync' }),
+      action({ id: 'read-1', kind: 'markRead' }),
+    ])).toBe('');
   });
 });
 

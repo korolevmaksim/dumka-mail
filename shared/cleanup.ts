@@ -1,4 +1,4 @@
-import type { MailThread, SenderCleanupStat } from './types';
+import type { MailActionLog, MailThread, SenderCleanupStat } from './types';
 
 export type CleanupSuggestedAction = 'review' | 'unsubscribe' | 'archiveOld' | 'none';
 
@@ -27,6 +27,22 @@ export const UNSUBSCRIBE_GRACE_PERIOD_MS = UNSUBSCRIBE_GRACE_PERIOD_DAYS * 24 * 
  * unsubscribed sender in Cleanup. One queued campaign email is ignored.
  */
 export const UNSUBSCRIBE_RESURFACE_MIN_MESSAGES = 2;
+
+/**
+ * Stable signal for completed actions that can change Cleanup sender stats.
+ * Archiving removes an old thread from the INBOX eligibility count, while a
+ * successful unsubscribe suppresses the sender until it qualifies to resurface.
+ */
+export function completedCleanupMutationKey(actionLog: readonly MailActionLog[]): string {
+  return actionLog
+    .filter(log => (
+      log.status === 'completed'
+      && (log.kind === 'markDone' || log.kind === 'unsubscribeSender')
+    ))
+    .map(log => `${log.id}:${log.completedAt || ''}`)
+    .sort()
+    .join('|');
+}
 
 /**
  * Whether a previously unsubscribed sender should reappear in Cleanup after

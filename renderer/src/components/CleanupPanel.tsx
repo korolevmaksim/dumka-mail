@@ -3,6 +3,7 @@ import { Eraser, ListFilter, RefreshCw, X } from 'lucide-react';
 import type { CleanupSenderExclusion, SenderCleanupStat } from '../../../shared/types';
 import {
   CLEANUP_ARCHIVE_BATCH_LIMIT,
+  completedCleanupMutationKey,
   isCleanupSenderActionable,
   selectArchiveOldCandidates,
 } from '../../../shared/cleanup';
@@ -67,18 +68,18 @@ export function CleanupPanel() {
     void loadStats();
   }, [loadStats]);
 
-  // After a successful unsubscribe, the main process marks the sender and the
-  // action log flips to completed. Reload stats so the row disappears without
-  // requiring a manual refresh (historical List-Unsubscribe headers still match).
-  const completedUnsubscribeKey = useMemo(() => store.actionLog
-    .filter(log => log.kind === 'unsubscribeSender' && log.status === 'completed')
-    .map(log => `${log.id}:${log.completedAt || ''}`)
-    .join('|'), [store.actionLog]);
+  // Cleanup stats are a separate SQL snapshot from the optimistic renderer
+  // thread cache. Re-read them after any successful archive or unsubscribe so
+  // an applied Archive batch cannot leave a stale count/button on screen.
+  const completedMutationKey = useMemo(
+    () => completedCleanupMutationKey(store.actionLog),
+    [store.actionLog],
+  );
 
   useEffect(() => {
-    if (!completedUnsubscribeKey) return;
+    if (!completedMutationKey) return;
     void loadStats();
-  }, [completedUnsubscribeKey, loadStats]);
+  }, [completedMutationKey, loadStats]);
 
   // One O(threads) grouping pass shared by every sender row instead of a full
   // thread-list scan per row. Stats keys are lowercase (sender_key in SQL), so
