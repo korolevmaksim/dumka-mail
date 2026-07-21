@@ -62,6 +62,8 @@ Advanced users can pre-seed AI settings with a dotenv-style file at `~/.config/d
 
 Semantic-search provider, model, endpoint, dimensions, and index maintenance are configured in Settings -> AI Configuration. Semantic search is disabled by default. When enabled, background indexing only backfills small recent batches; use the Settings index controls to inspect coverage, reindex all cached mail, rebuild the current provider/model/dimension index, cancel an active job, or delete old indexes. Changing provider, model, endpoint, or dimensions creates a separate local index key, so vectors from a previous configuration are not mixed with new query vectors.
 
+Application activity and sync failures can be inspected from Settings -> Logging. The viewer reads structured local SQLite events, supports live severity/source/search filters, and applies configurable time and record-count retention without requiring a log file or Terminal. See [docs/LOGGING.md](docs/LOGGING.md).
+
 Do not commit local OAuth files, provider keys, refresh tokens, SQLite databases, logs, or app exports.
 
 ## Development

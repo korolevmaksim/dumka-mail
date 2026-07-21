@@ -55,6 +55,7 @@ import {
 } from '../../shared/types';
 import { AIRequest } from '../../main/ai';
 import type { AutoUpdateStatus } from '../../shared/autoUpdate';
+import type { SystemLogEntry, SystemLogPage, SystemLogQuery, SystemLogStats } from '../../shared/systemLogs';
 
 export interface IElectronAPI {
   // Accounts
@@ -225,6 +226,12 @@ export interface IElectronAPI {
   // Settings
   getSetting: (key: string) => Promise<string | null>;
   setSetting: (key: string, value: string) => Promise<void>;
+
+  // Local application logs
+  listSystemLogs: (query?: SystemLogQuery) => Promise<SystemLogPage>;
+  getSystemLogStats: () => Promise<SystemLogStats>;
+  clearSystemLogs: () => Promise<number>;
+  onSystemLogEntry: (callback: (entry: SystemLogEntry) => void) => () => void;
 
   // Native Find in Page
   findInPage: (text: string, options?: any) => Promise<number>;

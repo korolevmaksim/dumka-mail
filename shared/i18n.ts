@@ -20,6 +20,7 @@ export type TranslationKey =
   | 'settings.tabs.mcp'
   | 'settings.tabs.privacy'
   | 'settings.tabs.appearance'
+  | 'settings.tabs.logging'
   | 'settings.tabs.about'
   | 'settings.general.title'
   | 'settings.general.description'
@@ -90,6 +91,7 @@ const ENGLISH: Record<TranslationKey, string> = {
   'settings.tabs.mcp': 'MCP & Search',
   'settings.tabs.privacy': 'Privacy',
   'settings.tabs.appearance': 'Appearance',
+  'settings.tabs.logging': 'Logging',
   'settings.tabs.about': 'About',
   'settings.general.title': 'General Preferences',
   'settings.general.description': 'Configure startup behavior, links, and workspace defaults.',

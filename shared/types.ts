@@ -1,4 +1,5 @@
 import type { AppLanguage } from './i18n';
+import type { SystemLoggingSettings } from './systemLogs';
 
 export type AccountID = string;
 export type ThreadID = string;
@@ -1299,6 +1300,7 @@ export interface AppSettings {
   notifications: MailNotificationSettings;
   ai: AISettings;
   privacy: PrivacySettings;
+  logging: SystemLoggingSettings;
   appearance: AppearanceSettings;
   mcpServers?: MCPServerConfig[];
   searchProviders?: SearchProvidersSettings;

@@ -364,6 +364,15 @@ export function runMigrations(db: Database.Database) {
         value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS application_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        occurred_at TEXT NOT NULL,
+        level TEXT NOT NULL CHECK (level IN ('info', 'warning', 'error')),
+        source TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details_json TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_ai_conversations_updated_at ON ai_conversations(updated_at);
     CREATE INDEX IF NOT EXISTS idx_ai_conversations_account_id ON ai_conversations(account_id);
     CREATE INDEX IF NOT EXISTS idx_mail_action_log_created_at ON mail_action_log(created_at);
@@ -388,6 +397,9 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_calendar_lists_account_selected ON calendar_lists(account_id, is_selected, is_deleted);
     CREATE INDEX IF NOT EXISTS idx_calendar_mutations_created ON calendar_mutations(created_at);
     CREATE INDEX IF NOT EXISTS idx_calendar_notification_start ON calendar_notification_log(start_at);
+    CREATE INDEX IF NOT EXISTS idx_application_logs_occurred_at ON application_logs(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_application_logs_level_id ON application_logs(level, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_application_logs_source_id ON application_logs(source, id DESC);
     CREATE VIRTUAL TABLE IF NOT EXISTS mail_search USING fts5(account_id, thread_id, message_id, subject, sender, snippet, body_plain);
     CREATE VIRTUAL TABLE IF NOT EXISTS calendar_search USING fts5(
         account_id UNINDEXED, calendar_id UNINDEXED, event_id UNINDEXED,

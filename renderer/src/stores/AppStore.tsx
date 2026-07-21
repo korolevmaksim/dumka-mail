@@ -54,6 +54,7 @@ import { DEFAULT_DAILY_BRIEFING_SETTINGS } from '../../../shared/dailyBriefing';
 import { DEFAULT_MAIL_RULES_SETTINGS, normalizeMailRulesSettings } from '../../../shared/mailRules';
 import { normalizeSnippetTemplates } from '../../../shared/snippets';
 import { normalizeAppLanguage } from '../../../shared/i18n';
+import { DEFAULT_SYSTEM_LOGGING_SETTINGS, normalizeSystemLoggingSettings } from '../../../shared/systemLogs';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { useSettingsState } from './useSettingsState';
 import { useMailState } from './useMailState';
@@ -81,7 +82,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 19;
+export const SETTINGS_SCHEMA_VERSION = 20;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -265,6 +266,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     clearCacheOnDisconnect: true,
     diagnosticsEnabled: false
   },
+  logging: { ...DEFAULT_SYSTEM_LOGGING_SETTINGS },
   appearance: {
     interfaceStyle: 'classic',
     theme: 'system',
@@ -334,6 +336,7 @@ export function mergeSettings(parsed: any): AppSettings {
     : DEFAULT_SETTINGS.ai.promptShortcuts.map(shortcut => ({ ...shortcut }));
   merged.snippets.templates = normalizeSnippetTemplates(merged.snippets.templates);
   merged.mailRules = normalizeMailRulesSettings(merged.mailRules);
+  merged.logging = normalizeSystemLoggingSettings(merged.logging);
   merged.general.language = normalizeAppLanguage(merged.general.language);
   if (!['classic', 'soft'].includes(merged.appearance.interfaceStyle)) {
     merged.appearance.interfaceStyle = 'classic';

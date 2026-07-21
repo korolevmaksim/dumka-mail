@@ -25,6 +25,7 @@ import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { normalizeEmbeddingText, stableTextHash } from '../shared/semantic';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
+import { SystemLogger } from './systemLogger';
 import type {
   AgentDraftSuggestion,
   AgentRulesSettings,
@@ -361,7 +362,7 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
     AgentDraftsRepo.save(draft);
     return draft;
   } catch (err) {
-    console.warn('[Agentic] Proactive draft generation skipped:', err);
+    SystemLogger.warning('Agentic', 'Proactive draft generation was skipped.', { error: err });
     return null;
   } finally {
     activeDraftThreads.delete(key);
@@ -427,9 +428,16 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
       await pauseBetweenEmbeddingBatches();
     }
 
+    if (indexed > 0) {
+      SystemLogger.info('Semantic Index', 'Recent mail indexing completed.', {
+        accountId,
+        indexedMessages: indexed,
+        model,
+      });
+    }
     return indexed;
   } catch (err) {
-    console.warn('[Agentic] Semantic indexing skipped:', err);
+    SystemLogger.warning('Semantic Index', 'Recent mail indexing was skipped.', { accountId, error: err });
     return 0;
   } finally {
     activeRecentEmbeddingAccounts.delete(accountId);
@@ -494,6 +502,11 @@ async function runEmbeddingReindexJob(
 ): Promise<void> {
   const model = currentEmbeddingModel(settings);
   let offset = 0;
+  SystemLogger.info('Semantic Index', 'Full mailbox indexing started.', {
+    accountId: job.accountId,
+    model,
+    totalMessages: job.total,
+  });
   try {
     await pauseBetweenEmbeddingBatches();
 
@@ -540,11 +553,26 @@ async function runEmbeddingReindexJob(
   } catch (err) {
     job.state = 'failed';
     job.error = toErrorMessage(err);
-    console.warn('[Agentic] Embedding reindex failed:', err);
+    SystemLogger.error('Semantic Index', 'Full mailbox indexing failed.', err, {
+      accountId: job.accountId,
+      model,
+      processedMessages: job.processed,
+      indexedMessages: job.indexed,
+      failedMessages: job.failed,
+    });
   } finally {
     const finishedAt = nowISO();
     job.updatedAt = finishedAt;
     job.completedAt = finishedAt;
+    if (job.state !== 'failed') {
+      SystemLogger.info('Semantic Index', `Full mailbox indexing ${job.state}.`, {
+        accountId: job.accountId,
+        model,
+        processedMessages: job.processed,
+        indexedMessages: job.indexed,
+        failedMessages: job.failed,
+      });
+    }
   }
 }
 
@@ -594,6 +622,12 @@ async function startEmbeddingReindexForAccount(
       void runEmbeddingReindexJob(job, embeddingSettings);
     }, 0);
   }
+  if (totalMessages === 0) {
+    SystemLogger.info('Semantic Index', 'Full mailbox indexing completed with no eligible messages.', {
+      accountId,
+      model,
+    });
+  }
 
   return getEmbeddingIndexStatusForAccount(accountId);
 }
@@ -603,6 +637,7 @@ async function cancelEmbeddingReindexForAccount(accountId: string): Promise<Embe
   if (job?.state === 'running') {
     job.cancelRequested = true;
     job.updatedAt = nowISO();
+    SystemLogger.info('Semantic Index', 'Full mailbox indexing cancellation requested.', { accountId });
   }
   return getEmbeddingIndexStatusForAccount(accountId);
 }

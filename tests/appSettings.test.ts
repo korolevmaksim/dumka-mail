@@ -33,6 +33,14 @@ describe('AppSettings defaults and migrations', () => {
     expect(DEFAULT_SETTINGS.general.language).toBe('system');
   });
 
+  it('ships bounded local log retention and migrates invalid logging settings', () => {
+    expect(DEFAULT_SETTINGS.logging).toEqual({ retentionDays: 14, maxEntries: 25_000 });
+    expect(mergeSettings({ logging: { retentionDays: 31, maxEntries: 8_000 } }).logging).toEqual({
+      retentionDays: 30,
+      maxEntries: 10_000,
+    });
+  });
+
   it('preserves Today as a supported startup workspace and rejects unknown values', () => {
     expect(mergeSettings({ general: { startupBehavior: 'today' } }).general.startupBehavior).toBe('today');
     expect(mergeSettings({ general: { startupBehavior: 'unknown' } }).general.startupBehavior).toBe('inbox');

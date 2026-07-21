@@ -34,6 +34,6 @@ HTML mail may reference sender-hosted remote images. The app exposes a privacy s
 
 ## Diagnostics
 
-Diagnostics are disabled by default. Logs should not include secrets or raw tokens.
+Anonymous diagnostics are disabled by default. The local application log is available under Settings -> Logging and remains on the device in SQLite. Credential-shaped fields, bearer tokens, and API-key patterns are always removed before persistence; personal identifiers are masked when Redact Logs is enabled. Retention and the maximum local record count are user-configurable. See [LOGGING.md](LOGGING.md) for the viewer, retention, and redaction behavior.
 
 Calendar notifications are scheduled from the local cache and deduplicated in SQLite. Quiet hours and the existing desktop-notification controls apply. Importing an `.ics` file reads only the user-selected local file, shows a preview before writing to Google, and does not email attendees. Export writes only the selected event to the user-selected path.

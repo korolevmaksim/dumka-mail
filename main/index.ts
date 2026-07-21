@@ -27,6 +27,8 @@ import {
   AIConversationsRepo,
   ThreadsRepo,
 } from './database';
+import { SystemLogRepo } from './systemLogRepository';
+import { SystemLogger } from './systemLogger';
 import { isNetworkError, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
@@ -89,6 +91,7 @@ import type {
   ReplyPipelineCandidate,
   SyncState,
 } from '../shared/types';
+import type { SystemLogQuery } from '../shared/systemLogs';
 import {
   allocateUniqueFilename,
   canOpenExternally,
@@ -688,7 +691,22 @@ app.whenReady().then(async () => {
   // Initialize SQLite database and run migrations
   initializeDatabase();
 
+  let storedAppSettings: Partial<AppSettings> = {};
+  try {
+    storedAppSettings = JSON.parse(SettingsRepo.get('appSettings') || '{}') as Partial<AppSettings>;
+  } catch {
+    storedAppSettings = {};
+  }
+  SystemLogger.initialize(storedAppSettings.logging, {
+    redactPersonalData: storedAppSettings.privacy?.redactLogs !== false,
+    publish: entry => mainWindow?.webContents.send('api:systemLogEntry', entry),
+  });
+
   createWindow();
+  SystemLogger.info('Application', 'Dumka Mail started.', {
+    version: app.getVersion(),
+    platform: process.platform,
+  });
 
   // Install the native application menu
   installApplicationMenu(() => mainWindow);
@@ -734,6 +752,7 @@ app.whenReady().then(async () => {
         allowOptimisticState: true,
       });
     },
+    logger: SystemLogger.console('Action Sync'),
   });
   startReminderNotificationWorker();
   startCalendarMutationWorker(() => mainWindow);
@@ -753,7 +772,7 @@ app.whenReady().then(async () => {
       await MCPManager.initialize(resolved as any);
     }
   } catch (err) {
-    console.error('Failed to initialize MCPManager on startup:', err);
+    SystemLogger.error('MCP', 'Failed to initialize MCP servers on startup.', err);
   }
 
   app.on('activate', () => {
@@ -778,7 +797,7 @@ app.on('window-all-closed', () => {
 async function saveThreadsToDatabase(threads: MailThread[]) {
   await databaseWorkerClient.saveThreads(threads);
   void runMailRulesForThreads(threads).catch(err => {
-    console.error('Failed to apply mail rules:', err);
+    SystemLogger.error('Mail Rules', 'Failed to apply mail rules to synchronized threads.', err);
   });
 }
 
@@ -793,7 +812,7 @@ async function saveMessagesToDatabase(messages: MailMessage[], options?: { notif
       notifyReplyPipelineUpdated(state.accountId, state.threadId);
     }
   } catch (pipelineError) {
-    console.error('[Reply Pipeline] Failed to reconcile persisted messages:', pipelineError);
+    SystemLogger.error('Reply Pipeline', 'Failed to reconcile persisted messages.', pipelineError);
   }
 
   if (options?.notifyOfNew && newMessages.length > 0) {
@@ -935,6 +954,7 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
 
   try {
     const parsed = JSON.parse(storedValue);
+    SystemLogger.updateSettings(parsed?.logging, parsed?.privacy?.redactLogs !== false);
     if (shouldRefreshSearchBodyIndex) {
       SearchRepo.setBodyIndexEnabled(parsed?.privacy?.includeBodiesInSearchIndex !== false);
     }
@@ -942,14 +962,22 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
       void resolveAppSettingsSecrets(parsed)
         .then(resolved => MCPManager.initialize(resolved as any))
         .catch(err => {
-          console.error('Failed to refresh MCPManager after settings update:', err);
+          SystemLogger.error('MCP', 'Failed to refresh MCP servers after a settings update.', err);
         });
     }
   } catch (err) {
-    console.error('Failed to apply settings update side effects:', err);
+    SystemLogger.error('Settings', 'Failed to apply settings update side effects.', err);
   }
 
   return result;
+});
+
+registerSecureHandler('api:listSystemLogs', (_, query?: SystemLogQuery) => SystemLogRepo.list(query));
+registerSecureHandler('api:getSystemLogStats', () => SystemLogRepo.stats());
+registerSecureHandler('api:clearSystemLogs', () => {
+  const deleted = SystemLogRepo.clear();
+  SystemLogger.info('Logging', 'Application logs were cleared.', { deletedEntries: deleted });
+  return deleted;
 });
 
 registerSecureHandler('api:verifyMCPServer', async (_, config) => {
@@ -1152,7 +1180,11 @@ async function performCalendarSync(email: string, startAt: string, endAt: string
         .filter(event => event.calendarId === calendar.id);
       allEvents.push(...cachedEvents.filter(event => event.status !== 'cancelled'));
     } catch (error) {
-      console.warn(`Calendar sync skipped ${calendar.id}:`, error);
+      SystemLogger.warning('Calendar Sync', 'A calendar was skipped during synchronization.', {
+        accountId: email,
+        calendarId: calendar.id,
+        error,
+      });
       allEvents.push(...CalendarEventsRepo.listBetween(email, startAt, endAt)
         .filter(event => event.calendarId === calendar.id && event.status !== 'cancelled'));
     }
@@ -1755,7 +1787,11 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
     return { offline: false };
   } catch (err: any) {
     if (isNetworkError(err)) {
-      console.warn('Network error in modifyLabels, queueing offline action:', err.message);
+      SystemLogger.warning('Action Sync', 'A mail action was queued for offline retry.', {
+        accountId: email,
+        actionKind,
+        error: err,
+      });
       if (actionId) {
         const log = ActionLogRepo.list(email).find(l => l.id === actionId);
         if (log) {
@@ -1800,7 +1836,10 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
     return { offline: false, threadId };
   } catch (err: any) {
     if (isNetworkError(err)) {
-      console.warn('Network error in sendDraft, queueing offline send:', err.message);
+      SystemLogger.warning('Action Sync', 'A send was queued for offline retry.', {
+        accountId: email,
+        error: err,
+      });
       if (actionId) {
         const log = ActionLogRepo.list(email).find(l => l.id === actionId);
         if (log) {
@@ -1844,7 +1883,10 @@ registerSecureHandler('api:searchSemantic', async (_, accountId, query, limit) =
   try {
     return await AgenticService.searchSemantic(accountId, query, limit);
   } catch (err) {
-    console.warn('[Agentic] Semantic search unavailable:', err);
+    SystemLogger.warning('Semantic Search', 'Semantic search was unavailable.', {
+      accountId,
+      error: err,
+    });
     return {
       status: 'error',
       results: [],
@@ -1954,7 +1996,7 @@ function startReminderNotificationWorker() {
         threadId: thread.id
       })));
     } catch (err) {
-      console.error('[Reminder Worker] Failed to process due reminders:', err);
+      SystemLogger.error('Reminders', 'Failed to process due reminders.', err);
     } finally {
       reminderWorkerActive = false;
     }
@@ -1989,6 +2031,7 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
   }
 
   activeBackfillAccounts.add(email);
+  const startedAt = Date.now();
 
   try {
     const syncState = SyncStateRepo.get(email);
@@ -2000,6 +2043,7 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
         busy: false
       };
     }
+    SystemLogger.info('Mailbox Backfill', 'Started a mailbox history page.', { accountId: email });
 
     const page = await GmailSyncService.syncBackfillPage(email, syncState?.historyBackfillPageToken || undefined);
     await saveThreadsToDatabase(page.threads);
@@ -2023,12 +2067,26 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
       historyBackfillThreadsSynced: nextThreadsSynced
     });
 
-    return {
+    const result = {
       threadsIndexed: nextThreadsSynced,
       pageThreadsIndexed: page.threads.length,
       completed: !page.nextPageToken,
       busy: false
     };
+    SystemLogger.info('Mailbox Backfill', 'Mailbox history page completed.', {
+      accountId: email,
+      pageThreadsIndexed: result.pageThreadsIndexed,
+      totalThreadsIndexed: result.threadsIndexed,
+      completed: result.completed,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    SystemLogger.error('Mailbox Backfill', 'Mailbox history page failed.', error, {
+      accountId: email,
+      durationMs: Date.now() - startedAt,
+    });
+    throw error;
   } finally {
     activeBackfillAccounts.delete(email);
   }
@@ -2062,7 +2120,11 @@ async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta
           upserts.push(thread);
         }
       } catch (err: any) {
-        console.warn(`[Mailbox Sync] Failed to fetch thread detail for ${threadId}:`, err);
+        SystemLogger.warning('Mailbox Sync', 'Failed to fetch synchronized thread details.', {
+          accountId: email,
+          threadId,
+          error: err,
+        });
         if (err.message?.includes('not found') || err.message?.includes('404')) {
           ThreadsRepo.delete(email, threadId);
           deletedThreadIds.push(threadId);
@@ -2093,13 +2155,37 @@ async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta
 
 function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
   const existing = mailboxSyncInFlight.get(email);
-  if (existing) return existing;
+  if (existing) {
+    SystemLogger.info('Mailbox Sync', 'Joined an in-progress mailbox sync.', { accountId: email });
+    return existing;
+  }
 
-  const task = performMailboxSyncForAccount(email).finally(() => {
-    if (mailboxSyncInFlight.get(email) === task) {
-      mailboxSyncInFlight.delete(email);
-    }
-  });
+  const startedAt = Date.now();
+  const mode = SyncStateRepo.get(email)?.historyId ? 'incremental' : 'initial';
+  const task = performMailboxSyncForAccount(email)
+    .then(delta => {
+      SystemLogger.info('Mailbox Sync', 'Mailbox sync completed.', {
+        accountId: email,
+        mode,
+        updatedThreads: delta.upserts.length,
+        deletedThreads: delta.deletedThreadIds.length,
+        durationMs: Date.now() - startedAt,
+      });
+      return delta;
+    })
+    .catch(error => {
+      SystemLogger.error('Mailbox Sync', 'Mailbox sync failed.', error, {
+        accountId: email,
+        mode,
+        durationMs: Date.now() - startedAt,
+      });
+      throw error;
+    })
+    .finally(() => {
+      if (mailboxSyncInFlight.get(email) === task) {
+        mailboxSyncInFlight.delete(email);
+      }
+    });
   mailboxSyncInFlight.set(email, task);
   return task;
 }
@@ -2115,7 +2201,7 @@ function startBackgroundMailboxSyncWorker() {
         await runMailboxSyncForAccount(account.email);
       }
     } catch (err) {
-      console.error('[Mailbox Sync] Background mailbox sync failed:', err);
+      SystemLogger.error('Mailbox Sync', 'Background mailbox sync pass failed.', err);
     } finally {
       mailboxSyncWorkerActive = false;
     }
@@ -2138,7 +2224,7 @@ function startBackgroundAgenticWorker() {
     try {
       await AgenticService.runBackgroundPass();
     } catch (err) {
-      console.error('[Agentic] Background pass failed:', err);
+      SystemLogger.error('Agentic', 'Background agent pass failed.', err);
     } finally {
       agenticWorkerActive = false;
     }

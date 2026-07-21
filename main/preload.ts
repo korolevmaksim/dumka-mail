@@ -37,6 +37,7 @@ import {
 } from '../shared/types';
 import { AIRequest } from './ai';
 import type { AutoUpdateStatus } from '../shared/autoUpdate';
+import type { SystemLogEntry, SystemLogPage, SystemLogQuery, SystemLogStats } from '../shared/systemLogs';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Accounts
@@ -209,6 +210,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('db:getSetting', key),
   setSetting: (key: string, value: string) => ipcRenderer.invoke('db:setSetting', key, value),
+
+  // Local application logs
+  listSystemLogs: (query?: SystemLogQuery): Promise<SystemLogPage> => ipcRenderer.invoke('api:listSystemLogs', query),
+  getSystemLogStats: (): Promise<SystemLogStats> => ipcRenderer.invoke('api:getSystemLogStats'),
+  clearSystemLogs: (): Promise<number> => ipcRenderer.invoke('api:clearSystemLogs'),
+  onSystemLogEntry: (callback: (entry: SystemLogEntry) => void) => {
+    const listener = (_: unknown, entry: SystemLogEntry) => callback(entry);
+    ipcRenderer.on('api:systemLogEntry', listener);
+    return () => ipcRenderer.off('api:systemLogEntry', listener);
+  },
 
   // Native Find in Page
   findInPage: (text: string, options?: any) => ipcRenderer.invoke('api:findInPage', text, options),
