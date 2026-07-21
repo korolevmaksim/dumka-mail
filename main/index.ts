@@ -65,6 +65,7 @@ import type {
   ActionKind,
   AgentPlanItem,
   AppSettings,
+  AttachmentMetadata,
   AttachmentOpenBlocked,
   AttachmentOpenResult,
   AttachmentSaveCancelled,
@@ -1483,15 +1484,7 @@ registerSecureHandler('api:revealInFolder', async (_, filePath: string): Promise
   shell.showItemInFolder(filePath);
 });
 
-registerSecureHandler('api:uploadAttachment', async () => {
-  if (!mainWindow) return null;
-  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
-    title: 'Select File to Attach'
-  });
-
-  if (!filePaths || filePaths.length === 0) return null;
-  const filePath = filePaths[0];
+function loadLocalAttachment(filePath: string): AttachmentMetadata {
   const filename = path.basename(filePath);
   const sizeBytes = fs.statSync(filePath).size;
   const mimeType = getMimeType(filePath);
@@ -1502,8 +1495,29 @@ registerSecureHandler('api:uploadAttachment', async () => {
     filename,
     mimeType,
     sizeBytes,
-    base64Data
+    base64Data,
   };
+}
+
+registerSecureHandler('api:uploadAttachment', async () => {
+  if (!mainWindow) return null;
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select File to Attach'
+  });
+
+  if (!filePaths || filePaths.length === 0) return null;
+  return loadLocalAttachment(filePaths[0]);
+});
+
+registerSecureHandler('api:uploadAttachments', async (): Promise<AttachmentMetadata[]> => {
+  if (!mainWindow) return [];
+  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    title: 'Select Files to Attach',
+  });
+
+  return filePaths.map(loadLocalAttachment);
 });
 function inferLabelActionKind(addLabelIds: string[], removeLabelIds: string[]): any {
   if (addLabelIds.includes('TRASH')) return 'moveToTrash';

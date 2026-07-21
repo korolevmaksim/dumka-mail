@@ -177,6 +177,7 @@ export interface IElectronAPI {
   getSystemDownloadsPath: () => Promise<string>;
   revealInFolder: (filePath: string) => Promise<void>;
   uploadAttachment: () => Promise<AttachmentMetadata | null>;
+  uploadAttachments: () => Promise<AttachmentMetadata[]>;
   syncContacts: (email: string) => Promise<{ contacts: ContactCard[]; groups: ContactGroup[] }>;
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => Promise<CalendarEvent[]>;
   syncCalendarLists: (email: string) => Promise<CalendarListEntry[]>;

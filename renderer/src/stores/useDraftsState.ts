@@ -4,6 +4,7 @@ import { startReply as buildReplySeed, startForward as buildForwardSeed, validat
 import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
 import { replyDraftPlaceholderValidationMessage } from '../../../shared/replyPipeline';
+import { filesToAttachments } from '../lib/composeHtmlHelpers';
 
 interface UseDraftsStateProps {
   settings: AppSettings;
@@ -31,6 +32,8 @@ export function useDraftsState({
   const pendingSendTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingSendIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pendingDraftRef = useRef<Draft | null>(null);
+  const activeDraftRef = useRef<Draft | null>(activeDraft);
+  activeDraftRef.current = activeDraft;
   const shouldPersistDrafts = settings.general.keepDraftsAcrossLaunches;
 
   const persistDraft = (draft: Draft, context: string): Promise<void> => {
@@ -270,16 +273,44 @@ export function useDraftsState({
 
   const addAttachmentToDraft = async () => {
     if (!activeDraft) return;
-    const attachment = await window.electronAPI.uploadAttachment();
-    if (!attachment) return;
+    const targetDraftId = activeDraft.id;
+    const attachments = await window.electronAPI.uploadAttachments();
+    if (attachments.length === 0) return;
+    const currentDraft = activeDraftRef.current;
+    if (!currentDraft || currentDraft.id !== targetDraftId) return;
     const updatedDraft: Draft = {
-      ...activeDraft,
-      attachments: [...(activeDraft.attachments || []), attachment],
+      ...currentDraft,
+      attachments: [...(currentDraft.attachments || []), ...attachments],
       updatedAt: new Date().toISOString()
     };
-    await persistDraft(updatedDraft, 'attachment');
+    await persistDraft(updatedDraft, 'attachments');
+    activeDraftRef.current = updatedDraft;
     setActiveDraft(updatedDraft);
     loadDrafts();
+  };
+
+  const addDroppedFilesToDraft = async (files: readonly File[]) => {
+    if (!activeDraft || files.length === 0) return;
+    const targetDraftId = activeDraft.id;
+    try {
+      const attachments = await filesToAttachments(files);
+      const currentDraft = activeDraftRef.current;
+      if (!currentDraft || currentDraft.id !== targetDraftId) return;
+      const updatedDraft: Draft = {
+        ...currentDraft,
+        attachments: [...(currentDraft.attachments || []), ...attachments],
+        updatedAt: new Date().toISOString(),
+      };
+      await persistDraft(updatedDraft, 'dropped attachments');
+      activeDraftRef.current = updatedDraft;
+      setActiveDraft(updatedDraft);
+      loadDrafts();
+    } catch (error: unknown) {
+      emitToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to attach dropped files.',
+      });
+    }
   };
 
   const removeAttachmentFromDraft = async (attId: string) => {
@@ -450,6 +481,7 @@ export function useDraftsState({
     updateDraft,
     updateDraftBody,
     addAttachmentToDraft,
+    addDroppedFilesToDraft,
     removeAttachmentFromDraft,
     discardDraft,
     scheduleDraftSend,

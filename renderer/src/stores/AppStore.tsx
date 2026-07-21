@@ -496,6 +496,7 @@ interface AppStoreContextType {
   pendingSendSeconds: number;
   cancelPendingSend: () => void;
   addAttachmentToDraft: () => Promise<void>;
+  addDroppedFilesToDraft: (files: readonly File[]) => Promise<void>;
   removeAttachmentFromDraft: (id: string) => Promise<void>;
   discardDraft: (draftId: string) => Promise<void>;
   syncHealth: 'ready' | 'syncing' | 'indexing' | 'paused' | 'failed' | 'reconnect';

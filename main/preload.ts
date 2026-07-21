@@ -161,6 +161,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSystemDownloadsPath: () => ipcRenderer.invoke('api:getSystemDownloadsPath'),
   revealInFolder: (filePath: string) => ipcRenderer.invoke('api:revealInFolder', filePath),
   uploadAttachment: () => ipcRenderer.invoke('api:uploadAttachment'),
+  uploadAttachments: () => ipcRenderer.invoke('api:uploadAttachments'),
   syncContacts: (email: string) => ipcRenderer.invoke('api:syncContacts', email),
   syncCalendarEvents: (email: string, startAt: string, endAt: string) => ipcRenderer.invoke('api:syncCalendarEvents', email, startAt, endAt),
   syncCalendarLists: (email: string) => ipcRenderer.invoke('api:syncCalendarLists', email),

@@ -28,6 +28,7 @@ interface RichTextEditorProps {
   collapseQuotedText?: boolean;
   onChange: (bodyPlain: string, bodyHtml: string) => void;
   onImageFile?: (file: File) => Promise<string | null>;
+  onDropFiles?: (files: readonly File[]) => Promise<void>;
 }
 
 function isImageFile(file: File): boolean {
@@ -48,10 +49,13 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   collapseQuotedText = false,
   onChange,
   onImageFile,
+  onDropFiles,
 }, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastDraftIdRef = useRef<string | null>(null);
   const [isEmpty, setIsEmpty] = useState(true);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const fileDragDepthRef = useRef(0);
 
   const emitChange = () => {
     const editor = editorRef.current;
@@ -145,11 +149,20 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
     return true;
   };
 
+  const hasDraggedFiles = (dataTransfer: DataTransfer): boolean => (
+    Array.from(dataTransfer.types).includes('Files')
+  );
+
   return (
     <div className="relative flex min-h-0 flex-1">
       {isEmpty && (
         <div className="pointer-events-none absolute left-5 top-4 text-[calc(13px*var(--font-scale))] text-[var(--text-tertiary)]">
           {placeholder}
+        </div>
+      )}
+      {isDraggingFiles && (
+        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[var(--accent)] bg-[var(--accent)]/10 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--accent)]">
+          Drop files to attach
         </div>
       )}
       <div
@@ -166,10 +179,33 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
           event.preventDefault();
           void handleImageFiles(event.clipboardData.files);
         }}
+        onDragEnter={(event) => {
+          if (!hasDraggedFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          fileDragDepthRef.current += 1;
+          setIsDraggingFiles(true);
+        }}
+        onDragOver={(event) => {
+          if (!hasDraggedFiles(event.dataTransfer)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={(event) => {
+          if (!hasDraggedFiles(event.dataTransfer)) return;
+          fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+          if (fileDragDepthRef.current === 0) setIsDraggingFiles(false);
+        }}
         onDrop={(event) => {
           if (!event.dataTransfer?.files.length) return;
           event.preventDefault();
-          void handleImageFiles(event.dataTransfer.files);
+          fileDragDepthRef.current = 0;
+          setIsDraggingFiles(false);
+          const files = Array.from(event.dataTransfer.files);
+          if (onDropFiles) {
+            void onDropFiles(files);
+            return;
+          }
+          void handleImageFiles(files);
         }}
         className={`rich-compose-editor ${collapseQuotedText ? 'rich-compose-editor--quotes-collapsed' : ''} min-h-[300px] flex-1 overflow-y-auto px-5 py-4 text-[calc(13px*var(--font-scale))] leading-relaxed text-[var(--text-primary)] outline-none ${editorClassName}`}
       />

@@ -541,6 +541,7 @@ export function FloatingComposeDrawer() {
         spellCheck={store.settings.compose.spellCheck}
         onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
         onImageFile={insertInlineImageFromFile}
+        onDropFiles={store.addDroppedFilesToDraft}
       />
 
       <DraftPlaceholderWarning bodyPlain={activeDraft.bodyPlain} bodyHtml={activeDraft.bodyHtml} />

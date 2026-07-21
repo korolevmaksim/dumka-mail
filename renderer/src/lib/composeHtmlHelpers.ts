@@ -17,6 +17,16 @@ export function fileToBase64(file: File): Promise<string> {
   });
 }
 
+export async function filesToAttachments(files: readonly File[]): Promise<AttachmentMetadata[]> {
+  return Promise.all(files.map(async file => ({
+    id: crypto.randomUUID(),
+    filename: file.name || 'attachment',
+    mimeType: file.type || 'application/octet-stream',
+    sizeBytes: file.size,
+    base64Data: await fileToBase64(file),
+  })));
+}
+
 export function inlineImageHtml(attachment: AttachmentMetadata): string {
   const cid = attachment.contentId || `${attachment.id}@dumka-mail`;
   const alt = attachment.filename.replace(/[<>"']/g, '');

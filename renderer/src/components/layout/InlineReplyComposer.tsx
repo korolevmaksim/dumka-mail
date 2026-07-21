@@ -270,6 +270,7 @@ export function InlineReplyComposer() {
         editorClassName="min-h-[170px] max-h-[min(42vh,420px)] px-4 py-3"
         collapseQuotedText={hasQuotedReply && !quotedTextExpanded}
         onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
+        onDropFiles={store.addDroppedFilesToDraft}
       />
 
       <DraftPlaceholderWarning bodyPlain={activeDraft.bodyPlain} bodyHtml={activeDraft.bodyHtml} />
