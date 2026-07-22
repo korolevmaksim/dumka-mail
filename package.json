@@ -100,7 +100,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "electron": "^42.5.0",
     "electron-builder": "^26.15.3",
-    "lucide-react": "^1.21.0",
+    "lucide-react": "^1.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tailwindcss": "^4.3.1",
