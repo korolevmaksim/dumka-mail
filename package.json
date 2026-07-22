@@ -98,7 +98,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.10",
     "@vitejs/plugin-react": "^6.0.3",
-    "electron": "^42.5.0",
+    "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "lucide-react": "^1.21.0",
     "react": "^19.2.7",
