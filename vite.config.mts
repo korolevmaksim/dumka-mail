@@ -5,17 +5,11 @@ import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 import path from 'path';
 
-export default defineConfig({
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './renderer/src'),
-      'shared': path.resolve(__dirname, './shared')
-    }
-  },
-  plugins: [
-    react(),
-    tailwindcss(),
-    electron([
+export default defineConfig(() => {
+  const isMarketingDemo = process.env.VITE_MARKETING_DEMO === '1';
+  const electronPlugins = isMarketingDemo
+    ? []
+    : [electron([
       {
         entry: 'main/index.ts',
         onstart(options) {
@@ -71,7 +65,19 @@ export default defineConfig({
           }
         }
       }
-    ]),
-    renderer()
-  ]
+    ]), renderer()];
+
+  return {
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './renderer/src'),
+        'shared': path.resolve(__dirname, './shared')
+      }
+    },
+    plugins: [
+      react(),
+      tailwindcss(),
+      ...electronPlugins,
+    ]
+  };
 });

@@ -4,9 +4,27 @@ Dumka Mail is a local-first desktop Gmail client built with Electron, React, Typ
 
 The app syncs Gmail metadata and messages into a local SQLite cache, applies mailbox actions optimistically, and uses optional AI providers for triage, summaries, drafting, and rewrites. Provider keys and OAuth refresh tokens are stored outside the repository and outside the bundled app.
 
+![Dumka Mail Soft interface with a list-first inbox, split inbox tabs, agenda, mailbox health, speed proof, and action ledger](./docs/media/dumka-inbox.png)
+
+> The public product images use reserved `.example` addresses and fully synthetic mail, calendar, and account data.
+
 ## Status
 
 This project is early alpha software. It is useful for local development and experimentation. Local packages are unsigned by default; signed and notarized macOS distribution builds require Apple Developer credentials.
+
+## Product tour
+
+![Dumka Mail product tour showing Inbox, Today, Calendar, and Privacy & Cleanup](./docs/media/dumka-product-tour.gif)
+
+## Screenshots
+
+| Today workspace | Calendar workspace |
+| --- | --- |
+| ![Dumka Mail Today workspace with a synthetic daily briefing and review queue](./docs/media/dumka-today.png) | ![Dumka Mail Calendar workspace with a synthetic day schedule and agenda](./docs/media/dumka-calendar.png) |
+
+![Dumka Mail Privacy and Cleanup workspace with synthetic sender suggestions](./docs/media/dumka-cleanup.png)
+
+The complete asset guide, including the GitHub social preview, is in [docs/media](./docs/media/README.md).
 
 ## Features
 

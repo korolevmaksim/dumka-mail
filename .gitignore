@@ -30,6 +30,8 @@ playwright-report
 test-results
 screenshots
 .playwright-mcp
+.playwright-cli
+output/playwright
 
 # Temporary exports and local backups
 tmp

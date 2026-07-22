@@ -28,6 +28,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:marketing": "VITE_MARKETING_DEMO=1 vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
