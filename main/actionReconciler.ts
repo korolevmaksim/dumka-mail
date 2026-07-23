@@ -1,5 +1,6 @@
 import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
+import { isGoogleReauthorizationRequiredError } from './googleAuthState';
 
 export interface ReconcilerDeps {
   actionLog: {
@@ -25,6 +26,7 @@ export interface ReconcilerDeps {
   buildAutoReplyDraft(accountId: string, threadId: string, replyBody: string): unknown;
   onDraftSent?: (accountId: string, draftId: string) => void;
   validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
+  shouldDeferAccount?: (accountId: string) => boolean;
   now?: () => Date;
   logger?: Pick<Console, 'log' | 'error'>;
 }
@@ -51,6 +53,10 @@ export function isNetworkError(err: any): boolean {
   );
 }
 
+export function isRetryableRemoteError(error: unknown): boolean {
+  return isNetworkError(error) || isGoogleReauthorizationRequiredError(error);
+}
+
 // One reconciliation pass: replay every pending_sync action against Gmail.
 // Moved verbatim from main/index.ts startBackgroundSyncWorker; semantics are
 // pinned by tests/actionReconciler.test.ts — change them deliberately or not at all.
@@ -58,7 +64,8 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
   const now = deps.now || (() => new Date());
   const logger = deps.logger || console;
 
-  const pendingActions = deps.actionLog.listPending();
+  const pendingActions = deps.actionLog.listPending()
+    .filter(action => !deps.shouldDeferAccount?.(action.accountId));
   if (pendingActions.length === 0) return;
 
   logger.log(`[Sync Worker] Found ${pendingActions.length} pending actions to sync`);
@@ -163,8 +170,8 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       deps.actionLog.save(action);
       logger.log(`[Sync Worker] Successfully synced action ${action.id} of kind ${action.kind}`);
     } catch (err: any) {
-      if (isNetworkError(err)) {
-        logger.log(`[Sync Worker] Network still offline, will retry action ${action.id} later:`, err.message);
+      if (isRetryableRemoteError(err)) {
+        logger.log(`[Sync Worker] Remote access is unavailable, will retry action ${action.id} later:`, err.message);
         action.status = 'pending_sync';
         deps.actionLog.save(action);
         break;

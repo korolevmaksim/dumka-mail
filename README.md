@@ -30,6 +30,7 @@ The complete asset guide, including the GitHub social preview, is in [docs/media
 
 - Local SQLite mail cache with full-text search and optional opt-in semantic search.
 - Gmail OAuth onboarding with OS-backed token storage through macOS Keychain or Electron safeStorage.
+- Persistent reconnect guidance for expired, revoked, missing, or under-scoped Google authorization; affected background retries pause until the account is reauthorized.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
 - First-class local-first Calendar workspace with per-account and unified multi-calendar views, Google colors and access roles, cache-first Month/Week/Day/Agenda/Quarter/Year layouts, offline search, calendar sets, event templates, secondary time zones, and keyboard navigation.
 - Split inbox categories, editable custom category rules with local email autocomplete, multi-address sender/recipient matching, domain and subject filters, saved views, reminders, snooze notifications, and action history.

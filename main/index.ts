@@ -29,9 +29,10 @@ import {
 } from './database';
 import { SystemLogRepo } from './systemLogRepository';
 import { SystemLogger } from './systemLogger';
-import { isNetworkError, startBackgroundSyncWorker } from './actionReconciler';
+import { isRetryableRemoteError, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
+import { googleAuthState } from './googleAuthState';
 import { GoogleCalendarSyncTokenExpiredError, GoogleWorkspaceService } from './googleWorkspace';
 import { optimisticCalendarEvent, queueCalendarMutation, startCalendarMutationWorker } from './calendarMutationWorker';
 import { startCalendarNotificationWorker } from './calendarNotifications';
@@ -87,6 +88,7 @@ import type {
   MailRuleAction,
   MailRulesSettings,
   MailThread,
+  GoogleAuthIssue,
   OperatorHomeStateSnapshot,
   ReplyPipelineCandidate,
   SyncState,
@@ -116,6 +118,20 @@ const DEFAULT_NOTIFICATION_SETTINGS: MailNotificationSettings = {
   quietHoursStart: '22:00',
   quietHoursEnd: '08:00'
 };
+
+googleAuthState.subscribe(change => {
+  mainWindow?.webContents.send('api:googleAuthStateChanged', change);
+  if (change.issue) {
+    SystemLogger.warning('Google Authorization', 'Google account requires reauthorization.', {
+      accountId: change.accountId,
+      reason: change.issue.reason,
+    });
+  } else {
+    SystemLogger.info('Google Authorization', 'Google account authorization was restored.', {
+      accountId: change.accountId,
+    });
+  }
+});
 const DEFAULT_MAIL_RULES_SETTINGS: MailRulesSettings = {
   enabled: false,
   rules: []
@@ -333,7 +349,7 @@ async function runNotificationLabelAction(
     await runRemoteLabelAction(accountId, threadId, addLabelIds, removeLabelIds, kind);
     ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
   } catch (err: any) {
-    if (isNetworkError(err)) {
+    if (isRetryableRemoteError(err)) {
       ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
       return;
     }
@@ -720,6 +736,7 @@ app.whenReady().then(async () => {
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
     buildAutoReplyDraft: buildAutoReplyDraftFromRule,
+    shouldDeferAccount: accountId => googleAuthState.requiresReauthorization(accountId),
     onDraftSent: (accountId, draftId) => {
       const state = ReplyPipelineService.markSentByDraftBestEffort(accountId, draftId);
       if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
@@ -1000,6 +1017,7 @@ registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
   await saveRefreshToken(account.email, profile.refreshToken);
   AccountsRepo.save(account);
   AccountIntegrationsRepo.patch(account.email, { gmailEnabled: true });
+  googleAuthState.clear(account.email);
 
   try {
     signatureSync = await GmailSyncService.fetchDefaultSignature(account.email);
@@ -1014,6 +1032,38 @@ registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
 registerSecureHandler('api:verifyTokenExists', async (_, email) => {
   const token = await getRefreshToken(email);
   return token !== null;
+});
+
+registerSecureHandler('api:listGoogleAuthIssues', (): GoogleAuthIssue[] => googleAuthState.list());
+
+registerSecureHandler('api:reauthorizeAccount', async (_, email) => {
+  const expectedEmail = normalizeOAuthEmail(email);
+  const existingAccount = AccountsRepo.get(expectedEmail);
+  if (!existingAccount) {
+    throw new Error(`Cannot reconnect an account that is not configured in Dumka Mail: ${expectedEmail}`);
+  }
+
+  const integrationStatus = AccountIntegrationsRepo.get(expectedEmail);
+  const scopes = [
+    ...GOOGLE_OAUTH_SCOPES,
+    ...(integrationStatus.calendarEnabled ? GOOGLE_CALENDAR_SCOPES : []),
+    ...(integrationStatus.contactsEnabled ? GOOGLE_CONTACTS_SCOPES : []),
+  ];
+  const profile = await startOAuthFlow(expectedEmail, scopes);
+  const authorizedEmail = normalizeOAuthEmail(profile.email);
+  if (authorizedEmail !== expectedEmail) {
+    throw new Error(`Google authorized ${authorizedEmail}, but ${expectedEmail} must be reconnected.`);
+  }
+  if (!profile.refreshToken) {
+    throw new Error('Google did not return a refresh token. Remove Dumka Mail access from your Google Account and try again.');
+  }
+
+  const account = buildOnboardedAccount(profile, existingAccount);
+  await saveRefreshToken(expectedEmail, profile.refreshToken);
+  AccountsRepo.save(account);
+  AccountIntegrationsRepo.patch(expectedEmail, { gmailEnabled: true });
+  googleAuthState.clear(expectedEmail);
+  return account;
 });
 
 registerSecureHandler('api:disconnectAccount', async (_, email, options?: { purgeCache?: boolean; revokeToken?: boolean }) => {
@@ -1031,6 +1081,7 @@ registerSecureHandler('api:disconnectAccount', async (_, email, options?: { purg
 
   await deleteRefreshToken(normalizedEmail);
   AccountsRepo.delete(normalizedEmail, { purgeCache: options?.purgeCache !== false });
+  googleAuthState.clear(normalizedEmail);
   return { revokeStatus };
 });
 
@@ -1064,6 +1115,7 @@ registerSecureHandler('api:authorizeGoogleIntegration', async (_, email, integra
   }
   if (profile.refreshToken) {
     await saveRefreshToken(expectedEmail, profile.refreshToken);
+    googleAuthState.clear(expectedEmail);
   }
   AccountIntegrationsRepo.patch(expectedEmail, integration === 'calendar'
     ? { calendarEnabled: true }
@@ -1294,7 +1346,7 @@ registerSecureHandler('api:createCalendarEvent', async (_, email, input: Calenda
     }
     return event;
   } catch (error) {
-    if (!isNetworkError(error)) throw error;
+    if (!isRetryableRemoteError(error)) throw error;
     const event = optimisticCalendarEvent(email, input);
     CalendarEventsRepo.saveMany([event]);
     queueCalendarMutation({ actionId, accountId: email, kind: 'create', calendarId: event.calendarId, eventId: event.id, payload: { input, optimisticEventId: event.id }, actionKind: 'createCalendarEvent' });
@@ -1339,7 +1391,7 @@ registerSecureHandler('api:updateCalendarEvent', async (_, email, input: Calenda
         payloadJson: JSON.stringify({ conflict: true, input, previousEvent }),
       });
     }
-    if (!isNetworkError(error)) throw error;
+    if (!isRetryableRemoteError(error)) throw error;
     if (input.mutationScope === 'following') {
       throw new Error('Changing this and following events requires a network connection.');
     }
@@ -1380,7 +1432,7 @@ registerSecureHandler('api:deleteCalendarEvent', async (_, email, calendarId: st
       ActionLogRepo.save({ id: actionId, accountId: email, kind: 'deleteCalendarEvent', status: 'completed', createdAt: now, completedAt: now, payloadJson: JSON.stringify({ calendarId: normalizedCalendarId, eventId }) });
     }
   } catch (error) {
-    if (!isNetworkError(error)) throw error;
+    if (!isRetryableRemoteError(error)) throw error;
     if (options.mutationScope === 'following') {
       throw new Error('Deleting this and following events requires a network connection.');
     }
@@ -1690,7 +1742,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       );
       ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
     } catch (err: any) {
-      if (isNetworkError(err)) {
+      if (isRetryableRemoteError(err)) {
         ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
         return;
       }
@@ -1720,7 +1772,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       );
       ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
     } catch (err: any) {
-      if (isNetworkError(err)) {
+      if (isRetryableRemoteError(err)) {
         ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
         return;
       }
@@ -1748,7 +1800,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
     await runRemoteLabelAction(thread.accountId, thread.id, mutation.addLabelIds, mutation.removeLabelIds, mutation.kind);
     ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
   } catch (err: any) {
-    if (isNetworkError(err)) {
+    if (isRetryableRemoteError(err)) {
       ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
       return;
     }
@@ -1786,7 +1838,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
     await runRemoteLabelAction(email, threadId, addLabelIds, removeLabelIds, resolvedKind);
     return { offline: false };
   } catch (err: any) {
-    if (isNetworkError(err)) {
+    if (isRetryableRemoteError(err)) {
       SystemLogger.warning('Action Sync', 'A mail action was queued for offline retry.', {
         accountId: email,
         actionKind,
@@ -1835,7 +1887,7 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
     }
     return { offline: false, threadId };
   } catch (err: any) {
-    if (isNetworkError(err)) {
+    if (isRetryableRemoteError(err)) {
       SystemLogger.warning('Action Sync', 'A send was queued for offline retry.', {
         accountId: email,
         error: err,
@@ -2198,7 +2250,13 @@ function startBackgroundMailboxSyncWorker() {
     try {
       const accounts = AccountsRepo.list();
       for (const account of accounts) {
-        await runMailboxSyncForAccount(account.email);
+        if (googleAuthState.requiresReauthorization(account.email)) continue;
+        try {
+          await runMailboxSyncForAccount(account.email);
+        } catch {
+          // runMailboxSyncForAccount records the account-scoped failure. Keep
+          // reconciling other accounts instead of duplicating a pass-level log.
+        }
       }
     } catch (err) {
       SystemLogger.error('Mailbox Sync', 'Background mailbox sync pass failed.', err);

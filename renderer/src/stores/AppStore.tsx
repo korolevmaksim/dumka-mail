@@ -39,6 +39,7 @@ import {
   AIAction,
   MCPServerConfig,
   GmailSignatureSyncResult,
+  GoogleAuthIssue,
   MailboxView,
   ThreadAgentInsights,
   FollowUpRadarResult,
@@ -381,6 +382,9 @@ interface AppStoreContextType {
   activeAccount: Account | null;
   setActiveAccount: (a: Account | null) => void;
   onboardAccount: (email: string) => Promise<void>;
+  googleAuthIssues: GoogleAuthIssue[];
+  reauthorizingAccountId: string | null;
+  reauthorizeAccount: (id: string) => Promise<void>;
   disconnectAccount: (id: string) => Promise<void>;
   threads: MailThread[];
   visibleThreads: MailThread[];

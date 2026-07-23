@@ -39,6 +39,7 @@ export function RightContextPanel() {
           <span className={`w-2 h-2 rounded-full ${
             store.syncHealth === 'ready' ? 'bg-[var(--success)]' :
             store.syncHealth === 'syncing' || store.syncHealth === 'indexing' ? 'bg-[var(--accent)] animate-pulse' :
+            store.syncHealth === 'reconnect' ? 'bg-[var(--warning)]' :
             'bg-[var(--danger)]'
           }`}></span>
         </h3>

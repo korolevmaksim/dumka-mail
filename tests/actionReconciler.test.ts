@@ -7,6 +7,7 @@ import {
   startBackgroundSyncWorker,
   type ReconcilerDeps,
 } from '../main/actionReconciler';
+import { GoogleReauthorizationRequiredError } from '../main/googleAuthState';
 import type { MailActionLog, MailThread } from '../shared/types';
 
 const NOW = new Date('2026-07-04T12:00:00.000Z');
@@ -166,6 +167,34 @@ describe('reconcilePendingActions network failure', () => {
     ]);
     expect(h.gmailCalls).toHaveLength(1);
     expect(h.rollbacks).toHaveLength(0);
+  });
+
+  it('keeps an action pending when Google requires reauthorization', async () => {
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'markDone' })],
+      gmailError: new GoogleReauthorizationRequiredError('me@example.com', 'credentials_rejected'),
+    });
+
+    await reconcilePendingActions(h.deps);
+
+    expect(h.saved.map(saved => saved.status)).toEqual(['running', 'pending_sync']);
+    expect(h.rollbacks).toHaveLength(0);
+  });
+
+  it('skips blocked accounts without preventing healthy accounts from replaying', async () => {
+    const blocked = makeAction({ id: 'blocked', accountId: 'blocked@example.com' });
+    const healthy = makeAction({ id: 'healthy', accountId: 'healthy@example.com' });
+    const h = makeDeps({ pending: [blocked, healthy] });
+    h.deps.shouldDeferAccount = accountId => accountId === blocked.accountId;
+
+    await reconcilePendingActions(h.deps);
+
+    expect(h.gmailCalls).toHaveLength(1);
+    expect(h.gmailCalls[0].args[0]).toBe('healthy@example.com');
+    expect(h.saved.map(saved => [saved.id, saved.status])).toEqual([
+      ['healthy', 'running'],
+      ['healthy', 'completed'],
+    ]);
   });
 });
 

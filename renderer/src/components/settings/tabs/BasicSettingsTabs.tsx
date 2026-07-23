@@ -33,7 +33,14 @@ export function AccountsTab() {
                   <SettingsAccountAvatar acc={acc} />
                   <div className="flex flex-col">
                     <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{acc.displayName || acc.email}</span>
-                    <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{acc.email}</span>
+                    <span className="flex items-center gap-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+                      {acc.email}
+                      {store.googleAuthIssues.some(issue => issue.accountId === acc.email) && (
+                        <span className="rounded bg-[var(--warning)]/15 px-1 py-0.5 font-semibold text-[var(--warning-solid)]">
+                          Needs reconnect
+                        </span>
+                      )}
+                    </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -53,10 +60,11 @@ export function AccountsTab() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => store.onboardAccount(acc.email)}
-                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer"
+                    onClick={() => void store.reauthorizeAccount(acc.email)}
+                    disabled={store.reauthorizingAccountId !== null}
+                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer disabled:cursor-wait disabled:opacity-50"
                   >
-                    Reconnect
+                    {store.reauthorizingAccountId === acc.email ? 'Reconnecting…' : 'Reconnect'}
                   </button>
                   <button
                     type="button"

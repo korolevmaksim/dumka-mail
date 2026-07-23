@@ -10,6 +10,7 @@ import {
 import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
 import { ToastHost } from './components/Toast';
+import { GoogleAuthBanner } from './components/GoogleAuthBanner';
 import { ThreadMessageList } from './components/ThreadMessageList';
 import { AgenticThreadPanel } from './components/AgenticThreadPanel';
 import { ThreadLabelMoveMenu } from './components/ThreadLabelMoveMenu';
@@ -805,7 +806,9 @@ function AppContent() {
         <LeftRail />
 
         {/* MAIN LAYOUT SPLIT: Left Workspace | Right Context panels */}
-        <div className="dm-workspace-frame flex flex-1 overflow-hidden bg-[var(--app-bg)]">
+        <div className="dm-workspace-frame flex flex-1 flex-col overflow-hidden bg-[var(--app-bg)]">
+          <GoogleAuthBanner />
+          <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* 3. AI COPILOT PANEL (Moved next to Left Rail & Undockable) */}
           {store.aiPanelOpen && <AICopilotPanel />}
 
@@ -1503,6 +1506,7 @@ function AppContent() {
 
           {/* 2. RIGHT PANEL (Context + Diagnostics + Health + Ledger) */}
           {store.workspaceView !== 'calendar' && <RightContextPanel />}
+          </div>
         </div>
       </div>
 

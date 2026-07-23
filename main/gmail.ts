@@ -5,6 +5,13 @@ import { compileMarkdownToHtml } from '../shared/markdown';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
 import { gmailSignatureHtmlToPlainText, sanitizeGmailSignatureHtml } from '../shared/textNormalizer';
 import { loadGoogleConfig, startOAuthFlow, base64urlSafe } from './gmailOAuth';
+import {
+  GoogleReauthorizationRequiredError,
+  googleAuthState,
+  googleReauthorizationReasonForApiResponse,
+  googleReauthorizationReasonForTokenResponse,
+  isGoogleReauthorizationRequiredError,
+} from './googleAuthState';
 
 export { startOAuthFlow };
 
@@ -26,7 +33,8 @@ export async function fetchWithTimeout(url: string, options: any = {}, timeoutMs
 export async function getAccessToken(email: string): Promise<string> {
   const refreshToken = await getRefreshToken(email);
   if (!refreshToken) {
-    throw new Error(`No credentials found in Keychain for ${email}`);
+    googleAuthState.mark(email, 'missing_credentials');
+    throw new GoogleReauthorizationRequiredError(email, 'missing_credentials');
   }
 
   const config = loadGoogleConfig().installed;
@@ -43,11 +51,31 @@ export async function getAccessToken(email: string): Promise<string> {
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to rotate access token for ${email}: ${await res.text()}`);
+    const body = await res.text();
+    const reason = googleReauthorizationReasonForTokenResponse(res.status, body);
+    if (reason) {
+      googleAuthState.mark(email, reason);
+      throw new GoogleReauthorizationRequiredError(email, reason);
+    }
+    throw new Error(`Failed to rotate access token for ${email}: HTTP ${res.status}`);
   }
 
-  const data = await res.json() as any;
+  const data = await res.json() as { access_token?: unknown };
+  if (typeof data.access_token !== 'string' || !data.access_token) {
+    throw new Error(`Google token response did not include an access token for ${email}.`);
+  }
   return data.access_token;
+}
+
+async function throwGoogleApiFailure(email: string, response: Response, context: string): Promise<never> {
+  const body = await response.text();
+  const reason = googleReauthorizationReasonForApiResponse(response.status, body);
+  if (reason) {
+    googleAuthState.mark(email, reason);
+    throw new GoogleReauthorizationRequiredError(email, reason);
+  }
+  const summary = body.trim().slice(0, 1000);
+  throw new Error(`${context}: HTTP ${response.status}${summary ? ` — ${summary}` : ''}`);
 }
 
 export function buildGoogleTokenRevokeRequest(refreshToken: string): { url: string; body: string } {
@@ -305,7 +333,7 @@ async function syncThreadsForQuery(
   });
 
   if (!listRes.ok) {
-    throw new Error(`syncThreadsForQuery list error (${query}): ${await listRes.text()}`);
+    await throwGoogleApiFailure(email, listRes, `syncThreadsForQuery list error (${query})`);
   }
 
   const listData = await listRes.json() as any;
@@ -317,11 +345,11 @@ async function syncThreadsForQuery(
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       if (!detailRes.ok) {
-        console.warn(`Thread detail fetch error for ${tSummary.id}: status ${detailRes.status}`);
-        return null;
+        await throwGoogleApiFailure(email, detailRes, `Thread detail fetch error for ${tSummary.id}`);
       }
       return await detailRes.json();
     } catch (err) {
+      if (isGoogleReauthorizationRequiredError(err)) throw err;
       console.warn(`Thread detail fetch error for ${tSummary.id}:`, err);
       return null;
     }
@@ -356,7 +384,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail labels fetch error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'Gmail labels fetch error');
     }
 
     const data = await res.json() as { labels?: any[] };
@@ -379,7 +407,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail label create error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'Gmail label create error');
     }
 
     return mapGmailLabel(await res.json(), email);
@@ -406,7 +434,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail label update error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'Gmail label update error');
     }
 
     return mapGmailLabel(await res.json(), email);
@@ -420,7 +448,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok && res.status !== 404) {
-      throw new Error(`Gmail label delete error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'Gmail label delete error');
     }
   },
 
@@ -431,7 +459,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail signature fetch error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'Gmail signature fetch error');
     }
 
     const data = await res.json() as { sendAs?: GmailSendAsAlias[] };
@@ -474,7 +502,7 @@ export const GmailSyncService = {
     }
 
     if (!res.ok) {
-      throw new Error(`syncIncremental error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'syncIncremental error');
     }
 
     const data = await res.json() as any;
@@ -520,7 +548,7 @@ export const GmailSyncService = {
     });
 
     if (!listRes.ok) {
-      throw new Error(`Backfill list error: ${await listRes.text()}`);
+      await throwGoogleApiFailure(email, listRes, 'Backfill list error');
     }
 
     const data = await listRes.json() as any;
@@ -534,11 +562,11 @@ export const GmailSyncService = {
           headers: { 'Authorization': `Bearer ${accessToken}` }
         });
         if (!detailRes.ok) {
-          console.warn(`Thread backfill detail error for ${tSummary.id}: status ${detailRes.status}`);
-          return null;
+          await throwGoogleApiFailure(email, detailRes, `Thread backfill detail error for ${tSummary.id}`);
         }
         return await detailRes.json();
       } catch (err) {
+        if (isGoogleReauthorizationRequiredError(err)) throw err;
         console.warn(`Thread backfill detail error for ${tSummary.id}:`, err);
         return null;
       }
@@ -570,7 +598,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`fetchThreadDetail error for ${threadId}: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, `fetchThreadDetail error for ${threadId}`);
     }
 
     const data = await res.json() as any;
@@ -586,7 +614,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`fetchAttachment error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'fetchAttachment error');
     }
 
     const data = await res.json() as any;
@@ -602,7 +630,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`fetchRawMessage error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'fetchRawMessage error');
     }
 
     const data = await res.json() as any;
@@ -628,7 +656,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Label modification failed for thread ${threadId}: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, `Label modification failed for thread ${threadId}`);
     }
   },
 
@@ -640,7 +668,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Trash failed for thread ${threadId}: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, `Trash failed for thread ${threadId}`);
     }
   },
 
@@ -652,7 +680,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Untrash failed for thread ${threadId}: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, `Untrash failed for thread ${threadId}`);
     }
   },
 
@@ -787,7 +815,7 @@ export const GmailSyncService = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail Send Message Error: ${await res.text()}`);
+      await throwGoogleApiFailure(email, res, 'Gmail Send Message Error');
     }
 
     const data = await res.json() as any;

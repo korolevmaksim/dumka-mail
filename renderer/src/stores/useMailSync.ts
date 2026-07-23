@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Account, GmailSignatureSyncResult, MailboxDelta, MailSyncCompletion } from '../../../shared/types';
+import {
+  Account,
+  GmailSignatureSyncResult,
+  GoogleAuthIssue,
+  MailboxDelta,
+  MailSyncCompletion,
+} from '../../../shared/types';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
 
@@ -29,11 +35,52 @@ export function useMailSync({
   const [backfillProgress, setBackfillProgress] = useState<string>('0%');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSuccessfulSync, setLastSuccessfulSync] = useState<MailSyncCompletion | null>(null);
+  const [googleAuthIssues, setGoogleAuthIssues] = useState<GoogleAuthIssue[]>([]);
+  const [reauthorizingAccountId, setReauthorizingAccountId] = useState<string | null>(null);
   const isSyncingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const unsubscribe = window.electronAPI.onGoogleAuthStateChanged(change => {
+      if (disposed) return;
+      setGoogleAuthIssues(current => {
+        const remaining = current.filter(issue => issue.accountId !== change.accountId);
+        return change.issue
+          ? [...remaining, change.issue].sort((a, b) => a.accountId.localeCompare(b.accountId))
+          : remaining;
+      });
+    });
+
+    void window.electronAPI.listGoogleAuthIssues()
+      .then(issues => {
+        if (!disposed) setGoogleAuthIssues(issues);
+      })
+      .catch(error => console.error('Failed to load Google authorization state:', error));
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (googleAuthIssues.length > 0) {
+      setSyncHealth('reconnect');
+      setSyncStatusText(
+        googleAuthIssues.length === 1
+          ? `Reconnect ${googleAuthIssues[0].accountId}`
+          : `Reconnect ${googleAuthIssues.length} Gmail accounts`,
+      );
+      return;
+    }
+    setSyncHealth(current => current === 'reconnect' ? 'ready' : current);
+    setSyncStatusText(current => current.startsWith('Reconnect ') ? 'Ready' : current);
+  }, [googleAuthIssues]);
 
   // Backfill background loader
   const triggerSilentBackfill = useCallback(async () => {
     if (!activeAccount || activeAccount.id === 'unified') return;
+    if (googleAuthIssues.some(issue => issue.accountId === activeAccount.email.trim().toLowerCase())) return;
     const syncState = await window.electronAPI.getSyncState(activeAccount.email);
     if (syncState && syncState.historyBackfillCompletedAt) {
       setBackfillProgress('All mail indexed');
@@ -55,7 +102,7 @@ export function useMailSync({
       setSyncHealth('paused');
       setSyncStatusText('Indexing paused');
     }
-  }, [activeAccount]);
+  }, [activeAccount, googleAuthIssues]);
 
   const triggerBackfillManual = useCallback(async () => {
     await triggerSilentBackfill();
@@ -85,15 +132,22 @@ export function useMailSync({
     try {
       const start = performance.now();
       const targetAccounts = activeAccount.id === 'unified' ? accounts : [activeAccount];
-      const targetAccountIds = targetAccounts.map(account => account.email.trim().toLowerCase()).filter(Boolean);
+      const blockedAccountIds = new Set(googleAuthIssues.map(issue => issue.accountId));
+      const targetAccountIds = targetAccounts
+        .map(account => account.email.trim().toLowerCase())
+        .filter(accountId => accountId && !blockedAccountIds.has(accountId));
+      if (targetAccountIds.length === 0) {
+        setSyncHealth('reconnect');
+        return;
+      }
       const deltas = await window.electronAPI.syncMailboxNow(targetAccountIds);
       setLastSuccessfulSync({
         revision: deltas.reduce((max, delta) => Math.max(max, delta.revision), 0),
         accountIds: targetAccountIds,
         completedAt: new Date().toISOString(),
       });
-      setSyncHealth('ready');
-      setSyncStatusText('Ready');
+      setSyncHealth(googleAuthIssues.length > 0 ? 'reconnect' : 'ready');
+      setSyncStatusText(googleAuthIssues.length > 0 ? syncStatusText : 'Ready');
       setSpeedProof((prev: SpeedProof) => ({
         ...prev,
         syncReadyMs: Math.round(performance.now() - start)
@@ -104,13 +158,13 @@ export function useMailSync({
       }
     } catch (err: any) {
       console.error('Inbox sync error:', err);
-      setSyncHealth('failed');
-      setSyncStatusText(err.message.includes('credentials') ? 'Reconnect Gmail' : 'Degraded sync');
+      setSyncHealth(googleAuthIssues.length > 0 ? 'reconnect' : 'failed');
+      setSyncStatusText(googleAuthIssues.length > 0 ? syncStatusText : 'Degraded sync');
     } finally {
       isSyncingRef.current = false;
       setIsSyncing(false);
     }
-  }, [activeAccount, accounts, triggerSilentBackfill, setSpeedProof]);
+  }, [activeAccount, accounts, googleAuthIssues, syncStatusText, triggerSilentBackfill, setSpeedProof]);
 
   const triggerSyncManual = useCallback(async () => {
     await runSync(false);
@@ -136,6 +190,37 @@ export function useMailSync({
     }
   };
 
+  const reauthorizeAccount = async (accountId: string) => {
+    const normalizedAccountId = accountId.trim().toLowerCase();
+    if (!normalizedAccountId || reauthorizingAccountId) return;
+
+    setReauthorizingAccountId(normalizedAccountId);
+    try {
+      await window.electronAPI.reauthorizeAccount(normalizedAccountId);
+      setGoogleAuthIssues(current => current.filter(issue => issue.accountId !== normalizedAccountId));
+      await loadAccounts();
+
+      try {
+        await window.electronAPI.syncMailboxNow([normalizedAccountId]);
+        emitToast({ type: 'success', message: `${normalizedAccountId} is connected and syncing again.` });
+      } catch (syncError) {
+        console.warn('Immediate mailbox sync after reauthorization failed:', syncError);
+        const currentIssues = await window.electronAPI.listGoogleAuthIssues().catch(() => []);
+        if (currentIssues.some(issue => issue.accountId === normalizedAccountId)) {
+          setGoogleAuthIssues(currentIssues);
+          emitToast({ type: 'error', message: `Google still rejected access for ${normalizedAccountId}. Please reconnect again.` });
+        } else {
+          emitToast({ type: 'warning', message: `${normalizedAccountId} was reconnected. Mail sync will retry automatically.` });
+        }
+      }
+    } catch (error) {
+      console.error('Google reauthorization failed:', error);
+      emitToast({ type: 'error', message: `Could not reconnect ${normalizedAccountId}. Please try again.` });
+    } finally {
+      setReauthorizingAccountId(null);
+    }
+  };
+
   const disconnectAccount = async (id: string) => {
     await window.electronAPI.disconnectAccount(id, { purgeCache: clearCacheOnDisconnect, revokeToken: true });
     loadAccounts();
@@ -150,7 +235,10 @@ export function useMailSync({
     backfillProgress,
     isSyncing,
     lastSuccessfulSync,
+    googleAuthIssues,
+    reauthorizingAccountId,
     onboardAccount,
+    reauthorizeAccount,
     disconnectAccount,
     triggerSyncManual,
     triggerBackfillManual,

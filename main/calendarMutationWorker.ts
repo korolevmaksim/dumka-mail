@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import type { BrowserWindow } from 'electron';
 import type { CalendarEvent, CalendarEventCreateInput, CalendarEventDeleteOptions, CalendarEventUpdateInput, MailActionLog } from '../shared/types';
 import { ActionLogRepo, CalendarEventsRepo, CalendarMutationsRepo, type CalendarMutationRecord } from './database';
-import { isNetworkError } from './actionReconciler';
+import { isRetryableRemoteError } from './actionReconciler';
+import { googleAuthState } from './googleAuthState';
 import { GoogleWorkspaceService } from './googleWorkspace';
 
 interface CalendarMutationPayload {
@@ -128,13 +129,14 @@ export async function reconcileCalendarMutations(getWindow: () => BrowserWindow 
   running = true;
   try {
     for (const mutation of CalendarMutationsRepo.list()) {
+      if (googleAuthState.requiresReauthorization(mutation.accountId)) continue;
       try {
         await replayMutation(mutation);
         CalendarMutationsRepo.delete(mutation.id);
         finishAction(mutation.id, 'completed');
         getWindow()?.webContents.send('api:calendarChanged', { accountId: mutation.accountId });
       } catch (error) {
-        if (isNetworkError(error)) {
+        if (isRetryableRemoteError(error)) {
           CalendarMutationsRepo.save({
             ...mutation,
             attemptCount: mutation.attemptCount + 1,

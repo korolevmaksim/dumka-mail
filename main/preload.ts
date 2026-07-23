@@ -28,6 +28,8 @@ import {
   FollowUpRadarListOptions,
   AIProviderPreference,
   FollowUpRadarResult,
+  GoogleAuthIssue,
+  GoogleAuthStateChange,
   OperatorHomeStateSnapshot,
   ReplyPipelineCandidate,
   ReplyPipelineDraftResult,
@@ -110,6 +112,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // OAuth onboarding
   onboardAccount: (emailHint?: string) => ipcRenderer.invoke('api:onboardAccount', emailHint),
   verifyTokenExists: (email: string) => ipcRenderer.invoke('api:verifyTokenExists', email),
+  listGoogleAuthIssues: (): Promise<GoogleAuthIssue[]> => ipcRenderer.invoke('api:listGoogleAuthIssues'),
+  reauthorizeAccount: (email: string): Promise<Account> => ipcRenderer.invoke('api:reauthorizeAccount', email),
   disconnectAccount: (email: string, options?: { purgeCache?: boolean; revokeToken?: boolean }) => ipcRenderer.invoke('api:disconnectAccount', email, options),
   authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => ipcRenderer.invoke('api:authorizeGoogleIntegration', email, integration),
 
@@ -267,6 +271,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('api:mailboxDelta', listener);
     return () => {
       ipcRenderer.off('api:mailboxDelta', listener);
+    };
+  },
+  onGoogleAuthStateChanged: (callback: (change: GoogleAuthStateChange) => void) => {
+    const listener = (_: unknown, change: GoogleAuthStateChange) => callback(change);
+    ipcRenderer.on('api:googleAuthStateChanged', listener);
+    return () => {
+      ipcRenderer.off('api:googleAuthStateChanged', listener);
     };
   },
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => {

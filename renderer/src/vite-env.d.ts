@@ -23,6 +23,8 @@ import {
   Draft,
   EmailAddressSuggestion,
   GmailSignatureSyncResult,
+  GoogleAuthIssue,
+  GoogleAuthStateChange,
   GoogleIntegrationStatus,
   MailActionLog,
   MailLabelDefinition,
@@ -126,6 +128,8 @@ export interface IElectronAPI {
   // OAuth onboarding
   onboardAccount: (emailHint?: string) => Promise<OnboardAccountResult>;
   verifyTokenExists: (email: string) => Promise<boolean>;
+  listGoogleAuthIssues: () => Promise<GoogleAuthIssue[]>;
+  reauthorizeAccount: (email: string) => Promise<Account>;
   disconnectAccount: (email: string, options?: { purgeCache?: boolean; revokeToken?: boolean }) => Promise<{ revokeStatus: 'skipped' | 'missing' | 'revoked' | 'failed' }>;
   authorizeGoogleIntegration: (email: string, integration: 'calendar' | 'contacts') => Promise<GoogleIntegrationStatus>;
 
@@ -243,6 +247,7 @@ export interface IElectronAPI {
   onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => () => void;
   onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onMailboxDelta: (callback: (delta: MailboxDelta) => void) => () => void;
+  onGoogleAuthStateChanged: (callback: (change: GoogleAuthStateChange) => void) => () => void;
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
   onExecuteCommand: (callback: (cmdId: string) => void) => () => void;

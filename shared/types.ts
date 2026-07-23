@@ -30,6 +30,22 @@ export interface OnboardAccountResult {
   signatureSyncError?: string;
 }
 
+export type GoogleAuthIssueReason =
+  | 'missing_credentials'
+  | 'credentials_rejected'
+  | 'permissions_changed';
+
+export interface GoogleAuthIssue {
+  accountId: AccountID;
+  reason: GoogleAuthIssueReason;
+  detectedAt: string;
+}
+
+export interface GoogleAuthStateChange {
+  accountId: AccountID;
+  issue: GoogleAuthIssue | null;
+}
+
 export interface ComposeSignatureSettings {
   signaturePlain: string;
   signatureHtml: string;
