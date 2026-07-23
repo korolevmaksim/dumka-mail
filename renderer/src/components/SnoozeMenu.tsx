@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { parseReminderInput } from '../../../shared/reminderInput';
 import { REMINDER_PRESETS, reminderDate, describeReminder } from '../../../shared/reminders';
-import { CalendarClock, Check, Clock, Search, X } from 'lucide-react';
+import { CalendarClock, Check, Clock, LoaderCircle, Search, X } from 'lucide-react';
 
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
@@ -64,8 +64,11 @@ export function SnoozeMenu({
       .filter((item): item is { preset: typeof REMINDER_PRESETS[number]; date: Date } => Boolean(item.date))
   ), [now]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const statusId = useId();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const defaultCustomDate = useMemo(() => reminderDate('tomorrow', now) || new Date(now.getTime() + 24 * 60 * 60 * 1000), [now]);
   const [customDate, setCustomDate] = useState(() => toDateInputValue(defaultCustomDate));
   const [customTime, setCustomTime] = useState(() => toTimeInputValue(defaultCustomDate));
@@ -81,19 +84,32 @@ export function SnoozeMenu({
     inputRef.current?.select();
   }, []);
 
-  const pick = (date: Date) => {
-    void onPick(date);
-    onClose();
+  const pick = async (date: Date) => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      await onPick(date);
+      onClose();
+    } catch (error) {
+      console.error('Failed to set reminder:', error);
+      setIsSubmitting(false);
+      setSubmitError('Could not set the reminder. Please try again.');
+    }
   };
 
   const pickActivePreset = () => {
     const option = presetOptions[activeIndex];
-    if (option) pick(option.date);
+    if (option) void pick(option.date);
   };
 
   const pickCustomDateTime = () => {
-    if (!customDateTime || customDateTime.getTime() <= Date.now()) return;
-    pick(customDateTime);
+    if (!customDateTime || customDateTime.getTime() <= Date.now()) {
+      setSubmitError('Choose a date and time in the future.');
+      return;
+    }
+    void pick(customDateTime);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -122,6 +138,11 @@ export function SnoozeMenu({
 
     if (e.key !== 'Enter' || isButton) return;
 
+    if (isSubmitting) {
+      e.preventDefault();
+      return;
+    }
+
     if (isCustomInput) {
       e.preventDefault();
       pickCustomDateTime();
@@ -130,7 +151,11 @@ export function SnoozeMenu({
 
     e.preventDefault();
     if (parsedQueryDate) {
-      pick(parsedQueryDate);
+      void pick(parsedQueryDate);
+      return;
+    }
+    if (query.trim()) {
+      setSubmitError('Enter a time like “tomorrow 10am” or choose a preset below.');
       return;
     }
     pickActivePreset();
@@ -143,6 +168,8 @@ export function SnoozeMenu({
       onKeyDown={handleKeyDown}
       role="dialog"
       aria-label="Remind me"
+      aria-busy={isSubmitting}
+      aria-describedby={isSubmitting || submitError ? statusId : undefined}
     >
       <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-3 py-2.5">
         <div className="flex min-w-0 gap-2">
@@ -172,16 +199,31 @@ export function SnoozeMenu({
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSubmitError(null);
+            }}
             placeholder="Tomorrow 9am"
+            aria-label="Reminder time"
             className="min-w-0 flex-1 bg-transparent text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
           />
           {parsedQueryDate && (
-            <span className="max-w-[150px] truncate text-[calc(10px*var(--font-scale))] font-medium text-[var(--accent)]">
-              {describeReminder(parsedQueryDate, now)}
+            <span className="flex min-w-0 max-w-[160px] items-center gap-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--accent)]">
+              <span className="truncate">{describeReminder(parsedQueryDate, now)}</span>
+              <kbd className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)]">↵</kbd>
             </span>
           )}
         </div>
+        {(isSubmitting || submitError) && (
+          <div
+            id={statusId}
+            role="status"
+            aria-live="polite"
+            className={`px-1 pt-1.5 text-[calc(10px*var(--font-scale))] ${submitError ? 'text-[var(--danger)]' : 'text-[var(--text-secondary)]'}`}
+          >
+            {submitError || 'Setting reminder…'}
+          </div>
+        )}
       </div>
       <div className="py-1.5">
         {presetOptions.map(({ preset, date }, index) => (
@@ -190,8 +232,9 @@ export function SnoozeMenu({
             type="button"
             onMouseEnter={() => setActiveIndex(index)}
             onFocus={() => setActiveIndex(index)}
-            onClick={() => pick(date)}
-            className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-left cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px] active:translate-y-px ${
+            onClick={() => void pick(date)}
+            disabled={isSubmitting}
+            className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-left cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px] active:translate-y-px disabled:cursor-wait disabled:opacity-60 ${
               index === activeIndex ? 'bg-[var(--hover-row)]' : 'hover:bg-[var(--hover-row)]'
             }`}
           >
@@ -217,24 +260,37 @@ export function SnoozeMenu({
             data-reminder-custom-input="true"
             type="date"
             value={customDate}
-            onChange={(e) => setCustomDate(e.target.value)}
+            onChange={(e) => {
+              setCustomDate(e.target.value);
+              setSubmitError(null);
+            }}
+            disabled={isSubmitting}
+            aria-label="Custom reminder date"
             className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />
           <input
             data-reminder-custom-input="true"
             type="time"
             value={customTime}
-            onChange={(e) => setCustomTime(e.target.value)}
+            onChange={(e) => {
+              setCustomTime(e.target.value);
+              setSubmitError(null);
+            }}
+            disabled={isSubmitting}
+            aria-label="Custom reminder time"
             className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />
           <button
             type="button"
-            disabled={!customIsFuture}
+            disabled={!customIsFuture || isSubmitting}
             onClick={pickCustomDateTime}
             title="Set custom reminder"
+            aria-label="Set custom reminder"
             className="flex h-[31px] w-8 items-center justify-center rounded-lg bg-[var(--accent)] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Check className="h-3.5 w-3.5" />
+            {isSubmitting
+              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              : <Check className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

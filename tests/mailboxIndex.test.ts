@@ -69,4 +69,29 @@ describe('mailbox index', () => {
     expect(threadsForMailboxIndex(next, 'inbox', 'important')).toEqual([]);
     expect(threadsForMailboxIndex(next, 'inbox', 'other').map(item => item.id)).toEqual(['2', '1']);
   });
+
+  it('removes a newly reminded thread from the prepared inbox immediately', async () => {
+    const getThreadCategory = vi.fn(() => 'important');
+    const first = thread('1');
+    const second = thread('2');
+    const index = await buildMailboxIndexCooperatively({
+      threads: [first, second],
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+
+    const next = replaceThreadInMailboxIndex({
+      index: index!,
+      previousThread: first,
+      nextThread: { ...first, reminderAt: '2099-07-24T10:00:00.000Z' },
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+
+    expect(threadsForMailboxIndex(next, 'inbox', 'important').map(item => item.id)).toEqual(['2']);
+    expect(next.splitCounts.important).toBe(1);
+    expect(next.mailboxCounts.inbox).toBe(1);
+  });
 });

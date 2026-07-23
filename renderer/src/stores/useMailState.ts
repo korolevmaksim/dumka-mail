@@ -4,7 +4,8 @@ import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
 import { categorize } from '../../../shared/categoryEngine';
-import { applyOptimisticThreadReminder, isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
+import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
+import { describeReminder } from '../../../shared/reminders';
 import { emitToast } from '../lib/toastBus';
 import { useMailSync } from './useMailSync';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
@@ -1104,7 +1105,7 @@ export function useMailState({
       fallbackReminder.setDate(fallbackReminder.getDate() + 1);
       fallbackReminder.setHours(9, 0, 0, 0);
       const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
-      setThreads(prev => applyOptimisticThreadReminder(prev, targetAccountId, targetThreadId || '', reminderAt));
+      patchThread(targetAccountId, targetThreadId || '', current => ({ ...current, reminderAt }));
       if (kind === 'autoMarkRead') {
         if (openedThread?.id === targetThreadId) {
           openThread(nextThread);
@@ -1300,17 +1301,41 @@ export function useMailState({
     await executeMailAction(reverseKind, lastReversible.threadId, null, undefined, lastReversible.payloadJson || null);
   };
 
-  const snoozeThread = async (thread: MailThread, date: Date) => {
-    const reminderAt = date.toISOString();
-    await executeMailAction('autoMarkRead', thread.id, null, async () => {
-      await window.electronAPI.saveReminder(thread.accountId, thread.id, reminderAt);
-    }, JSON.stringify({ accountId: thread.accountId, reminderAt }));
-  };
-
   const clearThreadReminder = async (thread: MailThread) => {
     await window.electronAPI.deleteReminder(thread.accountId, thread.id);
-    setThreads(prev => applyOptimisticThreadReminder(prev, thread.accountId, thread.id, null));
-    loadThreadsFromDB();
+    patchThread(thread.accountId, thread.id, current => ({ ...current, reminderAt: null }));
+    emitToast({ type: 'success', message: 'Reminder cleared.' });
+  };
+
+  const snoozeThread = async (thread: MailThread, date: Date) => {
+    const reminderAt = date.toISOString();
+    const previousReminderAt = thread.reminderAt || null;
+    let result: MailActionExecutionResult;
+    try {
+      result = await executeMailAction('autoMarkRead', thread.id, null, async () => {
+        await window.electronAPI.saveReminder(thread.accountId, thread.id, reminderAt);
+      }, JSON.stringify({ accountId: thread.accountId, reminderAt }));
+    } catch (error) {
+      patchThread(thread.accountId, thread.id, current => ({ ...current, reminderAt: previousReminderAt }));
+      throw error;
+    }
+
+    if (!result.accepted) {
+      patchThread(thread.accountId, thread.id, current => ({ ...current, reminderAt: previousReminderAt }));
+      throw new Error(result.errorMessage || 'The reminder could not be saved.');
+    }
+
+    emitToast({
+      type: 'success',
+      message: `Reminder set for ${describeReminder(date)}.`,
+      actionLabel: 'Undo',
+      onAction: () => {
+        void clearThreadReminder(thread).catch(error => {
+          console.error('Failed to clear reminder:', error);
+          emitToast({ type: 'error', message: 'Could not clear the reminder.' });
+        });
+      },
+    });
   };
 
   const triggerVisibleBodyRepair = async () => {
