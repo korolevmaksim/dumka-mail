@@ -261,4 +261,21 @@ describe('cleanPastedHtml', () => {
     const cleaned = cleanPastedHtml(rawHtml);
     expect(cleaned).toBe('Clean text');
   });
+
+  it('uses regex fallback logic when DOMParser is unavailable', () => {
+    const originalDOMParser = globalThis.DOMParser;
+    // @ts-ignore
+    delete globalThis.DOMParser;
+    try {
+      const rawHtml = '<p style="color: red;" class=MsoNormal id=p1>Fallback <font color=blue>text</font></p>';
+      const cleaned = cleanPastedHtml(rawHtml);
+      expect(cleaned).not.toContain('style=');
+      expect(cleaned).not.toContain('class=');
+      expect(cleaned).not.toContain('id=');
+      expect(cleaned).not.toContain('<font');
+      expect(cleaned).toContain('Fallback text');
+    } finally {
+      globalThis.DOMParser = originalDOMParser;
+    }
+  });
 });

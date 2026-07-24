@@ -38,12 +38,7 @@ export function installApplicationMenu(getMainWindow: () => BrowserWindow | null
     {
       label: 'Edit',
       submenu: [
-        {
-          label: 'Undo',
-          accelerator: 'CommandOrControl+Z',
-          enabled: commandState.canUndo,
-          click: () => sendCommand(getMainWindow, 'edit.undo')
-        },
+        { role: 'undo' },
         { role: 'redo' },
         { type: 'separator' },
         { role: 'cut' },

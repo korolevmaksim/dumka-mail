@@ -156,18 +156,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
     const imageFiles = Array.from(files).filter(isImageFile);
     if (imageFiles.length === 0) return false;
 
-    const editor = editorRef.current;
-    const selection = window.getSelection();
-    const range = editor && selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
-
     for (const file of imageFiles) {
       const html = await onImageFile(file);
       if (html) {
-        if (range) {
-          editor?.focus();
-          selection?.removeAllRanges();
-          selection?.addRange(range);
-        }
         insertHtml(html);
       }
     }

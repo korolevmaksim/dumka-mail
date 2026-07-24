@@ -732,8 +732,7 @@ function createWindow() {
 
     const menu = Menu.buildFromTemplate(menuTemplate);
     menu.popup({
-      window: mainWindow,
-      frame: params.frame ?? undefined
+      window: mainWindow
     });
   });
 
