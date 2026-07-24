@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
+  cleanPastedHtml,
   escapeHtml,
   htmlFragmentToPlainText,
   plainTextToHtmlFragment,
@@ -173,11 +174,44 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         aria-multiline="true"
         onInput={emitChange}
         onPaste={(event) => {
-          if (!event.clipboardData?.files.length) return;
-          const hasImage = Array.from(event.clipboardData.files).some(isImageFile);
-          if (!hasImage) return;
-          event.preventDefault();
-          void handleImageFiles(event.clipboardData.files);
+          const clipboardData = event.clipboardData;
+          if (!clipboardData) return;
+
+          if (clipboardData.files.length > 0 && onImageFile) {
+            const hasImage = Array.from(clipboardData.files).some(isImageFile);
+            if (hasImage) {
+              event.preventDefault();
+              void handleImageFiles(clipboardData.files);
+              return;
+            }
+          }
+
+          const rawHtml = clipboardData.getData('text/html');
+          const rawText = clipboardData.getData('text/plain');
+
+          const isShiftPressed = Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey);
+
+          // If Shift is held down (or no HTML is present), paste as plain text (Paste and Match Style)
+          if (isShiftPressed || !rawHtml.trim()) {
+            if (rawText) {
+              event.preventDefault();
+              document.execCommand('insertText', false, rawText);
+              emitChange();
+            }
+            return;
+          }
+
+          // Clean rich HTML paste: strip external fonts, inline colors/styles while keeping structural tags
+          const cleanedHtml = cleanPastedHtml(rawHtml);
+          if (cleanedHtml) {
+            event.preventDefault();
+            document.execCommand('insertHTML', false, cleanedHtml);
+            emitChange();
+          } else if (rawText) {
+            event.preventDefault();
+            document.execCommand('insertText', false, rawText);
+            emitChange();
+          }
         }}
         onDragEnter={(event) => {
           if (!hasDraggedFiles(event.dataTransfer)) return;

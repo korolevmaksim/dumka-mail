@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Notification, screen, shell, type NotificationAction } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, Notification, screen, shell, type NotificationAction } from 'electron';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -673,6 +673,63 @@ function createWindow() {
     if (mainWindow) {
       mainWindow.webContents.send('api:foundInPageResult', result);
     }
+  });
+
+  mainWindow.webContents.on('context-menu', (_, params) => {
+    if (!mainWindow) return;
+
+    const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+
+    if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
+      for (const suggestion of params.dictionarySuggestions) {
+        menuTemplate.push({
+          label: suggestion,
+          click: () => mainWindow?.webContents.replaceMisspelling(suggestion)
+        });
+      }
+      if (params.misspelledWord) {
+        menuTemplate.push({
+          label: `Add "${params.misspelledWord}" to Dictionary`,
+          click: () => {
+            mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
+          }
+        });
+      }
+      menuTemplate.push({ type: 'separator' });
+    }
+
+    if (params.isEditable) {
+      menuTemplate.push(
+        { role: 'undo', enabled: params.editFlags.canUndo },
+        { role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { role: 'cut', enabled: params.editFlags.canCut },
+        { role: 'copy', enabled: params.editFlags.canCopy || params.selectionText.length > 0 },
+        { role: 'paste', enabled: params.editFlags.canPaste },
+        {
+          label: 'Paste and Match Style',
+          role: 'pasteAndMatchStyle',
+          enabled: params.editFlags.canPaste,
+          accelerator: 'CmdOrControl+Shift+V'
+        },
+        { type: 'separator' },
+        { role: 'selectAll', enabled: params.editFlags.canSelectAll }
+      );
+    } else if (params.selectionText && params.selectionText.trim().length > 0) {
+      menuTemplate.push(
+        { role: 'copy' },
+        { type: 'separator' },
+        { role: 'selectAll' }
+      );
+    } else {
+      return;
+    }
+
+    const menu = Menu.buildFromTemplate(menuTemplate);
+    menu.popup({
+      window: mainWindow,
+      frame: params.frame ?? undefined
+    });
   });
 
   if (process.platform === 'darwin' && fs.existsSync(iconPath)) {

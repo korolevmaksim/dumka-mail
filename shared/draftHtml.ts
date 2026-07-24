@@ -56,6 +56,64 @@ export function sanitizeDraftHtmlFragment(html: string): string {
     .trim();
 }
 
+export function cleanPastedHtml(html: string): string {
+  if (!html) return '';
+
+  const fragment = sanitizeDraftHtmlFragment(html);
+  if (!fragment) return '';
+
+  if (typeof DOMParser !== 'undefined') {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(fragment, 'text/html');
+
+      const cleanNode = (node: Node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const el = node as HTMLElement;
+          const tagName = el.tagName.toLowerCase();
+
+          if (['script', 'style', 'meta', 'link', 'iframe', 'object', 'embed', 'head'].includes(tagName)) {
+            el.remove();
+            return;
+          }
+
+          el.removeAttribute('style');
+          el.removeAttribute('class');
+          el.removeAttribute('id');
+          el.removeAttribute('color');
+          el.removeAttribute('face');
+          el.removeAttribute('size');
+
+          const children = Array.from(el.childNodes);
+          children.forEach(cleanNode);
+
+          if ((tagName === 'span' || tagName === 'font') && el.attributes.length === 0) {
+            while (el.firstChild) {
+              el.parentNode?.insertBefore(el.firstChild, el);
+            }
+            el.remove();
+          }
+        }
+      };
+
+      Array.from(doc.body.childNodes).forEach(cleanNode);
+      const cleaned = doc.body.innerHTML.trim();
+      return cleaned || fragment;
+    } catch {
+      // Fall through to regex fallback if DOMParser fails
+    }
+  }
+
+  return fragment
+    .replace(/\s+style\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+style\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+class\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+class\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+id\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+id\s*=\s*'[^']*'/gi, '')
+    .replace(/<\/?(font|span)\b[^>]*>/gi, '');
+}
+
 export function htmlFragmentToPlainText(html: string): string {
   if (!html) return '';
 

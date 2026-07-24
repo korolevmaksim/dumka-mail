@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildInitialDraftBodyWithSignature,
+  cleanPastedHtml,
   compileDraftBodyHtml,
   htmlFragmentToPlainText,
   plainTextToHtmlFragment,
@@ -213,5 +214,39 @@ describe('rich draft HTML helpers', () => {
     expect(updated).toContain('<p>Hello client</p>');
     expect(updated).toContain('<b>Work Alex</b>');
     expect(updated).not.toContain('Personal Alex');
+  });
+});
+
+describe('cleanPastedHtml', () => {
+  it('strips inline styles and fonts while preserving semantic structure', () => {
+    const rawHtml = '<p style="font-family: Arial; color: red; background-color: yellow;">Hello <span style="font-size: 20px;"><b>world</b></span></p>';
+    const cleaned = cleanPastedHtml(rawHtml);
+
+    expect(cleaned).not.toContain('style');
+    expect(cleaned).not.toContain('font-family');
+    expect(cleaned).not.toContain('color');
+    expect(cleaned).toContain('<b>world</b>');
+    expect(cleaned).toContain('Hello');
+  });
+
+  it('removes dangerous or non-content tags', () => {
+    const rawHtml = '<p>Safe content</p><script>alert(1)</script><style>body { color: red; }</style>';
+    const cleaned = cleanPastedHtml(rawHtml);
+
+    expect(cleaned).toContain('Safe content');
+    expect(cleaned).not.toContain('<script');
+    expect(cleaned).not.toContain('<style');
+  });
+
+  it('preserves list structures and links without attributes', () => {
+    const rawHtml = '<ul class="MsoList" style="margin:0"><li id="item1"><a href="https://example.com" style="color:blue">Link</a></li></ul>';
+    const cleaned = cleanPastedHtml(rawHtml);
+
+    expect(cleaned).toContain('<ul>');
+    expect(cleaned).toContain('<li>');
+    expect(cleaned).toContain('<a href="https://example.com"');
+    expect(cleaned).not.toContain('class=');
+    expect(cleaned).not.toContain('id=');
+    expect(cleaned).not.toContain('style=');
   });
 });

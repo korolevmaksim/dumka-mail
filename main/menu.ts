@@ -49,6 +49,8 @@ export function installApplicationMenu(getMainWindow: () => BrowserWindow | null
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { type: 'separator' },
         { role: 'selectAll' }
       ]
     },
