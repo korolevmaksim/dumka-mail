@@ -89,21 +89,29 @@ export function createSystemLogRepository(database?: Database.Database) {
         const escaped = query.search.replace(/[\\%_]/g, match => `\\${match}`);
         params.push(`%${escaped}%`, `%${escaped}%`);
       }
+
+      const isAsc = query.order === 'asc';
       if (query.beforeId) {
-        clauses.push('id < ?');
+        if (isAsc) {
+          clauses.push('id > ?');
+        } else {
+          clauses.push('id < ?');
+        }
         params.push(query.beforeId);
       }
 
+      const sortDir = isAsc ? 'ASC' : 'DESC';
       const rows = db().prepare(`
         SELECT id, occurred_at, level, source, message, details_json
         FROM application_logs
         WHERE ${clauses.join(' AND ')}
-        ORDER BY id DESC
+        ORDER BY id ${sortDir}
         LIMIT ?
       `).all(...params, query.limit + 1) as SystemLogRow[];
+
       const hasMore = rows.length > query.limit;
       return {
-        entries: rows.slice(0, query.limit).reverse().map(mapRow),
+        entries: rows.slice(0, query.limit).map(mapRow),
         hasMore,
       };
     },

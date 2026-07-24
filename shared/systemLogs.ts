@@ -25,12 +25,15 @@ export interface SystemLogEntry {
   details: SystemLogDetails | null;
 }
 
+export type SystemLogOrder = 'desc' | 'asc';
+
 export interface SystemLogQuery {
   levels?: SystemLogLevel[];
   source?: string;
   search?: string;
   beforeId?: number;
   limit?: number;
+  order?: SystemLogOrder;
 }
 
 export interface SystemLogPage {
@@ -74,7 +77,7 @@ export function normalizeSystemLoggingSettings(value: unknown): SystemLoggingSet
   };
 }
 
-export function normalizeSystemLogQuery(value: unknown): Required<Pick<SystemLogQuery, 'levels' | 'limit'>> & SystemLogQuery {
+export function normalizeSystemLogQuery(value: unknown): Required<Pick<SystemLogQuery, 'levels' | 'limit' | 'order'>> & SystemLogQuery {
   const candidate = value && typeof value === 'object' && !Array.isArray(value)
     ? value as SystemLogQuery
     : {};
@@ -87,9 +90,11 @@ export function normalizeSystemLogQuery(value: unknown): Required<Pick<SystemLog
   const search = typeof candidate.search === 'string' ? candidate.search.trim().slice(0, 200) : '';
   const rawBeforeId = Number(candidate.beforeId);
   const beforeId = Number.isSafeInteger(rawBeforeId) && rawBeforeId > 0 ? rawBeforeId : undefined;
+  const order: SystemLogOrder = candidate.order === 'asc' ? 'asc' : 'desc';
   return {
     levels,
     limit,
+    order,
     ...(source ? { source } : {}),
     ...(search ? { search } : {}),
     ...(beforeId ? { beforeId } : {}),

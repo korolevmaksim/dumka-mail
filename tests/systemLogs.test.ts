@@ -28,19 +28,30 @@ describe('system logging settings', () => {
       search: `  ${'q'.repeat(250)}  `,
       beforeId: 42,
       limit: 50_000,
+      order: 'desc',
     })).toEqual({
       levels: ['warning'],
       source: 'S'.repeat(80),
       search: 'q'.repeat(200),
       beforeId: 42,
       limit: 500,
+      order: 'desc',
     });
   });
 
-  it('rejects invalid pagination and uses all severities by default', () => {
+  it('rejects invalid pagination and uses all severities by default with desc order', () => {
     expect(normalizeSystemLogQuery({ beforeId: -1, limit: 1 })).toEqual({
       levels: ['info', 'warning', 'error'],
       limit: 25,
+      order: 'desc',
+    });
+  });
+
+  it('supports asc order normalization', () => {
+    expect(normalizeSystemLogQuery({ order: 'asc' })).toEqual({
+      levels: ['info', 'warning', 'error'],
+      limit: 250,
+      order: 'asc',
     });
   });
 });
