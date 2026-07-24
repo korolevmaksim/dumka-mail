@@ -249,4 +249,16 @@ describe('cleanPastedHtml', () => {
     expect(cleaned).not.toContain('id=');
     expect(cleaned).not.toContain('style=');
   });
+
+  it('returns empty string when pasted HTML contains only styled empty tags', () => {
+    const rawHtml = '<span style="color: red; font-size: 12px;"></span>';
+    const cleaned = cleanPastedHtml(rawHtml);
+    expect(cleaned).toBe('');
+  });
+
+  it('unwraps span and font tags even if they have extra attributes like align or dir', () => {
+    const rawHtml = '<span align="left" dir="ltr" data-custom="1"><font color="red" size="3">Clean text</font></span>';
+    const cleaned = cleanPastedHtml(rawHtml);
+    expect(cleaned).toBe('Clean text');
+  });
 });

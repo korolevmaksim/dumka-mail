@@ -54,9 +54,22 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
 }, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastDraftIdRef = useRef<string | null>(null);
+  const lastShiftPressedRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(true);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const fileDragDepthRef = useRef(0);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      lastShiftPressedRef.current = e.shiftKey;
+    };
+    window.addEventListener('keydown', handleKey, true);
+    window.addEventListener('keyup', handleKey, true);
+    return () => {
+      window.removeEventListener('keydown', handleKey, true);
+      window.removeEventListener('keyup', handleKey, true);
+    };
+  }, []);
 
   const emitChange = () => {
     const editor = editorRef.current;
@@ -143,9 +156,20 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
     const imageFiles = Array.from(files).filter(isImageFile);
     if (imageFiles.length === 0) return false;
 
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    const range = editor && selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+
     for (const file of imageFiles) {
       const html = await onImageFile(file);
-      if (html) insertHtml(html);
+      if (html) {
+        if (range) {
+          editor?.focus();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }
+        insertHtml(html);
+      }
     }
     return true;
   };
@@ -189,12 +213,12 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
           const rawHtml = clipboardData.getData('text/html');
           const rawText = clipboardData.getData('text/plain');
 
-          const isShiftPressed = Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey);
+          const isShiftPressed = lastShiftPressedRef.current || Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey);
 
           // If Shift is held down (or no HTML is present), paste as plain text (Paste and Match Style)
           if (isShiftPressed || !rawHtml.trim()) {
+            event.preventDefault();
             if (rawText) {
-              event.preventDefault();
               document.execCommand('insertText', false, rawText);
               emitChange();
             }
@@ -203,12 +227,11 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
 
           // Clean rich HTML paste: strip external fonts, inline colors/styles while keeping structural tags
           const cleanedHtml = cleanPastedHtml(rawHtml);
+          event.preventDefault();
           if (cleanedHtml) {
-            event.preventDefault();
             document.execCommand('insertHTML', false, cleanedHtml);
             emitChange();
           } else if (rawText) {
-            event.preventDefault();
             document.execCommand('insertText', false, rawText);
             emitChange();
           }

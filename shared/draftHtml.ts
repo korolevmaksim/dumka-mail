@@ -77,19 +77,21 @@ export function cleanPastedHtml(html: string): string {
             return;
           }
 
-          el.removeAttribute('style');
-          el.removeAttribute('class');
-          el.removeAttribute('id');
-          el.removeAttribute('color');
-          el.removeAttribute('face');
-          el.removeAttribute('size');
+          const allowedAttrs = ['href', 'src', 'alt', 'title', 'target'];
+          const attrNames = Array.from(el.attributes).map(a => a.name);
+          for (const attr of attrNames) {
+            if (!allowedAttrs.includes(attr.toLowerCase())) {
+              el.removeAttribute(attr);
+            }
+          }
 
           const children = Array.from(el.childNodes);
           children.forEach(cleanNode);
 
-          if ((tagName === 'span' || tagName === 'font') && el.attributes.length === 0) {
+          if ((tagName === 'span' || tagName === 'font') && el.parentNode) {
+            const parent = el.parentNode;
             while (el.firstChild) {
-              el.parentNode?.insertBefore(el.firstChild, el);
+              parent.insertBefore(el.firstChild, el);
             }
             el.remove();
           }
@@ -97,20 +99,19 @@ export function cleanPastedHtml(html: string): string {
       };
 
       Array.from(doc.body.childNodes).forEach(cleanNode);
-      const cleaned = doc.body.innerHTML.trim();
-      return cleaned || fragment;
+      return doc.body.innerHTML.trim();
     } catch {
       // Fall through to regex fallback if DOMParser fails
     }
   }
 
   return fragment
-    .replace(/\s+style\s*=\s*"[^"]*"/gi, '')
-    .replace(/\s+style\s*=\s*'[^']*'/gi, '')
-    .replace(/\s+class\s*=\s*"[^"]*"/gi, '')
-    .replace(/\s+class\s*=\s*'[^']*'/gi, '')
-    .replace(/\s+id\s*=\s*"[^"]*"/gi, '')
-    .replace(/\s+id\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+style\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+class\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+color\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+face\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+size\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/<\/?(font|span)\b[^>]*>/gi, '');
 }
 

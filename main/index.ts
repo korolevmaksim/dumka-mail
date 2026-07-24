@@ -680,14 +680,19 @@ function createWindow() {
 
     const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
-    if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
-      for (const suggestion of params.dictionarySuggestions) {
-        menuTemplate.push({
-          label: suggestion,
-          click: () => mainWindow?.webContents.replaceMisspelling(suggestion)
-        });
+    const hasSuggestions = Boolean(params.dictionarySuggestions && params.dictionarySuggestions.length > 0);
+    const hasMisspelledWord = Boolean(params.misspelledWord && params.misspelledWord.trim());
+
+    if (hasSuggestions || hasMisspelledWord) {
+      if (hasSuggestions && params.dictionarySuggestions) {
+        for (const suggestion of params.dictionarySuggestions) {
+          menuTemplate.push({
+            label: suggestion,
+            click: () => mainWindow?.webContents.replaceMisspelling(suggestion)
+          });
+        }
       }
-      if (params.misspelledWord) {
+      if (hasMisspelledWord) {
         menuTemplate.push({
           label: `Add "${params.misspelledWord}" to Dictionary`,
           click: () => {
