@@ -5,26 +5,25 @@ import {
   DraftsRepo,
   MailEmbeddingsRepo,
   MessagesRepo,
-  MessageSecurityRepo,
   SettingsRepo,
   ThreadsRepo,
   UnsubscribedSendersRepo,
 } from './database';
 import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
+import { databaseWorkerClient } from './databaseWorkerClient';
+import type { EmbeddingCandidate, ThreadSecurityMode } from './mailAnalysisJobs';
 import { GmailSyncService } from './gmail';
 import {
-  MAIL_SECURITY_ANALYSIS_VERSION,
-  analyzeMessageSecurity,
   isSafePublicHttpUrl,
   parseUnsubscribeCandidate,
   shouldGenerateAgentDraft,
 } from '../shared/mailSecurity';
-import { buildThreadContext, htmlToText } from '../shared/aiContext';
+import { buildThreadContext } from '../shared/aiContext';
 import { resolveAIModelForPurpose } from '../shared/aiModelPurpose';
 import { normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
 import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
-import { normalizeEmbeddingText, stableTextHash } from '../shared/semantic';
+import { normalizeEmbeddingText } from '../shared/semantic';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import { SystemLogger } from './systemLogger';
 import type {
@@ -90,12 +89,6 @@ const EMBEDDING_FULL_INDEX_LIMIT = 100000;
 const EMBEDDING_REINDEX_PAGE_SIZE = 256;
 const EMBEDDING_MAX_RETRY_ATTEMPTS = 3;
 
-interface EmbeddingCandidate {
-  message: MailMessage;
-  text: string;
-  textHash: string;
-}
-
 function readAgentSettings(accountId?: string): RuntimeAgentSettings {
   try {
     const raw = SettingsRepo.get('appSettings');
@@ -158,17 +151,6 @@ function existingDraftForThread(accountId: string, threadId: string): Draft | nu
   return DraftsRepo.list(accountId).find(draft => draft.threadId === threadId) || null;
 }
 
-function buildEmbeddingText(message: MailMessage): string {
-  const body = (message.bodyPlain || (message.bodyHtml ? htmlToText(message.bodyHtml) : '') || message.snippet || '').trim();
-  return normalizeEmbeddingText([
-    `Subject: ${message.subject}`,
-    `From: ${message.senderName || message.senderEmail} <${message.senderEmail}>`,
-    `Received: ${message.receivedAt}`,
-    `Snippet: ${message.snippet}`,
-    body,
-  ].filter(Boolean).join('\n'));
-}
-
 function nowISO(): string {
   return new Date().toISOString();
 }
@@ -183,17 +165,6 @@ function isRunningEmbeddingJob(accountId: string): boolean {
 
 function currentEmbeddingModel(settings: AIEmbeddingSettings): string {
   return buildEmbeddingIndexKey(normalizeEmbeddingSettings(settings));
-}
-
-function buildEmbeddingCandidates(messages: MailMessage[]): EmbeddingCandidate[] {
-  return messages
-    .map(message => ({ message, text: buildEmbeddingText(message) }))
-    .filter(item => item.text.length >= 20)
-    .map(item => ({ ...item, textHash: stableTextHash(item.text) }));
-}
-
-function selectPendingEmbeddingCandidates(candidates: EmbeddingCandidate[], indexedHashes: Record<string, string>): EmbeddingCandidate[] {
-  return candidates.filter(item => indexedHashes[item.message.id] !== item.textHash);
 }
 
 async function pauseBetweenEmbeddingBatches(): Promise<void> {
@@ -221,7 +192,7 @@ async function saveEmbeddingBatch(settings: AIEmbeddingSettings, batch: Embeddin
   }
 
   const indexedAt = nowISO();
-  MailEmbeddingsRepo.saveMany(batch.map((item, batchIndex) => ({
+  await databaseWorkerClient.saveEmbeddingVectors(batch.map((item, batchIndex) => ({
     accountId: item.message.accountId,
     messageId: item.message.id,
     threadId: item.message.threadId,
@@ -370,39 +341,6 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
   }
 }
 
-function analyzeThreadMessages(accountId: string, messages: MailMessage[]): void {
-  const bySender = new Map<string, MailMessage[]>();
-  for (const message of messages) {
-    const key = message.senderEmail.trim().toLowerCase();
-    const group = bySender.get(key) || [];
-    group.push(message);
-    bySender.set(key, group);
-  }
-
-  const historyBySender = new Map<string, MailMessage[]>();
-  for (const [key, group] of bySender) {
-    const latest = group.reduce((candidate, message) => (
-      message.receivedAt > candidate.receivedAt ? message : candidate
-    ));
-    historyBySender.set(
-      key,
-      MessagesRepo.listRecentBySender(
-        accountId,
-        latest.senderEmail,
-        latest.receivedAt,
-        Math.min(1000, group.length + 24),
-      ),
-    );
-  }
-
-  const insights = messages.map(message => {
-    const history = historyBySender.get(message.senderEmail.trim().toLowerCase()) || [];
-    const previous = history.filter(candidate => candidate.receivedAt < message.receivedAt).slice(-8);
-    return analyzeMessageSecurity(message, previous);
-  });
-  MessageSecurityRepo.saveMany(insights);
-}
-
 async function indexRecentMessages(accountId: string, maxMessages = 40): Promise<number> {
   if (isRunningEmbeddingJob(accountId)) return 0;
   if (activeRecentEmbeddingAccounts.has(accountId)) return 0;
@@ -411,14 +349,11 @@ async function indexRecentMessages(accountId: string, maxMessages = 40): Promise
   try {
     const settings = readAgentSettings(accountId).embeddings;
     const model = currentEmbeddingModel(settings);
-    const recentCandidates = buildEmbeddingCandidates(MessagesRepo.listRecent(accountId, maxMessages * 3))
-      .slice(0, maxMessages);
-    const indexedHashes = MailEmbeddingsRepo.indexedHashesForMessageIds(
-      accountId,
-      model,
-      recentCandidates.map(item => item.message.id)
-    );
-    const candidates = selectPendingEmbeddingCandidates(recentCandidates, indexedHashes);
+    const { candidates } = await databaseWorkerClient.embeddingCandidates(accountId, model, {
+      kind: 'recent',
+      limit: maxMessages * 3,
+      maxCandidates: maxMessages,
+    });
 
     if (candidates.length === 0) return 0;
 
@@ -514,16 +449,12 @@ async function runEmbeddingReindexJob(
     while (!job.cancelRequested && offset < Math.min(job.total, EMBEDDING_FULL_INDEX_LIMIT)) {
       const remaining = Math.min(job.total, EMBEDDING_FULL_INDEX_LIMIT) - offset;
       const pageLimit = Math.min(EMBEDDING_REINDEX_PAGE_SIZE, remaining);
-      const messages = MessagesRepo.listForEmbeddingPage(job.accountId, pageLimit, offset);
-      if (messages.length === 0) break;
-
-      const candidates = buildEmbeddingCandidates(messages);
-      const indexedHashes = MailEmbeddingsRepo.indexedHashesForMessageIds(
+      const { candidates: pendingCandidates, scannedMessages } = await databaseWorkerClient.embeddingCandidates(
         job.accountId,
         model,
-        candidates.map(item => item.message.id)
+        { kind: 'page', limit: pageLimit, offset },
       );
-      const pendingCandidates = selectPendingEmbeddingCandidates(candidates, indexedHashes);
+      if (scannedMessages === 0) break;
 
       for (let index = 0; index < pendingCandidates.length; index += EMBEDDING_BATCH_SIZE) {
         if (job.cancelRequested) break;
@@ -539,12 +470,12 @@ async function runEmbeddingReindexJob(
         await pauseBetweenEmbeddingBatches();
       }
 
-      offset += messages.length;
+      offset += scannedMessages;
       job.processed = Math.min(job.total, offset);
       job.updatedAt = nowISO();
       await pauseBetweenEmbeddingBatches();
 
-      if (messages.length < pageLimit) break;
+      if (scannedMessages < pageLimit) break;
     }
 
     if (!job.cancelRequested) {
@@ -717,8 +648,11 @@ async function performUnsubscribe(accountId: string, method: UnsubscribeMethod):
 async function processThreadInternal(accountId: string, threadId: string): Promise<void> {
   const thread = ThreadsRepo.get(accountId, threadId);
   if (!thread) return;
-  const messages = MessagesRepo.listForThread(accountId, threadId);
-  analyzeThreadMessages(accountId, messages);
+  // Both the thread read and the security pass run on the database worker; this
+  // is the 120s background pass and used to block the main event loop on the
+  // sender-history reads behind analyzeThreadMessages.
+  const messages = await databaseWorkerClient.listMessagesForThread(accountId, threadId);
+  await databaseWorkerClient.threadSecurityInsights(accountId, threadId, 'force');
   await generateDraftForThread(thread, messages);
 }
 
@@ -819,15 +753,22 @@ export const AgenticService = {
   },
 
   async getThreadInsights(accountId: string, threadId: string, messages?: MailMessage[]): Promise<ThreadAgentInsights> {
-    const threadMessages = messages || MessagesRepo.listForThread(accountId, threadId);
-    let securityInsights = MessageSecurityRepo.listForThread(accountId, threadId);
-    const hasFullMessageBodies = threadMessages.some(message => message.bodyHtml !== null || message.bodyPlain !== null);
-    const needsSecurityRefresh = securityInsights.length !== threadMessages.length ||
-      securityInsights.some(insight => insight.analysisVersion !== MAIL_SECURITY_ANALYSIS_VERSION);
-    if (hasFullMessageBodies && needsSecurityRefresh) {
-      analyzeThreadMessages(accountId, threadMessages);
-      securityInsights = MessageSecurityRepo.listForThread(accountId, threadId);
-    }
+    // Opening a thread hits this path, so the freshness check and any resulting
+    // re-analysis both run on the database worker rather than stalling the reader.
+    //
+    // The analysis decision still depends on what the CALLER holds, not on what
+    // the worker can read: `api:getThreadAgentInsights` passes metadata-only
+    // messages (mapMessageMetadataRow nulls the bodies), and that has always
+    // meant "return the cached insights, do not analyze". Deciding this from the
+    // worker's own full-body read would silently start analyzing for that caller.
+    const analysisMode: ThreadSecurityMode = !messages ||
+      messages.some(message => message.bodyHtml !== null || message.bodyPlain !== null)
+      ? 'refresh'
+      : 'readOnly';
+    const [threadMessages, securityInsights] = await Promise.all([
+      messages ? Promise.resolve(messages) : databaseWorkerClient.listMessagesForThread(accountId, threadId),
+      databaseWorkerClient.threadSecurityInsights(accountId, threadId, analysisMode, messages?.length),
+    ]);
     return {
       accountId,
       threadId,
@@ -905,7 +846,7 @@ export const AgenticService = {
   },
 
   async unsubscribeThread(accountId: string, threadId: string, sourceMessageId?: string): Promise<{ method: string; archived: boolean; senderEmail: string | null }> {
-    const messages = MessagesRepo.listForThread(accountId, threadId);
+    const messages = await databaseWorkerClient.listMessagesForThread(accountId, threadId);
     let candidate: UnsubscribeCandidate | null;
     if (sourceMessageId) {
       // Execute exactly the method the user reviewed: re-parse the reviewed

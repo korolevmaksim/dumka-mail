@@ -45,6 +45,11 @@ vi.mock('../main/gmail', () => ({
 vi.mock('../main/semanticSearchWorkerClient', () => ({
   semanticSearchWorkerClient: { search: vi.fn() },
 }));
+// The briefing path reaches the database worker; run its job inline so this
+// suite stays focused on semantic search outcomes.
+vi.mock('../main/databaseWorkerClient', async () => (
+  (await import('./support/databaseWorkerClientTestDouble')).createDatabaseWorkerClientModule()
+));
 
 // Import target under test (must be imported after mocking database)
 import { AgenticService } from '../main/agentic';

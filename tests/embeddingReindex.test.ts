@@ -76,6 +76,11 @@ const workerClientMocks = vi.hoisted(() => ({
 
 vi.mock('../main/database', () => databaseMocks);
 vi.mock('../main/semanticSearchWorkerClient', () => workerClientMocks);
+// Embedding candidate collection and the briefing thread pass run on the
+// database worker; execute them inline against the repository mocks above.
+vi.mock('../main/databaseWorkerClient', async () => (
+  (await import('./support/databaseWorkerClientTestDouble')).createDatabaseWorkerClientModule()
+));
 vi.mock('../main/ai', () => ({
   completeAI: vi.fn(),
   createEmbeddings: vi.fn(),
@@ -90,6 +95,48 @@ vi.mock('../main/gmail', () => ({
 
 import { AgenticService } from '../main/agentic';
 import { createEmbeddings } from '../main/ai';
+import { buildEmbeddingText } from '../main/mailAnalysisJobs';
+import { stableTextHash } from '../shared/semantic';
+import type { MailMessage } from '../shared/types';
+
+const REINDEX_PAGE_SIZE = 256;
+
+function pageMessage(index: number): MailMessage {
+  return {
+    id: `msg-${index}`,
+    threadId: `thread-${index}`,
+    accountId,
+    senderName: 'Alex',
+    senderEmail: 'alex@example.com',
+    subject: `Contract revision ${index}`,
+    snippet: 'Please take a look at the latest revision when you have a moment.',
+    receivedAt: `2026-07-03T08:00:${String(index % 60).padStart(2, '0')}.000Z`,
+    labelIds: ['INBOX'],
+    hasAttachments: false,
+    isUnread: false,
+    to: [{ name: 'Me', email: accountId }],
+    cc: [],
+    bcc: [],
+    bodyPlain: `Body of revision ${index}: please review the attached contract changes.`,
+    bodyHtml: null,
+    attachments: [],
+    headers: [],
+  };
+}
+
+/** Hashes matching what the job computes, so every candidate is already indexed. */
+function indexedHashesFor(messages: MailMessage[]): Record<string, string> {
+  return Object.fromEntries(messages.map(message => [message.id, stableTextHash(buildEmbeddingText(message))]));
+}
+
+async function waitForReindexToFinish(): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const status = await AgenticService.getEmbeddingIndexStatus(accountId);
+    if (status.job && status.job.state !== 'running') return;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  throw new Error('Reindex job did not finish in time');
+}
 
 describe('embedding reindex jobs', () => {
   beforeEach(() => {
@@ -109,6 +156,43 @@ describe('embedding reindex jobs', () => {
     expect(status.job?.state).toBe('running');
     expect(databaseMocks.MessagesRepo.listForEmbedding).not.toHaveBeenCalled();
     expect(databaseMocks.MailEmbeddingsRepo.indexedHashes).not.toHaveBeenCalled();
+  });
+
+  // Paging advances by the number of rows the page QUERY returned, not by how
+  // many survived candidate filtering. A full page whose candidates are all
+  // already indexed yields zero candidates; if the loop advanced on that count
+  // it would re-request offset 0 forever.
+  it('advances reindex paging by scanned rows even when a whole page is already indexed', async () => {
+    const firstPage = Array.from({ length: REINDEX_PAGE_SIZE }, (_, index) => pageMessage(index));
+    databaseMocks.MessagesRepo.listForEmbeddingPage
+      .mockReturnValueOnce(firstPage as never[])
+      .mockReturnValue([] as never[]);
+    databaseMocks.MailEmbeddingsRepo.indexedHashesForMessageIds.mockReturnValue(
+      indexedHashesFor(firstPage) as never,
+    );
+
+    await AgenticService.startEmbeddingReindex(accountId);
+    await waitForReindexToFinish();
+
+    const offsets = databaseMocks.MessagesRepo.listForEmbeddingPage.mock.calls
+      .map(call => (call as unknown as [string, number, number])[2]);
+    expect(offsets.slice(0, 2)).toEqual([0, REINDEX_PAGE_SIZE]);
+    expect(vi.mocked(createEmbeddings)).not.toHaveBeenCalled();
+    const status = await AgenticService.getEmbeddingIndexStatus(accountId);
+    expect(status.job?.state).toBe('completed');
+  });
+
+  it('stops paging on a short page rather than requesting past the end', async () => {
+    const shortPage = Array.from({ length: 10 }, (_, index) => pageMessage(index));
+    databaseMocks.MessagesRepo.listForEmbeddingPage.mockReturnValue(shortPage as never[]);
+    databaseMocks.MailEmbeddingsRepo.indexedHashesForMessageIds.mockReturnValue(
+      indexedHashesFor(shortPage) as never,
+    );
+
+    await AgenticService.startEmbeddingReindex(accountId);
+    await waitForReindexToFinish();
+
+    expect(databaseMocks.MessagesRepo.listForEmbeddingPage).toHaveBeenCalledTimes(1);
   });
 
   it('delegates the interactive semantic search scan to the worker without main-process scans', async () => {

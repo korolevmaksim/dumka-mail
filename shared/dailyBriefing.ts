@@ -61,7 +61,12 @@ export function normalizeDailyBriefingSettings(input?: Partial<DailyBriefingSett
   };
 }
 
-function latestMessage(messages: MailMessage[]): MailMessage | null {
+/**
+ * Exported because the briefing's database-worker job returns only this one
+ * message per thread. If the two reductions ever diverged, the worker would ship
+ * a different message than the builder would have chosen.
+ */
+export function latestMessage(messages: MailMessage[]): MailMessage | null {
   if (messages.length === 0) return null;
   return [...messages]
     .sort((a, b) => Date.parse(a.receivedAt) - Date.parse(b.receivedAt))

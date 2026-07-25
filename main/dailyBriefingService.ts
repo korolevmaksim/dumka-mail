@@ -1,12 +1,10 @@
-import { MessagesRepo, MessageSecurityRepo, ThreadsRepo } from './database';
+import { databaseWorkerClient } from './databaseWorkerClient';
 import { buildDailyBriefing, normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
-import { analyzeMessageSecurity } from '../shared/mailSecurity';
 import type {
   DailyBriefing,
   DailyBriefingBuildOptions,
   DailyBriefingSettings,
   MailMessage,
-  MailThread,
   SemanticSearchResult,
 } from '../shared/types';
 
@@ -30,14 +28,6 @@ export interface BuildDailyBriefingForAccountInput {
 
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function analyzeThreadMessages(accountId: string, messages: MailMessage[]): void {
-  const insights = messages.map(message => {
-    const previous = MessagesRepo.listRecentBySender(accountId, message.senderEmail, message.receivedAt, 8);
-    return analyzeMessageSecurity(message, previous);
-  });
-  MessageSecurityRepo.saveMany(insights);
 }
 
 async function semanticScoresForDailyBriefing(
@@ -69,20 +59,6 @@ async function semanticScoresForDailyBriefing(
   return scores;
 }
 
-function hasThreadLabel(thread: MailThread, label: string): boolean {
-  const target = label.toUpperCase();
-  return thread.labelIds.some(item => String(item).toUpperCase() === target);
-}
-
-function isBriefingCandidateThread(thread: MailThread, sinceMs: number, includeRead: boolean, semanticScore: number): boolean {
-  if (!hasThreadLabel(thread, 'INBOX')) return false;
-  if (hasThreadLabel(thread, 'SPAM') || hasThreadLabel(thread, 'TRASH')) return false;
-  const lastMs = Date.parse(thread.lastMessageAt);
-  const isRecent = Number.isFinite(lastMs) && lastMs >= sinceMs;
-  if (isRecent || thread.isUnread || semanticScore >= 0.32) return true;
-  return includeRead;
-}
-
 export async function buildDailyBriefingForAccount({
   accountId,
   options = {},
@@ -100,20 +76,26 @@ export async function buildDailyBriefingForAccount({
 
   const semanticScoresByThreadId = await semanticScoresForDailyBriefing(accountId, semanticEnabled, searchSemantic, warnings);
   const sinceMs = safeNow.getTime() - settings.lookbackHours * 3600000;
-  const threads = ThreadsRepo.list(accountId)
-    .filter(thread => isBriefingCandidateThread(thread, sinceMs, settings.includeRead, semanticScoresByThreadId[thread.id] || 0))
-    .slice(0, Math.max(80, Math.min(240, settings.maxItems * 16)));
 
+  // Thread selection, per-thread message reads and the security pass all happen
+  // on the database worker. Building this inline used to read >100 MB of bodies
+  // and header JSON on the Electron main event loop, which froze the UI for
+  // seconds every time the briefing auto-refreshed after a sync.
+  const { threads, latestMessageByThreadId, securityByThreadId } = await databaseWorkerClient.briefingThreadContext(
+    accountId,
+    {
+      sinceMs,
+      includeRead: settings.includeRead,
+      semanticScoresByThreadId,
+      maxThreads: Math.max(80, Math.min(240, settings.maxItems * 16)),
+    },
+  );
+
+  // buildDailyBriefing reduces each thread's messages down to the newest one, so
+  // a single-element list yields the same item as the full message list did.
   const messagesByThreadId: Record<string, MailMessage[]> = {};
-  const securityByThreadId: Record<string, ReturnType<typeof MessageSecurityRepo.listForThread>> = {};
-
-  for (const thread of threads) {
-    const messages = MessagesRepo.listForThread(accountId, thread.id);
-    messagesByThreadId[thread.id] = messages;
-    if (messages.length > 0) {
-      analyzeThreadMessages(accountId, messages);
-    }
-    securityByThreadId[thread.id] = MessageSecurityRepo.listForThread(accountId, thread.id);
+  for (const [threadId, message] of Object.entries(latestMessageByThreadId)) {
+    messagesByThreadId[threadId] = [message];
   }
 
   return buildDailyBriefing({

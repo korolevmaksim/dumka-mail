@@ -1,19 +1,19 @@
 import path from 'path';
 import { Worker } from 'worker_threads';
-import type { MailMessage, MailThread, SenderCleanupStat } from '../shared/types';
-
-type WorkerPayload =
-  | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
-  | { type: 'saveThreads'; threads: MailThread[] }
-  | { type: 'listThreads'; accountIds: string[] }
-  | { type: 'listMessagesForThread'; accountId: string; threadId: string }
-  | { type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
-  | { type: 'recentSenderMessages'; accountId: string; senderEmail: string; limit: number }
-  | { type: 'senderCleanupStats'; accountId: string };
-
-type WorkerResponse =
-  | { id: number; ok: true; result: unknown }
-  | { id: number; ok: false; error: { name: string; message: string; stack?: string } };
+import type { MailEmbeddingRow } from './database';
+import type {
+  DatabaseWorkerPayload,
+  DatabaseWorkerResponse,
+} from './databaseWorkerProtocol';
+import type {
+  BriefingThreadBatch,
+  BriefingThreadContext,
+  BriefingThreadSelection,
+  EmbeddingCandidateBatch,
+  EmbeddingCandidateSource,
+  ThreadSecurityMode,
+} from './mailAnalysisJobs';
+import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat } from '../shared/types';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -22,6 +22,9 @@ interface PendingRequest {
 
 const MESSAGE_BATCH_SIZE = 5;
 const THREAD_BATCH_SIZE = 50;
+// Briefing threads carry full message bodies; keep each worker task short so
+// interactive requests are never stuck behind the whole selection.
+const BRIEFING_THREAD_BATCH_SIZE = 20;
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => setImmediate(resolve));
@@ -55,7 +58,7 @@ class DatabaseWorkerClient {
     this.worker = worker;
     this.shuttingDown = false;
 
-    worker.on('message', (response: WorkerResponse) => {
+    worker.on('message', (response: DatabaseWorkerResponse) => {
       const pending = this.pending.get(response.id);
       if (!pending) return;
 
@@ -89,7 +92,7 @@ class DatabaseWorkerClient {
     this.pending.clear();
   }
 
-  private request<T>(payload: WorkerPayload): Promise<T> {
+  private request<T>(payload: DatabaseWorkerPayload): Promise<T> {
     const id = this.nextRequestId++;
     const worker = this.getWorker();
 
@@ -156,6 +159,68 @@ class DatabaseWorkerClient {
 
   senderCleanupStats(accountId: string): Promise<SenderCleanupStat[]> {
     return this.request<SenderCleanupStat[]>({ type: 'senderCleanupStats', accountId });
+  }
+
+  // The analysis jobs below read bulk message bodies. They stay on the worker
+  // so the Electron main event loop never blocks on them; only their small
+  // results cross the thread boundary.
+
+  threadSecurityInsights(
+    accountId: string,
+    threadId: string,
+    mode: ThreadSecurityMode = 'refresh',
+    knownMessageCount?: number,
+  ): Promise<MessageSecurityInsight[]> {
+    return this.request<MessageSecurityInsight[]>({
+      type: 'threadSecurityInsights',
+      accountId,
+      threadId,
+      mode,
+      knownMessageCount,
+    });
+  }
+
+  embeddingCandidates(
+    accountId: string,
+    model: string,
+    source: EmbeddingCandidateSource,
+  ): Promise<EmbeddingCandidateBatch> {
+    return this.request<EmbeddingCandidateBatch>({ type: 'embeddingCandidates', accountId, model, source });
+  }
+
+  saveEmbeddingVectors(rows: MailEmbeddingRow[]): Promise<void> {
+    return this.request<void>({ type: 'saveEmbeddingVectors', rows });
+  }
+
+  /**
+   * Selects the briefing's threads, then walks them in bounded batches so the
+   * worker stays available to interactive requests (thread open, mailbox list)
+   * between batches instead of being held for the whole multi-second read.
+   */
+  async briefingThreadContext(
+    accountId: string,
+    selection: BriefingThreadSelection,
+  ): Promise<BriefingThreadContext> {
+    const threads = await this.request<MailThread[]>({ type: 'selectBriefingThreads', accountId, selection });
+    const latestMessageByThreadId: Record<string, MailMessage> = {};
+    const securityByThreadId: Record<string, MessageSecurityInsight[]> = {};
+    const batches = chunk(threads.map(thread => thread.id), BRIEFING_THREAD_BATCH_SIZE);
+
+    for (let index = 0; index < batches.length; index += 1) {
+      const batch = await this.request<BriefingThreadBatch>({
+        type: 'briefingThreadBatch',
+        accountId,
+        threadIds: batches[index],
+      });
+      Object.assign(latestMessageByThreadId, batch.latestMessageByThreadId);
+      Object.assign(securityByThreadId, batch.securityByThreadId);
+
+      if (index < batches.length - 1) {
+        await yieldToEventLoop();
+      }
+    }
+
+    return { threads, latestMessageByThreadId, securityByThreadId };
   }
 
   shutdown() {

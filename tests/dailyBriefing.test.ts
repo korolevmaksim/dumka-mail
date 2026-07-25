@@ -15,6 +15,11 @@ const databaseMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../main/database', () => databaseMocks);
+// The briefing now prepares its threads on the database worker; run that job
+// inline so the repository mocks above still drive these assertions.
+vi.mock('../main/databaseWorkerClient', async () => (
+  (await import('./support/databaseWorkerClientTestDouble')).createDatabaseWorkerClientModule()
+));
 
 import { buildDailyBriefing, normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
 import { buildDailyBriefingForAccount } from '../main/dailyBriefingService';
@@ -228,5 +233,49 @@ describe('daily briefing builder', () => {
     expect(briefing.coverage.warnings).toContain('Semantic briefing search skipped: embedding provider offline');
     expect(briefing.items.length).toBeGreaterThan(0);
     expect(briefing.coverage.semanticMatches).toBe(0);
+  });
+
+  // buildDailyBriefingForAccount only carries the newest message per thread back
+  // from the database worker, so whole-thread bodies never cross the thread
+  // boundary. That is only safe while the builder reduces each thread to its
+  // latest message -- this pins that contract.
+  it('produces identical items from a thread whether given every message or only the latest', () => {
+    const target = thread({ id: 'thread-multi' });
+    const older = message({
+      id: 'msg-old',
+      threadId: target.id,
+      receivedAt: '2026-07-01T08:00:00.000Z',
+      subject: 'Older subject nobody should see',
+      snippet: 'Older snippet nobody should see',
+      bodyPlain: 'An earlier note with no question in it.',
+    });
+    const newest = message({
+      id: 'msg-new',
+      threadId: target.id,
+      receivedAt: '2026-07-03T08:00:00.000Z',
+    });
+    const input = {
+      accountId: ACCOUNT,
+      threads: [target],
+      securityByThreadId: {},
+      semanticScoresByThreadId: {},
+      settings: normalizeDailyBriefingSettings({}),
+      semanticSearchEnabled: false,
+      bodyContextIncluded: false,
+      now: NOW,
+    };
+
+    const fromEveryMessage = buildDailyBriefing({
+      ...input,
+      messagesByThreadId: { [target.id]: [older, newest] },
+    });
+    const fromLatestOnly = buildDailyBriefing({
+      ...input,
+      messagesByThreadId: { [target.id]: [newest] },
+    });
+
+    expect(fromLatestOnly.items).toEqual(fromEveryMessage.items);
+    expect(fromLatestOnly.items).toHaveLength(1);
+    expect(fromLatestOnly.coverage.candidateThreadCount).toBe(fromEveryMessage.coverage.candidateThreadCount);
   });
 });

@@ -392,6 +392,12 @@ export function runMigrations(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_threads_account_last_message_at ON threads(account_id, last_message_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_account_thread_received_at ON messages(account_id, thread_id, received_at);
     CREATE INDEX IF NOT EXISTS idx_messages_account_sender_received_at ON messages(account_id, sender_email COLLATE NOCASE, received_at);
+    -- Per-account recency scans (MessagesRepo.listRecent / listForEmbeddingPage).
+    -- Without this SQLite falls back to "USE TEMP B-TREE FOR ORDER BY" and sorts
+    -- every message row of the account -- including body_html -- to return one
+    -- page. On a 1.5 GB cache that measured 10 s cold / 0.37 s warm per call
+    -- versus 6 ms with this index.
+    CREATE INDEX IF NOT EXISTS idx_messages_account_received_at ON messages(account_id, received_at DESC);
     CREATE INDEX IF NOT EXISTS idx_contacts_account_email ON contacts(account_id, email);
     CREATE INDEX IF NOT EXISTS idx_calendar_events_account_start ON calendar_events(account_id, start_at);
     CREATE INDEX IF NOT EXISTS idx_calendar_events_account_calendar_start ON calendar_events(account_id, calendar_id, start_at);

@@ -60,3 +60,5 @@ export {
   MessageSecurityRepo,
   SettingsRepo
 } from './repositories';
+
+export type { MailEmbeddingRow } from './repositories';
