@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CalendarAttendeeResponse, CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput, CalendarLocalTask, CalendarMutationScope, CalendarSettings, CalendarWorkspaceView, MailActionLog } from '../../../shared/types';
+import { calendarDeleteSuccessMessage } from '../../../shared/calendarDeleteCopy';
 import {
   calendarNavigationDate,
   calendarViewRange,
@@ -275,6 +276,7 @@ export function CalendarWorkspace() {
   async function deleteSelectedEvent(mutationScope: CalendarMutationScope = 'single') {
     if (!selectedEvent) return;
     setIsDeleting(true);
+    const wasRecurring = Boolean(selectedEvent.recurringEventId);
     try {
       await store.deleteCalendarEvent(selectedEvent, selectedEvent.accountId, {
         mutationScope,
@@ -285,7 +287,7 @@ export function CalendarWorkspace() {
       });
       setSelectedEvent(null);
       setFormMode(null);
-      emitToast({ type: 'success', message: 'Event deleted.' });
+      emitToast({ type: 'success', message: calendarDeleteSuccessMessage(wasRecurring, mutationScope) });
     } catch (error) {
       console.error('Calendar event delete failed:', error);
       emitToast({ type: 'error', message: error instanceof Error && error.message.includes('requires a network connection') ? error.message : 'Could not delete the event.' });

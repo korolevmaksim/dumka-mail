@@ -3,7 +3,8 @@ import { CalendarCheck, CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, C
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
 import { CalendarEventForm } from './CalendarEventForm';
-import type { CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput } from '../../../shared/types';
+import type { CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput, CalendarMutationScope } from '../../../shared/types';
+import { calendarDeleteSuccessMessage } from '../../../shared/calendarDeleteCopy';
 import { findAvailabilitySlots, type CalendarAvailabilitySlot } from '../../../shared/calendarAvailability';
 import { calendarEventTimesFromLocalInput, localCalendarTimeZone, parseNaturalLanguageCalendarEvent } from '../../../shared/calendarCreate';
 import {
@@ -180,13 +181,20 @@ export function CalendarAgendaPanel() {
     }
   }
 
-  async function deleteEditingEvent() {
+  async function deleteEditingEvent(mutationScope: CalendarMutationScope = 'single') {
     if (!editingEvent || isDeletingEvent) return;
     setIsDeletingEvent(true);
+    const wasRecurring = Boolean(editingEvent.recurringEventId);
     try {
-      await store.deleteCalendarEvent(editingEvent);
+      await store.deleteCalendarEvent(editingEvent, editingEvent.accountId, {
+        mutationScope,
+        recurringEventId: editingEvent.recurringEventId,
+        originalStartAt: editingEvent.originalStartAt,
+        sendUpdates: 'all',
+        isAllDay: editingEvent.isAllDay,
+      });
       closeEventForm();
-      emitToast({ type: 'success', message: 'Calendar event deleted.' });
+      emitToast({ type: 'success', message: calendarDeleteSuccessMessage(wasRecurring, mutationScope) });
     } catch (error) {
       console.error('Calendar event delete failed:', error);
       emitToast({ type: 'error', message: 'Could not delete calendar event.' });

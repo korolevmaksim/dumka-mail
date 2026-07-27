@@ -28,6 +28,11 @@ import {
   quickDraftLabel,
   sameBusyInterval,
 } from '../lib/calendarEventFormHelpers';
+import {
+  CALENDAR_DELETE_SCOPE_OPTIONS,
+  calendarDeleteButtonLabel,
+  calendarDeleteScopeChooserLabel,
+} from '../../../shared/calendarDeleteCopy';
 
 interface CalendarEventFormProps {
   mode: 'create' | 'edit';
@@ -369,11 +374,18 @@ export function CalendarEventForm({
         )}
         {mode === 'edit' && event?.recurringEventId && (
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">Apply changes to</span>
-            <select value={mutationScope} onChange={inputEvent => setMutationScope(inputEvent.target.value as CalendarMutationScope)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]">
-              <option value="single">This event</option>
-              <option value="following">This and following events</option>
-              <option value="series">Entire series</option>
+            <span className="text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">
+              {deletePending ? calendarDeleteScopeChooserLabel() : 'Apply changes to'}
+            </span>
+            <select
+              value={mutationScope}
+              onChange={inputEvent => setMutationScope(inputEvent.target.value as CalendarMutationScope)}
+              aria-label={deletePending ? calendarDeleteScopeChooserLabel() : 'Apply changes to'}
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]"
+            >
+              {CALENDAR_DELETE_SCOPE_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
         )}
@@ -546,10 +558,19 @@ export function CalendarEventForm({
                 void onDelete(mutationScope);
               }}
               disabled={isSaving || isDeleting}
+              title={
+                event?.recurringEventId
+                  ? calendarDeleteButtonLabel(true, mutationScope, deletePending || isDeleting ? (isDeleting ? 'deleting' : 'confirm') : 'idle')
+                  : undefined
+              }
               className="flex items-center gap-1.5 rounded-md border border-[var(--danger)]/40 px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              {isDeleting ? 'Deleting...' : deletePending ? 'Confirm delete' : 'Delete'}
+              {calendarDeleteButtonLabel(
+                Boolean(event?.recurringEventId),
+                mutationScope,
+                isDeleting ? 'deleting' : deletePending ? 'confirm' : 'idle',
+              )}
             </button>
           ) : (
             <button
