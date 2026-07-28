@@ -121,6 +121,7 @@ export function useMailState({
 }: UseMailStateProps) {
   const [activeSplit, setActiveSplitState] = useState<SplitInboxKind>('important');
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
+  const [splitUnreadCounts, setSplitUnreadCounts] = useState<Record<string, number>>({});
   const [mailboxView, setMailboxViewState] = useState<MailboxView>('inbox');
   const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -347,6 +348,7 @@ export function useMailState({
     setMailboxIndex(nextIndex);
     if (nextIndex) {
       setSplitCounts(nextIndex.splitCounts);
+      setSplitUnreadCounts(nextIndex.splitUnreadCounts);
       setMailboxCounts(nextIndex.mailboxCounts);
       const scopeKey = activeScopeKeyRef.current;
       if (scopeKey) {
@@ -392,10 +394,12 @@ export function useMailState({
     setVisibleThreads([]);
     if (cached) {
       setSplitCounts(cached.index.splitCounts);
+      setSplitUnreadCounts(cached.index.splitUnreadCounts);
       setMailboxCounts(cached.index.mailboxCounts);
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
     } else {
       setSplitCounts({});
+      setSplitUnreadCounts({});
       setMailboxCounts({ inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
       setNavigationActivity(account ? {
         phase: 'loadingAccount',
@@ -498,6 +502,7 @@ export function useMailState({
       setThreads(cached.threads);
       setMailboxIndex(cached.index);
       setSplitCounts(cached.index.splitCounts);
+      setSplitUnreadCounts(cached.index.splitUnreadCounts);
       setMailboxCounts(cached.index.mailboxCounts);
       setLoadedThreadScopeKey(scopeKey);
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
@@ -543,6 +548,7 @@ export function useMailState({
     if (cached && cached.threads === threads && cached.indexConfigKey === mailboxIndexConfigKey) {
       setMailboxIndex(cached.index);
       setSplitCounts(cached.index.splitCounts);
+      setSplitUnreadCounts(cached.index.splitUnreadCounts);
       setMailboxCounts(cached.index.mailboxCounts);
       setNavigationActivity(current => (
         current.phase === 'loadingThread' ? current : IDLE_NAVIGATION_ACTIVITY
@@ -568,6 +574,7 @@ export function useMailState({
       if (!index || cancelled || activeScopeKeyRef.current !== activeScopeKey) return;
       setMailboxIndex(index);
       setSplitCounts(index.splitCounts);
+      setSplitUnreadCounts(index.splitUnreadCounts);
       setMailboxCounts(index.mailboxCounts);
       mailboxSnapshotCacheRef.current.set(activeScopeKey, {
         accountIds: accountIdsForScope(activeAccount, accounts),
@@ -1520,6 +1527,7 @@ export function useMailState({
     activeSplit,
     setActiveSplit,
     splitCounts,
+    splitUnreadCounts,
     accounts,
     activeAccount,
     threads,

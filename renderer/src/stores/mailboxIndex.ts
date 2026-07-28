@@ -9,6 +9,7 @@ export interface MailboxIndex {
   inboxBySplit: Map<string, MailThread[]>;
   mailboxThreads: Record<IndexedMailbox, MailThread[]>;
   splitCounts: Record<string, number>;
+  splitUnreadCounts: Record<string, number>;
   mailboxCounts: Record<MailboxView, number>;
 }
 
@@ -57,6 +58,7 @@ export async function buildMailboxIndexCooperatively({
     muted: [],
   };
   const splitCounts: Record<string, number> = {};
+  const splitUnreadCounts: Record<string, number> = {};
   const mailboxCounts: Record<MailboxView, number> = {
     inbox: 0,
     drafts: 0,
@@ -67,6 +69,7 @@ export async function buildMailboxIndexCooperatively({
   };
   for (const category of tabCategories) {
     splitCounts[category.id] = 0;
+    splitUnreadCounts[category.id] = 0;
   }
 
   const now = new Date();
@@ -88,6 +91,7 @@ export async function buildMailboxIndexCooperatively({
       bucket.push(thread);
       inboxBySplit.set(category, bucket);
       splitCounts[category] = (splitCounts[category] || 0) + 1;
+      if (thread.isUnread) splitUnreadCounts[category] = (splitUnreadCounts[category] || 0) + 1;
     }
 
     if (index + 1 < threads.length && nowMs() - sliceStartedAt >= Math.max(1, sliceMs)) {
@@ -102,6 +106,7 @@ export async function buildMailboxIndexCooperatively({
     inboxBySplit,
     mailboxThreads,
     splitCounts,
+    splitUnreadCounts,
     mailboxCounts,
   };
 }
@@ -174,14 +179,22 @@ export function replaceThreadInMailboxIndex({
   }
 
   const splitCounts: Record<string, number> = {};
-  for (const tab of tabCategories) splitCounts[tab.id] = 0;
-  for (const [categoryId, threads] of inboxBySplit) splitCounts[categoryId] = threads.length;
+  const splitUnreadCounts: Record<string, number> = {};
+  for (const tab of tabCategories) {
+    splitCounts[tab.id] = 0;
+    splitUnreadCounts[tab.id] = 0;
+  }
+  for (const [categoryId, threads] of inboxBySplit) {
+    splitCounts[categoryId] = threads.length;
+    splitUnreadCounts[categoryId] = threads.reduce((sum, thread) => sum + (thread.isUnread ? 1 : 0), 0);
+  }
 
   return {
     categoryByThreadKey,
     inboxBySplit,
     mailboxThreads,
     splitCounts,
+    splitUnreadCounts,
     mailboxCounts: {
       inbox: mailboxThreads.inbox.length,
       drafts: index.mailboxCounts.drafts,

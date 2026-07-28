@@ -94,4 +94,80 @@ describe('mailbox index', () => {
     expect(next.splitCounts.important).toBe(1);
     expect(next.mailboxCounts.inbox).toBe(1);
   });
+
+  it('aggregates unread counts per split during the cooperative build', async () => {
+    const getThreadCategory = (item: MailThread) => (item.id === '1' || item.id === '2' ? 'important' : 'other');
+    const index = await buildMailboxIndexCooperatively({
+      threads: [
+        thread('1', ['INBOX'], true),
+        thread('2', ['INBOX'], true),
+        thread('3'),
+        thread('4', ['SENT'], true),
+      ],
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+
+    expect(index?.splitCounts).toMatchObject({ important: 2, other: 1 });
+    expect(index?.splitUnreadCounts).toMatchObject({ important: 2, other: 0 });
+  });
+
+  it('tracks unread counts when a thread is marked read and unread again', async () => {
+    const getThreadCategory = (item: MailThread) => (item.id === '1' ? 'important' : 'other');
+    const first = thread('1', ['INBOX'], true);
+    const second = thread('2');
+    const index = await buildMailboxIndexCooperatively({
+      threads: [first, second],
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+    expect(index?.splitUnreadCounts).toMatchObject({ important: 1, other: 0 });
+
+    const markedRead = replaceThreadInMailboxIndex({
+      index: index!,
+      previousThread: first,
+      nextThread: { ...first, isUnread: false },
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+    expect(markedRead.splitCounts.important).toBe(1);
+    expect(markedRead.splitUnreadCounts).toMatchObject({ important: 0, other: 0 });
+
+    const markedUnread = replaceThreadInMailboxIndex({
+      index: markedRead,
+      previousThread: { ...first, isUnread: false },
+      nextThread: { ...first, isUnread: true },
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+    expect(markedUnread.splitUnreadCounts).toMatchObject({ important: 1, other: 0 });
+  });
+
+  it('drops the unread count when an unread thread leaves the inbox', async () => {
+    const getThreadCategory = () => 'important';
+    const first = thread('1', ['INBOX'], true);
+    const index = await buildMailboxIndexCooperatively({
+      threads: [first],
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+    expect(index?.splitUnreadCounts.important).toBe(1);
+
+    const next = replaceThreadInMailboxIndex({
+      index: index!,
+      previousThread: first,
+      nextThread: { ...first, reminderAt: '2099-07-24T10:00:00.000Z' },
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+
+    expect(next.splitCounts.important).toBe(0);
+    expect(next.splitUnreadCounts.important).toBe(0);
+  });
 });

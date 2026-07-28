@@ -367,10 +367,6 @@ body {
   color: var(--accent-ink);
 }
 
-[data-interface-style="soft"] .dm-category-tab .opacity-40 {
-  opacity: 1;
-}
-
 [data-interface-style="soft"] .dm-thread-list {
   border-right-color: color-mix(in srgb, var(--border) 62%, transparent);
   background: var(--panel-bg);

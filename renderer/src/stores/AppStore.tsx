@@ -83,7 +83,7 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 20;
+export const SETTINGS_SCHEMA_VERSION = 21;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -97,7 +97,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     language: 'system',
     startupBehavior: 'inbox',
     defaultSplitInbox: 'important',
-    showBottomShortcutBar: true,
+    showBottomShortcutBar: false,
     showRightContextPanel: true,
     openLinksInBackground: true,
     confirmBeforeQuitting: true,
@@ -120,6 +120,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     showLinkedInSplit: true,
     showAutomationSplit: true,
     collapseReadThreads: false,
+    hideEmptySplits: false,
     categories: {
       builtIn: [
         { id: 'important', title: 'Important', isEnabled: true, matchMode: 'any', extraRules: [] },
@@ -350,6 +351,12 @@ export function mergeSettings(parsed: any): AppSettings {
     merged.notifications.notifyImportantOnly = false;
   }
 
+  // Schema 21: the bottom shortcut cheat-sheet bar is off by default; hide it for
+  // existing installs too (ShortcutGuideOverlay on "?" remains the discovery path).
+  if (parsedSchemaVersion < 21) {
+    merged.general.showBottomShortcutBar = false;
+  }
+
   merged.settingsSchemaVersion = SETTINGS_SCHEMA_VERSION;
   return merged;
 }
@@ -408,6 +415,7 @@ interface AppStoreContextType {
   activeSplit: SplitInboxKind;
   setActiveSplit: (s: SplitInboxKind) => void;
   splitCounts: Record<string, number>;
+  splitUnreadCounts: Record<string, number>;
   tabCategories: TabCategory[];
   addTabCategory: (displayName: string, colorHex?: string, accountId?: string) => void;
   updateTabCategory: (id: string, updated: Partial<TabCategory>) => void;

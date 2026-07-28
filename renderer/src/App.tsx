@@ -19,6 +19,7 @@ import { CleanupPanel } from './components/CleanupPanel';
 import { LeftRail } from './components/layout/LeftRail';
 import { AICopilotPanel } from './components/layout/AICopilotPanel';
 import { SearchCockpitBar } from './components/layout/SearchCockpitBar';
+import { SplitTabBar } from './components/layout/SplitTabBar';
 import { BottomShortcutBar } from './components/layout/BottomShortcutBar';
 import { RightContextPanel } from './components/layout/RightContextPanel';
 import { CommandPalette } from './components/layout/CommandPalette';
@@ -37,6 +38,7 @@ import { calculateVirtualWindow, scrollTopForIndex } from './lib/virtualList';
 import { buildLabelTree, flattenLabelTree, labelDefinitionsForAccount, labelPresenceInThreads } from '../../shared/labels';
 import { isReversibleMailActionKind } from '../../shared/mailActions';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
+import { visibleSplitTabs } from '../../shared/splitTabs';
 import type { Draft, MailboxView, MailThread } from '../../shared/types';
 
 const getMaxWidthStyle = (option?: string) => {
@@ -144,8 +146,6 @@ function AppContent() {
       status: store.openedThreadMessagesStatus,
     })
     : null;
-  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
-  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutGuideOpen, setShortcutGuideOpen] = useState(false);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
@@ -412,41 +412,6 @@ function AppContent() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [store.openedThread]);
-
-  const handleDragStartTab = (e: React.DragEvent, id: string) => {
-    setDraggedTabId(id);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOverTab = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDragEnterTab = (e: React.DragEvent, id: string) => {
-    e.preventDefault();
-    setDragOverTabId(id);
-  };
-
-  const handleDropTab = (e: React.DragEvent, targetId: string) => {
-    e.preventDefault();
-    if (draggedTabId && draggedTabId !== targetId) {
-      const draggedIndex = store.tabCategories.findIndex(c => c.id === draggedTabId);
-      const targetIndex = store.tabCategories.findIndex(c => c.id === targetId);
-      if (draggedIndex !== -1 && targetIndex !== -1) {
-        const newCategories = [...store.tabCategories];
-        const [removed] = newCategories.splice(draggedIndex, 1);
-        newCategories.splice(targetIndex, 0, removed);
-        store.updateTabCategoriesOrder(newCategories);
-      }
-    }
-    setDraggedTabId(null);
-    setDragOverTabId(null);
-  };
-
-  const handleDragEndTab = () => {
-    setDraggedTabId(null);
-    setDragOverTabId(null);
-  };
 
   useEffect(() => {
     if (!snoozeOpen) return;
@@ -721,12 +686,24 @@ function AppContent() {
     }
   });
 
-  const activeCategoryTabs = store.tabCategories.filter(c => {
-    if (!c.active) return false;
-    if (c.isSystem) return true;
-    if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
-    return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
-  });
+  const hideEmptySplits = store.settings.inbox.hideEmptySplits;
+  const activeCategoryTabs = visibleSplitTabs(
+    store.tabCategories.filter(c => {
+      if (c.isSystem) return true;
+      if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
+      return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
+    }),
+    store.splitCounts,
+    hideEmptySplits,
+    store.activeSplit,
+  );
+
+  // When empty splits are hidden, never leave the selection on a hidden tab.
+  useEffect(() => {
+    if (!hideEmptySplits) return;
+    if (activeCategoryTabs.some(c => c.id === store.activeSplit)) return;
+    store.setActiveSplit('important');
+  }, [hideEmptySplits, activeCategoryTabs, store.activeSplit]);
   const mailboxIcons: Record<MailboxView, typeof Inbox> = {
     inbox: Inbox,
     drafts: FileText,
@@ -826,7 +803,7 @@ function AppContent() {
 
             {/* SPLIT TABS BAR */}
             <div className="dm-mail-tabs dm-toolbar flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
-              <div className="flex min-w-0 h-full items-end gap-2">
+              <div className="flex min-w-0 h-full flex-1 items-end gap-2">
                 <div className="relative flex h-[var(--split-tab-h)] shrink-0 items-center" onClick={(event) => event.stopPropagation()}>
                   <button
                     type="button"
@@ -884,51 +861,7 @@ function AppContent() {
                 </div>
 
                 {store.mailboxView === 'inbox' ? (
-                  <div className="flex h-[var(--split-tab-h)] min-w-0 items-end gap-1 overflow-x-auto">
-                    {activeCategoryTabs.map((category, i) => {
-                      const count = store.splitCounts[category.id] || 0;
-                      return (
-                        <button
-                          key={category.id}
-                          aria-pressed={store.activeSplit === category.id}
-                          draggable
-                          onDragStart={(e) => handleDragStartTab(e, category.id)}
-                          onDragOver={handleDragOverTab}
-                          onDragEnter={(e) => handleDragEnterTab(e, category.id)}
-                          onDragEnd={handleDragEndTab}
-                          onDrop={(e) => handleDropTab(e, category.id)}
-                          onClick={() => {
-                            store.setWorkspaceView('mail');
-                            store.setActiveSplit(category.id);
-                            store.setSettingsOpen(false);
-                            store.setCleanupOpen(false);
-                          }}
-                          className={`dm-category-tab flex h-full items-center gap-1.5 border-b-2 px-3 text-tab transition-all cursor-grab ${
-                            store.activeSplit === category.id
-                              ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
-                              : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                          } ${
-                            draggedTabId === category.id ? 'opacity-40 scale-95' : ''
-                          } ${
-                            dragOverTabId === category.id && draggedTabId !== category.id
-                              ? 'bg-[var(--accent)]/10 border-b-[var(--accent)] border-dashed'
-                              : ''
-                          }`}
-                        >
-                          {category.colorHex && (
-                            <span className="w-1.5 h-1.5 rounded-full inline-block shrink-0" style={{ backgroundColor: category.colorHex }} />
-                          )}
-                          <span>{category.displayName}</span>
-                          {count > 0 && (
-                            <span className="bg-[var(--border)] px-1 rounded-full text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-normal">
-                              {count}
-                            </span>
-                          )}
-                          <span className="text-[calc(8px*var(--font-scale))] opacity-40 font-normal">({i + 1})</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <SplitTabBar categories={activeCategoryTabs} />
                 ) : (
                   <div className="flex h-full items-center min-w-0">
                     <div className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] truncate">

@@ -83,6 +83,33 @@ describe('AppSettings defaults and migrations', () => {
     expect(DEFAULT_SETTINGS.inbox.followUpThresholdHours).toBe(48);
   });
 
+  it('ships Hide Empty Splits disabled by default', () => {
+    expect(DEFAULT_SETTINGS.inbox.hideEmptySplits).toBe(false);
+  });
+
+  it('fills hideEmptySplits when migrating older settings blobs', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,
+      inbox: {
+        showUnreadFirst: false,
+      },
+    });
+
+    expect(merged.inbox.hideEmptySplits).toBe(false);
+    expect(merged.inbox.showUnreadFirst).toBe(false);
+  });
+
+  it('preserves a user-configured hideEmptySplits value', () => {
+    const merged = mergeSettings({
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      inbox: {
+        hideEmptySplits: true,
+      },
+    });
+
+    expect(merged.inbox.hideEmptySplits).toBe(true);
+  });
+
   it('fills followUpMaxAgeDays when migrating older settings blobs', () => {
     const merged = mergeSettings({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1,

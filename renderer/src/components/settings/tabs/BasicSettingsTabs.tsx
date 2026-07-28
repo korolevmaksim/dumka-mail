@@ -353,6 +353,7 @@ export function InboxTab() {
           { key: 'showPurchasesSplit', title: 'Include Purchases Split Tab', desc: 'Parse receipt and bill signals' },
           { key: 'showLinkedInSplit', title: 'Include LinkedIn Split Tab', desc: 'Route professional connections separately' },
           { key: 'collapseReadThreads', title: 'Collapse Read Threads', desc: 'Minimize read threads in detail viewer' },
+          { key: 'hideEmptySplits', title: 'Hide Empty Splits', desc: 'Only show split tabs that contain threads. Important always stays visible.' },
         ].map(item => (
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">

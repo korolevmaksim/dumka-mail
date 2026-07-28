@@ -946,6 +946,8 @@ export interface InboxSettings {
   showLinkedInSplit: boolean;
   showAutomationSplit: boolean;
   collapseReadThreads: boolean;
+  /** When enabled, split tabs without threads are hidden; Important always stays visible. */
+  hideEmptySplits: boolean;
   categories: {
     builtIn: BuiltInMailCategorySettings[];
     custom: CustomMailCategorySettings[];
