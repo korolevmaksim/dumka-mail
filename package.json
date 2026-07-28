@@ -41,7 +41,7 @@
     "dist:win": "npm run build && electron-builder --win",
     "package:linux": "npm run build && electron-builder --linux --dir",
     "dist:linux": "npm run build && electron-builder --linux",
-    "install-app": "./install.sh"
+    "install-app": "./install-app.sh"
   },
   "build": {
     "appId": "dev.dumka.mail",
