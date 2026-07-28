@@ -598,7 +598,6 @@ export function ComposeTab() {
         {[
           { key: 'autoSaveDrafts', title: 'Auto Save Drafts', desc: 'Sync draft changes to SQLite cache asynchronously' },
           { key: 'spellCheck', title: 'Enable Spell Check', desc: 'Perform system native spelling diagnostics' },
-          { key: 'autocorrect', title: 'Enable Autocorrect', desc: 'Capitalize and correct text corrections' },
           { key: 'smartCompose', title: 'Enable Smart Compose', desc: 'Query AI autocomplete suggestions inline' },
           { key: 'alwaysReplyAll', title: 'Default to Reply All', desc: 'Preserves CC recipients in thread reply views' },
         ].map(item => (
@@ -939,11 +938,6 @@ export function PrivacyTab() {
       key: 'clearCacheOnDisconnect',
       titleKey: 'settings.privacy.clearCacheOnDisconnect.title',
       descriptionKey: 'settings.privacy.clearCacheOnDisconnect.description',
-    },
-    {
-      key: 'diagnosticsEnabled',
-      titleKey: 'settings.privacy.diagnosticsEnabled.title',
-      descriptionKey: 'settings.privacy.diagnosticsEnabled.description',
     },
   ];
 

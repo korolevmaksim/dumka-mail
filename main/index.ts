@@ -55,6 +55,15 @@ import { installApplicationMenu, updateApplicationMenuCommandState } from './men
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
+import {
+  applyPendingRestoreIfAny,
+  createManualBackup,
+  recordSuccessfulBackup,
+  stageRestoreFromBackup,
+  startAutoBackupScheduler,
+} from './backupService';
+import { cancelMailboxExport, exportMailboxMbox } from './exportService';
+import type { MailboxExportScope } from '../shared/mboxExport';
 import { checkForAppUpdates, getAutoUpdateStatus, initializeAutoUpdates, installDownloadedAppUpdate } from './autoUpdate';
 import { shouldNotifyForMessage } from '../shared/mailSecurity';
 import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoReply';
@@ -223,6 +232,30 @@ function readIncludeBodiesInSearchIndex(): boolean {
     return parsed?.privacy?.includeBodiesInSearchIndex !== false;
   } catch (err) {
     console.error('Failed to read search indexing privacy setting:', err);
+    return true;
+  }
+}
+
+function readOpenLinksInBackground(): boolean {
+  try {
+    const rawSettings = SettingsRepo.get('appSettings');
+    if (!rawSettings) return true;
+    const parsed = JSON.parse(rawSettings);
+    return parsed?.general?.openLinksInBackground !== false;
+  } catch (err) {
+    console.error('Failed to read link opening setting:', err);
+    return true;
+  }
+}
+
+function readConfirmBeforeQuitting(): boolean {
+  try {
+    const rawSettings = SettingsRepo.get('appSettings');
+    if (!rawSettings) return true;
+    const parsed = JSON.parse(rawSettings);
+    return parsed?.general?.confirmBeforeQuitting !== false;
+  } catch (err) {
+    console.error('Failed to read quit confirmation setting:', err);
     return true;
   }
 }
@@ -754,7 +787,8 @@ function createWindow() {
   // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http:') || url.startsWith('https:')) {
-      require('electron').shell.openExternal(url);
+      // `activate` is honored on macOS; opening in the background avoids browser focus stealing.
+      void shell.openExternal(url, { activate: !readOpenLinksInBackground() });
     }
     return { action: 'deny' };
   });
@@ -765,6 +799,9 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // A staged restore must swap the database file before the first connection opens.
+  const pendingRestore = applyPendingRestoreIfAny();
+
   // Initialize SQLite database and run migrations
   initializeDatabase();
 
@@ -778,6 +815,13 @@ app.whenReady().then(async () => {
     redactPersonalData: storedAppSettings.privacy?.redactLogs !== false,
     publish: entry => mainWindow?.webContents.send('api:systemLogEntry', entry),
   });
+  if (pendingRestore.applied) {
+    SystemLogger.info('Backup Restore', 'Restored the database from a staged backup.', {
+      preRestorePath: pendingRestore.preRestorePath,
+    });
+  } else if (pendingRestore.error) {
+    SystemLogger.error('Backup Restore', 'Failed to apply the staged database restore.', pendingRestore.error);
+  }
 
   createWindow();
   SystemLogger.info('Application', 'Dumka Mail started.', {
@@ -837,6 +881,7 @@ app.whenReady().then(async () => {
   startCalendarNotificationWorker(() => mainWindow);
   startBackgroundMailboxSyncWorker();
   startBackgroundAgenticWorker();
+  startAutoBackupScheduler();
 
   // Initialize MCPManager with stored settings
   try {
@@ -857,6 +902,29 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
+  });
+});
+
+let quitConfirmed = false;
+
+app.on('before-quit', (event) => {
+  if (quitConfirmed || !readConfirmBeforeQuitting()) return;
+  event.preventDefault();
+  void dialog.showMessageBox({
+    type: 'question',
+    buttons: ['Quit', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Quit Dumka Mail',
+    message: 'Quit Dumka Mail?',
+    detail: 'Drafts and mailbox state are stored locally and will be kept.',
+  }).then(({ response }) => {
+    if (response === 0) {
+      quitConfirmed = true;
+      app.quit();
+    }
+  }).catch(err => {
+    console.error('Failed to show quit confirmation dialog:', err);
   });
 });
 
@@ -2058,6 +2126,33 @@ registerSecureHandler('api:undoFocusedInput', (event) => event.sender.undo());
 registerSecureHandler('api:getAutoUpdateStatus', () => getAutoUpdateStatus());
 registerSecureHandler('api:checkForAppUpdates', () => checkForAppUpdates());
 registerSecureHandler('api:installDownloadedAppUpdate', () => installDownloadedAppUpdate());
+
+// Data ownership: local backups, staged restore, and .mbox export.
+registerSecureHandler('api:createBackup', async () => {
+  const result = await createManualBackup(mainWindow, app.getVersion());
+  if (result.ok) recordSuccessfulBackup(result.createdAt);
+  return result;
+});
+
+registerSecureHandler('api:stageRestoreFromBackup', async () => {
+  const result = await stageRestoreFromBackup(mainWindow);
+  if (result.ok) {
+    SystemLogger.info('Backup Restore', 'A database backup was staged; relaunching to apply it.');
+    // WAL journaling is crash-safe, so a hard exit cannot corrupt the database;
+    // the staged swap runs before any connection opens on the next launch.
+    app.relaunch();
+    app.exit(0);
+  }
+  return result;
+});
+
+registerSecureHandler('api:exportMailboxMbox', async (_, accountId: string, scope: MailboxExportScope) => {
+  return exportMailboxMbox(mainWindow, accountId, scope, progress => {
+    mainWindow?.webContents.send('api:mailboxExportProgress', progress);
+  });
+});
+
+registerSecureHandler('api:cancelMailboxExport', (_, accountId: string) => cancelMailboxExport(accountId));
 registerSecureHandler('api:findInPage', (event, text, options) => {
   event.sender.findInPage(text, options);
 });

@@ -139,7 +139,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     signaturesByAccount: {},
     autoSaveDrafts: true,
     spellCheck: true,
-    autocorrect: true,
     smartCompose: true,
     alwaysReplyAll: false,
     sendUndoDelay: 10,
@@ -265,8 +264,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     includeBodiesInSearchIndex: true,
     redactLogs: true,
     useKeychainForSecrets: true,
-    clearCacheOnDisconnect: true,
-    diagnosticsEnabled: false
+    clearCacheOnDisconnect: true
   },
   logging: { ...DEFAULT_SYSTEM_LOGGING_SETTINGS },
   appearance: {
@@ -279,6 +277,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     enablePreviewPane: true,
     fontScale: 1.0,
     readerMaxWidth: 'standard'
+  },
+  data: {
+    autoBackupEnabled: false,
+    autoBackupRetention: 5,
+    lastBackupAt: null
   },
   mcpServers: [],
   searchProviders: {

@@ -6,6 +6,15 @@ import {
   plainTextToHtmlFragment,
   sanitizeDraftHtmlFragment,
 } from '../../../../shared/draftHtml';
+import {
+  SMART_COMPOSE_GHOST_SELECTOR,
+  useSmartCompose,
+  type SmartComposeConfig,
+} from './useSmartCompose';
+import {
+  useSnippetExpansion,
+  type SnippetExpansionConfig,
+} from './useSnippetExpansion';
 
 export interface RichTextEditorHandle {
   focus: () => void;
@@ -25,8 +34,11 @@ interface RichTextEditorProps {
   bodyHtml?: string | null;
   placeholder: string;
   spellCheck?: boolean;
+  fontSize?: 'compact' | 'normal' | 'large';
   editorClassName?: string;
   collapseQuotedText?: boolean;
+  smartCompose?: SmartComposeConfig | null;
+  snippets?: SnippetExpansionConfig | null;
   onChange: (bodyPlain: string, bodyHtml: string) => void;
   onImageFile?: (file: File) => Promise<string | null>;
   onDropFiles?: (files: readonly File[]) => Promise<void>;
@@ -36,8 +48,26 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith('image/');
 }
 
+// Matches the size labels in Settings -> Compose -> Composer Font Size.
+const FONT_SIZE_CLASS: Record<'compact' | 'normal' | 'large', string> = {
+  compact: 'text-[calc(11px*var(--font-scale))]',
+  normal: 'text-[calc(12px*var(--font-scale))]',
+  large: 'text-[calc(14px*var(--font-scale))]',
+};
+
 function htmlForInsertedText(text: string): string {
   return plainTextToHtmlFragment(text) || `<p>${escapeHtml(text)}</p>`;
+}
+
+/**
+ * Serializes the editor without Smart Compose ghost spans. The ghost is
+ * contenteditable=false UI chrome — its text must never reach a saved draft.
+ */
+function htmlWithoutSmartComposeGhosts(editor: HTMLElement): string {
+  if (!editor.querySelector(SMART_COMPOSE_GHOST_SELECTOR)) return editor.innerHTML;
+  const clone = editor.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(SMART_COMPOSE_GHOST_SELECTOR).forEach(node => node.remove());
+  return clone.innerHTML;
 }
 
 export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(function RichTextEditor({
@@ -46,8 +76,11 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   bodyHtml,
   placeholder,
   spellCheck = true,
+  fontSize = 'normal',
   editorClassName = '',
   collapseQuotedText = false,
+  smartCompose = null,
+  snippets = null,
   onChange,
   onImageFile,
   onDropFiles,
@@ -74,7 +107,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   const emitChange = () => {
     const editor = editorRef.current;
     if (!editor) return;
-    const sanitized = sanitizeDraftHtmlFragment(editor.innerHTML);
+    const sanitized = sanitizeDraftHtmlFragment(htmlWithoutSmartComposeGhosts(editor));
     const plain = htmlFragmentToPlainText(sanitized);
     setIsEmpty(plain.trim().length === 0);
     onChange(plain, sanitized);
@@ -100,6 +133,19 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
     setIsEmpty(htmlFragmentToPlainText(initialHtml).length === 0);
     lastDraftIdRef.current = draftId;
   }, [bodyHtml, bodyPlain, draftId]);
+
+  const smartComposeController = useSmartCompose({
+    editorRef,
+    draftId,
+    config: smartCompose,
+    emitChange,
+  });
+
+  const snippetExpansion = useSnippetExpansion({
+    editorRef,
+    config: snippets,
+    emitChange,
+  });
 
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
@@ -187,7 +233,20 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         spellCheck={spellCheck}
         role="textbox"
         aria-multiline="true"
-        onInput={emitChange}
+        onInput={() => {
+          emitChange();
+          smartComposeController.handleInput();
+        }}
+        onKeyDown={(event) => {
+          // Tab priority: 1) Smart Compose ghost-accept, 2) snippet
+          // Tab-expansion, 3) the browser's default Tab behavior. Non-Tab
+          // keys only matter to Smart Compose ghost dismissal.
+          if (smartComposeController.handleKeyDown(event)) return;
+          if (event.key === 'Tab') snippetExpansion.handleTab(event);
+        }}
+        onBlur={smartComposeController.handleBlur}
+        onCompositionStart={smartComposeController.handleCompositionStart}
+        onCompositionEnd={smartComposeController.handleCompositionEnd}
         onPaste={(event) => {
           const clipboardData = event.clipboardData;
           if (!clipboardData) return;
@@ -255,7 +314,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
           }
           void handleImageFiles(files);
         }}
-        className={`rich-compose-editor ${collapseQuotedText ? 'rich-compose-editor--quotes-collapsed' : ''} min-h-[300px] flex-1 overflow-y-auto px-5 py-4 text-[calc(13px*var(--font-scale))] leading-relaxed text-[var(--text-primary)] outline-none ${editorClassName}`}
+        className={`rich-compose-editor ${collapseQuotedText ? 'rich-compose-editor--quotes-collapsed' : ''} min-h-[300px] flex-1 overflow-y-auto px-5 py-4 ${FONT_SIZE_CLASS[fontSize]} leading-relaxed text-[var(--text-primary)] outline-none ${editorClassName}`}
       />
     </div>
   );

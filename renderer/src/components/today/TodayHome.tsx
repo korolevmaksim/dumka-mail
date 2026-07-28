@@ -1,21 +1,17 @@
 import { useMemo } from 'react';
 import { Archive, CalendarDays, CheckCircle2, ExternalLink, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
+import { emitToast } from '../../lib/toastBus';
+import { ActivityTimeline } from '../ActivityTimeline';
 import { DailyBriefingCard } from '../DailyBriefingCard';
 import { AgentReviewQueueCard } from '../AgentReviewQueueCard';
 import { RuleSimulatorPanel } from '../automation/RuleSimulatorPanel';
 import { ReplyPipelineSection } from './ReplyPipelineSection';
-import type { MailActionLog } from '../../../../shared/types';
 
 function formatCalendarTime(iso: string): string {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return '';
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function actionLabel(action: MailActionLog): string {
-  const label = action.kind.replace(/([A-Z])/g, ' $1').trim();
-  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 export function TodayHome() {
@@ -35,6 +31,15 @@ export function TodayHome() {
   const recentActions = useMemo(() => [...store.actionLog]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(0, 5), [store.actionLog]);
+
+  const openActivityThread = (threadId: string) => {
+    const thread = store.threads.find(candidate => candidate.id === threadId);
+    if (!thread) {
+      emitToast({ type: 'error', message: 'Source thread is no longer in the local cache.' });
+      return;
+    }
+    void store.openThreadFromToday(thread);
+  };
 
   return (
     <main className="dm-today-workspace flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-[var(--app-bg)]">
@@ -162,18 +167,7 @@ export function TodayHome() {
                 <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
                 Recent Actions
               </div>
-              {recentActions.length === 0 ? (
-                <div className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">No recent local actions.</div>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  {recentActions.map(action => (
-                    <div key={action.id} className="dm-inset flex items-center justify-between gap-2 rounded bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))]">
-                      <span className="truncate text-[var(--text-primary)]">{actionLabel(action)}</span>
-                      <span className="shrink-0 text-[var(--text-secondary)]">{action.status}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <ActivityTimeline logs={recentActions} max={5} onOpenThread={openActivityThread} />
             </section>
           </aside>
         </div>

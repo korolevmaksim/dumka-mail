@@ -783,6 +783,16 @@ body {
   display: none;
 }
 
+/* Smart Compose ghost text — an inline AI suggestion parked at the caret.
+   contenteditable=false; stripped before the draft is ever serialized. */
+.rich-compose-editor .smart-compose-ghost {
+  color: var(--text-tertiary);
+  opacity: 0.75;
+  font-style: italic;
+  pointer-events: none;
+  user-select: none;
+}
+
 .rich-compose-editor a {
   color: var(--accent);
   text-decoration: underline;

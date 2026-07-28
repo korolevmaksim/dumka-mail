@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import {
-  Key, User, Settings, Inbox, ListPlus, SquarePen, Keyboard, FileText, Bell, Sparkles, Cpu, Shield, Palette, Info, Tags, Users, CalendarDays, ScrollText
+  Key, User, Settings, Inbox, ListPlus, SquarePen, Keyboard, FileText, Bell, Sparkles, Cpu, Shield, Palette, Info, Tags, Users, CalendarDays, ScrollText, Database
 } from 'lucide-react';
 import { MCPAndSearchSettingsPanel } from './MCPAndSearchSettingsPanel';
 import { AccountsTab, ProfileTab, GeneralTab, InboxTab, ComposeTab, ShortcutsTab, SnippetsTab, NotificationsTab, PrivacyTab } from './tabs/BasicSettingsTabs';
@@ -11,13 +11,14 @@ import { ClassificationSettingsTab } from './tabs/ClassificationSettingsTab';
 import { AISettingsTab } from './tabs/AISettingsTab';
 import { ContactsTab } from './tabs/ContactsSettingsTab';
 import { CalendarSettingsTab, LabelsTab } from './tabs/WorkspaceSettingsTabs';
+import { DataBackupTab } from './tabs/DataBackupTab';
 import { LoggingSettingsTab } from './LoggingSettingsTab';
 import { createTranslator } from '../../../../shared/i18n';
 
 export function SettingsPanel() {
   const store = useAppStore();
   const t = createTranslator(store.settings.general.language);
-  const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'labels' | 'contacts' | 'calendar' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'mcp' | 'privacy' | 'appearance' | 'logging' | 'about'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'profile' | 'general' | 'inbox' | 'classification' | 'labels' | 'contacts' | 'calendar' | 'compose' | 'shortcuts' | 'snippets' | 'notifications' | 'ai' | 'mcp' | 'privacy' | 'appearance' | 'logging' | 'data' | 'about'>('accounts');
   
   const tabsList = [
     { id: 'accounts', nameKey: 'settings.tabs.accounts', icon: Key },
@@ -37,6 +38,7 @@ export function SettingsPanel() {
     { id: 'privacy', nameKey: 'settings.tabs.privacy', icon: Shield },
     { id: 'appearance', nameKey: 'settings.tabs.appearance', icon: Palette },
     { id: 'logging', nameKey: 'settings.tabs.logging', icon: ScrollText },
+    { id: 'data', nameKey: 'settings.tabs.data', icon: Database },
     { id: 'about', nameKey: 'settings.tabs.about', icon: Info },
   ] as const;
 
@@ -94,6 +96,7 @@ export function SettingsPanel() {
         {activeTab === 'privacy' && <PrivacyTab />}
         {activeTab === 'appearance' && <AppearanceSettingsTab />}
         {activeTab === 'logging' && <LoggingSettingsTab />}
+        {activeTab === 'data' && <DataBackupTab />}
         {activeTab === 'about' && <AboutTab />}
       </div>
     </div>

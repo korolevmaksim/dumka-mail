@@ -40,6 +40,7 @@ import {
 import { AIRequest } from './ai';
 import type { AutoUpdateStatus } from '../shared/autoUpdate';
 import type { SystemLogEntry, SystemLogPage, SystemLogQuery, SystemLogStats } from '../shared/systemLogs';
+import type { MailboxExportProgress, MailboxExportScope } from '../shared/mboxExport';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Accounts
@@ -210,6 +211,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAutoUpdateStatus: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:getAutoUpdateStatus'),
   checkForAppUpdates: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:checkForAppUpdates'),
   installDownloadedAppUpdate: (): Promise<AutoUpdateStatus> => ipcRenderer.invoke('api:installDownloadedAppUpdate'),
+
+  // Data ownership: backup, restore, and .mbox export
+  createBackup: () => ipcRenderer.invoke('api:createBackup'),
+  stageRestoreFromBackup: () => ipcRenderer.invoke('api:stageRestoreFromBackup'),
+  exportMailboxMbox: (accountId: string, scope: MailboxExportScope) => ipcRenderer.invoke('api:exportMailboxMbox', accountId, scope),
+  cancelMailboxExport: (accountId: string) => ipcRenderer.invoke('api:cancelMailboxExport', accountId),
+  onMailboxExportProgress: (callback: (progress: MailboxExportProgress) => void) => {
+    const listener = (_: unknown, progress: MailboxExportProgress) => callback(progress);
+    ipcRenderer.on('api:mailboxExportProgress', listener);
+    return () => {
+      ipcRenderer.off('api:mailboxExportProgress', listener);
+    };
+  },
 
   // Settings
   getSetting: (key: string) => ipcRenderer.invoke('db:getSetting', key),

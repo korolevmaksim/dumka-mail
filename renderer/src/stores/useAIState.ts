@@ -670,6 +670,14 @@ export function useAIState({
   const addDailyBriefingItemToAgentPlan = (item: DailyBriefingItem, labelId?: string | null) => {
     if (!dailyBriefing) return;
     const nextItem = buildAgentPlanFromDailyBriefingItem({ briefing: dailyBriefing, item, labelId }).items[0];
+    if (nextItem.action === 'applyLabel' && !settings.ai.suggestLabels) {
+      emitToast({ type: 'info', message: 'Label suggestions are disabled in AI settings.' });
+      return;
+    }
+    if (nextItem.action === 'archive' && !settings.ai.suggestAutoArchive) {
+      emitToast({ type: 'info', message: 'Auto-archive suggestions are disabled in AI settings.' });
+      return;
+    }
     setAgentPlan(prev => mergeAgentPlanItem(prev, nextItem));
     setSelectedAgentPlanItemIds(prev => {
       const next = new Set(prev);
@@ -807,6 +815,11 @@ export function useAIState({
       return;
     }
 
+    if (action === 'translate' && !settings.ai.translationEnabled) {
+      emitToast({ type: 'info', message: 'Translation is disabled in AI settings.' });
+      return;
+    }
+
     const tone = `Use a ${settings.ai.replyTone} tone.`;
     const prompts: Record<Exclude<AIAction, 'queue'>, { label: string; instruction: string }> = {
       summarize: { label: 'Summarize this thread', instruction: 'Summarize this email thread in 3-5 crisp bullet points, then a single "Next step:" line.' },
@@ -909,15 +922,20 @@ export function useAIState({
     if (!requestIsCurrent()) return;
     setTriagePlan(plan);
     const reviewPlan = buildAgentPlanFromTriagePlan({ plan, threads: visibleThreadsSnapshot, aiAssisted: usedAI });
-    setAgentPlan(prev => reviewPlan.items.reduce((acc, item) => mergeAgentPlanItem(acc, item), prev));
+    // Auto-archive suggestions are gated by the AI settings toggle; explicit
+    // user-queued actions (briefing/cleanup/Ask Dumka) are never filtered here.
+    const reviewItems = settings.ai.suggestAutoArchive
+      ? reviewPlan.items
+      : reviewPlan.items.filter(item => item.action !== 'archive');
+    setAgentPlan(prev => reviewItems.reduce((acc, item) => mergeAgentPlanItem(acc, item), prev));
     setSelectedAgentPlanItemIds(prev => {
       const next = new Set(prev);
-      for (const item of reviewPlan.items) {
+      for (const item of reviewItems) {
         if (item.selectionPolicy === 'autoSelected') next.add(item.id);
       }
       return next;
     });
-    emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewPlan.items.length} actions.` });
+    emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewItems.length} actions.` });
   };
 
   const runDailyBriefing = useCallback(async (

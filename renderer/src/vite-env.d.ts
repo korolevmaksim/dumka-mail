@@ -58,6 +58,8 @@ import {
 import { AIRequest } from '../../main/ai';
 import type { AutoUpdateStatus } from '../../shared/autoUpdate';
 import type { SystemLogEntry, SystemLogPage, SystemLogQuery, SystemLogStats } from '../../shared/systemLogs';
+import type { MailboxExportProgress, MailboxExportResult, MailboxExportScope } from '../../shared/mboxExport';
+import type { BackupRunResult, RestoreStageResult } from '../../shared/backupPlan';
 
 export interface IElectronAPI {
   // Accounts
@@ -226,6 +228,13 @@ export interface IElectronAPI {
   getAutoUpdateStatus: () => Promise<AutoUpdateStatus>;
   checkForAppUpdates: () => Promise<AutoUpdateStatus>;
   installDownloadedAppUpdate: () => Promise<AutoUpdateStatus>;
+
+  // Data ownership: backup, restore, and .mbox export
+  createBackup: () => Promise<BackupRunResult>;
+  stageRestoreFromBackup: () => Promise<RestoreStageResult>;
+  exportMailboxMbox: (accountId: string, scope: MailboxExportScope) => Promise<MailboxExportResult>;
+  cancelMailboxExport: (accountId: string) => Promise<boolean>;
+  onMailboxExportProgress: (callback: (progress: MailboxExportProgress) => void) => () => void;
 
   // Settings
   getSetting: (key: string) => Promise<string | null>;

@@ -21,6 +21,7 @@ export type TranslationKey =
   | 'settings.tabs.privacy'
   | 'settings.tabs.appearance'
   | 'settings.tabs.logging'
+  | 'settings.tabs.data'
   | 'settings.tabs.about'
   | 'settings.general.title'
   | 'settings.general.description'
@@ -64,8 +65,6 @@ export type TranslationKey =
   | 'settings.privacy.useKeychainForSecrets.description'
   | 'settings.privacy.clearCacheOnDisconnect.title'
   | 'settings.privacy.clearCacheOnDisconnect.description'
-  | 'settings.privacy.diagnosticsEnabled.title'
-  | 'settings.privacy.diagnosticsEnabled.description'
   | 'settings.updates.title'
   | 'settings.updates.loadingStatus'
   | 'settings.updates.restart'
@@ -92,6 +91,7 @@ const ENGLISH: Record<TranslationKey, string> = {
   'settings.tabs.privacy': 'Privacy',
   'settings.tabs.appearance': 'Appearance',
   'settings.tabs.logging': 'Logging',
+  'settings.tabs.data': 'Data & Backup',
   'settings.tabs.about': 'About',
   'settings.general.title': 'General Preferences',
   'settings.general.description': 'Configure startup behavior, links, and workspace defaults.',
@@ -135,8 +135,6 @@ const ENGLISH: Record<TranslationKey, string> = {
   'settings.privacy.useKeychainForSecrets.description': 'Encrypt OAuth tokens and API credentials',
   'settings.privacy.clearCacheOnDisconnect.title': 'Purge SQLite Cache on Disconnect',
   'settings.privacy.clearCacheOnDisconnect.description': 'Evict local SQLite records when an account is removed',
-  'settings.privacy.diagnosticsEnabled.title': 'Enable Anonymous Diagnostics',
-  'settings.privacy.diagnosticsEnabled.description': 'Share telemetry logs to improve triage classifications',
   'settings.updates.title': 'App Updates',
   'settings.updates.loadingStatus': 'Loading update status...',
   'settings.updates.restart': 'Restart',

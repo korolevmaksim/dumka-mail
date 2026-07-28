@@ -20,7 +20,6 @@ const compose: ComposeSettings = {
   signaturesByAccount: {},
   autoSaveDrafts: true,
   spellCheck: true,
-  autocorrect: true,
   smartCompose: true,
   alwaysReplyAll: false,
   sendUndoDelay: 10,

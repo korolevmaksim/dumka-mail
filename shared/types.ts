@@ -1101,7 +1101,6 @@ export interface ComposeSettings {
   signaturesByAccount: Record<AccountID, ComposeSignatureSettings>;
   autoSaveDrafts: boolean;
   spellCheck: boolean;
-  autocorrect: boolean;
   smartCompose: boolean;
   alwaysReplyAll: boolean;
   sendUndoDelay: number;
@@ -1265,7 +1264,6 @@ export interface PrivacySettings {
   redactLogs: boolean;
   useKeychainForSecrets: boolean;
   clearCacheOnDisconnect: boolean;
-  diagnosticsEnabled: boolean;
 }
 
 export interface AppearanceSettings {
@@ -1278,6 +1276,15 @@ export interface AppearanceSettings {
   enablePreviewPane: boolean;
   fontScale: number;
   readerMaxWidth?: 'full' | 'wide' | 'standard' | 'narrow';
+}
+
+export interface DataSettings {
+  /** Daily automatic database backups into the app-support backups folder. */
+  autoBackupEnabled: boolean;
+  /** How many automatic backups to keep (newest N). */
+  autoBackupRetention: number;
+  /** ISO timestamp of the last successful manual or automatic backup. */
+  lastBackupAt: string | null;
 }
 
 export interface MCPServerConfig {
@@ -1320,6 +1327,7 @@ export interface AppSettings {
   privacy: PrivacySettings;
   logging: SystemLoggingSettings;
   appearance: AppearanceSettings;
+  data: DataSettings;
   mcpServers?: MCPServerConfig[];
   searchProviders?: SearchProvidersSettings;
 }

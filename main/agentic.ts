@@ -58,6 +58,8 @@ interface RuntimeAgentSettings {
   agentRules: AgentRulesSettings;
   dailyBriefing: DailyBriefingSettings;
   suggestDrafts: boolean;
+  suggestAutoArchive: boolean;
+  suggestLabels: boolean;
   replyTone: AISettings['replyTone'];
   personalizationNotes: string;
 }
@@ -121,6 +123,8 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       agentRules: normalizeAgentRules(parsed?.ai?.agentRules),
       dailyBriefing: normalizeDailyBriefingSettings(parsed?.ai?.dailyBriefing),
       suggestDrafts: parsed?.ai?.suggestDrafts === true,
+      suggestAutoArchive: parsed?.ai?.suggestAutoArchive !== false,
+      suggestLabels: parsed?.ai?.suggestLabels !== false,
       replyTone: parsed?.ai?.replyTone || 'direct',
       personalizationNotes: parsed?.ai?.personalizationNotes || '',
     };
@@ -136,6 +140,8 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       agentRules: DEFAULT_AGENT_RULES,
       dailyBriefing: normalizeDailyBriefingSettings(null),
       suggestDrafts: false,
+      suggestAutoArchive: true,
+      suggestLabels: true,
       replyTone: 'direct',
       personalizationNotes: '',
     };
@@ -255,8 +261,8 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
     agentRules: settings.agentRules,
     dailyBriefing: settings.dailyBriefing,
     suggestDrafts: settings.suggestDrafts,
-    suggestAutoArchive: true,
-    suggestLabels: true,
+    suggestAutoArchive: settings.suggestAutoArchive,
+    suggestLabels: settings.suggestLabels,
     translationEnabled: true,
     personalizationNotes: settings.personalizationNotes,
   };

@@ -643,16 +643,19 @@ export function AICopilotPanel() {
         {AI_ACTIONS.map((a) => {
           const Icon = AI_ICON[a.icon] || Sparkles;
           const queueUnavailable = a.id === 'queue' && (!store.activeAccount || store.visibleThreads.length === 0);
-          const disabled = queueUnavailable || (a.requiresThread && !store.openedThread) || store.aiPanelLoading;
+          const translateUnavailable = a.id === 'translate' && !store.settings.ai.translationEnabled;
+          const disabled = queueUnavailable || translateUnavailable || (a.requiresThread && !store.openedThread) || store.aiPanelLoading;
           const title = a.id === 'queue'
             ? (!store.activeAccount
               ? 'Connect an account first'
               : store.visibleThreads.length === 0
                 ? 'No visible messages to triage in this tab'
                 : `Build a triage plan for ${store.visibleThreads.length} visible messages`)
-            : a.requiresThread && !store.openedThread
-              ? 'Open a thread first'
-              : a.label;
+            : translateUnavailable
+              ? 'Enable Realtime Translation in AI settings'
+              : a.requiresThread && !store.openedThread
+                ? 'Open a thread first'
+                : a.label;
           return (
             <button
               key={a.id}

@@ -1399,6 +1399,7 @@ function AppContent() {
                           messages={store.openedThreadMessages}
                           status={store.openedThreadMessagesStatus}
                           defaultLoadImages={store.settings.privacy.loadRemoteImages}
+                          collapseReadMessages={store.settings.inbox.collapseReadThreads}
                         />
 
                         {/* Inline Draft Reply Affordance */}

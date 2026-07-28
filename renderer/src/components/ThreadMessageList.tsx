@@ -4,6 +4,7 @@ import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import { DeferredMessageCard } from './DeferredMessageCard';
 import {
   EARLIER_MESSAGE_BATCH_SIZE,
+  initialCollapsedReadWindowStart,
   initialMessageWindowStart,
   revealEarlierMessageWindowStart,
 } from '../lib/threadMessageWindow';
@@ -13,6 +14,7 @@ interface ThreadMessageListProps {
   messages: MailMessage[];
   status: ThreadHeaderMessagesStatus;
   defaultLoadImages: boolean;
+  collapseReadMessages: boolean;
 }
 
 export const ThreadMessageList = memo(function ThreadMessageList({
@@ -20,14 +22,21 @@ export const ThreadMessageList = memo(function ThreadMessageList({
   messages,
   status,
   defaultLoadImages,
+  collapseReadMessages,
 }: ThreadMessageListProps) {
-  const [visibleStart, setVisibleStart] = useState(() => initialMessageWindowStart(messages.length));
+  const [visibleStart, setVisibleStart] = useState(() => (
+    collapseReadMessages
+      ? initialCollapsedReadWindowStart(messages)
+      : initialMessageWindowStart(messages.length)
+  ));
   const [isExpanding, setIsExpanding] = useState(false);
 
   useEffect(() => {
-    setVisibleStart(initialMessageWindowStart(messages.length));
+    setVisibleStart(collapseReadMessages
+      ? initialCollapsedReadWindowStart(messages)
+      : initialMessageWindowStart(messages.length));
     setIsExpanding(false);
-  }, [messages.length, threadKey]);
+  }, [messages.length, threadKey, collapseReadMessages]);
 
   const visibleMessages = useMemo(() => messages.slice(visibleStart), [messages, visibleStart]);
   const earlierCount = visibleStart;

@@ -539,6 +539,21 @@ export function FloatingComposeDrawer() {
         bodyHtml={activeDraft.bodyHtml}
         placeholder="Write your email. Use the toolbar, paste an image, or ask AI to draft."
         spellCheck={store.settings.compose.spellCheck}
+        fontSize={store.settings.compose.defaultFontSize}
+        smartCompose={{
+          enabled: store.settings.compose.smartCompose,
+          subject: activeDraft.subject,
+          toRecipientName: activeDraft.to[0]?.name || activeDraft.to[0]?.email || '',
+          provider: store.aiProvider,
+          interactiveModel: store.settings.ai.globalDefaultModel,
+          automationModel: store.settings.ai.automationModel,
+        }}
+        snippets={{
+          settings: store.settings.snippets,
+          compose: store.settings.compose,
+          profile: store.settings.profile,
+          accountId: activeDraft.accountId,
+        }}
         onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
         onImageFile={insertInlineImageFromFile}
         onDropFiles={store.addDroppedFilesToDraft}
