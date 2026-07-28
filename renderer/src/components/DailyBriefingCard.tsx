@@ -31,6 +31,8 @@ const CATEGORY_META: Record<DailyBriefingCategory, { title: string; empty: strin
 
 const CATEGORY_ORDER: DailyBriefingCategory[] = ['needsReply', 'waitingOnMe', 'riskOrNoise', 'fyi'];
 
+type BriefingItemAction = 'open' | 'draft' | 'remind' | 'archive' | 'label';
+
 function nextReminderAt(hour: number): Date {
   const date = new Date();
   date.setHours(hour, 0, 0, 0);
@@ -68,6 +70,7 @@ export function DailyBriefingCard() {
   const store = useAppStore();
   const briefing = store.dailyBriefing;
   const [labelByItemId, setLabelByItemId] = useState<Record<string, string>>({});
+  const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
 
   const groups = useMemo(() => categoryGroups(briefing?.items || []), [briefing?.items]);
   if (!briefing) return null;
@@ -95,83 +98,121 @@ export function DailyBriefingCard() {
     return state;
   };
 
-  const openThread = async (item: DailyBriefingItem) => {
+  const pendingActionKey = (itemId: string, action: BriefingItemAction) => `${itemId}:${action}`;
+  const isActionPending = (itemId: string, action: BriefingItemAction) => Boolean(pendingActions[pendingActionKey(itemId, action)]);
+
+  // Runs a card action with immediate visual feedback: the triggering button shows a
+  // spinner and is disabled for the whole duration, repeat clicks are ignored, and the
+  // underlying work continues in the background without blocking the rest of the UI.
+  const runItemAction = async (
+    item: DailyBriefingItem,
+    action: BriefingItemAction,
+    task: () => Promise<void>,
+    fallbackError: string
+  ) => {
+    const key = pendingActionKey(item.id, action);
+    if (pendingActions[key]) return;
+    setPendingActions(prev => ({ ...prev, [key]: true }));
+    try {
+      await task();
+    } catch (error) {
+      console.error(`Daily Briefing ${action} failed:`, error);
+      emitToast({ type: 'error', message: error instanceof Error ? error.message : fallbackError });
+    } finally {
+      setPendingActions(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  };
+
+  const openThread = (item: DailyBriefingItem) => runItemAction(item, 'open', async () => {
     const thread = findThread(item);
     if (!thread) {
       emitToast({ type: 'warning', message: 'Thread is no longer in the local cache.' });
       return;
     }
     await store.openThreadFromToday(thread);
-  };
+  }, 'Could not open the thread.');
 
-  const draftReply = async (item: DailyBriefingItem) => {
-    try {
-      const thread = findThread(item);
-      if (!thread) {
-        emitToast({ type: 'warning', message: 'Thread is no longer in the local cache.' });
-        return;
-      }
-      const candidate = replyCandidateFor(item);
-      const [state] = await window.electronAPI.reconcileReplyPipeline([candidate]);
-      if (!canPrepareReplyPipelineCandidateDraft(state || null, candidate)) {
-        if (state?.status !== 'snoozed') store.dismissDailyBriefingItem(item);
-        emitToast({
-          type: 'info',
-          message: state?.status === 'snoozed'
-            ? 'This reply is snoozed in the Reply Pipeline.'
-            : 'This briefing item has already moved to a newer reply state.',
-        });
-        return;
-      }
-      const result = await store.prepareReplyPipelineDraft(item.accountId, item.threadId);
-      await store.loadDrafts();
-      await store.openThreadFromToday(thread);
-      store.setActiveDraft(result.draft);
-      store.setComposeLayout('inline');
-      await store.executeMailAction(
-        'applyAIDraftPreview',
-        item.threadId,
-        result.draft.id,
-        async () => null,
-        payloadFor(item, 'draftReply', { draftId: result.draft.id, draftOrigin: result.state.draftOrigin })
-      );
-      emitToast({
-        type: result.placeholders.length > 0 ? 'warning' : 'success',
-        message: result.placeholders.length > 0
-          ? 'Reply draft opened. Replace the placeholder before sending.'
-          : 'Reply draft opened from briefing source.',
-      });
-    } catch (error) {
-      console.error('Daily Briefing reply draft failed:', error);
-      emitToast({ type: 'error', message: error instanceof Error ? error.message : 'Could not prepare the reply draft.' });
+  const draftReply = (item: DailyBriefingItem) => runItemAction(item, 'draft', async () => {
+    const thread = findThread(item);
+    if (!thread) {
+      emitToast({ type: 'warning', message: 'Thread is no longer in the local cache.' });
+      return;
     }
-  };
-
-  const setReminder = async (item: DailyBriefingItem) => {
-    const reminderAt = nextReminderAt(briefing.settings.defaultReminderHour).toISOString();
+    const candidate = replyCandidateFor(item);
+    const [state] = await window.electronAPI.reconcileReplyPipeline([candidate]);
+    if (!canPrepareReplyPipelineCandidateDraft(state || null, candidate)) {
+      if (state?.status !== 'snoozed') store.dismissDailyBriefingItem(item);
+      emitToast({
+        type: 'info',
+        message: state?.status === 'snoozed'
+          ? 'This reply is snoozed in the Reply Pipeline.'
+          : 'This briefing item has already moved to a newer reply state.',
+      });
+      return;
+    }
+    const result = await store.prepareReplyPipelineDraft(item.accountId, item.threadId);
+    await store.loadDrafts();
+    await store.openThreadFromToday(thread);
+    store.setActiveDraft(result.draft);
+    store.setComposeLayout('inline');
     await store.executeMailAction(
+      'applyAIDraftPreview',
+      item.threadId,
+      result.draft.id,
+      async () => null,
+      payloadFor(item, 'draftReply', { draftId: result.draft.id, draftOrigin: result.state.draftOrigin })
+    );
+    emitToast({
+      type: result.placeholders.length > 0 ? 'warning' : 'success',
+      message: result.placeholders.length > 0
+        ? 'Reply draft opened. Replace the placeholder before sending.'
+        : 'Reply draft opened from briefing source.',
+    });
+  }, 'Could not prepare the reply draft.');
+
+  const setReminder = (item: DailyBriefingItem) => runItemAction(item, 'remind', async () => {
+    const reminderAt = nextReminderAt(briefing.settings.defaultReminderHour).toISOString();
+    const result = await store.executeMailAction(
       'setReminder',
       item.threadId,
       null,
       undefined,
       payloadFor(item, 'setReminder', { reminderAt })
     );
-    store.dismissDailyBriefingItem(item);
-  };
+    if (result.accepted) {
+      store.dismissDailyBriefingItem(item);
+    } else {
+      emitToast({ type: 'error', message: result.errorMessage || 'Could not set the reminder.' });
+    }
+  }, 'Could not set the reminder.');
 
-  const archive = async (item: DailyBriefingItem) => {
-    await store.executeMailAction('markDone', item.threadId, null, undefined, payloadFor(item, 'archive'));
-    store.dismissDailyBriefingItem(item);
-  };
+  const archive = (item: DailyBriefingItem) => runItemAction(item, 'archive', async () => {
+    const result = await store.executeMailAction('markDone', item.threadId, null, undefined, payloadFor(item, 'archive'));
+    if (result.accepted) {
+      store.dismissDailyBriefingItem(item);
+    } else {
+      emitToast({ type: 'error', message: result.errorMessage || 'Could not archive the thread.' });
+    }
+  }, 'Could not archive the thread.');
 
-  const applyLabel = async (item: DailyBriefingItem, selectedLabelId?: string) => {
+  const applyLabel = (item: DailyBriefingItem, selectedLabelId?: string) => {
     const labelId = selectedLabelId || labelByItemId[item.id];
     if (!labelId) {
       emitToast({ type: 'warning', message: 'Choose a label first.' });
       return;
     }
-    await store.executeMailAction('applyLabel', item.threadId, null, undefined, payloadFor(item, 'applyLabel', { labelId }));
-    store.dismissDailyBriefingItem(item);
+    return runItemAction(item, 'label', async () => {
+      const result = await store.executeMailAction('applyLabel', item.threadId, null, undefined, payloadFor(item, 'applyLabel', { labelId }));
+      if (result.accepted) {
+        store.dismissDailyBriefingItem(item);
+      } else {
+        emitToast({ type: 'error', message: result.errorMessage || 'Could not apply the label.' });
+      }
+    }, 'Could not apply the label.');
   };
 
   const addToReviewQueue = (item: DailyBriefingItem, selectedLabelId?: string) => {
@@ -270,17 +311,25 @@ export function DailyBriefingCard() {
                     </div>
 
                     <div className="mt-2 grid grid-cols-4 gap-1">
-                      <button type="button" title="Open source thread" onClick={() => void openThread(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]">
-                        <ExternalLink className="h-3 w-3" /> Open
+                      <button type="button" title="Open source thread" disabled={isActionPending(item.id, 'open')} onClick={() => void openThread(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-70">
+                        {isActionPending(item.id, 'open')
+                          ? <RefreshCw className="h-3 w-3 animate-spin" />
+                          : <ExternalLink className="h-3 w-3" />} Open
                       </button>
-                      <button type="button" title={blockedPipelineState ? 'This source has already moved to another Reply Pipeline state' : 'Draft reply'} disabled={Boolean(blockedPipelineState)} onClick={() => void draftReply(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-45">
-                        <MailPlus className="h-3 w-3" /> {draftLabel}
+                      <button type="button" title={blockedPipelineState ? 'This source has already moved to another Reply Pipeline state' : 'Draft reply'} disabled={Boolean(blockedPipelineState) || isActionPending(item.id, 'draft')} onClick={() => void draftReply(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-45">
+                        {isActionPending(item.id, 'draft')
+                          ? <RefreshCw className="h-3 w-3 animate-spin" />
+                          : <MailPlus className="h-3 w-3" />} {draftLabel}
                       </button>
-                      <button type="button" title="Set reminder" onClick={() => void setReminder(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]">
-                        <Bell className="h-3 w-3" /> Remind
+                      <button type="button" title="Set reminder" disabled={isActionPending(item.id, 'remind')} onClick={() => void setReminder(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-70">
+                        {isActionPending(item.id, 'remind')
+                          ? <RefreshCw className="h-3 w-3 animate-spin" />
+                          : <Bell className="h-3 w-3" />} Remind
                       </button>
-                      <button type="button" title="Archive thread" onClick={() => void archive(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]">
-                        <Archive className="h-3 w-3" /> Archive
+                      <button type="button" title="Archive thread" disabled={isActionPending(item.id, 'archive')} onClick={() => void archive(item)} className="flex items-center justify-center gap-1 rounded border border-[var(--border)] px-1.5 py-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-70">
+                        {isActionPending(item.id, 'archive')
+                          ? <RefreshCw className="h-3 w-3 animate-spin" />
+                          : <Archive className="h-3 w-3" />} Archive
                       </button>
                     </div>
 
@@ -300,14 +349,16 @@ export function DailyBriefingCard() {
                       <button
                         type="button"
                         title="Apply selected label"
-                        disabled={!selectedLabel}
+                        disabled={!selectedLabel || isActionPending(item.id, 'label')}
                         onClick={() => {
                           setLabelByItemId(prev => ({ ...prev, [item.id]: selectedLabel }));
                           void applyLabel(item, selectedLabel);
                         }}
                         className="rounded border border-[var(--border)] p-1 text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:opacity-40"
                       >
-                        <Tag className="h-3.5 w-3.5" />
+                        {isActionPending(item.id, 'label')
+                          ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          : <Tag className="h-3.5 w-3.5" />}
                       </button>
                     </div>
                     <button
