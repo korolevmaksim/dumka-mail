@@ -3,7 +3,7 @@ import { AttachmentMetadata, MailMessage } from '../../../shared/types';
 import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, ExternalLink } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
 import { hasRemoteImages, SafeHtmlRenderer } from './SafeHtmlRenderer';
-import { resolveInlineCids } from '../../../shared/messageBody';
+import { hasRenderableHtmlBody, resolveInlineCids } from '../../../shared/messageBody';
 import { isCalendarInviteAttachment } from '../../../shared/calendar';
 import { canOpenExternally, formatByteSize } from '../../../shared/attachments';
 import { emitToast } from '../lib/toastBus';
@@ -13,11 +13,12 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
   const [copied, setCopied] = useState(false);
   const [showRawModal, setShowRawModal] = useState(false);
-  const remoteImages = msg.bodyHtml ? hasRemoteImages(msg.bodyHtml) : false;
+  const renderHtmlBody = hasRenderableHtmlBody(msg.bodyHtml);
+  const htmlBody = renderHtmlBody ? msg.bodyHtml || '' : '';
+  const remoteImages = htmlBody ? hasRemoteImages(htmlBody) : false;
   const initials = (msg.senderName || msg.senderEmail || '?').trim().substring(0, 2).toUpperCase();
   const [inlineAttachmentData, setInlineAttachmentData] = useState<Record<string, string>>({});
 
-  const htmlBody = msg.bodyHtml || '';
   const htmlHasCidReferences = /cid:/i.test(htmlBody);
   const inlineImageAttachments = useMemo(
     () => msg.attachments.filter(att => shouldTreatAsInlineImage(att, htmlBody)),
@@ -161,7 +162,7 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
             html={renderedHtml}
             loadRemoteImages={imagesAllowed}
           />
-        ) : msg.bodyHtml ? (
+        ) : renderHtmlBody ? (
           <SafeHtmlRenderer html={renderedHtml} loadRemoteImages={imagesAllowed} />
         ) : (
           <pre className="text-[calc(12px*var(--font-scale))] whitespace-pre-wrap font-sans text-[var(--text-primary)] select-text leading-relaxed">

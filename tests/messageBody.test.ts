@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  hasRenderableHtmlBody,
   INITIAL_PLAINTEXT_LIMIT,
   planPlainText,
   resolveInlineCids,
@@ -17,6 +18,29 @@ function attachment(overrides: Partial<AttachmentMetadata>): AttachmentMetadata 
     ...overrides,
   };
 }
+
+describe('hasRenderableHtmlBody', () => {
+  it('rejects an empty HTML alternative so the plain-text body can render', () => {
+    const html = '<html aria-label="message body"><head><meta charset="us-ascii"></head><body><div></div></body></html>';
+
+    expect(hasRenderableHtmlBody(html)).toBe(false);
+  });
+
+  it('accepts HTML with readable text', () => {
+    expect(hasRenderableHtmlBody('<div>Good day <strong>Alisa</strong></div>')).toBe(true);
+  });
+
+  it('accepts intentionally image-only HTML', () => {
+    expect(hasRenderableHtmlBody('<div><img src="cid:hero"></div>')).toBe(true);
+    expect(hasRenderableHtmlBody('<table background="https://example.com/hero.png"></table>')).toBe(true);
+  });
+
+  it('rejects missing, whitespace-only, and metadata-only HTML', () => {
+    expect(hasRenderableHtmlBody(null)).toBe(false);
+    expect(hasRenderableHtmlBody('   ')).toBe(false);
+    expect(hasRenderableHtmlBody('<style>body { color: red; }</style><!-- empty -->')).toBe(false);
+  });
+});
 
 describe('planPlainText', () => {
   it('returns text verbatim when shorter than the cap', () => {

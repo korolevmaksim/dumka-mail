@@ -6,6 +6,7 @@
 // standard JS/TS and relative imports from other `shared/` files are allowed.
 
 import type { AttachmentMetadata } from './types';
+import { htmlToText } from './aiContext';
 
 /**
  * Maximum number of characters rendered inline for a plain-text body before it
@@ -21,6 +22,28 @@ export interface MessageBodyRenderPlan {
   truncated: boolean;
   /** Length (in JS string units) of the untruncated source text. */
   fullLength: number;
+}
+
+/**
+ * True when an HTML body has content worth rendering instead of the plain-text
+ * alternative. Some Gmail messages contain a structurally non-empty HTML part
+ * whose body is only empty wrappers; treating that as authoritative would hide
+ * the real text stored in the multipart/alternative plain-text part.
+ */
+export function hasRenderableHtmlBody(html: string | null | undefined): boolean {
+  if (!html?.trim()) {
+    return false;
+  }
+
+  if (htmlToText(html).length > 0) {
+    return true;
+  }
+
+  // Keep image-only and other intentionally visual email bodies on the HTML
+  // path even when they have no readable text nodes.
+  return /<(?:img|picture|svg|canvas|video|audio|hr)\b/i.test(html)
+    || /\bbackground\s*=/i.test(html)
+    || /\bbackground(?:-image)?\s*:\s*[^;}]*\b(?:url|linear-gradient|radial-gradient)\s*\(/i.test(html);
 }
 
 /**

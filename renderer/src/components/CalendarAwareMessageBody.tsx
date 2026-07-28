@@ -106,7 +106,7 @@ export function CalendarAwareMessageBody({ msg, html, loadRemoteImages }: Calend
           ))}
         </div>
       )}
-      {msg.bodyHtml ? (
+      {html ? (
         <SafeHtmlRenderer html={html} loadRemoteImages={loadRemoteImages} onLinkClick={handleHtmlLink} />
       ) : (
         <pre className="text-[calc(12px*var(--font-scale))] whitespace-pre-wrap font-sans text-[var(--text-primary)] select-text leading-relaxed">
