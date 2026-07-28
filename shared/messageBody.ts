@@ -25,17 +25,27 @@ export interface MessageBodyRenderPlan {
 }
 
 /**
- * True when an HTML body has content worth rendering instead of the plain-text
- * alternative. Some Gmail messages contain a structurally non-empty HTML part
- * whose body is only empty wrappers; treating that as authoritative would hide
- * the real text stored in the multipart/alternative plain-text part.
+ * True when an HTML body has enough content to prefer it over the plain-text
+ * alternative. Some Gmail messages contain either empty HTML wrappers or only
+ * an HTML signature while the multipart/alternative plain-text part contains
+ * the complete message.
  */
-export function hasRenderableHtmlBody(html: string | null | undefined): boolean {
+export function hasRenderableHtmlBody(
+  html: string | null | undefined,
+  plainText?: string | null,
+): boolean {
   if (!html?.trim()) {
     return false;
   }
 
-  if (htmlToText(html).length > 0) {
+  const readableHtml = normalizeBodyText(htmlToText(html));
+  const readablePlain = normalizeBodyText(plainText || '');
+  if (readableHtml) {
+    const plainContainsHtml = readablePlain.includes(readableHtml);
+    const substantialMissingText = readablePlain.length - readableHtml.length >= 80;
+    if (plainContainsHtml && substantialMissingText) {
+      return false;
+    }
     return true;
   }
 
@@ -44,6 +54,14 @@ export function hasRenderableHtmlBody(html: string | null | undefined): boolean 
   return /<(?:img|picture|svg|canvas|video|audio|hr)\b/i.test(html)
     || /\bbackground\s*=/i.test(html)
     || /\bbackground(?:-image)?\s*:\s*[^;}]*\b(?:url|linear-gradient|radial-gradient)\s*\(/i.test(html);
+}
+
+function normalizeBodyText(text: string): string {
+  return text
+    .replace(/\uFFFC/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 /**

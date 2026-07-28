@@ -30,6 +30,28 @@ describe('hasRenderableHtmlBody', () => {
     expect(hasRenderableHtmlBody('<div>Good day <strong>Alisa</strong></div>')).toBe(true);
   });
 
+  it('rejects signature-only HTML when plain text contains the complete message', () => {
+    const html = '<html><body><div>Danny Garo</div><div>danny@softarex.com</div></body></html>';
+    const plain = `
+      Good day, Max
+
+      Please find attached the role of the CTO and our expectations on it.
+      The compensation language needs to be added to your current contract.
+
+      Danny Garo
+      danny@softarex.com
+    `;
+
+    expect(hasRenderableHtmlBody(html, plain)).toBe(false);
+  });
+
+  it('keeps HTML when the plain alternative does not contain additional message text', () => {
+    const html = '<div>Good day <strong>Alisa</strong></div>';
+
+    expect(hasRenderableHtmlBody(html, 'Good day Alisa')).toBe(true);
+    expect(hasRenderableHtmlBody(html, 'Different plain-text alternative')).toBe(true);
+  });
+
   it('accepts intentionally image-only HTML', () => {
     expect(hasRenderableHtmlBody('<div><img src="cid:hero"></div>')).toBe(true);
     expect(hasRenderableHtmlBody('<table background="https://example.com/hero.png"></table>')).toBe(true);
