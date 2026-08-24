@@ -8,6 +8,7 @@ import { isCalendarInviteAttachment } from '../../../shared/calendar';
 import { canOpenExternally, formatByteSize } from '../../../shared/attachments';
 import { emitToast } from '../lib/toastBus';
 import { CalendarAwareMessageBody } from './CalendarAwareMessageBody';
+import { RecipientList } from './RecipientList';
 
 export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }: { msg: MailMessage; defaultLoadImages: boolean }) {
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
@@ -117,16 +118,8 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
                   {copied ? <Check className="w-3 h-3 text-[var(--success)]" /> : <Copy className="w-3 h-3" />}
                 </button>
               </div>
-              {msg.to && msg.to.length > 0 && (
-                <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] truncate">
-                  To: {msg.to.map((r: { name?: string; email: string }) => r.name || r.email).join(', ')}
-                </span>
-              )}
-              {msg.cc && msg.cc.length > 0 && (
-                <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] truncate">
-                  Cc: {msg.cc.map((r: { name?: string; email: string }) => r.name || r.email).join(', ')}
-                </span>
-              )}
+              <RecipientList label="To" recipients={msg.to || []} />
+              <RecipientList label="Cc" recipients={msg.cc || []} />
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
