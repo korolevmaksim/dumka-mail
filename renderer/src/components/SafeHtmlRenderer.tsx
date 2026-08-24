@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { stripTrackingPixelsFromHtml } from '../../../shared/mailSecurity';
+import { EMAIL_BODY_READY_EVENT } from '../lib/emailSearchHighlights';
 
 function findNextMediaRule(css: string, from: number): number {
   let i = from;
@@ -298,6 +299,7 @@ export function SafeHtmlRenderer({
       resizeIframe();
       timers = [50, 300, 1000].map(ms => setTimeout(resizeIframe, ms));
       setReady(true);
+      window.dispatchEvent(new Event(EMAIL_BODY_READY_EVENT));
     };
 
     frameId = globalThis.requestAnimationFrame(prepareIframe);

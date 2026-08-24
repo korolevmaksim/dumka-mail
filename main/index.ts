@@ -29,6 +29,11 @@ import {
 } from './database';
 import { SystemLogRepo } from './systemLogRepository';
 import { SystemLogger } from './systemLogger';
+import {
+  RENDERER_CRASH_RELOAD_LIMIT,
+  RENDERER_CRASH_WINDOW_MS,
+  shouldReloadAfterRendererCrash,
+} from './rendererCrashPolicy';
 import { isRetryableRemoteError, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
@@ -667,6 +672,9 @@ function createWindow() {
   }
 
   let saveBoundsTimer: NodeJS.Timeout | null = null;
+  let windowClosing = false;
+  let rendererCrashReloads = 0;
+  let rendererCrashWindowTimer: NodeJS.Timeout | null = null;
   const saveBounds = () => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
@@ -695,6 +703,11 @@ function createWindow() {
   mainWindow.on('resize', queueSaveBounds);
   mainWindow.on('move', queueSaveBounds);
   mainWindow.on('close', () => {
+    windowClosing = true;
+    if (rendererCrashWindowTimer) {
+      clearTimeout(rendererCrashWindowTimer);
+      rendererCrashWindowTimer = null;
+    }
     if (saveBoundsTimer) {
       clearTimeout(saveBoundsTimer);
       saveBoundsTimer = null;
@@ -706,6 +719,33 @@ function createWindow() {
     if (mainWindow) {
       mainWindow.webContents.send('api:foundInPageResult', result);
     }
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return;
+    if (!mainWindow || mainWindow.isDestroyed() || windowClosing) return;
+    SystemLogger.error('Renderer', 'The UI process crashed and left a blank window.', undefined, {
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+    if (!shouldReloadAfterRendererCrash({
+      reason: details.reason,
+      reloadCountInWindow: rendererCrashReloads,
+      maxReloads: RENDERER_CRASH_RELOAD_LIMIT,
+      windowClosing,
+    })) {
+      if (rendererCrashReloads >= RENDERER_CRASH_RELOAD_LIMIT) {
+        SystemLogger.error('Renderer', 'The UI process crashed repeatedly; reload was skipped.');
+      }
+      return;
+    }
+    rendererCrashReloads += 1;
+    if (rendererCrashWindowTimer) clearTimeout(rendererCrashWindowTimer);
+    rendererCrashWindowTimer = setTimeout(() => {
+      rendererCrashReloads = 0;
+      rendererCrashWindowTimer = null;
+    }, RENDERER_CRASH_WINDOW_MS);
+    mainWindow.reload();
   });
 
   mainWindow.webContents.on('context-menu', (_, params) => {
@@ -813,7 +853,14 @@ app.whenReady().then(async () => {
   }
   SystemLogger.initialize(storedAppSettings.logging, {
     redactPersonalData: storedAppSettings.privacy?.redactLogs !== false,
-    publish: entry => mainWindow?.webContents.send('api:systemLogEntry', entry),
+    publish: entry => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      try {
+        mainWindow.webContents.send('api:systemLogEntry', entry);
+      } catch {
+        // The renderer may already be gone while we persist the crash log.
+      }
+    },
   });
   if (pendingRestore.applied) {
     SystemLogger.info('Backup Restore', 'Restored the database from a staged backup.', {

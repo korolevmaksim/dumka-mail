@@ -104,7 +104,7 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
             >
               {initials}
             </div>
-            <div className="flex flex-col min-w-0">
+            <div className="flex flex-col min-w-0" data-email-search-skip="">
               <span className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)] truncate">
                 {msg.senderName || msg.senderEmail}
               </span>

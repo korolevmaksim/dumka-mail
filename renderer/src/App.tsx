@@ -32,6 +32,7 @@ import { emitToast } from './lib/toastBus';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { shouldCloseReaderForSearchChange } from './lib/searchReaderBehavior';
+import { applyEmailSearchHighlights, clearEmailSearchHighlights, EMAIL_BODY_READY_EVENT } from './lib/emailSearchHighlights';
 import { isTextEditingElement } from './lib/undoRouting';
 import { densityMetrics } from './lib/density';
 import { calculateVirtualWindow, scrollTopForIndex } from './lib/virtualList';
@@ -364,23 +365,28 @@ function AppContent() {
     }
   };
 
-  // Manage highlights in the thread reader pane DOM
+  // Manage highlights in the thread reader pane DOM. Re-run when a mail iframe
+  // finishes writing so the first find-in-email pass is not racing doc.write.
   useEffect(() => {
-    const pane = document.getElementById('thread-reader-pane');
-    if (!pane) return;
+    const apply = () => {
+      const pane = document.getElementById('thread-reader-pane');
+      if (!pane) return;
 
-    // 1. Clear existing highlights first
-    clearHighlights(pane);
+      clearEmailSearchHighlights(pane);
 
-    if (!threadSearchOpen || !threadSearchQuery.trim()) {
-      setThreadMatchesCount(0);
-      setThreadActiveMatchIndex(0);
-      return;
-    }
+      if (!threadSearchOpen || !threadSearchQuery.trim()) {
+        setThreadMatchesCount(0);
+        setThreadActiveMatchIndex(0);
+        return;
+      }
 
-    // 2. Apply new highlights
-    const { count } = applyHighlights(pane, threadSearchQuery, threadActiveMatchIndex);
-    setThreadMatchesCount(count);
+      const { count } = applyEmailSearchHighlights(pane, threadSearchQuery, threadActiveMatchIndex);
+      setThreadMatchesCount(count);
+    };
+
+    apply();
+    window.addEventListener(EMAIL_BODY_READY_EVENT, apply);
+    return () => window.removeEventListener(EMAIL_BODY_READY_EVENT, apply);
   }, [threadSearchOpen, threadSearchQuery, threadActiveMatchIndex, store.openedThreadMessages]);
 
   // Close search when opening a different thread
@@ -1674,156 +1680,6 @@ function CornerUpLeftIcon({ className }: { className?: string }) {
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
     </svg>
   );
-}
-
-function clearHighlights(root: HTMLElement) {
-  const highlights: HTMLElement[] = [];
-  
-  const findHighlights = (node: Node) => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as HTMLElement;
-      if (el.tagName === 'MARK' && el.classList.contains('email-search-highlight')) {
-        highlights.push(el);
-      }
-      if (el.tagName === 'IFRAME') {
-        const iframe = el as HTMLIFrameElement;
-        try {
-          const doc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (doc && doc.body) {
-            findHighlights(doc.body);
-          }
-        } catch (e) {}
-      }
-    }
-    for (let i = 0; i < node.childNodes.length; i++) {
-      findHighlights(node.childNodes[i]);
-    }
-  };
-
-  findHighlights(root);
-
-  for (const mark of highlights) {
-    const parent = mark.parentNode;
-    if (parent) {
-      const textNode = document.createTextNode(mark.textContent || '');
-      parent.replaceChild(textNode, mark);
-    }
-  }
-
-  const normalizeNode = (node: Node) => {
-    node.normalize();
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as HTMLElement;
-      if (el.tagName === 'IFRAME') {
-        const iframe = el as HTMLIFrameElement;
-        try {
-          const doc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (doc && doc.body) {
-            doc.body.normalize();
-            for (let i = 0; i < doc.body.childNodes.length; i++) {
-              normalizeNode(doc.body.childNodes[i]);
-            }
-          }
-        } catch (e) {}
-      }
-    }
-    for (let i = 0; i < node.childNodes.length; i++) {
-      normalizeNode(node.childNodes[i]);
-    }
-  };
-  
-  normalizeNode(root);
-}
-
-function applyHighlights(root: HTMLElement, query: string, activeIdx: number): { count: number; elements: HTMLElement[] } {
-  const elements: HTMLElement[] = [];
-  if (!query.trim()) return { count: 0, elements };
-
-  const escaped = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const regex = new RegExp(`(${escaped})`, 'gi');
-
-  const traverse = (node: Node) => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as HTMLElement;
-      if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'NOSCRIPT') {
-        return;
-      }
-      if (el.tagName === 'IFRAME') {
-        const iframe = el as HTMLIFrameElement;
-        try {
-          const doc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (doc && doc.body) {
-            traverse(doc.body);
-          }
-        } catch (e) {}
-        return;
-      }
-    }
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.nodeValue || '';
-      regex.lastIndex = 0;
-      if (regex.test(text)) {
-        regex.lastIndex = 0;
-        const parts = text.split(regex);
-        const fragment = document.createDocumentFragment();
-        
-        for (const part of parts) {
-          if (part.toLowerCase() === query.toLowerCase()) {
-            const mark = document.createElement('mark');
-            mark.className = 'email-search-highlight';
-            mark.textContent = part;
-            
-            mark.style.backgroundColor = 'rgba(235, 140, 61, 0.4)';
-            mark.style.color = 'inherit';
-            mark.style.borderRadius = '2px';
-            mark.style.padding = '0 2px';
-            mark.style.borderBottom = '1px solid var(--warning)';
-            mark.style.fontWeight = '600';
-            
-            fragment.appendChild(mark);
-            elements.push(mark);
-          } else if (part) {
-            fragment.appendChild(document.createTextNode(part));
-          }
-        }
-        
-        const parent = node.parentNode;
-        if (parent) {
-          parent.replaceChild(fragment, node);
-        }
-      }
-      return;
-    }
-
-    const children = Array.from(node.childNodes);
-    for (const child of children) {
-      traverse(child);
-    }
-  };
-
-  traverse(root);
-
-  if (elements.length > 0) {
-    const safeIdx = (activeIdx + elements.length) % elements.length;
-    elements.forEach((el, idx) => {
-      if (idx === safeIdx) {
-        el.style.backgroundColor = 'var(--accent-solid)';
-        el.style.color = '#ffffff';
-        el.style.boxShadow = '0 0 0 2px var(--accent)';
-        el.style.borderBottom = 'none';
-        
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      } else {
-        el.style.backgroundColor = 'rgba(235, 140, 61, 0.4)';
-        el.style.color = 'inherit';
-        el.style.boxShadow = 'none';
-        el.style.borderBottom = '1px solid var(--warning)';
-      }
-    });
-  }
-
-  return { count: elements.length, elements };
 }
 
 export default function App() {

@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { RendererErrorBoundary } from './components/RendererErrorBoundary';
 import './index.css';
 import { startRendererLongTaskMonitor } from './lib/performanceMonitor';
 
@@ -24,7 +25,9 @@ if (isMarketingDemo) {
 } else {
   root.render(
     <React.StrictMode>
-      <App />
+      <RendererErrorBoundary>
+        <App />
+      </RendererErrorBoundary>
     </React.StrictMode>,
   );
 }

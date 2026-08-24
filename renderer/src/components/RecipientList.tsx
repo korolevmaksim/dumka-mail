@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Recipient } from '../../../shared/types';
 import {
@@ -6,6 +6,7 @@ import {
   joinRecipientNames,
   recipientDisplayName,
   recipientFullIdentity,
+  recipientsSignature,
 } from '../lib/recipientList';
 
 /**
@@ -29,40 +30,57 @@ export const RecipientList = memo(function RecipientList({
   const [expanded, setExpanded] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
   const lineRef = useRef<HTMLSpanElement>(null);
+  const signature = useMemo(() => recipientsSignature(recipients), [recipients]);
 
   const measure = useCallback(() => {
     const el = lineRef.current;
-    if (!el) return;
+    if (!el?.isConnected) return;
     const containerRight = el.getBoundingClientRect().right;
     let fullyVisible = 0;
     for (const child of Array.from(el.children)) {
+      if (!(child instanceof HTMLElement) || !child.isConnected) break;
       if (child.getBoundingClientRect().right <= containerRight + 1) {
         fullyVisible += 1;
       } else {
         break;
       }
     }
-    setHiddenCount(countHiddenRecipients(recipients.length, fullyVisible));
+    const nextHidden = countHiddenRecipients(recipients.length, fullyVisible);
+    setHiddenCount(current => (current === nextHidden ? current : nextHidden));
   }, [recipients.length]);
 
   useLayoutEffect(() => {
     if (expanded) return;
     measure();
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
     const el = lineRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(schedule);
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [expanded, measure, recipients]);
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [expanded, measure]);
 
   useEffect(() => {
     setExpanded(false);
-  }, [recipients]);
+  }, [signature]);
 
   if (recipients.length === 0) return null;
 
   return (
-    <div className="flex items-baseline gap-1 min-w-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
+    <div
+      className="flex items-baseline gap-1 min-w-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]"
+      data-email-search-skip=""
+    >
       <span className="shrink-0">{label}:</span>
       {expanded ? (
         <span className="min-w-0 flex-1 leading-snug select-text">

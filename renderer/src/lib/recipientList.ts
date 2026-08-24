@@ -34,3 +34,11 @@ export function joinRecipientNames(recipients: Recipient[]): string {
 export function countHiddenRecipients(total: number, fullyVisible: number): number {
   return Math.max(0, total - Math.max(0, fullyVisible));
 }
+
+/**
+ * Identity for a recipient row that survives mailbox-refresh object copies.
+ * Used so expanding To/Cc is not reset just because chat re-rendered the message.
+ */
+export function recipientsSignature(recipients: Recipient[]): string {
+  return recipients.map(recipient => `${recipient.email}\t${recipient.name || ''}`).join('\n');
+}

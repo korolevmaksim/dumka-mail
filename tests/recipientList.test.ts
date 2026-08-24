@@ -4,6 +4,7 @@ import {
   joinRecipientNames,
   recipientDisplayName,
   recipientFullIdentity,
+  recipientsSignature,
 } from '../renderer/src/lib/recipientList';
 import { Recipient } from '../shared/types';
 
@@ -64,5 +65,25 @@ describe('countHiddenRecipients', () => {
   it('never goes negative for out-of-range measurements', () => {
     expect(countHiddenRecipients(3, 10)).toBe(0);
     expect(countHiddenRecipients(3, -1)).toBe(3);
+  });
+});
+
+describe('recipientsSignature', () => {
+  it('is stable across a new array instance with the same participants', () => {
+    const first = [
+      recipient({ name: 'Igor Solomatov', email: 'igor.solomatov1@accesscfa.com' }),
+      recipient({ name: 'Maksim Korolyov', email: 'maksim.korolyov1@accesscfa.com' }),
+    ];
+    const second = first.map(item => ({ ...item }));
+    expect(recipientsSignature(second)).toBe(recipientsSignature(first));
+  });
+
+  it('changes when a participant is added after a mailbox refresh', () => {
+    const before = [recipient({ email: 'igor.solomatov1@accesscfa.com' })];
+    const after = [
+      recipient({ email: 'igor.solomatov1@accesscfa.com' }),
+      recipient({ email: 'marilyn.joseph@cfacorp.com' }),
+    ];
+    expect(recipientsSignature(after)).not.toBe(recipientsSignature(before));
   });
 });
