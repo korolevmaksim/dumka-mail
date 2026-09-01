@@ -30,7 +30,7 @@ export function ToastHost() {
   const dismiss = (id: string) => setToasts((prev) => prev.filter((x) => x.id !== id));
 
   return (
-    <div className="fixed bottom-10 left-5 right-5 z-[200] flex flex-col gap-2 items-end pointer-events-none">
+    <div role="status" aria-live="polite" className="fixed bottom-10 left-5 right-5 z-[200] flex flex-col gap-2 items-end pointer-events-none">
       {toasts.map((t) => {
         const tone = TONE[t.type || 'info'];
         const Icon = tone.Icon;

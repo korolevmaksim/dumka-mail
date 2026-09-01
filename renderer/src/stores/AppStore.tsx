@@ -458,8 +458,8 @@ interface AppStoreContextType {
   updateLabel: (labelId: string, patch: Partial<MailLabelDefinition>, email?: string) => Promise<void>;
   deleteLabel: (labelId: string, email?: string) => Promise<void>;
   moveThreadToLabel: (labelId: string, threadId?: string | null, move?: boolean) => Promise<void>;
-  muteThread: (threadId?: string | null) => Promise<void>;
-  unmuteThread: (threadId?: string | null) => Promise<void>;
+  muteThread: (threadId?: string | null, extras?: Record<string, unknown>) => Promise<MailActionExecutionResult>;
+  unmuteThread: (threadId?: string | null, extras?: Record<string, unknown>) => Promise<MailActionExecutionResult>;
   syncContacts: (email?: string) => Promise<void>;
   updateContactLocal: (contactId: string, patch: Partial<ContactCard>, email?: string) => Promise<void>;
   saveContactGroup: (name: string, email?: string) => Promise<void>;
@@ -808,10 +808,10 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     await loadWorkspaceCache();
   }, [loadWorkspaceCache, mailState.executeMailAction]);
 
-  const muteThread = useCallback(async (threadId?: string | null) => {
+  const muteThread = useCallback(async (threadId?: string | null, extras: Record<string, unknown> = {}): Promise<MailActionExecutionResult> => {
     const thread = threadId ? mailState.threads.find(item => item.id === threadId) : mailState.openedThread;
     const targetEmail = thread?.accountId || primaryWorkspaceEmail;
-    if (!targetEmail) return;
+    if (!targetEmail) return { accepted: false, offline: false, errorMessage: 'No target account.' };
     let mutedLabel = labelDefinitions.find(
       label => label.accountId === targetEmail && label.name.toLowerCase() === DUMKA_MUTED_LABEL_NAME.toLowerCase()
     );
@@ -819,18 +819,26 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       mutedLabel = await window.electronAPI.createLabel(targetEmail, DUMKA_MUTED_LABEL_NAME);
       await syncLabels(targetEmail);
     }
-    await mailState.executeMailAction('muteThread', threadId, null, undefined, JSON.stringify({ labelId: mutedLabel.id, labelName: mutedLabel.name }));
+    return mailState.executeMailAction('muteThread', threadId, null, undefined, JSON.stringify({
+      labelId: mutedLabel.id,
+      labelName: mutedLabel.name,
+      ...extras,
+    }));
   }, [labelDefinitions, mailState.executeMailAction, mailState.openedThread, mailState.threads, primaryWorkspaceEmail, syncLabels]);
 
-  const unmuteThread = useCallback(async (threadId?: string | null) => {
+  const unmuteThread = useCallback(async (threadId?: string | null, extras: Record<string, unknown> = {}): Promise<MailActionExecutionResult> => {
     const thread = threadId ? mailState.threads.find(item => item.id === threadId) : mailState.openedThread;
     const targetEmail = thread?.accountId || primaryWorkspaceEmail;
-    if (!targetEmail) return;
+    if (!targetEmail) return { accepted: false, offline: false, errorMessage: 'No target account.' };
     const mutedLabel = labelDefinitions.find(
       label => label.accountId === targetEmail && label.name.toLowerCase() === DUMKA_MUTED_LABEL_NAME.toLowerCase()
     );
-    if (!mutedLabel) return;
-    await mailState.executeMailAction('unmuteThread', threadId, null, undefined, JSON.stringify({ labelId: mutedLabel.id, labelName: mutedLabel.name }));
+    if (!mutedLabel) return { accepted: false, offline: false, errorMessage: 'Muted label is missing.' };
+    return mailState.executeMailAction('unmuteThread', threadId, null, undefined, JSON.stringify({
+      labelId: mutedLabel.id,
+      labelName: mutedLabel.name,
+      ...extras,
+    }));
   }, [labelDefinitions, mailState.executeMailAction, mailState.openedThread, mailState.threads, primaryWorkspaceEmail]);
 
   const syncContacts = useCallback(async (email?: string) => {

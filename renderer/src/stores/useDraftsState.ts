@@ -12,7 +12,7 @@ interface UseDraftsStateProps {
   activeAccount: Account | null;
   openedThread: MailThread | null;
   openThread: (thread: MailThread | null) => Promise<void>;
-  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any) => Promise<MailActionExecutionResult>;
+  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<MailActionExecutionResult>;
 }
 
 export function useDraftsState({
@@ -417,7 +417,7 @@ export function useDraftsState({
       pendingDraftRef.current = null;
       if (!draft) return;
       try {
-        await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (actionId: string) => {
+        const result = await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (actionId: string) => {
           const draftForSend = {
             ...draft,
             sendAt: null,
@@ -429,12 +429,17 @@ export function useDraftsState({
             await window.electronAPI.deleteDraft(draft.id);
           }
           return res;
-        });
+        }, JSON.stringify({ accountId: draft.accountId }));
         loadDrafts();
+        if (!result.accepted) {
+          setActiveDraft(draft);
+          return;
+        }
+        if (result.offline) return;
         if (draft.threadId === openedThread?.id) openThread(null);
-        emitToast({ type: 'success', message: 'Message sent.' });
       } catch (e) {
         console.error('Failed to send draft:', e);
+        setActiveDraft(draft);
         emitToast({ type: 'error', message: 'Failed to send message.' });
       }
     };

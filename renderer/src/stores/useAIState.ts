@@ -586,61 +586,63 @@ export function useAIState({
     }
 
     try {
-    if (item.action === 'openThread') {
-      await openThread(thread);
-    } else if (item.action === 'markRead') {
-      await executeMailAction('markRead', item.threadId, null, undefined, payloadForAgentPlanItem(item));
-    } else if (item.action === 'archive') {
-      await executeMailAction('markDone', item.threadId, null, undefined, payloadForAgentPlanItem(item));
-    } else if (item.action === 'setReminder') {
-      const reminderAt = item.payload?.reminderAt || (() => {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(9, 0, 0, 0);
-        return tomorrow.toISOString();
-      })();
-      await executeMailAction('setReminder', item.threadId, null, undefined, payloadForAgentPlanItem(item, { reminderAt }));
-    } else if (item.action === 'applyLabel') {
-      await executeMailAction(
-        'applyLabel',
-        item.threadId,
-        null,
-        undefined,
-        payloadForAgentPlanItem(item, { labelId: item.payload?.labelId || null })
-      );
-    } else if (item.action === 'unsubscribe') {
-      await executeMailAction(
-        'unsubscribeSender',
-        item.threadId,
-        null,
-        // Forward the reviewed message id so the main process executes exactly
-        // the unsubscribe method that was shown at approval time.
-        async (actionId: string) => window.electronAPI.unsubscribeThread(
-          item.accountId,
+      let accepted = true;
+      if (item.action === 'openThread') {
+        await openThread(thread);
+      } else if (item.action === 'markRead') {
+        accepted = (await executeMailAction('markRead', item.threadId, null, undefined, payloadForAgentPlanItem(item))).accepted;
+      } else if (item.action === 'archive') {
+        accepted = (await executeMailAction('markDone', item.threadId, null, undefined, payloadForAgentPlanItem(item))).accepted;
+      } else if (item.action === 'setReminder') {
+        const reminderAt = item.payload?.reminderAt || (() => {
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(9, 0, 0, 0);
+          return tomorrow.toISOString();
+        })();
+        accepted = (await executeMailAction('setReminder', item.threadId, null, undefined, payloadForAgentPlanItem(item, { reminderAt }))).accepted;
+      } else if (item.action === 'applyLabel') {
+        accepted = (await executeMailAction(
+          'applyLabel',
           item.threadId,
-          actionId,
-          item.payload?.sourceMessageId || undefined,
-        ),
-        payloadForAgentPlanItem(item, { accountId: item.accountId })
-      );
-    } else if (item.action === 'draftReply') {
-      const sourceMessage = await latestMessageForAgentItem(item);
-      if (!sourceMessage) {
-        emitToast({ type: 'warning', message: 'No source message found for this plan item.' });
-        return;
-      }
-      await openThread(thread);
-      const draft = startReplyWithBody(sourceMessage, item.payload?.bodyPlain || '');
-      if (draft) {
-        await executeMailAction(
-          'applyAIDraftPreview',
+          null,
+          undefined,
+          payloadForAgentPlanItem(item, { labelId: item.payload?.labelId || null })
+        )).accepted;
+      } else if (item.action === 'unsubscribe') {
+        accepted = (await executeMailAction(
+          'unsubscribeSender',
           item.threadId,
-          draft.id,
-          async () => null,
-          payloadForAgentPlanItem(item, { draftId: draft.id })
-        );
+          null,
+          // Forward the reviewed message id so the main process executes exactly
+          // the unsubscribe method that was shown at approval time.
+          async (actionId: string) => window.electronAPI.unsubscribeThread(
+            item.accountId,
+            item.threadId,
+            actionId,
+            item.payload?.sourceMessageId || undefined,
+          ),
+          payloadForAgentPlanItem(item, { accountId: item.accountId })
+        )).accepted;
+      } else if (item.action === 'draftReply') {
+        const sourceMessage = await latestMessageForAgentItem(item);
+        if (!sourceMessage) {
+          emitToast({ type: 'warning', message: 'No source message found for this plan item.' });
+          return;
+        }
+        await openThread(thread);
+        const draft = startReplyWithBody(sourceMessage, item.payload?.bodyPlain || '');
+        if (draft) {
+          accepted = (await executeMailAction(
+            'applyAIDraftPreview',
+            item.threadId,
+            draft.id,
+            async () => null,
+            payloadForAgentPlanItem(item, { draftId: draft.id })
+          )).accepted;
+        }
       }
-    }
+      if (!accepted) return;
     } catch (error) {
       emitToast({
         type: 'warning',
@@ -650,7 +652,6 @@ export function useAIState({
     }
 
     rejectAgentPlanItem(item.id);
-    emitToast({ type: 'success', message: 'Approved action applied.' });
   };
 
   const applySelectedAgentPlanItems = async () => {

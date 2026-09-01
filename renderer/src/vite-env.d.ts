@@ -31,6 +31,7 @@ import {
   MailMessage,
   MailboxSearchSource,
   MailboxDelta,
+  MailboxSyncHealthEvent,
   MailThread,
   OnboardAccountResult,
   OperatorHomeStateSnapshot,
@@ -256,6 +257,8 @@ export interface IElectronAPI {
   onRemindersDue: (callback: (data: { accountId: string; threadId: string }[]) => void) => () => void;
   onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onMailboxDelta: (callback: (delta: MailboxDelta) => void) => () => void;
+  onMailboxSyncHealth: (callback: (event: MailboxSyncHealthEvent) => void) => () => void;
+  onActionLogChanged: (callback: () => void) => () => void;
   onGoogleAuthStateChanged: (callback: (change: GoogleAuthStateChange) => void) => () => void;
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;

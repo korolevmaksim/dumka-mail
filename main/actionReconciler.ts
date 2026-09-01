@@ -27,6 +27,7 @@ export interface ReconcilerDeps {
   onDraftSent?: (accountId: string, draftId: string) => void;
   validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
   shouldDeferAccount?: (accountId: string) => boolean;
+  onActionLogChanged?: () => void;
   now?: () => Date;
   logger?: Pick<Console, 'log' | 'error'>;
 }
@@ -219,6 +220,10 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       }
     }
   }
+
+  if (pendingActions.length > 0) {
+    deps.onActionLogChanged?.();
+  }
 }
 
 export const SEND_LIKE_KINDS: ReadonlySet<ActionKind> = new Set(['send', 'forwardThread', 'autoReply']);
@@ -259,7 +264,9 @@ export const RECOVERY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // - everything else (no dispatch branch): failed — re-queueing would fabricate success
 export function recoverStaleRunningActions(deps: ReconcilerDeps): void {
   const now = deps.now || (() => new Date());
-  for (const action of deps.actionLog.listRunning()) {
+  const running = deps.actionLog.listRunning();
+  if (running.length === 0) return;
+  for (const action of running) {
     const ageMs = now().getTime() - new Date(action.createdAt).getTime();
     if (SEND_LIKE_KINDS.has(action.kind)) {
       action.status = 'failed';
@@ -281,6 +288,7 @@ export function recoverStaleRunningActions(deps: ReconcilerDeps): void {
     }
     deps.actionLog.save(action);
   }
+  deps.onActionLogChanged?.();
 }
 
 export function startBackgroundSyncWorker(deps: ReconcilerDeps, intervalMs = 15000): NodeJS.Timeout {

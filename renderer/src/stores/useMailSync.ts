@@ -4,6 +4,7 @@ import {
   GmailSignatureSyncResult,
   GoogleAuthIssue,
   MailboxDelta,
+  MailboxSyncHealthEvent,
   MailSyncCompletion,
 } from '../../../shared/types';
 import { emitToast } from '../lib/toastBus';
@@ -116,6 +117,25 @@ export function useMailSync({
       completedAt: delta.completedAt,
     }));
   }), [applyMailboxDelta]);
+
+  useEffect(() => window.electronAPI.onMailboxSyncHealth((event: MailboxSyncHealthEvent) => {
+    if (event.ok) {
+      setLastSuccessfulSync(previous => ({
+        revision: previous?.revision || 0,
+        accountIds: Array.from(new Set([...(previous?.accountIds || []), event.accountId])),
+        completedAt: event.lastSuccessAt || event.completedAt,
+      }));
+      setSyncHealth(current => (current === 'reconnect' || current === 'indexing' ? current : 'ready'));
+      setSyncStatusText(current => (
+        current.startsWith('Reconnect ') || current === 'Indexing older mail...' ? current : 'Ready'
+      ));
+      return;
+    }
+    setSyncHealth(current => (current === 'reconnect' ? current : 'failed'));
+    setSyncStatusText(current => (
+      current.startsWith('Reconnect ') ? current : (event.lastError || 'Degraded sync')
+    ));
+  }), []);
 
   // Main owns scheduled Gmail reconciliation. The renderer only requests a
   // manual pass and applies the resulting mailbox deltas.

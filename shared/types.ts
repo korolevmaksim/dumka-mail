@@ -807,6 +807,14 @@ export interface MailboxDelta {
   completedAt: string;
 }
 
+export interface MailboxSyncHealthEvent {
+  accountId: AccountID;
+  ok: boolean;
+  lastSuccessAt?: string | null;
+  lastError?: string | null;
+  completedAt: string;
+}
+
 export type NavigationActivityPhase =
   | 'idle'
   | 'loadingAccount'

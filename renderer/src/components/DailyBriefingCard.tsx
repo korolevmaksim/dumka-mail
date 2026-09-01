@@ -164,7 +164,7 @@ export function DailyBriefingCard() {
       item.threadId,
       result.draft.id,
       async () => null,
-      payloadFor(item, 'draftReply', { draftId: result.draft.id, draftOrigin: result.state.draftOrigin })
+      payloadFor(item, 'draftReply', { draftId: result.draft.id, draftOrigin: result.state.draftOrigin, silent: true })
     );
     emitToast({
       type: result.placeholders.length > 0 ? 'warning' : 'success',
@@ -185,8 +185,6 @@ export function DailyBriefingCard() {
     );
     if (result.accepted) {
       store.dismissDailyBriefingItem(item);
-    } else {
-      emitToast({ type: 'error', message: result.errorMessage || 'Could not set the reminder.' });
     }
   }, 'Could not set the reminder.');
 
@@ -194,8 +192,6 @@ export function DailyBriefingCard() {
     const result = await store.executeMailAction('markDone', item.threadId, null, undefined, payloadFor(item, 'archive'));
     if (result.accepted) {
       store.dismissDailyBriefingItem(item);
-    } else {
-      emitToast({ type: 'error', message: result.errorMessage || 'Could not archive the thread.' });
     }
   }, 'Could not archive the thread.');
 
@@ -209,8 +205,6 @@ export function DailyBriefingCard() {
       const result = await store.executeMailAction('applyLabel', item.threadId, null, undefined, payloadFor(item, 'applyLabel', { labelId }));
       if (result.accepted) {
         store.dismissDailyBriefingItem(item);
-      } else {
-        emitToast({ type: 'error', message: result.errorMessage || 'Could not apply the label.' });
       }
     }, 'Could not apply the label.');
   };

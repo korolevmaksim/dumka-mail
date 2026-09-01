@@ -472,6 +472,40 @@ describe('recoverStaleRunningActions', () => {
     recoverStaleRunningActions(h.deps);
     expect(h.saved).toHaveLength(0);
   });
+
+  it('notifies after recovering stale running actions', () => {
+    const h = makeDeps({ running: [makeAction({ status: 'running', kind: 'markDone' })] });
+    const onActionLogChanged = vi.fn();
+    h.deps.onActionLogChanged = onActionLogChanged;
+    recoverStaleRunningActions(h.deps);
+    expect(onActionLogChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not notify when nothing is stuck in running', () => {
+    const h = makeDeps({});
+    const onActionLogChanged = vi.fn();
+    h.deps.onActionLogChanged = onActionLogChanged;
+    recoverStaleRunningActions(h.deps);
+    expect(onActionLogChanged).not.toHaveBeenCalled();
+  });
+});
+
+describe('reconcilePendingActions action-log notifications', () => {
+  it('emits onActionLogChanged after a pass that mutates the log', async () => {
+    const h = makeDeps({ pending: [makeAction({ kind: 'markDone' })] });
+    const onActionLogChanged = vi.fn();
+    h.deps.onActionLogChanged = onActionLogChanged;
+    await reconcilePendingActions(h.deps);
+    expect(onActionLogChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not emit when there is nothing pending', async () => {
+    const h = makeDeps({ pending: [] });
+    const onActionLogChanged = vi.fn();
+    h.deps.onActionLogChanged = onActionLogChanged;
+    await reconcilePendingActions(h.deps);
+    expect(onActionLogChanged).not.toHaveBeenCalled();
+  });
 });
 
 describe('startBackgroundSyncWorker', () => {

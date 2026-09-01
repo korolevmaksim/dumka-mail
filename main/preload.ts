@@ -16,6 +16,7 @@ import {
   MailThread,
   MailMessage,
   MailboxDelta,
+  MailboxSyncHealthEvent,
   Draft,
   SyncState,
   MailActionLog,
@@ -285,6 +286,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('api:mailboxDelta', listener);
     return () => {
       ipcRenderer.off('api:mailboxDelta', listener);
+    };
+  },
+  onMailboxSyncHealth: (callback: (event: MailboxSyncHealthEvent) => void) => {
+    const listener = (_: unknown, event: MailboxSyncHealthEvent) => callback(event);
+    ipcRenderer.on('api:mailboxSyncHealth', listener);
+    return () => {
+      ipcRenderer.off('api:mailboxSyncHealth', listener);
+    };
+  },
+  onActionLogChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('api:actionLogChanged', listener);
+    return () => {
+      ipcRenderer.off('api:actionLogChanged', listener);
     };
   },
   onGoogleAuthStateChanged: (callback: (change: GoogleAuthStateChange) => void) => {

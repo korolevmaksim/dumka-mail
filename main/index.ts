@@ -98,6 +98,7 @@ import type {
   FollowUpRadarListOptions,
   MailMessage,
   MailboxDelta,
+  MailboxSyncHealthEvent,
   MailNotificationSettings,
   MailRuleAction,
   MailRulesSettings,
@@ -920,6 +921,9 @@ app.whenReady().then(async () => {
         labelId,
         allowOptimisticState: true,
       });
+    },
+    onActionLogChanged: () => {
+      mainWindow?.webContents.send('api:actionLogChanged');
     },
     logger: SystemLogger.console('Action Sync'),
   });
@@ -2232,6 +2236,10 @@ function publishMailboxDelta(
   return delta;
 }
 
+function publishMailboxSyncHealth(event: MailboxSyncHealthEvent): void {
+  mainWindow?.webContents.send('api:mailboxSyncHealth', event);
+}
+
 function startReminderNotificationWorker() {
   const run = async () => {
     if (reminderWorkerActive) return;
@@ -2426,6 +2434,13 @@ function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
         deletedThreads: delta.deletedThreadIds.length,
         durationMs: Date.now() - startedAt,
       });
+      publishMailboxSyncHealth({
+        accountId: email,
+        ok: true,
+        lastSuccessAt: delta.completedAt,
+        lastError: null,
+        completedAt: delta.completedAt,
+      });
       return delta;
     })
     .catch(error => {
@@ -2433,6 +2448,12 @@ function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
         accountId: email,
         mode,
         durationMs: Date.now() - startedAt,
+      });
+      publishMailboxSyncHealth({
+        accountId: email,
+        ok: false,
+        lastError: error instanceof Error ? error.message : String(error),
+        completedAt: new Date().toISOString(),
       });
       throw error;
     })

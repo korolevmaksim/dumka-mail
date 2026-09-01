@@ -4,9 +4,16 @@ import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
 import { categorize } from '../../../shared/categoryEngine';
-import { isReversibleMailActionKind, reverseMailActionKind } from '../../../shared/mailActions';
+import { reverseMailActionKind } from '../../../shared/mailActions';
+import {
+  aggregateMailActionResults,
+  isUndoableMailActionLog,
+  mailActionBatchId,
+  mailActionPayloadFields,
+} from '../../../shared/mailActionFeedback';
 import { describeReminder } from '../../../shared/reminders';
 import { emitToast } from '../lib/toastBus';
+import { presentMailActionFeedback, undoPayloadJson } from '../lib/presentMailAction';
 import { useMailSync } from './useMailSync';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import {
@@ -34,6 +41,28 @@ export interface SpeedProof {
   searchMs?: number;
   aiMs?: number;
   detailCacheCoverage: string;
+}
+
+async function cancelPendingMailAction(item: Pick<MailActionLog, 'id' | 'accountId'> & Partial<MailActionLog>): Promise<void> {
+  try {
+    const latest = (await window.electronAPI.listActionLog(item.accountId)).find(log => log.id === item.id) || item;
+    if (latest.status !== 'pending_sync' && latest.status !== 'queued') return;
+    await window.electronAPI.saveActionLog({
+      id: latest.id,
+      accountId: latest.accountId,
+      threadId: latest.threadId,
+      draftId: latest.draftId,
+      kind: latest.kind || 'markDone',
+      status: 'failed',
+      createdAt: latest.createdAt || new Date().toISOString(),
+      scheduledAt: latest.scheduledAt,
+      completedAt: new Date().toISOString(),
+      failureMessage: 'Undone before sync',
+      payloadJson: latest.payloadJson,
+    });
+  } catch (error) {
+    console.error('Failed to cancel pending action before undo:', error);
+  }
 }
 
 const SENT_SYNC_MIN_INTERVAL_MS = 60_000;
@@ -736,6 +765,21 @@ export function useMailState({
     loadActionLog();
   }, [loadActionLog]);
 
+  useEffect(() => {
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = window.electronAPI.onActionLogChanged(() => {
+      void loadActionLog();
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        void loadThreadsFromDB(true);
+      }, 400);
+    });
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      unsubscribe();
+    };
+  }, [loadActionLog, loadThreadsFromDB]);
+
   const loadFollowUpRadar = useCallback(async () => {
     if (!activeAccount || !inboxSettings.enableFollowUps) {
       setFollowUpRadar(null);
@@ -1036,7 +1080,13 @@ export function useMailState({
     }
 
     if (thread.isUnread && inboxSettings.autoMarkReadOnOpen && openedThreadKeyRef.current === nextThreadKey) {
-      executeMailAction('markRead', thread.id);
+      void executeMailAction(
+        'markRead',
+        thread.id,
+        null,
+        undefined,
+        JSON.stringify({ auto: true, accountId: thread.accountId }),
+      ).catch(error => console.error('Auto mark-read failed:', error));
     }
   };
 
@@ -1048,10 +1098,31 @@ export function useMailState({
     customAction?: (actionId: string) => Promise<any>,
     payloadJson?: string | null
   ): Promise<MailActionExecutionResult> => {
-    if (!activeAccount) return { accepted: false, offline: false, errorMessage: 'No active account.' };
+    const feedbackFields = mailActionPayloadFields(payloadJson);
+    const retryAction = () => {
+      void executeMailAction(kind, threadId, draftId, customAction, payloadJson);
+    };
+
+    if (!activeAccount) {
+      return presentMailActionFeedback({
+        result: { accepted: false, offline: false, errorMessage: 'No active account.' },
+        kind,
+        auto: feedbackFields.auto,
+        silent: feedbackFields.silent,
+        undo: feedbackFields.undo,
+      }, { onRetry: retryAction });
+    }
 
     const targetThreadId = threadId || openedThread?.id || focusedThreadId || null;
-    if (!targetThreadId && kind !== 'send') return { accepted: false, offline: false, errorMessage: 'No target thread.' };
+    if (!targetThreadId && kind !== 'send') {
+      return presentMailActionFeedback({
+        result: { accepted: false, offline: false, errorMessage: 'No target thread.' },
+        kind,
+        auto: feedbackFields.auto,
+        silent: feedbackFields.silent,
+        undo: feedbackFields.undo,
+      }, { onRetry: retryAction });
+    }
 
     const payload = payloadJson ? JSON.parse(payloadJson) : {};
     const propagateReviewedFailure = Boolean(payload.proposalValidationItem);
@@ -1063,7 +1134,13 @@ export function useMailState({
         : threads.find(t => t.id === targetThreadId) || null
       : null;
     if (targetThreadId && payloadAccountId && !thread) {
-      throw new Error('The account-scoped target thread is no longer available.');
+      return presentMailActionFeedback({
+        result: { accepted: false, offline: false, errorMessage: 'The account-scoped target thread is no longer available.' },
+        kind,
+        auto: feedbackFields.auto,
+        silent: feedbackFields.silent,
+        undo: feedbackFields.undo,
+      }, { onRetry: retryAction });
     }
     const targetAccountId = payloadAccountId || (thread ? thread.accountId : activeAccount.email);
     
@@ -1216,7 +1293,7 @@ export function useMailState({
       )));
     }
 
-    return await (async (): Promise<MailActionExecutionResult> => {
+    const result = await (async (): Promise<MailActionExecutionResult> => {
       try {
         await window.electronAPI.saveActionLog(log);
         log.status = 'running';
@@ -1272,6 +1349,7 @@ export function useMailState({
         }
 
         if (res && res.offline) {
+          log.status = 'pending_sync';
           loadActionLog();
           return { accepted: true, offline: true, actionId };
         } else {
@@ -1293,19 +1371,92 @@ export function useMailState({
         return { accepted: false, offline: false, actionId, errorMessage: err.message };
       }
     })();
+
+    return presentMailActionFeedback({
+      result,
+      kind,
+      auto: feedbackFields.auto,
+      silent: feedbackFields.silent,
+      undo: feedbackFields.undo,
+    }, {
+      onUndo: () => {
+        const reverseKind = reverseMailActionKind(kind);
+        if (!reverseKind) return;
+        void (async () => {
+          if (result.offline) {
+            await cancelPendingMailAction(log);
+          }
+          await executeMailAction(reverseKind, targetThreadId, draftId, undefined, undoPayloadJson(payloadJson));
+        })().catch(error => {
+          console.error('Failed to undo mail action:', error);
+          emitToast({ type: 'error', message: 'Could not undo.' });
+        });
+      },
+      onRetry: retryAction,
+    });
+  };
+
+  const reverseMailActionLogs = async (items: MailActionLog[]) => {
+    if (items.length === 0) {
+      emitToast({ type: 'info', message: 'Nothing to undo.' });
+      return;
+    }
+    const results: MailActionExecutionResult[] = [];
+    const redoBatchId = items.length > 1 ? crypto.randomUUID() : undefined;
+    for (const item of items) {
+      if (item.status === 'pending_sync' || item.status === 'queued') {
+        await cancelPendingMailAction(item);
+      }
+      const reverseKind = reverseMailActionKind(item.kind);
+      if (!reverseKind) continue;
+      results.push(await executeMailAction(
+        reverseKind,
+        item.threadId,
+        item.draftId,
+        undefined,
+        undoPayloadJson(item.payloadJson, {
+          silent: items.length > 1,
+          ...(redoBatchId ? { batchId: redoBatchId } : {}),
+        }),
+      ));
+    }
+    if (items.length <= 1) return;
+    const aggregated = aggregateMailActionResults(results);
+    const summaryKind = reverseMailActionKind(items[0].kind) || items[0].kind;
+    presentMailActionFeedback({
+      result: aggregated,
+      kind: summaryKind,
+      count: results.length,
+      succeeded: aggregated.succeeded,
+      failed: aggregated.failed,
+    }, {
+      onUndo: () => {
+        void undoLastAction().catch(error => {
+          console.error('Failed to redo undone actions:', error);
+          emitToast({ type: 'error', message: 'Could not undo.' });
+        });
+      },
+      onRetry: () => {
+        void reverseMailActionLogs(items).catch(error => {
+          console.error('Failed to retry undo:', error);
+          emitToast({ type: 'error', message: 'Could not undo.' });
+        });
+      },
+    });
   };
 
   const undoLastAction = async () => {
-    const lastReversible = actionLog.find(l => l.status === 'completed' && isReversibleMailActionKind(l.kind));
+    const lastReversible = actionLog.find(isUndoableMailActionLog);
     if (!lastReversible) {
       emitToast({ type: 'info', message: 'Nothing to undo.' });
       return;
     }
 
-    const reverseKind = reverseMailActionKind(lastReversible.kind);
-    if (!reverseKind) return;
-
-    await executeMailAction(reverseKind, lastReversible.threadId, null, undefined, lastReversible.payloadJson || null);
+    const batchId = mailActionBatchId(lastReversible.payloadJson);
+    const items = batchId
+      ? actionLog.filter(log => mailActionBatchId(log.payloadJson) === batchId && isUndoableMailActionLog(log))
+      : [lastReversible];
+    await reverseMailActionLogs(items);
   };
 
   const clearThreadReminder = async (thread: MailThread) => {
@@ -1321,7 +1472,7 @@ export function useMailState({
     try {
       result = await executeMailAction('autoMarkRead', thread.id, null, async () => {
         await window.electronAPI.saveReminder(thread.accountId, thread.id, reminderAt);
-      }, JSON.stringify({ accountId: thread.accountId, reminderAt }));
+      }, JSON.stringify({ accountId: thread.accountId, reminderAt, silent: true }));
     } catch (error) {
       patchThread(thread.accountId, thread.id, current => ({ ...current, reminderAt: previousReminderAt }));
       throw error;
@@ -1434,10 +1585,18 @@ export function useMailState({
         : t));
     }
 
+    const batchId = crypto.randomUUID();
+    const results: MailActionExecutionResult[] = [];
+    const logs: MailActionLog[] = [];
+
     const promises = threadIds.map(async (targetThreadId) => {
       const actionId = crypto.randomUUID();
       const thread = threads.find(t => t.id === targetThreadId);
       const targetAccountId = thread ? thread.accountId : activeAccount.email;
+      const payloadJson = JSON.stringify({
+        batchId,
+        accountId: targetAccountId,
+      });
 
       const log: MailActionLog = {
         id: actionId,
@@ -1445,7 +1604,8 @@ export function useMailState({
         threadId: targetThreadId,
         kind,
         status: 'queued',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        payloadJson,
       };
 
       try {
@@ -1471,23 +1631,48 @@ export function useMailState({
         }
 
         if (res && res.offline) {
-          // keep pending
+          log.status = 'pending_sync';
+          results.push({ accepted: true, offline: true, actionId });
         } else {
           log.status = 'completed';
           log.completedAt = new Date().toISOString();
           await window.electronAPI.saveActionLog(log);
+          results.push({ accepted: true, offline: false, actionId });
         }
       } catch (err: any) {
         console.error(`Batch action item failed for thread ${targetThreadId}:`, err);
         log.status = 'failed';
         log.failureMessage = err.message;
-        await window.electronAPI.saveActionLog(log);
+        try {
+          await window.electronAPI.saveActionLog(log);
+        } catch (saveErr) {
+          console.error(`Failed to persist batch action failure for ${targetThreadId}:`, saveErr);
+        }
+        results.push({ accepted: false, offline: false, actionId, errorMessage: err.message });
       }
+      logs.push(log);
     });
 
     await Promise.all(promises);
     loadActionLog();
-    loadThreadsFromDB();
+    await loadThreadsFromDB(true);
+
+    const aggregated = aggregateMailActionResults(results);
+    presentMailActionFeedback({
+      result: aggregated,
+      kind,
+      count: threadIds.length,
+      succeeded: aggregated.succeeded,
+      failed: aggregated.failed,
+    }, {
+      onUndo: () => {
+        void reverseMailActionLogs(logs.filter(isUndoableMailActionLog)).catch(error => {
+          console.error('Failed to undo batch mail action:', error);
+          emitToast({ type: 'error', message: 'Could not undo.' });
+        });
+      },
+      onRetry: () => { void executeBatchMailAction(kind, threadIds); },
+    });
   };
 
   const dismissAgentDraftSuggestion = useCallback(async (id: string) => {
@@ -1511,11 +1696,13 @@ export function useMailState({
     const targetAccountId = thread?.accountId || activeAccount?.email;
     if (!targetAccountId) return;
 
-    await executeMailAction('unsubscribeSender', targetThreadId, null, async (actionId: string) => {
-      const result = await window.electronAPI.unsubscribeThread(targetAccountId, targetThreadId, actionId);
-      emitToast({ type: 'success', message: 'Unsubscribed and archived.' });
-      return result;
-    });
+    await executeMailAction(
+      'unsubscribeSender',
+      targetThreadId,
+      null,
+      async (actionId: string) => window.electronAPI.unsubscribeThread(targetAccountId, targetThreadId, actionId),
+      JSON.stringify({ accountId: targetAccountId }),
+    );
   }, [activeAccount?.email, executeMailAction, focusedThreadId, openedThread, threads]);
 
 

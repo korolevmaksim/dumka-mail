@@ -37,7 +37,9 @@ import { isTextEditingElement } from './lib/undoRouting';
 import { densityMetrics } from './lib/density';
 import { calculateVirtualWindow, scrollTopForIndex } from './lib/virtualList';
 import { buildLabelTree, flattenLabelTree, labelDefinitionsForAccount, labelPresenceInThreads } from '../../shared/labels';
-import { isReversibleMailActionKind } from '../../shared/mailActions';
+import { reverseMailActionKind } from '../../shared/mailActions';
+import { aggregateMailActionResults, isUndoableMailActionLog } from '../../shared/mailActionFeedback';
+import { presentMailActionFeedback, undoPayloadJson } from './lib/presentMailAction';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
 import { visibleSplitTabs } from '../../shared/splitTabs';
 import type { Draft, MailboxView, MailThread } from '../../shared/types';
@@ -293,7 +295,7 @@ function AppContent() {
 
     const canCreateDraft = Boolean(resolveComposeAccountId(store.activeAccount, store.accounts));
     const canUndo = hasActiveDraft
-      || store.actionLog.some(l => l.status === 'completed' && isReversibleMailActionKind(l.kind));
+      || store.actionLog.some(isUndoableMailActionLog);
 
     window.electronAPI.setMenuCommandState({ canCreateDraft, canUndo }).catch(err => {
       console.error('Failed to update native menu command state:', err);
@@ -462,23 +464,60 @@ function AppContent() {
     setMailboxMenuOpen(false);
   }, [store.mailboxView]);
 
-  const labelNameForToast = (labelId: string, accountId?: string | null) =>
-    store.labelDefinitions.find(label =>
-      label.id === labelId && (!accountId || label.accountId === accountId)
-    )?.name || 'label';
-
   const runSelectedLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
     const threadIds = Array.from(store.selectedThreadIds);
     if (threadIds.length === 0) return;
     setBatchLabelMenuOpen(false);
     store.clearThreadSelection();
-    for (const threadId of threadIds) {
-      void store.executeMailAction(kind, threadId, null, undefined, JSON.stringify({ labelId }));
-    }
-    const verb = kind === 'moveToLabel' ? 'Moved' : kind === 'applyLabel' ? 'Applied' : 'Removed';
-    const labelName = labelNameForToast(labelId, selectedThreadsAccountId);
-    const suffix = kind === 'removeLabel' ? ` from ${labelName}` : ` ${labelName}`;
-    emitToast({ type: 'success', message: `${verb} ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'}${suffix}.` });
+    const batchId = crypto.randomUUID();
+    void (async () => {
+      const results = await Promise.all(threadIds.map(threadId =>
+        store.executeMailAction(kind, threadId, null, undefined, JSON.stringify({ labelId, silent: true, batchId }))
+      ));
+      const aggregated = aggregateMailActionResults(results);
+      const reverseKind = reverseMailActionKind(kind);
+      presentMailActionFeedback({
+        result: aggregated,
+        kind,
+        count: results.length,
+        succeeded: aggregated.succeeded,
+        failed: aggregated.failed,
+      }, {
+        onUndo: reverseKind
+          ? () => {
+              const redoBatchId = crypto.randomUUID();
+              void Promise.all(threadIds.map(threadId =>
+                store.executeMailAction(
+                  reverseKind,
+                  threadId,
+                  null,
+                  undefined,
+                  undoPayloadJson(JSON.stringify({ labelId }), {
+                    silent: threadIds.length > 1,
+                    batchId: redoBatchId,
+                  }),
+                )
+              )).then(undoResults => {
+                const undoAggregated = aggregateMailActionResults(undoResults);
+                presentMailActionFeedback({
+                  result: undoAggregated,
+                  kind: reverseKind,
+                  count: undoResults.length,
+                  succeeded: undoAggregated.succeeded,
+                  failed: undoAggregated.failed,
+                }, {
+                  onUndo: () => runSelectedLabelAction(kind, labelId),
+                  onRetry: () => runSelectedLabelAction(kind, labelId),
+                });
+              }).catch(error => {
+                console.error('Failed to undo label action:', error);
+                emitToast({ type: 'error', message: 'Could not undo.' });
+              });
+            }
+          : undefined,
+        onRetry: () => runSelectedLabelAction(kind, labelId),
+      });
+    })();
   };
 
   const runOpenedThreadLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
@@ -496,10 +535,43 @@ function AppContent() {
     const threadIds = Array.from(store.selectedThreadIds);
     if (threadIds.length === 0) return;
     store.clearThreadSelection();
-    for (const threadId of threadIds) {
-      void store.unmuteThread(threadId);
-    }
-    emitToast({ type: 'success', message: `Unmuted ${threadIds.length} thread${threadIds.length === 1 ? '' : 's'}.` });
+    const batchId = crypto.randomUUID();
+    void (async () => {
+      const results = await Promise.all(threadIds.map(threadId =>
+        store.unmuteThread(threadId, { silent: true, batchId })
+      ));
+      const aggregated = aggregateMailActionResults(results);
+      presentMailActionFeedback({
+        result: aggregated,
+        kind: 'unmuteThread',
+        count: results.length,
+        succeeded: aggregated.succeeded,
+        failed: aggregated.failed,
+      }, {
+        onUndo: () => {
+          const redoBatchId = crypto.randomUUID();
+          void Promise.all(threadIds.map(threadId =>
+            store.muteThread(threadId, { silent: threadIds.length > 1, batchId: redoBatchId })
+          )).then(muteResults => {
+            const muteAggregated = aggregateMailActionResults(muteResults);
+            presentMailActionFeedback({
+              result: muteAggregated,
+              kind: 'muteThread',
+              count: muteResults.length,
+              succeeded: muteAggregated.succeeded,
+              failed: muteAggregated.failed,
+            });
+          }).catch(error => {
+            console.error('Failed to remute threads:', error);
+            emitToast({ type: 'error', message: 'Could not undo.' });
+          });
+        },
+        onRetry: () => unmuteSelectedThreads(),
+      });
+    })().catch(error => {
+      console.error('Failed to unmute selected threads:', error);
+      emitToast({ type: 'error', message: 'Could not unmute the selected threads.' });
+    });
   };
 
   useEffect(() => {
