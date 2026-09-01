@@ -500,6 +500,8 @@ interface AppStoreContextType {
   composeLayout: 'inline' | 'floating';
   setComposeLayout: (layout: 'inline' | 'floating') => void;
   draftsList: Draft[];
+  draftSaveStatus: 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
+  draftSaveStatusLabel: string | null;
   loadDrafts: () => Promise<void>;
   startNewDraft: (accountId?: string | null, seed?: Partial<Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject'>>) => Draft | null;
   saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
@@ -512,7 +514,7 @@ interface AppStoreContextType {
   sendDraftWithUndo: () => Promise<void>;
   pendingSend: boolean;
   pendingSendSeconds: number;
-  cancelPendingSend: () => void;
+  cancelPendingSend: () => Promise<void>;
   addAttachmentToDraft: () => Promise<void>;
   addDroppedFilesToDraft: (files: readonly File[]) => Promise<void>;
   removeAttachmentFromDraft: (id: string) => Promise<void>;

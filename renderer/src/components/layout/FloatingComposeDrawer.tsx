@@ -439,6 +439,11 @@ export function FloatingComposeDrawer() {
           <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
             {activeDraft.accountId}
           </span>
+          {store.draftSaveStatusLabel && (
+            <span className={`text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text-tertiary)]'}`}>
+              {store.draftSaveStatusLabel}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <button

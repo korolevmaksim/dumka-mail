@@ -263,6 +263,8 @@ export interface IElectronAPI {
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;
   onExecuteCommand: (callback: (cmdId: string) => void) => () => void;
+  onFlushDrafts: (callback: () => void) => () => void;
+  notifyDraftsFlushed: () => void;
 }
 
 declare global {

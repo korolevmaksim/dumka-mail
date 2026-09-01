@@ -1535,7 +1535,7 @@ function AppContent() {
             <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">Undo window active</span>
           </div>
           <button
-            onClick={() => store.cancelPendingSend()}
+            onClick={() => void store.cancelPendingSend()}
             className="px-3 py-1.5 text-[calc(11px*var(--font-scale))] bg-[var(--warning)] text-white rounded-lg cursor-pointer font-semibold hover:opacity-90 transition-opacity"
           >
             Cancel Send

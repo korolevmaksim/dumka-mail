@@ -959,10 +959,15 @@ app.whenReady().then(async () => {
 });
 
 let quitConfirmed = false;
+let quitFlushDone = false;
+let quitFlushInFlight = false;
 
-app.on('before-quit', (event) => {
-  if (quitConfirmed || !readConfirmBeforeQuitting()) return;
-  event.preventDefault();
+function continueQuitAfterDraftFlush() {
+  if (!readConfirmBeforeQuitting()) {
+    quitConfirmed = true;
+    app.quit();
+    return;
+  }
   void dialog.showMessageBox({
     type: 'question',
     buttons: ['Quit', 'Cancel'],
@@ -970,15 +975,54 @@ app.on('before-quit', (event) => {
     cancelId: 1,
     title: 'Quit Dumka Mail',
     message: 'Quit Dumka Mail?',
-    detail: 'Drafts and mailbox state are stored locally and will be kept.',
+    detail: 'Drafts stay on this Mac. A message in the undo-send window will still send unless you cancel it first.',
   }).then(({ response }) => {
     if (response === 0) {
       quitConfirmed = true;
       app.quit();
+    } else {
+      quitFlushDone = false;
+      quitFlushInFlight = false;
     }
   }).catch(err => {
     console.error('Failed to show quit confirmation dialog:', err);
   });
+}
+
+function requestDraftFlushThenQuit() {
+  if (quitFlushInFlight) return;
+  quitFlushInFlight = true;
+  const window = mainWindow;
+  const finishFlush = () => {
+    if (quitFlushDone) return;
+    quitFlushDone = true;
+    continueQuitAfterDraftFlush();
+  };
+  if (!window || window.isDestroyed()) {
+    finishFlush();
+    return;
+  }
+  const onFlushed = () => {
+    clearTimeout(timeout);
+    ipcMain.removeListener('app:draftsFlushed', onFlushed);
+    finishFlush();
+  };
+  const timeout = setTimeout(() => {
+    ipcMain.removeListener('app:draftsFlushed', onFlushed);
+    finishFlush();
+  }, 1500);
+  ipcMain.once('app:draftsFlushed', onFlushed);
+  window.webContents.send('app:flushDrafts');
+}
+
+app.on('before-quit', (event) => {
+  if (quitConfirmed) return;
+  event.preventDefault();
+  if (!quitFlushDone) {
+    requestDraftFlushThenQuit();
+    return;
+  }
+  continueQuitAfterDraftFlush();
 });
 
 app.on('will-quit', () => {
@@ -2067,6 +2111,12 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
   if (placeholderError) throw new Error(placeholderError);
   const rfcMessageId = draft.rfcMessageId || createRfcMessageId();
   const draftForSend = { ...draft, rfcMessageId };
+  if (draft?.id) {
+    const existing = DraftsRepo.get(draft.id);
+    if (existing && existing.rfcMessageId !== rfcMessageId) {
+      DraftsRepo.save({ ...existing, rfcMessageId });
+    }
+  }
   try {
     const threadId = await GmailSyncService.sendDraft(email, draftForSend);
     if (draft?.id) {

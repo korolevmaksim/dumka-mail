@@ -86,8 +86,9 @@ describe('scheduled send persistence', () => {
       const futureAt = '2026-07-02T11:00:00.000Z';
       const now = '2026-07-02T10:00:00.000Z';
 
-      DraftsRepo.save(draft({ sendAt: futureAt }));
+      DraftsRepo.save(draft({ sendAt: futureAt, rfcMessageId: '<sched@dumka-mail.local>' }));
       expect(DraftsRepo.get('draft-1')?.sendAt).toBe(futureAt);
+      expect(DraftsRepo.get('draft-1')?.rfcMessageId).toBe('<sched@dumka-mail.local>');
 
       ActionLogRepo.save(action({ id: 'due', scheduledAt: dueAt }));
       ActionLogRepo.save(action({

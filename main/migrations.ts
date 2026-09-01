@@ -199,6 +199,7 @@ export function runMigrations(db: Database.Database) {
         reply_message_id TEXT,
         reply_references TEXT,
         send_at TEXT,
+        rfc_message_id TEXT,
         updated_at TEXT NOT NULL
     );
 
@@ -456,6 +457,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'drafts', column: 'reply_message_id', definition: 'reply_message_id TEXT' },
     { table: 'drafts', column: 'reply_references', definition: 'reply_references TEXT' },
     { table: 'drafts', column: 'send_at', definition: 'send_at TEXT' },
+    { table: 'drafts', column: 'rfc_message_id', definition: 'rfc_message_id TEXT' },
     { table: 'mail_action_log', column: 'scheduled_at', definition: 'scheduled_at TEXT' },
     { table: 'mail_action_log', column: 'payload_json', definition: 'payload_json TEXT' },
     { table: 'message_security', column: 'analysis_version', definition: 'analysis_version INTEGER NOT NULL DEFAULT 1' },

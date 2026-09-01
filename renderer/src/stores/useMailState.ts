@@ -14,6 +14,7 @@ import {
 import { describeReminder } from '../../../shared/reminders';
 import { emitToast } from '../lib/toastBus';
 import { presentMailActionFeedback, undoPayloadJson } from '../lib/presentMailAction';
+import { cancelPendingMailAction } from '../lib/cancelPendingMailAction';
 import { useMailSync } from './useMailSync';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import {
@@ -41,28 +42,6 @@ export interface SpeedProof {
   searchMs?: number;
   aiMs?: number;
   detailCacheCoverage: string;
-}
-
-async function cancelPendingMailAction(item: Pick<MailActionLog, 'id' | 'accountId'> & Partial<MailActionLog>): Promise<void> {
-  try {
-    const latest = (await window.electronAPI.listActionLog(item.accountId)).find(log => log.id === item.id) || item;
-    if (latest.status !== 'pending_sync' && latest.status !== 'queued') return;
-    await window.electronAPI.saveActionLog({
-      id: latest.id,
-      accountId: latest.accountId,
-      threadId: latest.threadId,
-      draftId: latest.draftId,
-      kind: latest.kind || 'markDone',
-      status: 'failed',
-      createdAt: latest.createdAt || new Date().toISOString(),
-      scheduledAt: latest.scheduledAt,
-      completedAt: new Date().toISOString(),
-      failureMessage: 'Undone before sync',
-      payloadJson: latest.payloadJson,
-    });
-  } catch (error) {
-    console.error('Failed to cancel pending action before undo:', error);
-  }
 }
 
 const SENT_SYNC_MIN_INTERVAL_MS = 60_000;

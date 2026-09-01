@@ -328,7 +328,12 @@ export function InlineReplyComposer() {
       )}
 
       <div className="flex items-center justify-between border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 select-none">
-        <div className="flex min-w-0 items-center gap-1">
+        <div className="flex min-w-0 items-center gap-2">
+          {store.draftSaveStatusLabel && (
+            <span className={`mr-1 text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text-tertiary)]'}`}>
+              {store.draftSaveStatusLabel}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => void store.sendDraftWithUndo()}

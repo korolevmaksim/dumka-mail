@@ -2330,48 +2330,38 @@ export const ActionLogRepo = {
 };
 
 // === Drafts Repository ===
+function mapDraftRow(r: any): Draft {
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    threadId: r.thread_id,
+    to: JSON.parse(r.to_json),
+    cc: JSON.parse(r.cc_json),
+    bcc: JSON.parse(r.bcc_json),
+    subject: r.subject,
+    bodyPlain: r.body_plain_text,
+    bodyHtml: r.body_html,
+    attachments: JSON.parse(r.attachments_json),
+    replyMessageId: r.reply_message_id,
+    replyReferences: r.reply_references,
+    rfcMessageId: r.rfc_message_id,
+    sendAt: r.send_at,
+    updatedAt: r.updated_at
+  };
+}
+
 export const DraftsRepo = {
   list(accountId: string): Draft[] {
     const db = getDatabase();
     const rows = db.prepare('SELECT * FROM drafts WHERE account_id = ? ORDER BY updated_at DESC').all(accountId) as any[];
-    return rows.map(r => ({
-      id: r.id,
-      accountId: r.account_id,
-      threadId: r.thread_id,
-      to: JSON.parse(r.to_json),
-      cc: JSON.parse(r.cc_json),
-      bcc: JSON.parse(r.bcc_json),
-      subject: r.subject,
-      bodyPlain: r.body_plain_text,
-      bodyHtml: r.body_html,
-      attachments: JSON.parse(r.attachments_json),
-      replyMessageId: r.reply_message_id,
-      replyReferences: r.reply_references,
-      sendAt: r.send_at,
-      updatedAt: r.updated_at
-    }));
+    return rows.map(mapDraftRow);
   },
 
   get(id: string): Draft | null {
     const db = getDatabase();
     const row = db.prepare('SELECT * FROM drafts WHERE id = ?').get(id) as any;
     if (!row) return null;
-    return {
-      id: row.id,
-      accountId: row.account_id,
-      threadId: row.thread_id,
-      to: JSON.parse(row.to_json),
-      cc: JSON.parse(row.cc_json),
-      bcc: JSON.parse(row.bcc_json),
-      subject: row.subject,
-      bodyPlain: row.body_plain_text,
-      bodyHtml: row.body_html,
-      attachments: JSON.parse(row.attachments_json),
-      replyMessageId: row.reply_message_id,
-      replyReferences: row.reply_references,
-      sendAt: row.send_at,
-      updatedAt: row.updated_at
-    };
+    return mapDraftRow(row);
   },
 
   save(draft: Draft) {
@@ -2379,8 +2369,8 @@ export const DraftsRepo = {
     db.prepare(`
       INSERT INTO drafts (
         id, account_id, thread_id, to_json, cc_json, bcc_json, subject, body_plain_text,
-        body_html, attachments_json, reply_message_id, reply_references, send_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        body_html, attachments_json, reply_message_id, reply_references, rfc_message_id, send_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         thread_id=excluded.thread_id,
         to_json=excluded.to_json,
@@ -2392,6 +2382,7 @@ export const DraftsRepo = {
         attachments_json=excluded.attachments_json,
         reply_message_id=excluded.reply_message_id,
         reply_references=excluded.reply_references,
+        rfc_message_id=excluded.rfc_message_id,
         send_at=excluded.send_at,
         updated_at=excluded.updated_at
     `).run(
@@ -2407,6 +2398,7 @@ export const DraftsRepo = {
       JSON.stringify(draft.attachments),
       draft.replyMessageId || null,
       draft.replyReferences || null,
+      draft.rfcMessageId || null,
       draft.sendAt || null,
       draft.updatedAt
     );

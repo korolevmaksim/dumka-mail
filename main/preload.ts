@@ -323,5 +323,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.off('menu:executeCommand', listener);
     };
-  }
+  },
+  onFlushDrafts: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:flushDrafts', listener);
+    return () => {
+      ipcRenderer.off('app:flushDrafts', listener);
+    };
+  },
+  notifyDraftsFlushed: () => ipcRenderer.send('app:draftsFlushed'),
 });

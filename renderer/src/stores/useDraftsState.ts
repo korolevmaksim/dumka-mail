@@ -3,9 +3,23 @@ import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionExecuti
 import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
 import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
+import { cancelPendingMailAction } from '../lib/cancelPendingMailAction';
+import { presentMailActionFeedback } from '../lib/presentMailAction';
 import { replyDraftPlaceholderValidationMessage } from '../../../shared/replyPipeline';
 import { filesToAttachments } from '../lib/composeHtmlHelpers';
 import { createRfcMessageId } from '../../../shared/rfcMessageId';
+import {
+  DRAFT_AUTOSAVE_DEBOUNCE_MS,
+  DRAFT_DISCARD_UNDO_MS,
+  draftSaveStatusLabel,
+  findReusableThreadDraft,
+  shouldPersistDraftWrite,
+  undoSendScheduledAt,
+  undoSendWorkerScheduledAt,
+  visibleDrafts,
+  type DraftPersistReason,
+  type DraftSaveStatus,
+} from '../../../shared/draftLifecycle';
 
 interface UseDraftsStateProps {
   settings: AppSettings;
@@ -29,19 +43,82 @@ export function useDraftsState({
   const [draftsList, setDraftsList] = useState<Draft[]>([]);
   const [pendingSend, setPendingSend] = useState<boolean>(false);
   const [pendingSendSeconds, setPendingSendSeconds] = useState<number>(0);
-  
+  const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>('idle');
+  const [discardedDraftIds, setDiscardedDraftIds] = useState<string[]>([]);
+
   const pendingSendTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingSendIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pendingDraftRef = useRef<Draft | null>(null);
+  const pendingSendActionRef = useRef<MailActionLog | null>(null);
   const activeDraftRef = useRef<Draft | null>(activeDraft);
   activeDraftRef.current = activeDraft;
-  const shouldPersistDrafts = settings.general.keepDraftsAcrossLaunches;
+  const pendingWriteRef = useRef<Draft | null>(null);
+  const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const writeInFlightRef = useRef<Promise<void> | null>(null);
+  const discardTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const keepDraftsAcrossLaunches = settings.general.keepDraftsAcrossLaunches;
+  const autoSaveDrafts = settings.compose.autoSaveDrafts;
 
-  const persistDraft = (draft: Draft, context: string): Promise<void> => {
-    if (!shouldPersistDrafts) return Promise.resolve();
-    return window.electronAPI.saveDraft(draft).catch(e => {
-      console.error(`saveDraft (${context}) failed`, e);
-    });
+  const persistDraftNow = async (draft: Draft, reason: DraftPersistReason): Promise<boolean> => {
+    if (!shouldPersistDraftWrite({ keepDraftsAcrossLaunches, autoSaveDrafts, reason })) {
+      return false;
+    }
+    setDraftSaveStatus('saving');
+    try {
+      await window.electronAPI.saveDraft(draft);
+      if (pendingWriteRef.current && pendingWriteRef.current.id === draft.id
+        && pendingWriteRef.current.updatedAt !== draft.updatedAt) {
+        return true;
+      }
+      setDraftSaveStatus('saved');
+      return true;
+    } catch (error) {
+      console.error(`saveDraft (${reason}) failed`, error);
+      setDraftSaveStatus('error');
+      emitToast({ type: 'error', message: 'Draft could not be saved.' });
+      return false;
+    }
+  };
+
+  const flushDraftPersistence = async (): Promise<void> => {
+    if (writeTimerRef.current) {
+      clearTimeout(writeTimerRef.current);
+      writeTimerRef.current = null;
+    }
+    if (writeInFlightRef.current) await writeInFlightRef.current;
+    const draft = pendingWriteRef.current || activeDraftRef.current;
+    if (!draft) return;
+    const reason: DraftPersistReason = pendingWriteRef.current ? 'autosave' : 'explicit';
+    const persistReason = shouldPersistDraftWrite({ keepDraftsAcrossLaunches, autoSaveDrafts, reason })
+      ? reason
+      : 'explicit';
+    if (!shouldPersistDraftWrite({ keepDraftsAcrossLaunches, autoSaveDrafts, reason: persistReason })) {
+      return;
+    }
+    pendingWriteRef.current = null;
+    const write = persistDraftNow(draft, persistReason).then(() => undefined);
+    writeInFlightRef.current = write;
+    await write;
+    writeInFlightRef.current = null;
+    if (pendingWriteRef.current) await flushDraftPersistence();
+  };
+
+  const queueDraftWrite = (draft: Draft, reason: DraftPersistReason) => {
+    if (!shouldPersistDraftWrite({ keepDraftsAcrossLaunches, autoSaveDrafts, reason })) {
+      if (reason === 'autosave') setDraftSaveStatus('unsaved');
+      return;
+    }
+    pendingWriteRef.current = draft;
+    if (reason === 'autosave') {
+      setDraftSaveStatus('unsaved');
+      if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
+      writeTimerRef.current = setTimeout(() => {
+        writeTimerRef.current = null;
+        void flushDraftPersistence();
+      }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
+      return;
+    }
+    void flushDraftPersistence();
   };
 
   const loadDrafts = useCallback(async () => {
@@ -104,6 +181,15 @@ export function useDraftsState({
   }, [activeAccount, accounts, settings.general.keepDraftsAcrossLaunches]);
 
   useEffect(() => {
+    const unsubscribe = window.electronAPI.onFlushDrafts(() => {
+      void flushDraftPersistence().finally(() => {
+        window.electronAPI.notifyDraftsFlushed();
+      });
+    });
+    return unsubscribe;
+  }, [autoSaveDrafts, keepDraftsAcrossLaunches]);
+
+  useEffect(() => {
     if (activeDraft && !activeDraft.threadId) {
       setComposeLayout('floating');
     }
@@ -137,7 +223,9 @@ export function useDraftsState({
     };
 
     setActiveDraft(draft);
+    setDraftSaveStatus('unsaved');
     setComposeLayout('floating');
+    queueDraftWrite(draft, 'create');
     return draft;
   };
 
@@ -163,7 +251,7 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
 
-    await persistDraft(draft, 'manual');
+    await persistDraftNow(draft, 'explicit');
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
@@ -171,6 +259,23 @@ export function useDraftsState({
 
   const startReply = (message: MailMessage, replyAll = false) => {
     if (!activeAccount) return;
+    const reusable = (
+      activeDraftRef.current
+      && activeDraftRef.current.accountId === message.accountId
+      && activeDraftRef.current.threadId === message.threadId
+      && !activeDraftRef.current.sendAt
+      && !discardedDraftIds.includes(activeDraftRef.current.id)
+    ) ? activeDraftRef.current : findReusableThreadDraft(
+      visibleDrafts(draftsList, new Set(discardedDraftIds)),
+      message.accountId,
+      message.threadId,
+    );
+    if (reusable) {
+      setActiveDraft(reusable);
+      setDraftSaveStatus('saved');
+      setComposeLayout('inline');
+      return;
+    }
     const selfEmail = activeAccount.id === 'unified'
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
@@ -191,7 +296,7 @@ export function useDraftsState({
       replyReferences: seed.replyReferences || null,
       updatedAt: new Date().toISOString()
     };
-    persistDraft(draft, 'reply');
+    queueDraftWrite(draft, 'create');
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
@@ -199,6 +304,14 @@ export function useDraftsState({
 
   const startReplyWithBody = (message: MailMessage, bodyPlain: string, replyAll = false): Draft | null => {
     if (!activeAccount) return null;
+    const reusable = findReusableThreadDraft(
+      visibleDrafts(
+        [activeDraftRef.current, ...draftsList].filter((item): item is Draft => Boolean(item)),
+        new Set(discardedDraftIds),
+      ),
+      message.accountId,
+      message.threadId,
+    );
     const selfEmail = activeAccount.id === 'unified'
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
@@ -208,7 +321,7 @@ export function useDraftsState({
     const combinedBodyHtml = `${responsePlain ? plainTextToHtmlFragment(responsePlain) : ''}${seed.bodyHtml || ''}`;
     const initialBody = buildInitialDraftBodyWithSignature(combinedBodyPlain, settings.compose, settings.profile, message.accountId, combinedBodyHtml);
     const draft: Draft = {
-      id: crypto.randomUUID(),
+      id: reusable?.id || crypto.randomUUID(),
       accountId: message.accountId,
       threadId: message.threadId,
       to: seed.to,
@@ -217,12 +330,13 @@ export function useDraftsState({
       subject: seed.subject,
       bodyPlain: initialBody.bodyPlain,
       bodyHtml: initialBody.bodyHtml,
-      attachments: [],
+      attachments: reusable?.attachments || [],
       replyMessageId: seed.replyMessageId || null,
       replyReferences: seed.replyReferences || null,
+      rfcMessageId: reusable?.rfcMessageId || null,
       updatedAt: new Date().toISOString()
     };
-    persistDraft(draft, 'agent reply');
+    queueDraftWrite(draft, 'explicit');
     setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
@@ -247,7 +361,7 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
     openThread(null);
-    persistDraft(draft, 'forward');
+    queueDraftWrite(draft, 'create');
     setActiveDraft(draft);
     setComposeLayout('floating');
     loadDrafts();
@@ -257,7 +371,7 @@ export function useDraftsState({
     if (!activeDraft) return;
     const updated: Draft = { ...activeDraft, ...patch, updatedAt: new Date().toISOString() };
     setActiveDraft(updated);
-    persistDraft(updated, 'update');
+    queueDraftWrite(updated, 'autosave');
   };
 
   const updateDraftBody = (body: string, bodyHtml?: string | null) => {
@@ -269,7 +383,7 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
     setActiveDraft(updated);
-    persistDraft(updated, 'body');
+    queueDraftWrite(updated, 'autosave');
   };
 
   const addAttachmentToDraft = async () => {
@@ -284,7 +398,7 @@ export function useDraftsState({
       attachments: [...(currentDraft.attachments || []), ...attachments],
       updatedAt: new Date().toISOString()
     };
-    await persistDraft(updatedDraft, 'attachments');
+    await persistDraftNow(updatedDraft, 'explicit');
     activeDraftRef.current = updatedDraft;
     setActiveDraft(updatedDraft);
     loadDrafts();
@@ -302,7 +416,7 @@ export function useDraftsState({
         attachments: [...(currentDraft.attachments || []), ...attachments],
         updatedAt: new Date().toISOString(),
       };
-      await persistDraft(updatedDraft, 'dropped attachments');
+      await persistDraftNow(updatedDraft, 'explicit');
       activeDraftRef.current = updatedDraft;
       setActiveDraft(updatedDraft);
       loadDrafts();
@@ -321,21 +435,51 @@ export function useDraftsState({
       attachments: (activeDraft.attachments || []).filter(a => a.id !== attId),
       updatedAt: new Date().toISOString()
     };
-    await persistDraft(updatedDraft, 'remove attachment');
+    await persistDraftNow(updatedDraft, 'explicit');
     setActiveDraft(updatedDraft);
     loadDrafts();
   };
 
+  const restoreDiscardedDraft = (draft: Draft) => {
+    const timer = discardTimersRef.current.get(draft.id);
+    if (timer) {
+      clearTimeout(timer);
+      discardTimersRef.current.delete(draft.id);
+    }
+    setDiscardedDraftIds(current => current.filter(id => id !== draft.id));
+    setActiveDraft(draft);
+    setComposeLayout(draft.threadId ? 'inline' : 'floating');
+  };
+
   const discardDraft = async (draftId: string) => {
-    try {
-      await window.electronAPI.deleteDraft(draftId);
-    } catch (e) {
-      console.error('Failed to delete draft:', e);
+    const draft = (activeDraft?.id === draftId ? activeDraft : draftsList.find(item => item.id === draftId)) || null;
+    if (writeTimerRef.current && pendingWriteRef.current?.id === draftId) {
+      clearTimeout(writeTimerRef.current);
+      writeTimerRef.current = null;
+      pendingWriteRef.current = null;
     }
     if (activeDraft?.id === draftId) {
       setActiveDraft(null);
+      setDraftSaveStatus('idle');
     }
-    loadDrafts();
+    setDiscardedDraftIds(current => current.includes(draftId) ? current : [...current, draftId]);
+    const existingTimer = discardTimersRef.current.get(draftId);
+    if (existingTimer) clearTimeout(existingTimer);
+    discardTimersRef.current.set(draftId, setTimeout(() => {
+      discardTimersRef.current.delete(draftId);
+      void window.electronAPI.deleteDraft(draftId).catch(error => {
+        console.error('Failed to delete draft:', error);
+      });
+      setDiscardedDraftIds(current => current.filter(id => id !== draftId));
+      loadDrafts();
+    }, DRAFT_DISCARD_UNDO_MS));
+    emitToast({
+      type: 'success',
+      message: 'Draft discarded.',
+      actionLabel: 'Undo',
+      duration: DRAFT_DISCARD_UNDO_MS,
+      onAction: draft ? () => restoreDiscardedDraft(draft) : undefined,
+    });
   };
 
   const validateDraftForSend = (draftToValidate: Draft): string | null => {
@@ -409,7 +553,24 @@ export function useDraftsState({
       return;
     }
 
-    pendingDraftRef.current = draftToSend;
+    await flushDraftPersistence();
+    const rfcMessageId = draftToSend.rfcMessageId || createRfcMessageId();
+    pendingDraftRef.current = { ...draftToSend, rfcMessageId };
+
+    const sendPreparedDraft = async (draft: Draft, actionId: string) => {
+      const draftForSend = {
+        ...draft,
+        rfcMessageId,
+        sendAt: null,
+        bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose, draft.accountId, draft.bodyHtml),
+      };
+      await window.electronAPI.saveDraft(draftForSend);
+      const res = await window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId);
+      if (res && !res.offline) {
+        await window.electronAPI.deleteDraft(draft.id);
+      }
+      return res;
+    };
 
     const performSend = async () => {
       if (pendingSendIntervalRef.current) { clearInterval(pendingSendIntervalRef.current); pendingSendIntervalRef.current = null; }
@@ -417,22 +578,37 @@ export function useDraftsState({
       setPendingSend(false);
       setPendingSendSeconds(0);
       const draft = pendingDraftRef.current;
+      const parked = pendingSendActionRef.current;
       pendingDraftRef.current = null;
+      pendingSendActionRef.current = null;
       if (!draft) return;
       try {
-        const result = await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (actionId: string) => {
-          const draftForSend = {
-            ...draft,
-            sendAt: null,
-            bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose, draft.accountId, draft.bodyHtml)
-          };
-          await window.electronAPI.saveDraft(draftForSend);
-          const res = await window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId);
-          if (res && !res.offline) {
-            await window.electronAPI.deleteDraft(draft.id);
+        if (parked) {
+          const latest = (await window.electronAPI.listActionLog(parked.accountId)).find(log => log.id === parked.id);
+          if (!latest || (latest.status !== 'pending_sync' && latest.status !== 'queued')) {
+            return;
           }
-          return res;
-        }, JSON.stringify({ accountId: draft.accountId }));
+          const res = await sendPreparedDraft(draft, parked.id);
+          if (!res?.offline) {
+            await window.electronAPI.saveActionLog({
+              ...parked,
+              status: 'completed',
+              completedAt: new Date().toISOString(),
+              payloadJson: parked.payloadJson,
+            });
+          }
+          const result = presentMailActionFeedback({
+            result: { accepted: true, offline: Boolean(res?.offline), actionId: parked.id },
+            kind: 'send',
+          });
+          loadDrafts();
+          if (result.offline) return;
+          if (draft.threadId === openedThread?.id) openThread(null);
+          return;
+        }
+        const result = await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (sendActionId: string) => {
+          return sendPreparedDraft(draft, sendActionId);
+        }, JSON.stringify({ accountId: draft.accountId, rfcMessageId }));
         loadDrafts();
         if (!result.accepted) {
           setActiveDraft(draft);
@@ -449,27 +625,70 @@ export function useDraftsState({
 
     const delaySec = Math.max(0, Math.round(settings.compose.sendUndoDelay ?? 10));
     setActiveDraft(null);
+    setDraftSaveStatus('idle');
 
     if (delaySec === 0) {
       await performSend();
       return;
     }
 
+    const scheduledAt = undoSendScheduledAt(delaySec);
+    const workerScheduledAt = undoSendWorkerScheduledAt(delaySec);
+    const actionId = crypto.randomUUID();
+    const scheduledDraft: Draft = {
+      ...draftToSend,
+      rfcMessageId,
+      sendAt: scheduledAt,
+      updatedAt: new Date().toISOString(),
+    };
+    const log: MailActionLog = {
+      id: actionId,
+      accountId: scheduledDraft.accountId,
+      threadId: scheduledDraft.threadId || openedThread?.id || null,
+      draftId: scheduledDraft.id,
+      kind: 'send',
+      status: 'pending_sync',
+      createdAt: new Date().toISOString(),
+      scheduledAt: workerScheduledAt,
+      payloadJson: JSON.stringify({ sendAt: scheduledAt, rfcMessageId, undoSend: true }),
+    };
+    pendingSendActionRef.current = log;
+    pendingDraftRef.current = scheduledDraft;
+    await persistDraftNow(scheduledDraft, 'send');
+    await window.electronAPI.saveActionLog(log);
+    loadDrafts();
+
     setPendingSend(true);
     setPendingSendSeconds(delaySec);
     pendingSendIntervalRef.current = setInterval(() => {
       setPendingSendSeconds(s => (s > 1 ? s - 1 : 0));
     }, 1000);
-    pendingSendTimerRef.current = setTimeout(performSend, delaySec * 1000);
+    pendingSendTimerRef.current = setTimeout(() => {
+      void performSend();
+    }, delaySec * 1000);
   };
 
-  const cancelPendingSend = () => {
+  const cancelPendingSend = async () => {
+    const parked = pendingSendActionRef.current;
+    const draft = pendingDraftRef.current;
+    if (parked) {
+      const cancelled = await cancelPendingMailAction(parked);
+      if (!cancelled) {
+        emitToast({ type: 'error', message: 'Could not cancel send. The message may still go out.' });
+        return;
+      }
+    }
     if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
     if (pendingSendIntervalRef.current) { clearInterval(pendingSendIntervalRef.current); pendingSendIntervalRef.current = null; }
     setPendingSend(false);
     setPendingSendSeconds(0);
-    if (pendingDraftRef.current) setActiveDraft(pendingDraftRef.current);
+    pendingSendActionRef.current = null;
     pendingDraftRef.current = null;
+    if (draft) {
+      const restored = { ...draft, sendAt: null, updatedAt: new Date().toISOString() };
+      void persistDraftNow(restored, 'send');
+      setActiveDraft(restored);
+    }
   };
 
   return {
@@ -477,7 +696,9 @@ export function useDraftsState({
     setActiveDraft,
     composeLayout,
     setComposeLayout,
-    draftsList,
+    draftsList: visibleDrafts(draftsList, new Set(discardedDraftIds)),
+    draftSaveStatus,
+    draftSaveStatusLabel: draftSaveStatusLabel(draftSaveStatus),
     pendingSend,
     pendingSendSeconds,
     loadDrafts,
