@@ -2254,6 +2254,30 @@ export const ActionLogRepo = {
     }));
   },
 
+  listOpenMutations(accountId: string): MailActionLog[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM mail_action_log
+      WHERE account_id = ?
+        AND status IN ('pending_sync', 'queued', 'running')
+      ORDER BY created_at ASC
+    `).all(accountId) as any[];
+
+    return rows.map(r => ({
+      id: r.id,
+      accountId: r.account_id,
+      threadId: r.thread_id,
+      draftId: r.draft_id,
+      kind: r.kind,
+      status: r.status,
+      createdAt: r.created_at,
+      scheduledAt: r.scheduled_at,
+      completedAt: r.completed_at,
+      failureMessage: r.failure_message,
+      payloadJson: r.payload_json
+    }));
+  },
+
   listRunning(): MailActionLog[] {
     const db = getDatabase();
     const rows = db.prepare(`

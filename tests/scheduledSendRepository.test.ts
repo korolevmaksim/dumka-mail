@@ -107,6 +107,7 @@ describe('scheduled send persistence', () => {
       expect(ActionLogRepo.list('me@example.com').find(item => item.id === 'future')?.scheduledAt).toBe(futureAt);
       expect(ActionLogRepo.listPending(now).map(item => item.id)).toEqual(['due', 'immediate']);
       expect(ActionLogRepo.listPending('2026-07-02T11:00:00.001Z').map(item => item.id)).toEqual(['due', 'immediate', 'future']);
+      expect(ActionLogRepo.listOpenMutations('me@example.com').map(item => item.id).sort()).toEqual(['due', 'future', 'immediate']);
     });
   });
 });

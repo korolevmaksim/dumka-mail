@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyOptimisticThreadReminder,
+  applyPendingLabelDeltas,
   isReversibleMailActionKind,
   reverseMailActionKind,
 } from '../shared/mailActions';
-import type { MailThread } from '../shared/types';
+import type { MailActionLog, MailThread } from '../shared/types';
 
 describe('mail action helpers', () => {
   it('reverses destructive and ignore actions', () => {
@@ -65,5 +66,33 @@ describe('mail action helpers', () => {
     expect(updated[0].reminderAt).toBe(reminderAt);
     expect(updated[1]).toBe(threads[1]);
     expect(updated[1].reminderAt).toBeNull();
+  });
+
+  it('re-applies pending label mutations so sync cannot overwrite an optimistic archive', () => {
+    const thread: MailThread = {
+      id: 't1',
+      accountId: 'me@example.com',
+      subject: 'Keep me archived',
+      snippet: '',
+      lastMessageAt: '2026-07-03T08:00:00.000Z',
+      senderNames: ['Sender'],
+      senderEmail: 'sender@example.com',
+      labelIds: ['INBOX', 'UNREAD'],
+      hasAttachments: false,
+      isUnread: true,
+      reminderAt: null,
+    };
+    const pending: MailActionLog = {
+      id: 'a1',
+      accountId: 'me@example.com',
+      threadId: 't1',
+      kind: 'markDone',
+      status: 'pending_sync',
+      createdAt: '2026-07-03T08:01:00.000Z',
+    };
+
+    const overlaid = applyPendingLabelDeltas(thread, [pending]);
+    expect(overlaid.labelIds).toEqual(['UNREAD']);
+    expect(overlaid).not.toBe(thread);
   });
 });

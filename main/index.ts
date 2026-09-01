@@ -34,8 +34,11 @@ import {
   RENDERER_CRASH_WINDOW_MS,
   shouldReloadAfterRendererCrash,
 } from './rendererCrashPolicy';
-import { isRetryableRemoteError, startBackgroundSyncWorker } from './actionReconciler';
+import { isRetryableRemoteError, scheduledAtForRetry, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
+import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
+import { createRfcMessageId } from '../shared/rfcMessageId';
+import { parseMailActionPayload } from '../shared/mailActionFeedback';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
 import { googleAuthState } from './googleAuthState';
 import { GoogleCalendarSyncTokenExpiredError, GoogleWorkspaceService } from './googleWorkspace';
@@ -76,7 +79,6 @@ import { buildMailRuleShadowLog, evaluateMailRules, evaluateShadowMailRules, nor
 import { escapeHtml } from '../shared/draftHtml';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
 import { calendarEventToIcs } from '../shared/calendar';
-import { buildMailThreadFromMessages } from '../shared/mailThread';
 import { nextMorningIso, notificationActionAt, notificationActionsFor, type MailNotificationKind } from '../shared/notificationActions';
 import type {
   ActionKind,
@@ -1904,6 +1906,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
 
   if (effect.action.type === 'forward') {
     if (!effect.action.forwardTo) return;
+    const rfcMessageId = createRfcMessageId();
     const log = {
       id: effect.actionId,
       accountId: thread.accountId,
@@ -1911,14 +1914,14 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       kind: 'forwardThread' as const,
       status: 'running' as const,
       createdAt: now,
-      payloadJson,
+      payloadJson: mergeActionPayload(payloadJson, { rfcMessageId }),
     };
     ActionLogRepo.save(log);
 
     try {
       await GmailSyncService.sendDraft(
         thread.accountId,
-        buildForwardDraftFromThread(thread.accountId, thread, effect.action.forwardTo),
+        { ...buildForwardDraftFromThread(thread.accountId, thread, effect.action.forwardTo), rfcMessageId },
       );
       ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
     } catch (err: any) {
@@ -1934,6 +1937,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
   if (effect.action.type === 'autoReply') {
     const replyBody = effect.action.replyBody?.trim();
     if (!replyBody) return;
+    const rfcMessageId = createRfcMessageId();
     const log = {
       id: effect.actionId,
       accountId: thread.accountId,
@@ -1941,14 +1945,14 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       kind: 'autoReply' as const,
       status: 'running' as const,
       createdAt: now,
-      payloadJson,
+      payloadJson: mergeActionPayload(payloadJson, { rfcMessageId }),
     };
     ActionLogRepo.save(log);
 
     try {
       await GmailSyncService.sendDraft(
         thread.accountId,
-        buildAutoReplyDraftFromRule(thread.accountId, thread.id, replyBody),
+        { ...buildAutoReplyDraftFromRule(thread.accountId, thread.id, replyBody), rfcMessageId },
       );
       ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
     } catch (err: any) {
@@ -2024,23 +2028,25 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         actionKind,
         error: err,
       });
-      if (actionId) {
-        const log = ActionLogRepo.list(email).find(l => l.id === actionId);
-        if (log) {
-          log.status = 'pending_sync';
-          log.payloadJson = payloadJson || log.payloadJson || null;
-          ActionLogRepo.save(log);
-        } else {
-          ActionLogRepo.save({
-            id: actionId,
-            accountId: email,
-            threadId,
-            kind: resolvedKind,
-            status: 'pending_sync',
-            createdAt: new Date().toISOString(),
-            payloadJson
-          });
-        }
+      const parkedId = actionId || crypto.randomUUID();
+      const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
+      const scheduledAt = scheduledAtForRetry(err);
+      if (log) {
+        log.status = 'pending_sync';
+        log.payloadJson = payloadJson || log.payloadJson || null;
+        if (scheduledAt) log.scheduledAt = scheduledAt;
+        ActionLogRepo.save(log);
+      } else {
+        ActionLogRepo.save({
+          id: parkedId,
+          accountId: email,
+          threadId,
+          kind: resolvedKind,
+          status: 'pending_sync',
+          createdAt: new Date().toISOString(),
+          scheduledAt,
+          payloadJson
+        });
       }
       return { offline: true };
     }
@@ -2059,8 +2065,10 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
     typeof draft.bodyHtml === 'string' ? draft.bodyHtml : null,
   );
   if (placeholderError) throw new Error(placeholderError);
+  const rfcMessageId = draft.rfcMessageId || createRfcMessageId();
+  const draftForSend = { ...draft, rfcMessageId };
   try {
-    const threadId = await GmailSyncService.sendDraft(email, draft);
+    const threadId = await GmailSyncService.sendDraft(email, draftForSend);
     if (draft?.id) {
       const state = ReplyPipelineService.markSentByDraftBestEffort(email, draft.id);
       if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
@@ -2074,8 +2082,12 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
       });
       if (actionId) {
         const log = ActionLogRepo.list(email).find(l => l.id === actionId);
+        const scheduledAt = scheduledAtForRetry(err);
+        const payloadJson = mergeActionPayload(log?.payloadJson, { rfcMessageId });
         if (log) {
           log.status = 'pending_sync';
+          log.payloadJson = payloadJson;
+          if (scheduledAt) log.scheduledAt = scheduledAt;
           ActionLogRepo.save(log);
         } else {
           ActionLogRepo.save({
@@ -2085,7 +2097,9 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
             threadId: draft.threadId,
             kind: 'send',
             status: 'pending_sync',
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            scheduledAt,
+            payloadJson,
           });
         }
       }
@@ -2355,65 +2369,30 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
   }
 }
 
+function mergeActionPayload(payloadJson: string | null | undefined, extra: Record<string, unknown>): string {
+  return JSON.stringify({
+    ...parseMailActionPayload(payloadJson),
+    ...extra,
+  });
+}
+
 async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
-  const syncState = SyncStateRepo.get(email);
-  const upserts: MailThread[] = [];
-  const deletedThreadIds: string[] = [];
-
-  if (!syncState?.historyId) {
-    const fullSync = await GmailSyncService.syncInbox(email);
-    await saveThreadsToDatabase(fullSync.threads);
-    await saveMessagesToDatabase(fullSync.messages);
-    SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
-    upserts.push(...fullSync.threads);
-    return publishMailboxDelta(email, upserts, deletedThreadIds);
-  }
-
-  try {
-    const incrementalSync = await GmailSyncService.syncIncremental(email, syncState.historyId);
-
-    for (const threadId of incrementalSync.updatedThreadIds) {
-      try {
-        const messages = await GmailSyncService.fetchThreadDetail(email, threadId);
-        await saveMessagesToDatabase(messages, { notifyOfNew: true });
-
-        const thread = buildMailThreadFromMessages(email, threadId, messages);
-        if (thread) {
-          await saveThreadsToDatabase([thread]);
-          upserts.push(thread);
-        }
-      } catch (err: any) {
-        SystemLogger.warning('Mailbox Sync', 'Failed to fetch synchronized thread details.', {
-          accountId: email,
-          threadId,
-          error: err,
-        });
-        if (err.message?.includes('not found') || err.message?.includes('404')) {
-          ThreadsRepo.delete(email, threadId);
-          deletedThreadIds.push(threadId);
-        }
-      }
-    }
-
-    for (const threadId of incrementalSync.deletedThreadIds) {
-      ThreadsRepo.delete(email, threadId);
-      deletedThreadIds.push(threadId);
-    }
-
-    SyncStateRepo.save(nextSyncState(email, syncState, incrementalSync.historyId));
-  } catch (err: any) {
-    if (err.message === 'HISTORY_EXPIRED') {
-      const fullSync = await GmailSyncService.syncInbox(email);
-      await saveThreadsToDatabase(fullSync.threads);
-      await saveMessagesToDatabase(fullSync.messages);
-      SyncStateRepo.save(nextSyncState(email, syncState, fullSync.historyId, new Date().toISOString()));
-      upserts.push(...fullSync.threads);
-      return publishMailboxDelta(email, upserts, deletedThreadIds);
-    }
-    throw err;
-  }
-
-  return publishMailboxDelta(email, upserts, deletedThreadIds);
+  return runMailboxSyncPass(email, {
+    getSyncState: accountId => SyncStateRepo.get(accountId),
+    saveSyncState: state => SyncStateRepo.save(state),
+    nextSyncState,
+    syncInbox: accountId => GmailSyncService.syncInbox(accountId),
+    syncIncremental: (accountId, historyId) => GmailSyncService.syncIncremental(accountId, historyId),
+    fetchThreadDetail: (accountId, threadId) => GmailSyncService.fetchThreadDetail(accountId, threadId),
+    saveThreads: saveThreadsToDatabase,
+    saveMessages: saveMessagesToDatabase,
+    deleteThread: (accountId, threadId) => ThreadsRepo.delete(accountId, threadId),
+    listPendingActions: accountId => ActionLogRepo.listOpenMutations(accountId),
+    publishDelta: publishMailboxDelta,
+    logger: {
+      warning: (scope, message, extra) => SystemLogger.warning(scope, message, extra),
+    },
+  });
 }
 
 function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {

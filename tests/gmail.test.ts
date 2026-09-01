@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGoogleTokenRevokeRequest, mapMessage } from '../main/gmail';
+import { buildGoogleTokenRevokeRequest, mapMessage, sendDraftTimeoutMs } from '../main/gmail';
 
 function b64url(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64url');
@@ -103,6 +103,14 @@ describe('mapMessage', () => {
 
     expect(message.bodyPlain).toBe('snippet');
     expect(message.bodyHtml).toBe('');
+  });
+});
+
+describe('sendDraftTimeoutMs', () => {
+  it('starts at 15s and grows with attachment size up to 120s', () => {
+    expect(sendDraftTimeoutMs({ attachments: [] })).toBe(15_000);
+    expect(sendDraftTimeoutMs({ attachments: [{ sizeBytes: 512 * 1024 }] })).toBe(25_000);
+    expect(sendDraftTimeoutMs({ attachments: [{ sizeBytes: 20 * 1024 * 1024 }] })).toBe(120_000);
   });
 });
 

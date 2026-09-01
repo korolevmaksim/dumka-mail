@@ -1,4 +1,5 @@
 import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
+import { createRfcMessageId, resolveActionRfcMessageId } from '../shared/rfcMessageId';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
 import { isGoogleReauthorizationRequiredError } from './googleAuthState';
 
@@ -21,6 +22,7 @@ export interface ReconcilerDeps {
     trashThread(accountId: string, threadId: string): Promise<unknown>;
     untrashThread(accountId: string, threadId: string): Promise<unknown>;
     sendDraft(accountId: string, draft: unknown): Promise<unknown>;
+    findMessageByRfcId?(accountId: string, rfcMessageId: string): Promise<string | null>;
   };
   buildForwardDraft(accountId: string, thread: MailThread, forwardTo: string): unknown;
   buildAutoReplyDraft(accountId: string, threadId: string, replyBody: string): unknown;
@@ -28,6 +30,7 @@ export interface ReconcilerDeps {
   validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
   shouldDeferAccount?: (accountId: string) => boolean;
   onActionLogChanged?: () => void;
+  createRfcMessageId?: () => string;
   now?: () => Date;
   logger?: Pick<Console, 'log' | 'error'>;
 }
@@ -54,8 +57,85 @@ export function isNetworkError(err: any): boolean {
   );
 }
 
+export function isTransientHttpError(err: unknown): boolean {
+  if (!err) return false;
+  const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+  if (name === 'AbortError' || name === 'TimeoutError' || name === 'RequestTimeoutError') return true;
+  const status = err && typeof err === 'object' && 'status' in err
+    ? Number((err as { status?: number }).status)
+    : NaN;
+  if (Number.isFinite(status) && (status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599))) {
+    return true;
+  }
+  const msg = String((err as { message?: string })?.message || err);
+  const match = msg.match(/HTTP\s+(\d{3})/i);
+  if (!match) return false;
+  const code = Number(match[1]);
+  return code === 408 || code === 425 || code === 429 || (code >= 500 && code <= 599);
+}
+
+export function parseRetryAfterMs(retryAfter: string | null | undefined, now = new Date()): number | null {
+  if (!retryAfter) return null;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 15 * 60 * 1000);
+  const date = Date.parse(retryAfter);
+  if (!Number.isFinite(date)) return null;
+  return Math.max(0, Math.min(date - now.getTime(), 15 * 60 * 1000));
+}
+
+export function scheduledAtForRetry(error: unknown, now = new Date()): string | null {
+  const retryAfter = error && typeof error === 'object' && 'retryAfter' in error
+    ? (error as { retryAfter?: string | null }).retryAfter
+    : null;
+  const ms = parseRetryAfterMs(retryAfter, now);
+  return ms == null ? null : new Date(now.getTime() + ms).toISOString();
+}
+
 export function isRetryableRemoteError(error: unknown): boolean {
-  return isNetworkError(error) || isGoogleReauthorizationRequiredError(error);
+  return isNetworkError(error) || isTransientHttpError(error) || isGoogleReauthorizationRequiredError(error);
+}
+
+function persistActionRfcMessageId(
+  action: MailActionLog,
+  payload: Record<string, unknown>,
+  deps: ReconcilerDeps,
+  fallback?: string | null,
+): string {
+  const resolved = resolveActionRfcMessageId(
+    action.payloadJson,
+    fallback,
+    deps.createRfcMessageId || (() => createRfcMessageId()),
+  );
+  if (resolved.wrote) {
+    action.payloadJson = resolved.payloadJson;
+    payload.rfcMessageId = resolved.rfcMessageId;
+    deps.actionLog.save(action);
+  }
+  return resolved.rfcMessageId;
+}
+
+async function completeIfAlreadySent(
+  action: MailActionLog,
+  rfcMessageId: string,
+  deps: ReconcilerDeps,
+  now: () => Date,
+  logger: Pick<Console, 'log' | 'error'>,
+): Promise<boolean> {
+  if (!deps.gmail.findMessageByRfcId) return false;
+  const existingId = await deps.gmail.findMessageByRfcId(action.accountId, rfcMessageId);
+  if (!existingId) return false;
+  if (action.kind === 'send' && action.draftId) {
+    try {
+      deps.onDraftSent?.(action.accountId, action.draftId);
+    } catch (pipelineError) {
+      logger.error('[Sync Worker] Reply Pipeline update failed after idempotent send:', pipelineError);
+    }
+    deps.drafts.delete(action.draftId);
+  }
+  action.status = 'completed';
+  action.completedAt = now().toISOString();
+  deps.actionLog.save(action);
+  return true;
 }
 
 // One reconciliation pass: replay every pending_sync action against Gmail.
@@ -137,7 +217,13 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
             : null;
           const placeholderError = replyDraftPlaceholderValidationMessage(draftBodyPlain, draftBodyHtml);
           if (placeholderError) throw new Error(placeholderError);
-          await deps.gmail.sendDraft(action.accountId, draft);
+          const draftRfcMessageId = typeof draft === 'object' && draft !== null && 'rfcMessageId' in draft
+            && typeof draft.rfcMessageId === 'string'
+            ? draft.rfcMessageId
+            : null;
+          const rfcMessageId = persistActionRfcMessageId(action, payload, deps, draftRfcMessageId);
+          if (await completeIfAlreadySent(action, rfcMessageId, deps, now, logger)) continue;
+          await deps.gmail.sendDraft(action.accountId, { ...draft as object, rfcMessageId });
           try {
             deps.onDraftSent?.(action.accountId, action.draftId);
           } catch (pipelineError) {
@@ -151,18 +237,22 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
         const thread = action.threadId ? deps.threads.get(action.accountId, action.threadId) : null;
         if (!forwardTo) throw new Error('Forward rule action is missing forwardTo.');
         if (!thread) throw new Error('Thread not found for pending forward rule.');
+        const rfcMessageId = persistActionRfcMessageId(action, payload, deps);
+        if (await completeIfAlreadySent(action, rfcMessageId, deps, now, logger)) continue;
         await deps.gmail.sendDraft(
           action.accountId,
-          deps.buildForwardDraft(action.accountId, thread, forwardTo),
+          { ...(deps.buildForwardDraft(action.accountId, thread, forwardTo) as object), rfcMessageId },
         );
       } else if (action.kind === 'autoReply') {
         const payloadAction = payload.action as MailRuleAction | undefined;
         const replyBody = payloadAction?.replyBody?.trim();
         if (!replyBody) throw new Error('Auto-reply rule action is missing replyBody.');
         if (!action.threadId) throw new Error('Thread id is missing for pending auto-reply rule.');
+        const rfcMessageId = persistActionRfcMessageId(action, payload, deps);
+        if (await completeIfAlreadySent(action, rfcMessageId, deps, now, logger)) continue;
         await deps.gmail.sendDraft(
           action.accountId,
-          deps.buildAutoReplyDraft(action.accountId, action.threadId, replyBody),
+          { ...(deps.buildAutoReplyDraft(action.accountId, action.threadId, replyBody) as object), rfcMessageId },
         );
       }
 
@@ -174,6 +264,8 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       if (isRetryableRemoteError(err)) {
         logger.log(`[Sync Worker] Remote access is unavailable, will retry action ${action.id} later:`, err.message);
         action.status = 'pending_sync';
+        const scheduledAt = scheduledAtForRetry(err, now());
+        if (scheduledAt) action.scheduledAt = scheduledAt;
         deps.actionLog.save(action);
         break;
       } else {

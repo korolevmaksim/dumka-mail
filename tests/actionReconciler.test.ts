@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isNetworkError,
+  isTransientHttpError,
+  parseRetryAfterMs,
   RECOVERY_MAX_AGE_MS,
   reconcilePendingActions,
   recoverStaleRunningActions,
+  scheduledAtForRetry,
   startBackgroundSyncWorker,
   type ReconcilerDeps,
 } from '../main/actionReconciler';
@@ -76,6 +79,7 @@ function makeDeps(options: {
       untrashThread: (...args) => { gmailCalls.push({ method: 'untrashThread', args }); return maybeFail('untrashThread'); },
       sendDraft: (...args) => { gmailCalls.push({ method: 'sendDraft', args }); return maybeFail('sendDraft'); },
     },
+    createRfcMessageId: () => '<test-rfc@dumka-mail.local>',
     buildForwardDraft: (accountId, thread, forwardTo) => ({ builtForward: { accountId, threadId: thread.id, forwardTo } }),
     buildAutoReplyDraft: (accountId, threadId, replyBody) => ({ builtAutoReply: { accountId, threadId, replyBody } }),
     now: () => NOW,
@@ -94,6 +98,24 @@ describe('isNetworkError', () => {
     expect(isNetworkError(Object.assign(new Error('x'), { code: 'ETIMEDOUT' }))).toBe(true);
     expect(isNetworkError(new Error('HTTP 403 forbidden'))).toBe(false);
     expect(isNetworkError(null)).toBe(false);
+  });
+});
+
+describe('isTransientHttpError', () => {
+  it('classifies 429, 5xx, abort, and named timeouts as transient', () => {
+    expect(isTransientHttpError(new Error('syncIncremental error: HTTP 429 — rateLimit'))).toBe(true);
+    expect(isTransientHttpError(Object.assign(new Error('Label modification failed: HTTP 503'), { status: 503 }))).toBe(true);
+    expect(isTransientHttpError(Object.assign(new Error('aborted'), { name: 'AbortError' }))).toBe(true);
+    expect(isTransientHttpError(Object.assign(new Error('Request timeout after 15000ms'), { name: 'RequestTimeoutError' }))).toBe(true);
+    expect(isTransientHttpError(new Error('HTTP 403 forbidden'))).toBe(false);
+  });
+
+  it('honours Retry-After seconds when parking a retry', () => {
+    expect(parseRetryAfterMs('2', new Date('2026-07-04T12:00:00.000Z'))).toBe(2000);
+    expect(scheduledAtForRetry(
+      Object.assign(new Error('HTTP 429'), { retryAfter: '30' }),
+      new Date('2026-07-04T12:00:00.000Z'),
+    )).toBe('2026-07-04T12:00:30.000Z');
   });
 });
 
@@ -151,6 +173,21 @@ describe('reconcilePendingActions dispatch', () => {
     await reconcilePendingActions(h.deps);
     expect(h.gmailCalls).toHaveLength(0);
     expect(h.saved[h.saved.length - 1].status).toBe('completed');
+  });
+});
+
+describe('reconcilePendingActions transient HTTP failure', () => {
+  it('parks a 429 as pending_sync with Retry-After instead of rolling back', async () => {
+    const err = Object.assign(new Error('Label modification failed: HTTP 429 — rateLimit'), {
+      status: 429,
+      retryAfter: '30',
+    });
+    const h = makeDeps({ pending: [makeAction({ kind: 'markDone' })], gmailError: err });
+    await reconcilePendingActions(h.deps);
+    const final = h.saved[h.saved.length - 1];
+    expect(final.status).toBe('pending_sync');
+    expect(final.scheduledAt).toBe('2026-07-04T12:00:30.000Z');
+    expect(h.rollbacks).toHaveLength(0);
   });
 });
 
@@ -272,6 +309,41 @@ describe('reconcilePendingActions permanent failure', () => {
 });
 
 describe('reconcilePendingActions send-like kinds', () => {
+  it('mints and persists a Message-ID before a scheduled send that later retries', async () => {
+    const draft = { accountId: 'me@example.com', subject: 'hi' };
+    const err = Object.assign(new Error('Gmail Send Message Error: HTTP 503'), { status: 503 });
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'send', draftId: 'd1', payloadJson: '{"sendAt":"2026-07-04T13:00:00.000Z"}' })],
+      drafts: { d1: draft },
+      gmailError: err,
+      failOn: 'sendDraft',
+    });
+    await reconcilePendingActions(h.deps);
+    const parked = h.saved.find(saved => saved.status === 'pending_sync');
+    expect(JSON.parse(parked?.payloadJson || '{}')).toMatchObject({
+      sendAt: '2026-07-04T13:00:00.000Z',
+      rfcMessageId: '<test-rfc@dumka-mail.local>',
+    });
+    expect(h.gmailCalls).toEqual([{
+      method: 'sendDraft',
+      args: ['me@example.com', { ...draft, rfcMessageId: '<test-rfc@dumka-mail.local>' }],
+    }]);
+    expect(h.rollbacks).toHaveLength(0);
+  });
+
+  it('skips a send that already landed under the same Message-ID', async () => {
+    const draft = { accountId: 'me@example.com', subject: 'hi', rfcMessageId: '<id@dumka-mail.local>' };
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'send', draftId: 'd1', payloadJson: '{"rfcMessageId":"<id@dumka-mail.local>"}' })],
+      drafts: { d1: draft },
+    });
+    h.deps.gmail.findMessageByRfcId = async () => 'gmail-msg-1';
+    await reconcilePendingActions(h.deps);
+    expect(h.gmailCalls.filter(call => call.method === 'sendDraft')).toHaveLength(0);
+    expect(h.draftsDeleted).toEqual(['d1']);
+    expect(h.saved[h.saved.length - 1].status).toBe('completed');
+  });
+
   it('sends a pending draft and deletes it afterwards', async () => {
     const draft = { accountId: 'me@example.com', subject: 'hi' };
     const h = makeDeps({
@@ -279,7 +351,12 @@ describe('reconcilePendingActions send-like kinds', () => {
       drafts: { d1: draft },
     });
     await reconcilePendingActions(h.deps);
-    expect(h.gmailCalls).toEqual([{ method: 'sendDraft', args: ['me@example.com', draft] }]);
+    expect(h.gmailCalls).toEqual([{
+      method: 'sendDraft',
+      args: ['me@example.com', { ...draft, rfcMessageId: '<test-rfc@dumka-mail.local>' }],
+    }]);
+    expect(JSON.parse(h.saved.find(saved => saved.payloadJson?.includes('rfcMessageId'))?.payloadJson || '{}').rfcMessageId)
+      .toBe('<test-rfc@dumka-mail.local>');
     expect(h.draftsDeleted).toEqual(['d1']);
     expect(h.saved[h.saved.length - 1].status).toBe('completed');
   });
@@ -350,8 +427,23 @@ describe('reconcilePendingActions send-like kinds', () => {
     await reconcilePendingActions(h.deps);
     expect(h.gmailCalls).toEqual([{
       method: 'sendDraft',
-      args: ['me@example.com', { builtForward: { accountId: 'me@example.com', threadId: 't1', forwardTo: 'x@y.com' } }],
+      args: ['me@example.com', {
+        builtForward: { accountId: 'me@example.com', threadId: 't1', forwardTo: 'x@y.com' },
+        rfcMessageId: '<test-rfc@dumka-mail.local>',
+      }],
     }]);
+  });
+
+  it('skips a forward that already landed under the same Message-ID', async () => {
+    const thread = { id: 't1' } as MailThread;
+    const h = makeDeps({
+      pending: [makeAction({ kind: 'forwardThread', payloadJson: '{"action":{"forwardTo":"x@y.com"},"rfcMessageId":"<fwd@dumka-mail.local>"}' })],
+      threads: { 'me@example.com:t1': thread },
+    });
+    h.deps.gmail.findMessageByRfcId = async () => 'gmail-fwd-1';
+    await reconcilePendingActions(h.deps);
+    expect(h.gmailCalls.filter(call => call.method === 'sendDraft')).toHaveLength(0);
+    expect(h.saved[h.saved.length - 1].status).toBe('completed');
   });
 
   it('fails forwardThread permanently when forwardTo or the thread is missing', async () => {
@@ -373,7 +465,10 @@ describe('reconcilePendingActions send-like kinds', () => {
     await reconcilePendingActions(ok.deps);
     expect(ok.gmailCalls).toEqual([{
       method: 'sendDraft',
-      args: ['me@example.com', { builtAutoReply: { accountId: 'me@example.com', threadId: 't1', replyBody: 'got it' } }],
+      args: ['me@example.com', {
+        builtAutoReply: { accountId: 'me@example.com', threadId: 't1', replyBody: 'got it' },
+        rfcMessageId: '<test-rfc@dumka-mail.local>',
+      }],
     }]);
 
     const missing = makeDeps({ pending: [makeAction({ kind: 'autoReply', payloadJson: '{"action":{}}' })] });

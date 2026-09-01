@@ -359,6 +359,7 @@ export interface Draft {
   attachments: AttachmentMetadata[];
   replyMessageId?: string | null;
   replyReferences?: string | null;
+  rfcMessageId?: string | null;
   sendAt?: string | null;
   updatedAt: string;
 }

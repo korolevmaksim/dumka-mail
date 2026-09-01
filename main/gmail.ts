@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { GmailSignatureSyncResult, MailLabelDefinition, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
+import { paginateGmailHistory } from '../shared/gmailHistory';
+import { rfc822MessageIdQuery } from '../shared/rfcMessageId';
 import { getRefreshToken } from './keychain';
 import { compileMarkdownToHtml } from '../shared/markdown';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
@@ -15,6 +17,22 @@ import {
 
 export { startOAuthFlow };
 
+export class RequestTimeoutError extends Error {
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(`Request timeout after ${timeoutMs}ms`);
+    this.name = 'RequestTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export function sendDraftTimeoutMs(draft: { attachments?: Array<{ sizeBytes?: number | null }> }): number {
+  const bytes = (draft.attachments || []).reduce((total, attachment) => (
+    total + (typeof attachment.sizeBytes === 'number' ? attachment.sizeBytes : 0)
+  ), 0);
+  return Math.min(120_000, 15_000 + Math.ceil(bytes / (512 * 1024)) * 10_000);
+}
+
 // Helper: Fetch with Timeout to prevent hung requests
 export async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 15000): Promise<Response> {
   const controller = new AbortController();
@@ -24,6 +42,12 @@ export async function fetchWithTimeout(url: string, options: any = {}, timeoutMs
       ...options,
       signal: controller.signal
     });
+  } catch (err) {
+    const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+    if (name === 'AbortError' || name === 'TimeoutError') {
+      throw new RequestTimeoutError(timeoutMs);
+    }
+    throw err;
   } finally {
     clearTimeout(id);
   }
@@ -75,7 +99,13 @@ async function throwGoogleApiFailure(email: string, response: Response, context:
     throw new GoogleReauthorizationRequiredError(email, reason);
   }
   const summary = body.trim().slice(0, 1000);
-  throw new Error(`${context}: HTTP ${response.status}${summary ? ` — ${summary}` : ''}`);
+  const error = new Error(`${context}: HTTP ${response.status}${summary ? ` — ${summary}` : ''}`) as Error & {
+    status: number;
+    retryAfter: string | null;
+  };
+  error.status = response.status;
+  error.retryAfter = response.headers.get('Retry-After');
+  throw error;
 }
 
 export function buildGoogleTokenRevokeRequest(refreshToken: string): { url: string; body: string } {
@@ -487,52 +517,47 @@ export const GmailSyncService = {
     return syncThreadsForQuery(email, 'in:sent', 50);
   },
 
-  // Incremental history sync: requests updates since historyId
+  // Incremental history sync: pages through History until exhausted or the page cap.
   async syncIncremental(email: string, startHistoryId: string): Promise<{ updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string }> {
     const accessToken = await getAccessToken(email);
-    const endpoint = `https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${startHistoryId}&maxResults=100`;
+    return paginateGmailHistory({
+      startHistoryId,
+      fetchPage: async (pageToken) => {
+        const params = new URLSearchParams({
+          startHistoryId,
+          maxResults: '100',
+        });
+        if (pageToken) params.set('pageToken', pageToken);
+        const res = await fetchWithTimeout(
+          `https://gmail.googleapis.com/gmail/v1/users/me/history?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
 
-    const res = await fetchWithTimeout(endpoint, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
+        if (res.status === 404) {
+          throw new Error('HISTORY_EXPIRED');
+        }
+        if (!res.ok) {
+          await throwGoogleApiFailure(email, res, 'syncIncremental error');
+        }
+
+        return await res.json() as { history?: []; historyId?: string; nextPageToken?: string };
+      },
     });
+  },
 
-    // If history cursor is invalid/expired (Google returns HTTP 404)
-    if (res.status === 404) {
-      throw new Error('HISTORY_EXPIRED');
-    }
-
+  async findMessageByRfcId(email: string, rfcMessageId: string): Promise<string | null> {
+    const query = rfc822MessageIdQuery(rfcMessageId);
+    if (!query) return null;
+    const accessToken = await getAccessToken(email);
+    const endpoint = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`;
+    const res = await fetchWithTimeout(endpoint, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
     if (!res.ok) {
-      await throwGoogleApiFailure(email, res, 'syncIncremental error');
+      await throwGoogleApiFailure(email, res, 'rfc822msgid lookup failed');
     }
-
-    const data = await res.json() as any;
-    const historyRecords = data.history || [];
-    const updatedThreadIds = new Set<string>();
-    const deletedThreadIds = new Set<string>();
-
-    for (const record of historyRecords) {
-      if (record.messagesAdded) {
-        record.messagesAdded.forEach((m: any) => updatedThreadIds.add(m.message.threadId));
-      }
-      if (record.labelsAdded) {
-        record.labelsAdded.forEach((l: any) => updatedThreadIds.add(l.message.threadId));
-      }
-      if (record.labelsRemoved) {
-        record.labelsRemoved.forEach((l: any) => updatedThreadIds.add(l.message.threadId));
-      }
-      if (record.messagesDeleted) {
-        record.messagesDeleted.forEach((m: any) => deletedThreadIds.add(m.message.threadId));
-      }
-    }
-
-    // Latest history id
-    const latestHistoryId = data.historyId || startHistoryId;
-
-    return {
-      updatedThreadIds: Array.from(updatedThreadIds),
-      deletedThreadIds: Array.from(deletedThreadIds),
-      historyId: latestHistoryId
-    };
+    const data = await res.json() as { messages?: Array<{ id?: string }> };
+    return data.messages?.[0]?.id || null;
   },
 
   // Backfill: pages through all mail
@@ -685,7 +710,7 @@ export const GmailSyncService = {
   },
 
   // Outgoing Send: Builds MIME payload and submits
-  async sendDraft(email: string, draft: { to: Recipient[]; cc: Recipient[]; bcc: Recipient[]; subject: string; bodyPlain: string; bodyHtml?: string | null; attachments?: AttachmentMetadata[]; threadId?: string | null; replyMessageId?: string | null; replyReferences?: string | null }): Promise<string> {
+  async sendDraft(email: string, draft: { to: Recipient[]; cc: Recipient[]; bcc: Recipient[]; subject: string; bodyPlain: string; bodyHtml?: string | null; attachments?: AttachmentMetadata[]; threadId?: string | null; replyMessageId?: string | null; replyReferences?: string | null; rfcMessageId?: string | null }): Promise<string> {
     const accessToken = await getAccessToken(email);
     
     // MIME Construction
@@ -708,6 +733,9 @@ export const GmailSyncService = {
       headers.push(`Bcc: ${draft.bcc.map(r => r.name ? `"${r.name}" <${r.email}>` : r.email).join(', ')}`);
     }
     headers.push(`Subject: ${draft.subject}`);
+    if (draft.rfcMessageId) {
+      headers.push(`Message-ID: ${draft.rfcMessageId}`);
+    }
     headers.push('MIME-Version: 1.0');
     
     if (hasFileAttachments) {
@@ -812,7 +840,7 @@ export const GmailSyncService = {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)
-    });
+    }, sendDraftTimeoutMs(draft));
 
     if (!res.ok) {
       await throwGoogleApiFailure(email, res, 'Gmail Send Message Error');

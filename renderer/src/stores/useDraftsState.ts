@@ -5,6 +5,7 @@ import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentT
 import { emitToast } from '../lib/toastBus';
 import { replyDraftPlaceholderValidationMessage } from '../../../shared/replyPipeline';
 import { filesToAttachments } from '../lib/composeHtmlHelpers';
+import { createRfcMessageId } from '../../../shared/rfcMessageId';
 
 interface UseDraftsStateProps {
   settings: AppSettings;
@@ -369,8 +370,10 @@ export function useDraftsState({
       return;
     }
 
+    const rfcMessageId = activeDraft.rfcMessageId || createRfcMessageId();
     const scheduledDraft: Draft = {
       ...activeDraft,
+      rfcMessageId,
       sendAt,
       bodyHtml: compileDraftBodyHtml(activeDraft.bodyPlain, settings.compose, activeDraft.accountId, activeDraft.bodyHtml),
       updatedAt: new Date().toISOString(),
@@ -384,7 +387,7 @@ export function useDraftsState({
       status: 'pending_sync',
       createdAt: new Date().toISOString(),
       scheduledAt: sendAt,
-      payloadJson: JSON.stringify({ sendAt }),
+      payloadJson: JSON.stringify({ sendAt, rfcMessageId }),
     };
 
     await window.electronAPI.saveDraft(scheduledDraft);
