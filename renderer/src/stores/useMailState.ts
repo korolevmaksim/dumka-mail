@@ -4,6 +4,7 @@ import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import { fuseSearchMatches, orderSearchResults, type RankedSourceList } from '../../../shared/searchRanking';
 import { categorize } from '../../../shared/categoryEngine';
+import { applyInboxSplitToggles } from '../../../shared/inboxSplits';
 import { reverseMailActionKind } from '../../../shared/mailActions';
 import {
   aggregateMailActionResults,
@@ -30,6 +31,7 @@ import { IDLE_SEARCH_STATE, type MailSearchState } from './mailSearchStatus';
 import {
   buildMailboxIndexCooperatively,
   categoryFromMailboxIndex,
+  applyDeltaToMailboxIndex,
   replaceThreadInMailboxIndex,
   threadsForMailboxIndex,
   type MailboxIndex,
@@ -174,7 +176,14 @@ export function useMailState({
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
   const activeScopeKey = accountScopeKey(activeAccount, accounts);
-  const mailboxIndexConfigKey = JSON.stringify({ categorySettings, tabCategories, mutedLabelIdsByAccount });
+  const mailboxIndexConfigKey = JSON.stringify({
+    categorySettings,
+    tabCategories,
+    mutedLabelIdsByAccount,
+    showPurchasesSplit: inboxSettings.showPurchasesSplit,
+    showLinkedInSplit: inboxSettings.showLinkedInSplit,
+    showAutomationSplit: inboxSettings.showAutomationSplit,
+  });
   const activeScopeKeyRef = useRef<string | null>(activeScopeKey);
   activeScopeKeyRef.current = activeScopeKey;
 
@@ -322,8 +331,8 @@ export function useMailState({
 
 
   const getThreadCategory = useCallback((t: MailThread): string => (
-    categorize(t, categorySettings.builtIn, categorySettings.custom, 'other')
-  ), [categorySettings]);
+    categorize(t, applyInboxSplitToggles(categorySettings.builtIn, inboxSettings), categorySettings.custom, 'other')
+  ), [categorySettings, inboxSettings]);
 
   const patchThread = useCallback((
     accountId: string,
@@ -527,12 +536,23 @@ export function useMailState({
     });
 
     const accountIds = accountIdsForScope(activeAccount, accounts);
-    const list = await window.electronAPI.listThreadsForAccounts(accountIds);
-    if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
-    
-    setThreads(list);
-    setMailboxIndex(null);
-    setLoadedThreadScopeKey(scopeKey);
+    try {
+      const list = await window.electronAPI.listThreadsForAccounts(accountIds);
+      if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
+
+      setThreads(list);
+      setMailboxIndex(null);
+      setLoadedThreadScopeKey(scopeKey);
+    } catch (error) {
+      if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
+      console.error('Failed to load mailbox threads:', error);
+      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+      emitToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Could not load the mailbox.',
+      });
+      return;
+    }
     
     setSpeedProof((prev: SpeedProof) => ({
       ...prev,
@@ -622,23 +642,34 @@ export function useMailState({
     for (const [scopeKey, snapshot] of mailboxSnapshotCacheRef.current) {
       if (!snapshot.accountIds.includes(delta.accountId)) continue;
       const nextThreads = applyDeltaToThreads(snapshot.threads, delta);
-      mailboxSnapshotCacheRef.current.delete(scopeKey);
+      const nextIndex = applyDeltaToMailboxIndex({
+        index: snapshot.index,
+        previousThreads: snapshot.threads,
+        delta,
+        tabCategories,
+        mutedLabelIdsByAccount,
+        getThreadCategory,
+      });
+      mailboxSnapshotCacheRef.current.set(scopeKey, {
+        ...snapshot,
+        threads: nextThreads,
+        index: nextIndex,
+      });
       if (scopeKey === activeScopeKeyRef.current) {
         setThreads(nextThreads);
-        setMailboxIndex(null);
+        setMailboxIndex(nextIndex);
+        setSplitCounts(nextIndex.splitCounts);
+        setSplitUnreadCounts(nextIndex.splitUnreadCounts);
+        setMailboxCounts(nextIndex.mailboxCounts);
       }
     }
 
     if (!accountIdsForScope(activeAccount, accounts).includes(delta.accountId)) return;
-    setNavigationActivity({
-      phase: 'refreshing',
-      label: 'Refreshing…',
-      scopeKey: activeScopeKeyRef.current,
-      startedAt: performance.now(),
-    });
+    const activeScopeKey = activeScopeKeyRef.current;
+    if (activeScopeKey && mailboxSnapshotCacheRef.current.has(activeScopeKey)) return;
     setThreads(current => applyDeltaToThreads(current, delta));
     setMailboxIndex(null);
-  }, [activeAccount, accounts]);
+  }, [activeAccount, accounts, getThreadCategory, mutedLabelIdsByAccount, tabCategories]);
 
   const {
     syncHealth,
@@ -1150,11 +1181,12 @@ export function useMailState({
     const payloadLabelId = typeof payload.labelId === 'string' ? payload.labelId : null;
 
     if (kind === 'markDone') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: t.labelIds.filter(label => label.toUpperCase() !== 'INBOX') }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: current.labelIds.filter(label => label.toUpperCase() !== 'INBOX'),
+        }));
+      }
       if (mailboxView === 'inbox' && openedThread?.id === targetThreadId) {
         openThread(inboxSettings.openNextThreadAfterDone ? nextThread : null);
       }
@@ -1184,65 +1216,69 @@ export function useMailState({
     } else if (kind === 'markUnread') {
       if (targetThreadId) patchThread(targetAccountId, targetThreadId, current => ({ ...current, isUnread: true }));
     } else if (kind === 'moveToTrash') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'INBOX'), 'TRASH'])) }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([...current.labelIds.filter(label => label.toUpperCase() !== 'INBOX'), 'TRASH'])),
+        }));
+      }
       if (openedThread?.id === targetThreadId) openThread(nextThread);
     } else if (kind === 'restoreFromTrash') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'TRASH'), 'INBOX'])) }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([...current.labelIds.filter(label => label.toUpperCase() !== 'TRASH'), 'INBOX'])),
+        }));
+      }
       if (mailboxView === 'trash' && openedThread?.id === targetThreadId) {
         openThread(nextThread);
       }
     } else if (kind === 'reportSpam') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'INBOX'), 'SPAM'])) }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([...current.labelIds.filter(label => label.toUpperCase() !== 'INBOX'), 'SPAM'])),
+        }));
+      }
       if (openedThread?.id === targetThreadId) openThread(nextThread);
     } else if (kind === 'restoreFromSpam') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label.toUpperCase() !== 'SPAM'), 'INBOX'])) }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([...current.labelIds.filter(label => label.toUpperCase() !== 'SPAM'), 'INBOX'])),
+        }));
+      }
       if (mailboxView === 'spam' && openedThread?.id === targetThreadId) {
         openThread(nextThread);
       }
     } else if (kind === 'muteThread') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? {
-              ...t,
-              labelIds: Array.from(new Set([
-                ...t.labelIds.filter(label => label.toUpperCase() !== 'INBOX'),
-                ...(payloadLabelId ? [payloadLabelId] : [])
-              ]))
-            }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([
+            ...current.labelIds.filter(label => label.toUpperCase() !== 'INBOX'),
+            ...(payloadLabelId ? [payloadLabelId] : []),
+          ])),
+        }));
+      }
       if (openedThread?.id === targetThreadId) openThread(nextThread);
     } else if (kind === 'unmuteThread' && payloadLabelId) {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: Array.from(new Set([...t.labelIds.filter(label => label !== payloadLabelId), 'INBOX'])) }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([...current.labelIds.filter(label => label !== payloadLabelId), 'INBOX'])),
+        }));
+      }
       if (mailboxView === 'muted' && openedThread?.id === targetThreadId) {
         openThread(nextThread);
       }
     } else if (kind === 'unsubscribeSender') {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: t.labelIds.filter(label => label.toUpperCase() !== 'INBOX') }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: current.labelIds.filter(label => label.toUpperCase() !== 'INBOX'),
+        }));
+      }
       if (mailboxView === 'inbox' && openedThread?.id === targetThreadId) {
         openThread(nextThread);
       }
@@ -1252,24 +1288,23 @@ export function useMailState({
         setFocusedThreadId(null);
       }
     } else if ((kind === 'applyLabel' || kind === 'moveToLabel') && payloadLabelId) {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? {
-              ...t,
-              labelIds: Array.from(new Set([
-                ...t.labelIds.filter(label => kind === 'moveToLabel' ? label.toUpperCase() !== 'INBOX' : true),
-                payloadLabelId
-              ]))
-            }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: Array.from(new Set([
+            ...current.labelIds.filter(label => kind === 'moveToLabel' ? label.toUpperCase() !== 'INBOX' : true),
+            payloadLabelId,
+          ])),
+        }));
+      }
       if (kind === 'moveToLabel' && openedThread?.id === targetThreadId) openThread(nextThread);
     } else if (kind === 'removeLabel' && payloadLabelId) {
-      setThreads(prev => prev.map(t => (
-        t.id === targetThreadId && t.accountId === targetAccountId
-          ? { ...t, labelIds: t.labelIds.filter(label => label !== payloadLabelId) }
-          : t
-      )));
+      if (targetThreadId) {
+        patchThread(targetAccountId, targetThreadId, current => ({
+          ...current,
+          labelIds: current.labelIds.filter(label => label !== payloadLabelId),
+        }));
+      }
     }
 
     const result = await (async (): Promise<MailActionExecutionResult> => {

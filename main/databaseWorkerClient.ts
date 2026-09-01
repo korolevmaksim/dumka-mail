@@ -13,12 +13,19 @@ import type {
   EmbeddingCandidateSource,
   ThreadSecurityMode,
 } from './mailAnalysisJobs';
+import {
+  DATABASE_WORKER_REQUEST_TIMEOUT_MS,
+  databaseWorkerTimeoutMessage,
+} from '../shared/databaseWorkerTimeout';
 import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat } from '../shared/types';
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason?: unknown) => void;
+  timeout: ReturnType<typeof setTimeout>;
 }
+
+export { DATABASE_WORKER_REQUEST_TIMEOUT_MS };
 
 const MESSAGE_BATCH_SIZE = 5;
 const THREAD_BATCH_SIZE = 50;
@@ -71,14 +78,18 @@ class DatabaseWorkerClient {
     });
 
     worker.on('error', error => {
-      this.rejectAll(error instanceof Error ? error : new Error(String(error)));
+      const next = error instanceof Error ? error : new Error(String(error));
+      console.error('[Database worker] crashed:', next);
+      this.rejectAll(next);
       this.worker = null;
     });
 
     worker.on('exit', code => {
       this.worker = null;
       if (!this.shuttingDown && code !== 0) {
-        this.rejectAll(new Error(`Database worker exited with code ${code}`));
+        const next = new Error(`Database worker exited with code ${code}`);
+        console.error('[Database worker]', next.message);
+        this.rejectAll(next);
       }
     });
 
@@ -87,6 +98,7 @@ class DatabaseWorkerClient {
 
   private rejectAll(error: Error) {
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
       pending.reject(error);
     }
     this.pending.clear();
@@ -97,9 +109,20 @@ class DatabaseWorkerClient {
     const worker = this.getWorker();
 
     return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(databaseWorkerTimeoutMessage(payload.type)));
+      }, DATABASE_WORKER_REQUEST_TIMEOUT_MS);
       this.pending.set(id, {
-        resolve: value => resolve(value as T),
-        reject
+        resolve: value => {
+          clearTimeout(timeout);
+          resolve(value as T);
+        },
+        reject: reason => {
+          clearTimeout(timeout);
+          reject(reason);
+        },
+        timeout,
       });
       worker.postMessage({ id, ...payload });
     });

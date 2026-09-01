@@ -70,6 +70,8 @@ import {
   stageRestoreFromBackup,
   startAutoBackupScheduler,
 } from './backupService';
+import { handleFatalProcessFailure, handleStartupFailure, installProcessFailureHandlers } from './startupCrash';
+import { isLikelyCorruptDatabaseError } from '../shared/startupFailure';
 import { cancelMailboxExport, exportMailboxMbox } from './exportService';
 import type { MailboxExportScope } from '../shared/mboxExport';
 import { checkForAppUpdates, getAutoUpdateStatus, initializeAutoUpdates, installDownloadedAppUpdate } from './autoUpdate';
@@ -841,6 +843,14 @@ function createWindow() {
   });
 }
 
+installProcessFailureHandlers((scope, message, error) => {
+  try {
+    SystemLogger.error(scope, message, error);
+  } catch {
+    console.error(`[${scope}] ${message}`, error);
+  }
+});
+
 app.whenReady().then(async () => {
   // A staged restore must swap the database file before the first connection opens.
   const pendingRestore = applyPendingRestoreIfAny();
@@ -956,6 +966,12 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
+}).catch(error => {
+  if (isLikelyCorruptDatabaseError(error)) {
+    void handleStartupFailure(error);
+    return;
+  }
+  void handleFatalProcessFailure(error);
 });
 
 let quitConfirmed = false;

@@ -28,6 +28,7 @@ import {
 import { useAppStore } from '../../stores/AppStore';
 import { emitToast } from '../../lib/toastBus';
 import { formatAIUserError } from '../../../../shared/aiErrors';
+import { withAIRequestTimeout } from '../../../../shared/aiRequest';
 import { resolveAIModelForPurpose } from '../../../../shared/aiModelPurpose';
 import {
   buildInitialDraftBodyWithSignature,
@@ -86,13 +87,24 @@ export function FloatingComposeDrawer() {
   const [linkSelectedText, setLinkSelectedText] = useState('');
   const [linkSelectionRange, setLinkSelectionRange] = useState<Range | null>(null);
   const [reminderOpen, setReminderOpen] = useState(false);
+  const [subject, setSubject] = useState('');
+  const [liveBodyPlain, setLiveBodyPlain] = useState('');
+  const [liveBodyHtml, setLiveBodyHtml] = useState<string | null>(null);
 
   const activeDraft = store.activeDraft;
+  const activeDraftIdRef = useRef<string | null>(activeDraft?.id ?? null);
+  activeDraftIdRef.current = activeDraft?.id ?? null;
 
   useEffect(() => {
     if (!activeDraft) return;
     setShowCc(activeDraft.cc.length > 0);
     setShowBcc(activeDraft.bcc.length > 0);
+    const current = store.getActiveDraft()?.id === activeDraft.id
+      ? store.getActiveDraft()!
+      : activeDraft;
+    setSubject(current.subject);
+    setLiveBodyPlain(current.bodyPlain);
+    setLiveBodyHtml(current.bodyHtml ?? null);
     setTemplatesOpen(false);
     setAiOpen(false);
     setAiInstruction('');
@@ -166,6 +178,8 @@ export function FloatingComposeDrawer() {
     closeLinkPopover();
   };
 
+  const liveDraft = () => store.getActiveDraft() || activeDraft;
+
   const addInlineImageAttachment = (attachment: AttachmentMetadata) => {
     const inlineAttachment: AttachmentMetadata = {
       ...attachment,
@@ -173,7 +187,7 @@ export function FloatingComposeDrawer() {
       contentId: attachment.contentId || `${attachment.id}@dumka-mail`,
     };
     store.updateDraft({
-      attachments: [...(store.activeDraft?.attachments || []), inlineAttachment],
+      attachments: [...(liveDraft().attachments || []), inlineAttachment],
     });
     return inlineAttachment;
   };
@@ -203,7 +217,7 @@ export function FloatingComposeDrawer() {
   };
 
   const insertDefaultSnippet = () => {
-    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const alreadyHasSignature = Boolean(liveDraft().bodyHtml?.includes('gmail_signature'));
     const snippet = renderDefaultSnippetHtml(
       alreadyHasSignature
         ? { ...store.settings.snippets, includeSignature: false }
@@ -221,7 +235,7 @@ export function FloatingComposeDrawer() {
   };
 
   const insertSnippetTemplate = (template: SnippetTemplate) => {
-    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const alreadyHasSignature = Boolean(liveDraft().bodyHtml?.includes('gmail_signature'));
     const snippet = renderSnippetTemplateHtml(
       alreadyHasSignature
         ? { ...template, includeSignature: false }
@@ -316,10 +330,11 @@ export function FloatingComposeDrawer() {
   };
 
   const updateFromAccount = (accountId: string) => {
+    const currentDraft = liveDraft();
     let nextHtml: string | null;
-    if (activeDraft.bodyHtml?.trim()) {
+    if (currentDraft.bodyHtml?.trim()) {
       nextHtml = replaceComposeSignatureForAccount(
-        activeDraft.bodyHtml,
+        currentDraft.bodyHtml,
         store.settings.compose,
         store.settings.profile,
         accountId,
@@ -328,11 +343,11 @@ export function FloatingComposeDrawer() {
       const previousSignature = renderComposeSignaturePlain(
         store.settings.compose,
         store.settings.profile,
-        activeDraft.accountId,
+        currentDraft.accountId,
       ).trim();
-      const bodyPlain = previousSignature && activeDraft.bodyPlain.trim() === previousSignature
+      const bodyPlain = previousSignature && currentDraft.bodyPlain.trim() === previousSignature
         ? ''
-        : activeDraft.bodyPlain;
+        : currentDraft.bodyPlain;
       nextHtml = buildInitialDraftBodyWithSignature(
         bodyPlain,
         store.settings.compose,
@@ -343,18 +358,19 @@ export function FloatingComposeDrawer() {
 
     store.updateDraft({
       accountId,
-      bodyPlain: nextHtml ? htmlFragmentToPlainText(nextHtml) : activeDraft.bodyPlain,
+      bodyPlain: nextHtml ? htmlFragmentToPlainText(nextHtml) : currentDraft.bodyPlain,
       bodyHtml: nextHtml,
     });
   };
 
   const saveCurrentBodyAsSnippet = async () => {
-    const body = (store.activeDraft?.bodyPlain || '').trim();
+    const currentDraft = liveDraft();
+    const body = (currentDraft.bodyPlain || '').trim();
     if (!body) {
       emitToast({ type: 'warning', message: 'Write a body before saving a snippet.' });
       return;
     }
-    const titleSeed = activeDraft.subject.trim() || 'New snippet';
+    const titleSeed = (subject || currentDraft.subject).trim() || 'New snippet';
     await store.updateSettings(s => {
       s.snippets.enabled = true;
       const title = titleSeed;
@@ -376,7 +392,7 @@ export function FloatingComposeDrawer() {
 
   const runAICompose = async (mode: 'draft' | 'improve') => {
     const selectedText = editorRef.current?.getSelectedText() || '';
-    const body = store.activeDraft?.bodyPlain || '';
+    const body = liveDraft().bodyPlain || '';
     const prompt = aiInstruction.trim();
     if (mode === 'draft' && !prompt) {
       emitToast({ type: 'warning', message: 'Describe what the email should say.' });
@@ -387,10 +403,11 @@ export function FloatingComposeDrawer() {
       return;
     }
 
+    const targetDraftId = activeDraft.id;
     setAiBusy(true);
     try {
       const context = [
-        `Subject: ${activeDraft.subject || '(none)'}`,
+        `Subject: ${subject || activeDraft.subject || '(none)'}`,
         `To: ${activeDraft.to.map(r => r.email).join(', ') || '(none)'}`,
         `Cc: ${activeDraft.cc.map(r => r.email).join(', ') || '(none)'}`,
         `Current body:\n${body || '(empty)'}`,
@@ -399,17 +416,21 @@ export function FloatingComposeDrawer() {
         ? `Write a polished email body from these instructions: ${prompt}. Return only a conservative HTML body fragment with paragraphs, lists, links, and emphasis when useful.`
         : `Rewrite ${selectedText ? 'the selected text' : 'the current draft'} to be clearer, concise, and professional. ${prompt ? `Additional instruction: ${prompt}.` : ''} Return only a conservative HTML body fragment. Text to improve:\n${selectedText || body}`;
 
-      const response = await window.electronAPI.completeAI({
+      const response = await withAIRequestTimeout(window.electronAPI.completeAI({
         action: 'compose',
         context,
         conversationHistory: [],
         userInstruction: instruction,
       }, store.aiProvider, resolveAIModelForPurpose('interactive', {
         interactiveModel: store.settings.ai.globalDefaultModel,
-      }, store.aiModel));
+      }, store.aiModel)));
 
       const fragment = textOrHtmlToFragment(response.text);
       if (!fragment) return;
+      if (activeDraftIdRef.current !== targetDraftId) {
+        emitToast({ type: 'warning', message: 'AI draft discarded because the composer changed.' });
+        return;
+      }
       if (mode === 'draft') {
         editorRef.current?.replaceHtml(fragment);
       } else {
@@ -530,8 +551,11 @@ export function FloatingComposeDrawer() {
         <span className="w-16 shrink-0 text-[var(--text-secondary)] font-medium select-none">Subject</span>
         <input
           type="text"
-          value={activeDraft.subject}
-          onChange={(event) => store.updateDraft({ subject: event.target.value })}
+          value={subject}
+          onChange={(event) => {
+            setSubject(event.target.value);
+            store.updateDraft({ subject: event.target.value });
+          }}
           placeholder="Subject"
           className="flex-1 bg-transparent text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
         />
@@ -539,15 +563,15 @@ export function FloatingComposeDrawer() {
 
       <RichTextEditor
         ref={editorRef}
-        draftId={`${activeDraft.id}:${activeDraft.accountId}`}
-        bodyPlain={activeDraft.bodyPlain}
-        bodyHtml={activeDraft.bodyHtml}
+        draftId={`${activeDraft.id}:${activeDraft.accountId}:${store.draftBodySeed}`}
+        bodyPlain={liveDraft().bodyPlain}
+        bodyHtml={liveDraft().bodyHtml}
         placeholder="Write your email. Use the toolbar, paste an image, or ask AI to draft."
         spellCheck={store.settings.compose.spellCheck}
         fontSize={store.settings.compose.defaultFontSize}
         smartCompose={{
           enabled: store.settings.compose.smartCompose,
-          subject: activeDraft.subject,
+          subject,
           toRecipientName: activeDraft.to[0]?.name || activeDraft.to[0]?.email || '',
           provider: store.aiProvider,
           interactiveModel: store.settings.ai.globalDefaultModel,
@@ -559,12 +583,16 @@ export function FloatingComposeDrawer() {
           profile: store.settings.profile,
           accountId: activeDraft.accountId,
         }}
-        onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
+        onChange={(bodyPlain, bodyHtml) => {
+          setLiveBodyPlain(bodyPlain);
+          setLiveBodyHtml(bodyHtml);
+          store.updateDraftBody(bodyPlain, bodyHtml);
+        }}
         onImageFile={insertInlineImageFromFile}
         onDropFiles={store.addDroppedFilesToDraft}
       />
 
-      <DraftPlaceholderWarning bodyPlain={activeDraft.bodyPlain} bodyHtml={activeDraft.bodyHtml} />
+      <DraftPlaceholderWarning bodyPlain={liveBodyPlain} bodyHtml={liveBodyHtml} />
 
       {activeDraft.attachments.length > 0 && (
         <div className="border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-2 select-none">

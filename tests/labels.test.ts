@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLabelTree,
   composeNestedLabelName,
+  filterLabelTree,
   flattenLabelTree,
   isDescendantLabel,
   labelDefinitionsForAccount,
@@ -176,5 +177,17 @@ describe('label helpers', () => {
     ]);
     expect(flattened[0].label).toBeUndefined();
     expect(flattened[1].label?.id).toBe('l1');
+  });
+
+  it('filters a label tree by substring while keeping ancestor folders', () => {
+    const tree = buildLabelTree([
+      label('l1', 'Clients/Acme'),
+      label('l2', 'Clients/Beta'),
+      label('l3', 'Projects'),
+    ]);
+    const filtered = filterLabelTree(tree, 'acme');
+
+    expect(filtered.map(node => node.fullName)).toEqual(['Clients']);
+    expect(filtered[0].children.map(node => node.fullName)).toEqual(['Clients/Acme']);
   });
 });

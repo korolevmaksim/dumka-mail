@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Archive, CalendarDays, CheckCircle2, ExternalLink, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
+import { Archive, CalendarDays, CheckCircle2, ExternalLink, RefreshCw, Sparkles } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
 import { emitToast } from '../../lib/toastBus';
 import { ActivityTimeline } from '../ActivityTimeline';
@@ -7,6 +7,7 @@ import { DailyBriefingCard } from '../DailyBriefingCard';
 import { AgentReviewQueueCard } from '../AgentReviewQueueCard';
 import { RuleSimulatorPanel } from '../automation/RuleSimulatorPanel';
 import { ReplyPipelineSection } from './ReplyPipelineSection';
+import { shouldShowTodaySection, todayRecentActions, todayUnresolvedActionCount } from '../../../../shared/todayHomeState';
 
 function formatCalendarTime(iso: string): string {
   const date = new Date(iso);
@@ -28,9 +29,15 @@ export function TodayHome() {
     ['createCalendarEvent', 'updateCalendarEvent', 'deleteCalendarEvent'].includes(action.kind)
     && (action.status === 'failed' || action.status === 'pending_sync')
   ).length, [store.actionLog]);
-  const recentActions = useMemo(() => [...store.actionLog]
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-    .slice(0, 5), [store.actionLog]);
+  const recentActions = useMemo(() => todayRecentActions(store.actionLog, 5), [store.actionLog]);
+  const unresolvedActions = useMemo(() => todayUnresolvedActionCount(store.actionLog), [store.actionLog]);
+  const reviewCount = store.agentPlan?.items.length || 0;
+  const pipelineCount = store.replyPipelineItems.filter(item => !['resolved', 'snoozed', 'suppressed'].includes(item.status)).length;
+  const briefingCount = store.dailyBriefing?.items.length || 0;
+  const showReview = shouldShowTodaySection(reviewCount > 0);
+  const showBriefing = shouldShowTodaySection(Boolean(store.dailyBriefing && briefingCount > 0));
+  const showRecentActions = shouldShowTodaySection(recentActions.length > 0);
+  const allClear = !showReview && pipelineCount === 0 && !showBriefing && unresolvedActions === 0;
 
   const openActivityThread = (threadId: string) => {
     const thread = store.threads.find(candidate => candidate.id === threadId);
@@ -63,8 +70,11 @@ export function TodayHome() {
             </button>
             <button
               type="button"
-              onClick={() => void store.loadFollowUpRadar()}
-              disabled={store.followUpRadarLoading}
+              onClick={() => {
+                void store.loadFollowUpRadar();
+                void store.runDailyBriefing(undefined, { openPanel: false });
+              }}
+              disabled={store.followUpRadarLoading || store.dailyBriefingLoading}
               className="dm-secondary-button flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-1.5 text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${store.followUpRadarLoading ? 'animate-spin' : ''}`} />
@@ -75,46 +85,37 @@ export function TodayHome() {
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Review queue</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{store.agentPlan?.items.length || 0}</div>
+            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Review queue</div>
+            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{reviewCount}</div>
           </div>
           <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Reply pipeline</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{store.replyPipelineItems.filter(item => !['resolved', 'snoozed', 'suppressed'].includes(item.status)).length}</div>
+            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Reply pipeline</div>
+            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{pipelineCount}</div>
           </div>
           <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Briefing items</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{store.dailyBriefing?.items.length || 0}</div>
+            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Briefing items</div>
+            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{briefingCount}</div>
           </div>
           <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(9px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Recent actions</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{recentActions.length}</div>
+            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Needs attention</div>
+            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{unresolvedActions}</div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
           <div className="flex min-w-0 flex-col gap-4">
-            {store.agentPlan ? (
-              <AgentReviewQueueCard />
-            ) : (
-              <section className="dm-panel rounded-lg border border-dashed border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+            {allClear && (
+              <section className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)]">
                 <div className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
-                  <ShieldAlert className="h-4 w-4 text-[var(--ai-accent)]" />
-                  Agent Review Queue
+                  <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                  All clear
                 </div>
-                <p className="mt-1">No pending agent approvals.</p>
+                <p className="mt-1">No review items, failed actions, or briefing cards need attention.</p>
               </section>
             )}
-
+            {showReview && <AgentReviewQueueCard />}
             <ReplyPipelineSection />
-
-            {store.dailyBriefing ? (
-              <DailyBriefingCard />
-            ) : (
-              <section className="dm-panel rounded-lg border border-dashed border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
-                Run Briefing to build a focused daily mail digest.
-              </section>
-            )}
+            {showBriefing && <DailyBriefingCard />}
           </div>
 
           <aside className="flex min-w-0 flex-col gap-4">
@@ -162,6 +163,7 @@ export function TodayHome() {
                 </div>
               )}
             </section>
+            {showRecentActions && (
             <section className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
               <div className="mb-2 flex items-center gap-1.5 font-semibold text-[var(--text-primary)]">
                 <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
@@ -169,6 +171,7 @@ export function TodayHome() {
               </div>
               <ActivityTimeline logs={recentActions} max={5} onOpenThread={openActivityThread} />
             </section>
+            )}
           </aside>
         </div>
       </div>

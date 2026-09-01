@@ -27,6 +27,12 @@ export function getDatabase(): Database.Database {
   return dbInstance;
 }
 
+export function closeDatabase(): void {
+  if (!dbInstance) return;
+  dbInstance.close();
+  dbInstance = null;
+}
+
 export {
   CalendarListsRepo,
   CalendarEventsRepo,

@@ -22,6 +22,7 @@ export interface CalendarEventRange {
 interface UseCalendarStateOptions {
   primaryEmail: string;
   activeDraft: Draft | null;
+  getActiveDraft: () => Draft | null;
   defaultMeetingDurationMinutes: number;
   loadActionLog: () => Promise<void>;
   updateDraftBody: (body: string, bodyHtml?: string | null) => void;
@@ -258,7 +259,7 @@ export function useCalendarState(options: UseCalendarStateOptions) {
   }, [options.loadActionLog, syncCalendarAgenda, updateCalendarEvent]);
 
   const createGoogleMeetDraftEvent = useCallback(async (): Promise<CalendarEvent | null> => {
-    const draft = options.activeDraft;
+    const draft = options.getActiveDraft() ?? options.activeDraft;
     if (!draft) return null;
     const event = await window.electronAPI.createGoogleMeetDraftEvent(draft.accountId, {
       summary: draft.subject || 'Meeting',
@@ -273,7 +274,7 @@ export function useCalendarState(options: UseCalendarStateOptions) {
     }
     await syncCalendarAgenda(draft.accountId);
     return event;
-  }, [options.activeDraft, options.defaultMeetingDurationMinutes, options.updateDraftBody, syncCalendarAgenda]);
+  }, [options.activeDraft, options.defaultMeetingDurationMinutes, options.getActiveDraft, options.updateDraftBody, syncCalendarAgenda]);
 
   return {
     calendarEvents,

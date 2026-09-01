@@ -1,4 +1,4 @@
-import type { MailboxView, MailThread, TabCategory } from '../../../shared/types';
+import type { MailboxDelta, MailboxView, MailThread, TabCategory } from '../../../shared/types';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
 
 const INDEXED_MAILBOXES = ['inbox', 'sent', 'trash', 'spam', 'muted'] as const;
@@ -204,4 +204,52 @@ export function replaceThreadInMailboxIndex({
       muted: mailboxThreads.muted.length,
     },
   };
+}
+
+export function applyDeltaToMailboxIndex({
+  index,
+  previousThreads,
+  delta,
+  tabCategories,
+  mutedLabelIdsByAccount,
+  getThreadCategory,
+}: {
+  index: MailboxIndex;
+  previousThreads: MailThread[];
+  delta: MailboxDelta;
+  tabCategories: TabCategory[];
+  mutedLabelIdsByAccount: Readonly<Record<string, readonly string[]>>;
+  getThreadCategory: (thread: MailThread) => string;
+}): MailboxIndex {
+  const previousByKey = new Map(previousThreads.map(thread => [threadKey(thread), thread]));
+  let next = index;
+  for (const threadId of delta.deletedThreadIds) {
+    const previous = previousByKey.get(`${delta.accountId}:${threadId}`);
+    if (!previous) continue;
+    next = replaceThreadInMailboxIndex({
+      index: next,
+      previousThread: previous,
+      nextThread: { ...previous, labelIds: [], isUnread: false, reminderAt: null },
+      tabCategories,
+      mutedLabelIdsByAccount,
+      getThreadCategory,
+    });
+    next.categoryByThreadKey.delete(`${delta.accountId}:${threadId}`);
+  }
+  for (const thread of delta.upserts) {
+    const previous = previousByKey.get(threadKey(thread)) || {
+      ...thread,
+      labelIds: [],
+      isUnread: false,
+    };
+    next = replaceThreadInMailboxIndex({
+      index: next,
+      previousThread: previous,
+      nextThread: thread,
+      tabCategories,
+      mutedLabelIdsByAccount,
+      getThreadCategory,
+    });
+  }
+  return next;
 }

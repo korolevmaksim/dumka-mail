@@ -8,6 +8,7 @@ import { MAILBOX_SEARCH_TOOL_NAME } from '../shared/mailboxSearchTool';
 import { CALENDAR_FREE_SLOTS_TOOL_NAME, CALENDAR_SEARCH_TOOL_NAME } from '../shared/calendarAssistant';
 import { buildAgentActionProposalInstruction, parseAgentActionProposalResponse } from '../shared/agentActionProposal';
 import { resolveAgentActionProposals } from './agentActionProposalResolver';
+import { AI_CHAT_REQUEST_TIMEOUT_MS } from '../shared/aiRequest';
 
 export { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer };
 
@@ -255,14 +256,14 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
 
       if (isResponsesApi) {
         // Responses API doesn't support tools in the same way, fallback to simple completion
-        const res = await fetch(endpoint, {
+        const res = await fetchWithTimeout(endpoint, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({ model: resolvedModel, input: `${sysInstruction}\n\n${promptText}` })
-        });
+        }, AI_CHAT_REQUEST_TIMEOUT_MS, 'OpenAI');
         if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
         const data = await res.json() as any;
         let text = '';
@@ -316,14 +317,14 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           body.reasoning_effort = openAIReasoningEffort;
         }
 
-        const res = await fetch(endpoint, {
+        const res = await fetchWithTimeout(endpoint, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(body)
-        });
+        }, AI_CHAT_REQUEST_TIMEOUT_MS, 'OpenAI');
 
         if (!res.ok) {
           throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
@@ -407,7 +408,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           };
         }
 
-        const res = await fetch(endpoint, {
+        const res = await fetchWithTimeout(endpoint, {
           method: 'POST',
           headers: {
             'x-api-key': apiKey,
@@ -415,7 +416,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(body)
-        });
+        }, AI_CHAT_REQUEST_TIMEOUT_MS, 'Anthropic');
 
         if (!res.ok) {
           throw new Error(`Anthropic HTTP ${res.status}: ${await res.text()}`);
@@ -500,11 +501,11 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           };
         }
 
-        const res = await fetch(endpoint, {
+        const res = await fetchWithTimeout(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
-        });
+        }, AI_CHAT_REQUEST_TIMEOUT_MS, 'Gemini');
 
         if (!res.ok) {
           throw new Error(`Gemini HTTP ${res.status}: ${await res.text()}`);
@@ -628,11 +629,11 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
           addOpenRouterHeaders(headers, env);
         }
 
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
           method: 'POST',
           headers,
           body: JSON.stringify(body)
-        });
+        }, AI_CHAT_REQUEST_TIMEOUT_MS, 'Chat Completions');
 
         if (!res.ok) {
           throw new Error(`Chat Completions HTTP ${res.status}: ${await res.text()}`);
@@ -706,7 +707,7 @@ function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, lab
 
     timeout = setTimeout(() => {
       controller.abort();
-      finish(() => reject(new Error(`${label} embeddings request timed out after ${timeoutMs}ms.`)));
+      finish(() => reject(new Error(`${label} request timed out after ${timeoutMs}ms.`)));
     }, timeoutMs);
 
     fetch(url, { ...init, signal: controller.signal }).then(

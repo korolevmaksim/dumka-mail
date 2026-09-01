@@ -8,6 +8,7 @@
   --raised-surface: #FCFDFE;
   --selected-row: #ECF0F7;
   --hover-row: rgba(0, 0, 0, 0.035);
+  --focus-row: color-mix(in srgb, var(--accent) 16%, transparent);
   --border: rgba(0, 0, 0, 0.08);
   --strong-border: rgba(0, 0, 0, 0.14);
   --text-primary: rgba(0, 0, 0, 0.86);
@@ -89,6 +90,7 @@
   --raised-surface: #1B1D22;
   --selected-row: #262F3E;
   --hover-row: rgba(255, 255, 255, 0.075);
+  --focus-row: color-mix(in srgb, var(--accent) 28%, transparent);
   --border: rgba(255, 255, 255, 0.105);
   --strong-border: rgba(255, 255, 255, 0.18);
   --text-primary: rgba(255, 255, 255, 0.90);
@@ -128,6 +130,7 @@
   --inset-surface: #F0F4F9;
   --selected-row: color-mix(in srgb, var(--accent) 15%, #F1F5FA);
   --hover-row: color-mix(in srgb, var(--accent) 7%, transparent);
+  --focus-row: color-mix(in srgb, var(--accent) 18%, transparent);
   --accent-surface: color-mix(in srgb, var(--accent) 13%, #FFFFFF);
   --accent-solid: color-mix(in srgb, var(--accent) 72%, #111827);
   --ai-solid: #684AAA;
@@ -157,6 +160,7 @@
   --inset-surface: #162236;
   --selected-row: color-mix(in srgb, var(--accent) 27%, #182438);
   --hover-row: rgba(151, 181, 231, 0.11);
+  --focus-row: color-mix(in srgb, var(--accent) 32%, transparent);
   --accent-surface: color-mix(in srgb, var(--accent) 25%, #182438);
   --accent-solid: color-mix(in srgb, var(--accent) 72%, #111827);
   --ai-solid: #684AAA;

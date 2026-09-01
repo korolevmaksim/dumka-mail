@@ -276,3 +276,26 @@ export function flattenLabelTree(nodes: LabelTreeNode[]): LabelTreeNode[] {
   }
   return result;
 }
+
+export function labelTreeNodeMatchesQuery(node: LabelTreeNode, query: string): boolean {
+  const normalizedQuery = normalizedLabelSearchValue(query);
+  if (!normalizedQuery) return true;
+  return [node.segment, node.fullName, node.label?.name, node.label?.id]
+    .filter((value): value is string => Boolean(value))
+    .some(value => normalizedLabelSearchValue(value).includes(normalizedQuery));
+}
+
+export function filterLabelTree(nodes: LabelTreeNode[], query: string): LabelTreeNode[] {
+  if (!normalizedLabelSearchValue(query)) return nodes;
+  return nodes.flatMap(node => {
+    const children = filterLabelTree(node.children, query);
+    if (children.length > 0 || labelTreeNodeMatchesQuery(node, query)) {
+      return [{ ...node, children }];
+    }
+    return [];
+  });
+}
+
+export function selectableLabeledNodes(nodes: LabelTreeNode[]): LabelTreeNode[] {
+  return flattenLabelTree(nodes).filter((node): node is LabelTreeNode & { label: MailLabelDefinition } => Boolean(node.label));
+}

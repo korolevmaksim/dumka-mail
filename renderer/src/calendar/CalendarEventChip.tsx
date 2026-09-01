@@ -61,7 +61,7 @@ export function CalendarEventChip({ event, calendar, compact = false, draggable 
         </span>
       )}
       {event.conferenceUrl && <span className="shrink-0 opacity-80" aria-label="Video meeting">⌁</span>}
-      {event.status === 'pending' && <span className="shrink-0 text-[8px] uppercase opacity-75">sync</span>}
+      {event.status === 'pending' && <span className="shrink-0 text-[calc(11px*var(--font-scale))] uppercase opacity-75">sync</span>}
     </button>
   );
 }

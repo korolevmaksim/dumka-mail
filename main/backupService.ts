@@ -17,7 +17,8 @@ import { app, dialog, type BrowserWindow } from 'electron';
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { AccountsRepo, getDatabase, SettingsRepo } from './database';
+import { AccountsRepo, closeDatabase, getDatabase, SettingsRepo } from './database';
+import { databaseWorkerClient } from './databaseWorkerClient';
 import { ensureAppSupportDir } from './appPaths';
 import { SystemLogger } from './systemLogger';
 import {
@@ -304,4 +305,22 @@ export function applyPendingRestoreIfAny(): { applied: boolean; preRestorePath?:
     console.error('[Backup Restore] Failed to apply staged restore:', message);
     return { applied: false, error: message };
   }
+}
+
+export function moveAsideLiveDatabase(): { asidePath: string } {
+  databaseWorkerClient.shutdown();
+  closeDatabase();
+  const supportDir = ensureAppSupportDir();
+  const dbPath = path.join(supportDir, LIVE_DATABASE_NAME);
+  const asidePath = path.join(supportDir, `database.corrupt-${Date.now()}.sqlite`);
+  if (fs.existsSync(dbPath)) {
+    fs.renameSync(dbPath, asidePath);
+  }
+  for (const suffix of ['-wal', '-shm']) {
+    const sidecar = `${dbPath}${suffix}`;
+    if (fs.existsSync(sidecar)) {
+      fs.renameSync(sidecar, `${asidePath}${suffix}`);
+    }
+  }
+  return { asidePath };
 }

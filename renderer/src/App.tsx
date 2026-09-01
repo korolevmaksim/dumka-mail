@@ -47,6 +47,7 @@ import { presentMailActionFeedback, undoPayloadJson } from './lib/presentMailAct
 import { keymapShortcut } from '../../shared/appKeymap';
 import { mailboxEmptyCopy } from '../../shared/mailboxEmptyCopy';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
+import { filterEnabledSplitTabs } from '../../shared/inboxSplits';
 import { visibleSplitTabs } from '../../shared/splitTabs';
 import type { Draft, MailboxView, MailThread } from '../../shared/types';
 
@@ -766,22 +767,25 @@ function AppContent() {
 
   const hideEmptySplits = store.settings.inbox.hideEmptySplits;
   const activeCategoryTabs = visibleSplitTabs(
-    store.tabCategories.filter(c => {
-      if (c.isSystem) return true;
-      if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
-      return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
-    }),
+    filterEnabledSplitTabs(
+      store.tabCategories.filter(c => {
+        if (c.isSystem) return true;
+        if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
+        return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
+      }),
+      store.settings.inbox,
+    ),
     store.splitCounts,
     hideEmptySplits,
     store.activeSplit,
   );
 
-  // When empty splits are hidden, never leave the selection on a hidden tab.
+  // Never leave the selection on a hidden or disabled split tab.
   useEffect(() => {
-    if (!hideEmptySplits) return;
+    if (activeCategoryTabs.length === 0) return;
     if (activeCategoryTabs.some(c => c.id === store.activeSplit)) return;
-    store.setActiveSplit('important');
-  }, [hideEmptySplits, activeCategoryTabs, store.activeSplit]);
+    store.setActiveSplit(activeCategoryTabs[0].id);
+  }, [activeCategoryTabs, store.activeSplit]);
   const mailboxIcons: Record<MailboxView, typeof Inbox> = {
     inbox: Inbox,
     drafts: FileText,
@@ -1126,6 +1130,7 @@ function AppContent() {
                                 onMove={(labelId) => runSelectedLabelAction('moveToLabel', labelId)}
                                 onApply={(labelId) => runSelectedLabelAction('applyLabel', labelId)}
                                 onRemove={(labelId) => runSelectedLabelAction('removeLabel', labelId)}
+                                onClose={() => setBatchLabelMenuOpen(false)}
                                 labelPresenceById={selectedLabelPresenceById}
                                 className="absolute bottom-8 right-0"
                               />
@@ -1380,6 +1385,7 @@ function AppContent() {
                                   onMove={(labelId) => runOpenedThreadLabelAction('moveToLabel', labelId)}
                                   onApply={(labelId) => runOpenedThreadLabelAction('applyLabel', labelId)}
                                   onRemove={(labelId) => runOpenedThreadLabelAction('removeLabel', labelId)}
+                                  onClose={() => setLabelMenuOpen(false)}
                                   currentLabelIds={store.openedThread?.labelIds || []}
                                   className="absolute right-0 top-8"
                                 />
@@ -1684,7 +1690,7 @@ function AppContent() {
             onClick={() => {
               store.setWorkspaceView('mail');
               store.openThread(contextMenu.thread).then(() => {
-                store.saveDraftLocally('', contextMenu.thread.senderEmail, `Re: ${contextMenu.thread.subject}`);
+                store.saveDraftLocally('', contextMenu.thread.senderEmail, '', contextMenu.thread);
               });
               setContextMenu(null);
             }}

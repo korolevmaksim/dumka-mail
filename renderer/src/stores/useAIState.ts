@@ -891,14 +891,14 @@ export function useAIState({
 
     try {
       if (canUseAI) {
-        const response = await window.electronAPI.completeAI({
+        const response = await withAIRequestTimeout(window.electronAPI.completeAI({
           action: 'triage',
           context: buildAITriageContext(visibleThreadsSnapshot),
           conversationHistory: [],
           userInstruction: buildAITriageInstruction(intent),
         }, aiProvider, resolveAIModelForPurpose('interactive', {
           interactiveModel: settings.ai.globalDefaultModel,
-        }, aiModel));
+        }, aiModel)));
         if (!requestIsCurrent()) return;
 
         plan = buildAITriagePlanFromResponse({
@@ -980,7 +980,7 @@ export function useAIState({
       const briefings = await Promise.all(
         targetAccounts
           .filter(account => account.email)
-          .map(account => window.electronAPI.buildDailyBriefing(account.email, requestOptions))
+          .map(account => withAIRequestTimeout(window.electronAPI.buildDailyBriefing(account.email, requestOptions)))
       );
       if (!requestIsCurrent()) return false;
 

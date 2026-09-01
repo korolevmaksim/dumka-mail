@@ -66,6 +66,7 @@ import { useCalendarState, type CalendarEventRange } from './useCalendarState';
 import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import type { MailSearchState } from './mailSearchStatus';
+import { emitToast } from '../lib/toastBus';
 
 export const UNIFIED_ACCOUNT: Account = {
   id: 'unified',
@@ -497,14 +498,16 @@ interface AppStoreContextType {
   clearThreadReminder: (thread: MailThread) => Promise<void>;
   activeDraft: Draft | null;
   setActiveDraft: (d: Draft | null) => void;
+  getActiveDraft: () => Draft | null;
   composeLayout: 'inline' | 'floating';
   setComposeLayout: (layout: 'inline' | 'floating') => void;
   draftsList: Draft[];
   draftSaveStatus: 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
+  draftBodySeed: number;
   draftSaveStatusLabel: string | null;
   loadDrafts: () => Promise<void>;
   startNewDraft: (accountId?: string | null, seed?: Partial<Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject'>>) => Draft | null;
-  saveDraftLocally: (body: string, to: string, subject: string) => Promise<void>;
+  saveDraftLocally: (body: string, to: string, subject: string, targetThread?: MailThread | null) => Promise<void>;
   startReply: (message: MailMessage, replyAll?: boolean) => void;
   startReplyWithBody: (message: MailMessage, bodyPlain: string, replyAll?: boolean) => Draft | null;
   startForward: (message: MailMessage) => void;
@@ -718,6 +721,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const calendarState = useCalendarState({
     primaryEmail: primaryWorkspaceEmail,
     activeDraft: draftsState.activeDraft,
+    getActiveDraft: draftsState.getActiveDraft,
     defaultMeetingDurationMinutes: settingsState.settings.calendar.defaultMeetingDurationMinutes,
     loadActionLog: mailState.loadActionLog,
     updateDraftBody: draftsState.updateDraftBody,
@@ -750,17 +754,25 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
-    const [status, labels, contactList, groups] = await Promise.all([
-      window.electronAPI.getGoogleIntegrationStatus(targetEmail),
-      window.electronAPI.listLabels(targetEmail),
-      window.electronAPI.listContacts(targetEmail),
-      window.electronAPI.listContactGroups(targetEmail),
-      calendarState.loadCachedRange(targetEmail),
-    ]);
-    setGoogleIntegrationStatus(status);
-    setLabelDefinitions(current => replaceLabelsForAccount(current, targetEmail, labels));
-    setContacts(contactList);
-    setContactGroups(groups);
+    try {
+      const [status, labels, contactList, groups] = await Promise.all([
+        window.electronAPI.getGoogleIntegrationStatus(targetEmail),
+        window.electronAPI.listLabels(targetEmail),
+        window.electronAPI.listContacts(targetEmail),
+        window.electronAPI.listContactGroups(targetEmail),
+        calendarState.loadCachedRange(targetEmail),
+      ]);
+      setGoogleIntegrationStatus(status);
+      setLabelDefinitions(current => replaceLabelsForAccount(current, targetEmail, labels));
+      setContacts(contactList);
+      setContactGroups(groups);
+    } catch (error) {
+      console.error('Failed to load workspace cache:', error);
+      emitToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Could not load labels and contacts.',
+      });
+    }
   }, [calendarState.clearCalendarCache, calendarState.loadCachedRange, primaryWorkspaceEmail]);
 
   useEffect(() => {
@@ -1016,7 +1028,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...publicSettingsState
   } = settingsState;
 
-  const storeValue: AppStoreContextType = {
+  const storeValue: AppStoreContextType = useMemo(() => ({
     ...publicSettingsState,
     ...mailState,
     ...draftsState,
@@ -1065,7 +1077,54 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     openThreadFromToday,
     openThreadFromCalendar,
     closeOpenedThread,
-  };
+  }), [
+    publicSettingsState,
+    mailState,
+    draftsState,
+    aiState,
+    replyPipelineState,
+    googleIntegrationStatus,
+    labelDefinitions,
+    contacts,
+    contactGroups,
+    calendarEvents,
+    calendarLists,
+    calendarDraftSeed,
+    startCalendarEventFromThread,
+    calendarFocusRequest,
+    openCalendarEvent,
+    authorizeGoogleIntegration,
+    loadLabels,
+    syncLabels,
+    createLabel,
+    updateLabel,
+    deleteLabel,
+    moveThreadToLabel,
+    muteThread,
+    unmuteThread,
+    syncContacts,
+    updateContactLocal,
+    saveContactGroup,
+    renameContactGroup,
+    deleteContactGroup,
+    syncCalendarAgenda,
+    syncCalendarLists,
+    queryCalendarFreeBusy,
+    respondToCalendarInvite,
+    respondToCalendarEvent,
+    addCalendarEvent,
+    createCalendarEvent,
+    updateCalendarEvent,
+    deleteCalendarEvent,
+    resolveCalendarConflict,
+    createGoogleMeetDraftEvent,
+    fetchModelsForProvider,
+    syncGmailSignature,
+    beginTodayThreadNavigation,
+    openThreadFromToday,
+    openThreadFromCalendar,
+    closeOpenedThread,
+  ]);
 
   return (
     <AppStoreContext.Provider value={storeValue}>

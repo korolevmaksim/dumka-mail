@@ -71,6 +71,8 @@ export function InlineReplyComposer() {
   const [reminderOpen, setReminderOpen] = useState(false);
   const [sendLaterOpen, setSendLaterOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [liveBodyPlain, setLiveBodyPlain] = useState('');
+  const [liveBodyHtml, setLiveBodyHtml] = useState<string | null>(null);
 
   useEffect(() => {
     const draft = store.activeDraft;
@@ -80,6 +82,8 @@ export function InlineReplyComposer() {
     if (!isNewDraft) return;
 
     lastDraftIdRef.current = draft.id;
+    setLiveBodyPlain(draft.bodyPlain);
+    setLiveBodyHtml(draft.bodyHtml ?? null);
     setQuotedTextExpanded(false);
     window.setTimeout(() => {
       composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -92,6 +96,8 @@ export function InlineReplyComposer() {
   if (!activeDraft || activeDraft.threadId !== store.openedThread?.id || store.composeLayout !== 'inline') {
     return null;
   }
+
+  const liveDraft = () => store.getActiveDraft() || activeDraft;
 
   const toEmails = recipientList(activeDraft.to);
   const ccEmails = recipientList(activeDraft.cc);
@@ -134,7 +140,7 @@ export function InlineReplyComposer() {
   };
 
   const insertDefaultSnippet = () => {
-    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const alreadyHasSignature = Boolean(liveDraft().bodyHtml?.includes('gmail_signature'));
     const snippet = renderDefaultSnippetHtml(
       alreadyHasSignature
         ? { ...store.settings.snippets, includeSignature: false }
@@ -152,7 +158,7 @@ export function InlineReplyComposer() {
   };
 
   const insertSnippetTemplate = (template: SnippetTemplate) => {
-    const alreadyHasSignature = Boolean(activeDraft.bodyHtml?.includes('gmail_signature'));
+    const alreadyHasSignature = Boolean(liveDraft().bodyHtml?.includes('gmail_signature'));
     const snippet = renderSnippetTemplateHtml(
       alreadyHasSignature
         ? { ...template, includeSignature: false }
@@ -171,12 +177,13 @@ export function InlineReplyComposer() {
   };
 
   const saveCurrentBodyAsSnippet = async () => {
-    const body = activeDraft.bodyPlain.trim();
+    const currentDraft = liveDraft();
+    const body = currentDraft.bodyPlain.trim();
     if (!body) {
       emitToast({ type: 'warning', message: 'Write a body before saving a snippet.' });
       return;
     }
-    const titleSeed = activeDraft.subject.trim() || 'New snippet';
+    const titleSeed = currentDraft.subject.trim() || 'New snippet';
     await store.updateSettings(s => {
       s.snippets.enabled = true;
       const id = createSnippetTemplateId(titleSeed, s.snippets.templates);
@@ -262,15 +269,15 @@ export function InlineReplyComposer() {
 
       <RichTextEditor
         ref={editorRef}
-        draftId={`${activeDraft.id}:${activeDraft.accountId}`}
-        bodyPlain={activeDraft.bodyPlain}
-        bodyHtml={activeDraft.bodyHtml}
+        draftId={`${activeDraft.id}:${activeDraft.accountId}:${store.draftBodySeed}`}
+        bodyPlain={liveDraft().bodyPlain}
+        bodyHtml={liveDraft().bodyHtml}
         placeholder="Write your reply"
         spellCheck={store.settings.compose.spellCheck}
         fontSize={store.settings.compose.defaultFontSize}
         smartCompose={{
           enabled: store.settings.compose.smartCompose,
-          subject: activeDraft.subject,
+          subject: liveDraft().subject,
           toRecipientName: activeDraft.to[0]?.name || activeDraft.to[0]?.email || '',
           provider: store.aiProvider,
           interactiveModel: store.settings.ai.globalDefaultModel,
@@ -284,11 +291,15 @@ export function InlineReplyComposer() {
         }}
         editorClassName="min-h-[170px] max-h-[min(42vh,420px)] px-4 py-3"
         collapseQuotedText={hasQuotedReply && !quotedTextExpanded}
-        onChange={(bodyPlain, bodyHtml) => store.updateDraftBody(bodyPlain, bodyHtml)}
+        onChange={(bodyPlain, bodyHtml) => {
+          setLiveBodyPlain(bodyPlain);
+          setLiveBodyHtml(bodyHtml);
+          store.updateDraftBody(bodyPlain, bodyHtml);
+        }}
         onDropFiles={store.addDroppedFilesToDraft}
       />
 
-      <DraftPlaceholderWarning bodyPlain={activeDraft.bodyPlain} bodyHtml={activeDraft.bodyHtml} />
+      <DraftPlaceholderWarning bodyPlain={liveBodyPlain} bodyHtml={liveBodyHtml} />
 
       {hasQuotedReply && (
         <div className="border-t border-[var(--border)]/40 px-4 py-2 select-none">

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MailThread, TabCategory } from '../shared/types';
 import {
+  applyDeltaToMailboxIndex,
   buildMailboxIndexCooperatively,
   replaceThreadInMailboxIndex,
   threadsForMailboxIndex,
@@ -169,5 +170,37 @@ describe('mailbox index', () => {
 
     expect(next.splitCounts.important).toBe(0);
     expect(next.splitUnreadCounts.important).toBe(0);
+  });
+
+  it('applies a sync delta without rebuilding the whole index', async () => {
+    const getThreadCategory = vi.fn((item: MailThread) => item.isUnread ? 'important' : 'other');
+    const first = thread('1', ['INBOX'], true);
+    const second = thread('2');
+    const index = await buildMailboxIndexCooperatively({
+      threads: [first, second],
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+    getThreadCategory.mockClear();
+
+    const next = applyDeltaToMailboxIndex({
+      index: index!,
+      previousThreads: [first, second],
+      delta: {
+        accountId: 'me@example.com',
+        revision: 2,
+        completedAt: '2026-07-10T11:00:00.000Z',
+        upserts: [{ ...first, isUnread: false }],
+        deletedThreadIds: ['2'],
+      },
+      tabCategories: categories,
+      mutedLabelIdsByAccount: {},
+      getThreadCategory,
+    });
+
+    expect(getThreadCategory).toHaveBeenCalledTimes(2);
+    expect(threadsForMailboxIndex(next, 'inbox', 'important')).toEqual([]);
+    expect(threadsForMailboxIndex(next, 'inbox', 'other').map(item => item.id)).toEqual(['1']);
   });
 });

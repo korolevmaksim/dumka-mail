@@ -352,6 +352,7 @@ export function InboxTab() {
           { key: 'enableFollowUps', title: 'Enable Follow-ups Detection', desc: 'Query sent messages lacking replies' },
           { key: 'showPurchasesSplit', title: 'Include Purchases Split Tab', desc: 'Parse receipt and bill signals' },
           { key: 'showLinkedInSplit', title: 'Include LinkedIn Split Tab', desc: 'Route professional connections separately' },
+          { key: 'showAutomationSplit', title: 'Include Automation Split Tab', desc: 'Keep receipts, CI, and bot mail in their own split' },
           { key: 'collapseReadThreads', title: 'Collapse Read Threads', desc: 'Minimize read threads in detail viewer' },
           { key: 'hideEmptySplits', title: 'Hide Empty Splits', desc: 'Only show split tabs that contain threads. Important always stays visible.' },
         ].map(item => (

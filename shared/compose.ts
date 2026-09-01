@@ -251,7 +251,7 @@ function bodyHtmlSource(message: MailMessage): string {
 // Subject helpers (ported from `Draft.subject`)
 // ---------------------------------------------------------------------------
 
-function replySubject(subject: string): string {
+export function replySubject(subject: string): string {
   return subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`
 }
 

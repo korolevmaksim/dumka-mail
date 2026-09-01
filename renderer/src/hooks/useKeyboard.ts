@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
 import { deriveShortcuts, physicalKeyChar, resolveSingleKey } from '../../../shared/keyboard';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
+import { filterEnabledSplitTabs } from '../../../shared/inboxSplits';
 import { visibleSplitTabs } from '../../../shared/splitTabs';
 import { composeOrConnectAccount } from '../lib/composeOrConnect';
 import type { MailThread } from '../../../shared/types';
@@ -178,11 +179,14 @@ export function useKeyboard(options: KeyboardOptions) {
       // Split switching (unmodified keys 1 to 9 based on the visible tabs)
       if (noModifiers && e.key >= '1' && e.key <= '9') {
         const activeTabs = visibleSplitTabs(
-          currentStore.tabCategories.filter(c => {
-            if (c.isSystem) return true;
-            if (!currentStore.activeAccount || currentStore.activeAccount.id === 'unified') return true;
-            return !c.accountId || c.accountId === 'global' || c.accountId === currentStore.activeAccount.email;
-          }),
+          filterEnabledSplitTabs(
+            currentStore.tabCategories.filter(c => {
+              if (c.isSystem) return true;
+              if (!currentStore.activeAccount || currentStore.activeAccount.id === 'unified') return true;
+              return !c.accountId || c.accountId === 'global' || c.accountId === currentStore.activeAccount.email;
+            }),
+            currentStore.settings.inbox,
+          ),
           currentStore.splitCounts,
           currentStore.settings.inbox.hideEmptySplits,
           currentStore.activeSplit,

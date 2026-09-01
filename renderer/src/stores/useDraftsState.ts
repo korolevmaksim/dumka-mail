@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionExecutionResult, MailActionLog } from '../../../shared/types';
-import { startReply as buildReplySeed, startForward as buildForwardSeed, validateDraft } from '../../../shared/compose';
+import { startReply as buildReplySeed, startForward as buildForwardSeed, replySubject, validateDraft } from '../../../shared/compose';
 import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
 import { cancelPendingMailAction } from '../lib/cancelPendingMailAction';
@@ -44,6 +44,7 @@ export function useDraftsState({
   const [pendingSend, setPendingSend] = useState<boolean>(false);
   const [pendingSendSeconds, setPendingSendSeconds] = useState<number>(0);
   const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>('idle');
+  const [draftBodySeed, setDraftBodySeed] = useState(0);
   const [discardedDraftIds, setDiscardedDraftIds] = useState<string[]>([]);
 
   const pendingSendTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -51,7 +52,8 @@ export function useDraftsState({
   const pendingDraftRef = useRef<Draft | null>(null);
   const pendingSendActionRef = useRef<MailActionLog | null>(null);
   const activeDraftRef = useRef<Draft | null>(activeDraft);
-  activeDraftRef.current = activeDraft;
+  const openedThreadRef = useRef<MailThread | null>(openedThread);
+  openedThreadRef.current = openedThread;
   const pendingWriteRef = useRef<Draft | null>(null);
   const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const writeInFlightRef = useRef<Promise<void> | null>(null);
@@ -99,7 +101,8 @@ export function useDraftsState({
     const write = persistDraftNow(draft, persistReason).then(() => undefined);
     writeInFlightRef.current = write;
     await write;
-    writeInFlightRef.current = null;
+    if (writeInFlightRef.current === write) writeInFlightRef.current = null;
+    void loadDrafts();
     if (pendingWriteRef.current) await flushDraftPersistence();
   };
 
@@ -120,6 +123,39 @@ export function useDraftsState({
     }
     void flushDraftPersistence();
   };
+
+  const replaceActiveDraft = (incoming: Draft | null) => {
+    const current = activeDraftRef.current;
+    const draft = incoming && current && current.id === incoming.id && current.updatedAt > incoming.updatedAt
+      ? current
+      : incoming;
+    const pending = pendingWriteRef.current;
+    if (pending && pending.id !== draft?.id) {
+      if (writeTimerRef.current) {
+        clearTimeout(writeTimerRef.current);
+        writeTimerRef.current = null;
+      }
+      pendingWriteRef.current = null;
+      const persistReason: DraftPersistReason = shouldPersistDraftWrite({
+        keepDraftsAcrossLaunches,
+        autoSaveDrafts,
+        reason: 'autosave',
+      }) ? 'autosave' : 'explicit';
+      const write = persistDraftNow(pending, persistReason).then(() => undefined);
+      writeInFlightRef.current = write;
+      void write.finally(() => {
+        if (writeInFlightRef.current === write) writeInFlightRef.current = null;
+        void loadDrafts();
+      });
+    }
+    activeDraftRef.current = draft;
+    if (draft && pendingWriteRef.current?.id === draft.id) {
+      pendingWriteRef.current = draft;
+    }
+    setActiveDraft(draft);
+  };
+
+  const getActiveDraft = useCallback(() => activeDraftRef.current, []);
 
   const loadDrafts = useCallback(async () => {
     if (!settings.general.keepDraftsAcrossLaunches) {
@@ -222,37 +258,60 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
 
-    setActiveDraft(draft);
+    replaceActiveDraft(draft);
     setDraftSaveStatus('unsaved');
     setComposeLayout('floating');
     queueDraftWrite(draft, 'create');
     return draft;
   };
 
-  const saveDraftLocally = async (body: string, toStr: string, subject: string) => {
+  const saveDraftLocally = async (body: string, toStr: string, subject: string, targetThread?: MailThread | null) => {
     if (!activeAccount) return;
 
+    const thread = targetThread === undefined ? openedThreadRef.current : targetThread;
     const toRecipients = toStr ? toStr.split(',').map(e => ({ name: '', email: e.trim() })) : [];
-    const targetAccountId = openedThread ? openedThread.accountId : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
+    const targetAccountId = thread ? thread.accountId : (activeAccount.id === 'unified' ? accounts[0]?.email : activeAccount.email);
     if (!targetAccountId) return;
     const initialBody = buildInitialDraftBodyWithSignature(body, settings.compose, settings.profile, targetAccountId);
 
+    const active = activeDraftRef.current;
+    const current = thread
+      ? ((active
+          && active.accountId === targetAccountId
+          && active.threadId === thread.id
+          && !active.sendAt
+          && !discardedDraftIds.includes(active.id))
+        ? active
+        : findReusableThreadDraft(
+            visibleDrafts(draftsList, new Set(discardedDraftIds)),
+            targetAccountId,
+            thread.id,
+          ))
+      : null;
+    const reuseCurrent = Boolean(current);
+    const keepCurrentBody = Boolean(reuseCurrent && current && !body.trim());
     const draft: Draft = {
-      id: activeDraft?.id || crypto.randomUUID(),
+      id: reuseCurrent && current ? current.id : crypto.randomUUID(),
       accountId: targetAccountId,
-      threadId: openedThread?.id || null,
-      to: toRecipients,
-      cc: activeDraft?.cc || [],
-      bcc: activeDraft?.bcc || [],
-      subject: subject || (openedThread ? `Re: ${openedThread.subject}` : ''),
-      bodyPlain: initialBody.bodyPlain,
-      bodyHtml: activeDraft?.bodyHtml || initialBody.bodyHtml,
-      attachments: activeDraft?.attachments || [],
+      threadId: thread?.id || null,
+      to: reuseCurrent && current ? current.to : toRecipients,
+      cc: reuseCurrent && current ? current.cc : [],
+      bcc: reuseCurrent && current ? current.bcc : [],
+      subject: reuseCurrent && current
+        ? current.subject
+        : (subject || (thread ? replySubject(thread.subject) : '')),
+      bodyPlain: keepCurrentBody && current ? current.bodyPlain : initialBody.bodyPlain,
+      bodyHtml: keepCurrentBody && current ? (current.bodyHtml ?? null) : initialBody.bodyHtml,
+      attachments: reuseCurrent && current ? current.attachments : [],
+      replyMessageId: reuseCurrent && current ? current.replyMessageId : null,
+      replyReferences: reuseCurrent && current ? current.replyReferences : null,
+      rfcMessageId: reuseCurrent && current ? current.rfcMessageId : null,
       updatedAt: new Date().toISOString()
     };
 
     await persistDraftNow(draft, 'explicit');
-    setActiveDraft(draft);
+    replaceActiveDraft(draft);
+    if (!keepCurrentBody) setDraftBodySeed(seed => seed + 1);
     setComposeLayout('inline');
     loadDrafts();
   };
@@ -271,7 +330,7 @@ export function useDraftsState({
       message.threadId,
     );
     if (reusable) {
-      setActiveDraft(reusable);
+      replaceActiveDraft(reusable);
       setDraftSaveStatus('saved');
       setComposeLayout('inline');
       return;
@@ -296,8 +355,8 @@ export function useDraftsState({
       replyReferences: seed.replyReferences || null,
       updatedAt: new Date().toISOString()
     };
+    replaceActiveDraft(draft);
     queueDraftWrite(draft, 'create');
-    setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
   };
@@ -336,8 +395,9 @@ export function useDraftsState({
       rfcMessageId: reusable?.rfcMessageId || null,
       updatedAt: new Date().toISOString()
     };
+    replaceActiveDraft(draft);
+    setDraftBodySeed(seed => seed + 1);
     queueDraftWrite(draft, 'explicit');
-    setActiveDraft(draft);
     setComposeLayout('inline');
     loadDrafts();
     return draft;
@@ -361,29 +421,46 @@ export function useDraftsState({
       updatedAt: new Date().toISOString()
     };
     openThread(null);
+    replaceActiveDraft(draft);
     queueDraftWrite(draft, 'create');
-    setActiveDraft(draft);
     setComposeLayout('floating');
     loadDrafts();
   };
 
   const updateDraft = (patch: Partial<Draft>) => {
-    if (!activeDraft) return;
-    const updated: Draft = { ...activeDraft, ...patch, updatedAt: new Date().toISOString() };
-    setActiveDraft(updated);
+    const current = activeDraftRef.current;
+    if (!current) return;
+    const updated: Draft = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    activeDraftRef.current = updated;
+    pendingWriteRef.current = updated;
     queueDraftWrite(updated, 'autosave');
+    const needsComposerRender = 'to' in patch
+      || 'cc' in patch
+      || 'bcc' in patch
+      || 'attachments' in patch
+      || 'accountId' in patch
+      || 'threadId' in patch
+      || 'sendAt' in patch;
+    if (needsComposerRender) {
+      setActiveDraft(updated);
+      return;
+    }
+    setDraftSaveStatus(status => (status === 'saving' ? status : 'unsaved'));
   };
 
   const updateDraftBody = (body: string, bodyHtml?: string | null) => {
-    if (!activeDraft) return;
+    const current = activeDraftRef.current;
+    if (!current) return;
     const updated: Draft = {
-      ...activeDraft,
+      ...current,
       bodyPlain: body,
-      bodyHtml: bodyHtml === undefined ? activeDraft.bodyHtml || null : bodyHtml,
+      bodyHtml: bodyHtml === undefined ? current.bodyHtml || null : bodyHtml,
       updatedAt: new Date().toISOString()
     };
-    setActiveDraft(updated);
+    activeDraftRef.current = updated;
+    pendingWriteRef.current = updated;
     queueDraftWrite(updated, 'autosave');
+    setDraftSaveStatus(status => (status === 'saving' ? status : 'unsaved'));
   };
 
   const addAttachmentToDraft = async () => {
@@ -398,9 +475,9 @@ export function useDraftsState({
       attachments: [...(currentDraft.attachments || []), ...attachments],
       updatedAt: new Date().toISOString()
     };
+    if (pendingWriteRef.current?.id === updatedDraft.id) pendingWriteRef.current = updatedDraft;
+    replaceActiveDraft(updatedDraft);
     await persistDraftNow(updatedDraft, 'explicit');
-    activeDraftRef.current = updatedDraft;
-    setActiveDraft(updatedDraft);
     loadDrafts();
   };
 
@@ -416,9 +493,9 @@ export function useDraftsState({
         attachments: [...(currentDraft.attachments || []), ...attachments],
         updatedAt: new Date().toISOString(),
       };
+      if (pendingWriteRef.current?.id === updatedDraft.id) pendingWriteRef.current = updatedDraft;
+      replaceActiveDraft(updatedDraft);
       await persistDraftNow(updatedDraft, 'explicit');
-      activeDraftRef.current = updatedDraft;
-      setActiveDraft(updatedDraft);
       loadDrafts();
     } catch (error: unknown) {
       emitToast({
@@ -429,14 +506,16 @@ export function useDraftsState({
   };
 
   const removeAttachmentFromDraft = async (attId: string) => {
-    if (!activeDraft) return;
+    const current = activeDraftRef.current;
+    if (!current) return;
     const updatedDraft: Draft = {
-      ...activeDraft,
-      attachments: (activeDraft.attachments || []).filter(a => a.id !== attId),
+      ...current,
+      attachments: (current.attachments || []).filter(a => a.id !== attId),
       updatedAt: new Date().toISOString()
     };
+    if (pendingWriteRef.current?.id === updatedDraft.id) pendingWriteRef.current = updatedDraft;
+    replaceActiveDraft(updatedDraft);
     await persistDraftNow(updatedDraft, 'explicit');
-    setActiveDraft(updatedDraft);
     loadDrafts();
   };
 
@@ -447,19 +526,23 @@ export function useDraftsState({
       discardTimersRef.current.delete(draft.id);
     }
     setDiscardedDraftIds(current => current.filter(id => id !== draft.id));
-    setActiveDraft(draft);
+    replaceActiveDraft(draft);
     setComposeLayout(draft.threadId ? 'inline' : 'floating');
   };
 
   const discardDraft = async (draftId: string) => {
-    const draft = (activeDraft?.id === draftId ? activeDraft : draftsList.find(item => item.id === draftId)) || null;
-    if (writeTimerRef.current && pendingWriteRef.current?.id === draftId) {
-      clearTimeout(writeTimerRef.current);
-      writeTimerRef.current = null;
+    const draft = (activeDraftRef.current?.id === draftId
+      ? activeDraftRef.current
+      : draftsList.find(item => item.id === draftId)) || null;
+    if (pendingWriteRef.current?.id === draftId) {
+      if (writeTimerRef.current) {
+        clearTimeout(writeTimerRef.current);
+        writeTimerRef.current = null;
+      }
       pendingWriteRef.current = null;
     }
-    if (activeDraft?.id === draftId) {
-      setActiveDraft(null);
+    if (activeDraftRef.current?.id === draftId) {
+      replaceActiveDraft(null);
       setDraftSaveStatus('idle');
     }
     setDiscardedDraftIds(current => current.includes(draftId) ? current : [...current, draftId]);
@@ -499,7 +582,8 @@ export function useDraftsState({
   };
 
   const scheduleDraftSend = async (date: Date) => {
-    if (!activeDraft || !activeAccount) return;
+    const currentDraft = activeDraftRef.current;
+    if (!currentDraft || !activeAccount) return;
     if (pendingSend) return;
 
     const sendAt = date.toISOString();
@@ -508,18 +592,18 @@ export function useDraftsState({
       return;
     }
 
-    const validationError = validateDraftForSend(activeDraft);
+    const validationError = validateDraftForSend(currentDraft);
     if (validationError) {
       emitToast({ type: 'warning', message: validationError });
       return;
     }
 
-    const rfcMessageId = activeDraft.rfcMessageId || createRfcMessageId();
+    const rfcMessageId = currentDraft.rfcMessageId || createRfcMessageId();
     const scheduledDraft: Draft = {
-      ...activeDraft,
+      ...currentDraft,
       rfcMessageId,
       sendAt,
-      bodyHtml: compileDraftBodyHtml(activeDraft.bodyPlain, settings.compose, activeDraft.accountId, activeDraft.bodyHtml),
+      bodyHtml: compileDraftBodyHtml(currentDraft.bodyPlain, settings.compose, currentDraft.accountId, currentDraft.bodyHtml),
       updatedAt: new Date().toISOString(),
     };
     const log: MailActionLog = {
@@ -536,17 +620,18 @@ export function useDraftsState({
 
     await window.electronAPI.saveDraft(scheduledDraft);
     await window.electronAPI.saveActionLog(log);
-    setActiveDraft(null);
+    replaceActiveDraft(null);
     pendingDraftRef.current = null;
     loadDrafts();
     emitToast({ type: 'success', message: `Message scheduled for ${date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.` });
   };
 
   const sendDraftWithUndo = async () => {
-    if (!activeDraft || !activeAccount) return;
+    const currentDraft = activeDraftRef.current;
+    if (!currentDraft || !activeAccount) return;
     if (pendingSend) return;
 
-    const draftToSend = activeDraft;
+    const draftToSend = currentDraft;
     const validationError = validateDraftForSend(draftToSend);
     if (validationError) {
       emitToast({ type: 'warning', message: validationError });
@@ -611,20 +696,20 @@ export function useDraftsState({
         }, JSON.stringify({ accountId: draft.accountId, rfcMessageId }));
         loadDrafts();
         if (!result.accepted) {
-          setActiveDraft(draft);
+          replaceActiveDraft(draft);
           return;
         }
         if (result.offline) return;
         if (draft.threadId === openedThread?.id) openThread(null);
       } catch (e) {
         console.error('Failed to send draft:', e);
-        setActiveDraft(draft);
+        replaceActiveDraft(draft);
         emitToast({ type: 'error', message: 'Failed to send message.' });
       }
     };
 
     const delaySec = Math.max(0, Math.round(settings.compose.sendUndoDelay ?? 10));
-    setActiveDraft(null);
+    replaceActiveDraft(null);
     setDraftSaveStatus('idle');
 
     if (delaySec === 0) {
@@ -687,17 +772,19 @@ export function useDraftsState({
     if (draft) {
       const restored = { ...draft, sendAt: null, updatedAt: new Date().toISOString() };
       void persistDraftNow(restored, 'send');
-      setActiveDraft(restored);
+      replaceActiveDraft(restored);
     }
   };
 
   return {
     activeDraft,
-    setActiveDraft,
+    setActiveDraft: replaceActiveDraft,
+    getActiveDraft,
     composeLayout,
     setComposeLayout,
     draftsList: visibleDrafts(draftsList, new Set(discardedDraftIds)),
     draftSaveStatus,
+    draftBodySeed,
     draftSaveStatusLabel: draftSaveStatusLabel(draftSaveStatus),
     pendingSend,
     pendingSendSeconds,
