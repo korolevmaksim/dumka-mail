@@ -72,6 +72,10 @@ export type MailKeyAction =
   | 'shortcutGuide'
   | 'next'
   | 'prev'
+  | 'trash'
+  | 'spam'
+  | 'mute'
+  | 'select'
   | 'none';
 
 /**
@@ -96,9 +100,19 @@ export type MailKeyAction =
  *   h  → remind    (only when reminderKey enabled)
  *   o  → open
  *   z  → undo
+ *   m  → mute
+ *   x  → select
+ *   !  → spam
+ *   Backspace/Delete → trash
  *   j  → next      (only when vim enabled)
  *   k  → prev      (only when vim enabled)
  */
+/** Latin character for a physical key, so single-key shortcuts survive non-Latin layouts. */
+export function physicalKeyChar(key: string, code: string): string {
+  const match = /^Key([A-Z])$/.exec(code);
+  return match ? match[1].toLowerCase() : key;
+}
+
 export function resolveSingleKey(key: string, r: ResolvedShortcuts): MailKeyAction {
   if (!r.singleKey) {
     return 'none';
@@ -112,6 +126,12 @@ export function resolveSingleKey(key: string, r: ResolvedShortcuts): MailKeyActi
   }
   if (key === '/') {
     return 'search';
+  }
+  if (key === '!') {
+    return 'spam';
+  }
+  if (key === 'Backspace' || key === 'Delete') {
+    return 'trash';
   }
 
   switch (key.toLowerCase()) {
@@ -135,6 +155,10 @@ export function resolveSingleKey(key: string, r: ResolvedShortcuts): MailKeyActi
       return 'open';
     case 'z':
       return 'undo';
+    case 'm':
+      return 'mute';
+    case 'x':
+      return 'select';
     case 'j':
       return r.vim ? 'next' : 'none';
     case 'k':

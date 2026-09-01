@@ -14,7 +14,7 @@ function cmd(partial: Partial<PaletteCommand> & { id: string; title: string }): 
 }
 
 const compose = cmd({ id: 'compose', title: 'Compose', subtitle: 'Start a new draft', shortcut: '⌘N / C' });
-const search = cmd({ id: 'search', title: 'Search', subtitle: 'Filter current account', shortcut: '⌘F / /' });
+const search = cmd({ id: 'search', title: 'Search mailbox', subtitle: 'Filter current account', shortcut: '/' });
 const markDone = cmd({ id: 'done', title: 'Mark Done', subtitle: 'Archive selected thread', shortcut: '⌘⇧E / E' });
 const markRead = cmd({ id: 'read', title: 'Mark Read', subtitle: 'Remove unread state', shortcut: '⌘⇧U' });
 const replyAll = cmd({ id: 'reply-all', title: 'Reply All', subtitle: 'Reply to the thread recipients', shortcut: '⌘⇧R / A' });

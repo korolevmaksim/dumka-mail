@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { Command, Search, X } from 'lucide-react';
-import { emitToast } from '../../lib/toastBus';
+import { composeOrConnectAccount } from '../../lib/composeOrConnect';
+import { keymapShortcut, type AppKeyBindingId } from '../../../../shared/appKeymap';
 import { nextMailboxView } from '../../../../shared/mailboxNavigation';
 import {
   DEFAULT_COMMAND_GROUP_ORDER,
@@ -26,13 +27,14 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
   const listRef = useRef<HTMLDivElement>(null);
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
 
+  const shortcut = (id: AppKeyBindingId) => keymapShortcut(id, store.settings.shortcuts);
+
   // Rebuild each render so action closures always see current store fields.
   const commands: PaletteCommandWithAction[] = [
     {
       id: 'open-today',
       group: 'navigation',
       title: 'Open Today',
-      shortcut: 'Home',
       keywords: ['operator', 'home', 'today'],
       action: () => {
         store.setWorkspaceView('today');
@@ -44,7 +46,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'open-calendar',
       group: 'navigation',
       title: 'Open Calendar',
-      shortcut: '⌘⇧C',
+      shortcut: shortcut('openCalendar'),
       keywords: ['calendar', 'schedule', 'agenda', 'events'],
       action: () => {
         store.setWorkspaceView('calendar');
@@ -56,7 +58,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'mark-done',
       group: 'mail',
       title: 'Mark Done (Archive)',
-      shortcut: 'E',
+      shortcut: shortcut('markDone'),
       keywords: ['archive', 'done'],
       action: () => store.executeMailAction('markDone'),
     },
@@ -64,7 +66,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'mark-read',
       group: 'mail',
       title: 'Mark Read',
-      shortcut: 'R',
+      shortcut: shortcut('markRead'),
       keywords: ['read'],
       action: () => store.executeMailAction('markRead'),
     },
@@ -72,7 +74,6 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'mark-unread',
       group: 'mail',
       title: 'Mark Unread',
-      shortcut: 'Shift+R',
       keywords: ['unread'],
       action: () => store.executeMailAction('markUnread'),
     },
@@ -80,7 +81,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'move-trash',
       group: 'mail',
       title: 'Move to Trash',
-      shortcut: '#',
+      shortcut: shortcut('moveToTrash'),
       keywords: ['delete', 'remove'],
       action: () => store.executeMailAction('moveToTrash'),
     },
@@ -88,7 +89,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'move-spam',
       group: 'mail',
       title: 'Move to Spam',
-      shortcut: '!',
+      shortcut: shortcut('reportSpam'),
       keywords: ['spam', 'junk'],
       action: () => store.executeMailAction('reportSpam'),
     },
@@ -96,7 +97,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'ignore-thread',
       group: 'mail',
       title: 'Ignore Thread',
-      shortcut: 'M',
+      shortcut: shortcut('muteThread'),
       keywords: ['mute'],
       action: () => store.muteThread(),
     },
@@ -104,7 +105,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'set-reminder',
       group: 'mail',
       title: 'Set Reminder',
-      shortcut: 'H',
+      shortcut: shortcut('remind'),
       keywords: ['remind', 'snooze'],
       action: onOpenReminder,
     },
@@ -112,7 +113,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'open-ai-assistant',
       group: 'ai',
       title: 'Open AI Assistant',
-      shortcut: 'Cmd+J',
+      shortcut: shortcut('openAiAssistant'),
       keywords: ['ai', 'assistant'],
       action: () => store.setAiPanelOpen(true),
     },
@@ -120,7 +121,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'ai-triage-queue',
       group: 'ai',
       title: 'AI Triage Queue',
-      shortcut: 'S',
+      shortcut: shortcut('summarize'),
       keywords: ['triage', 'queue'],
       action: () => store.runAITriagePlan(),
     },
@@ -128,16 +129,10 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'compose-message',
       group: 'compose',
       title: 'Compose Message',
-      shortcut: 'C',
+      shortcut: shortcut('compose'),
       keywords: ['new mail', 'draft'],
       action: () => {
-        const draft = store.startNewDraft();
-        if (!draft) {
-          store.setWorkspaceView('mail');
-          store.setSettingsOpen(true);
-          store.setCleanupOpen(false);
-          emitToast({ type: 'warning', message: 'Connect an account before composing.' });
-        }
+        composeOrConnectAccount(store);
       },
     },
     {
@@ -151,7 +146,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'toggle-unified-inbox',
       group: 'navigation',
       title: 'Toggle Unified Inbox',
-      shortcut: 'Cmd+0',
+      shortcut: shortcut('toggleUnifiedInbox'),
       keywords: ['unified', 'all accounts'],
       action: () => {
         store.setWorkspaceView('mail');
@@ -164,7 +159,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'switch-mailbox',
       group: 'navigation',
       title: 'Switch Mailbox',
-      shortcut: 'G',
+      shortcut: shortcut('switchMailbox'),
       keywords: ['inbox', 'sent', 'trash', 'spam'],
       action: () => {
         store.setWorkspaceView('mail');
@@ -177,7 +172,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'undo-last-action',
       group: 'mail',
       title: 'Undo Last Action',
-      shortcut: 'Z',
+      shortcut: shortcut('undo'),
       keywords: ['undo'],
       action: () => store.undoLastAction(),
     },
@@ -185,7 +180,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'toggle-theme',
       group: 'settings',
       title: 'Toggle Theme',
-      shortcut: 'Cmd+Shift+T',
+      shortcut: shortcut('toggleTheme'),
       keywords: ['theme', 'dark', 'light'],
       action: () => {
         const nextTheme = store.theme === 'system' ? 'light' : (store.theme === 'light' ? 'dark' : 'system');
@@ -196,7 +191,6 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'cache-visible-bodies',
       group: 'sync',
       title: 'Cache Visible Bodies',
-      shortcut: 'Cmd+Shift+B',
       keywords: ['body', 'cache'],
       action: () => store.triggerVisibleBodyRepair(),
     },
@@ -204,7 +198,6 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       id: 'resume-older-mail-indexing',
       group: 'sync',
       title: 'Resume Older Mail Indexing',
-      shortcut: 'Cmd+Shift+I',
       keywords: ['backfill', 'index'],
       action: () => store.triggerBackfillManual(),
     },

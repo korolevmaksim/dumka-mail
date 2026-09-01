@@ -4,6 +4,7 @@ import { AlertTriangle, Check, LoaderCircle, Search, Sparkles, X } from 'lucide-
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
 import { getSearchIndicatorState } from './searchIndicator';
+import { isIncompleteBackfillProgress } from '../../../../shared/syncStatusAffordance';
 
 export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
@@ -195,6 +196,9 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           {store.syncStatusText && (
             <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] font-normal tracking-wide">
               {store.syncStatusText}
+              {isIncompleteBackfillProgress(store.backfillProgress)
+                ? ` · ${store.backfillProgress}`
+                : ''}
             </span>
           )}
         </div>

@@ -33,7 +33,7 @@ export function useMailSync({
 }: UseMailSyncProps) {
   const [syncHealth, setSyncHealth] = useState<'ready' | 'syncing' | 'indexing' | 'paused' | 'failed' | 'reconnect'>('ready');
   const [syncStatusText, setSyncStatusText] = useState<string>('Ready');
-  const [backfillProgress, setBackfillProgress] = useState<string>('0%');
+  const [backfillProgress, setBackfillProgress] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSuccessfulSync, setLastSuccessfulSync] = useState<MailSyncCompletion | null>(null);
   const [googleAuthIssues, setGoogleAuthIssues] = useState<GoogleAuthIssue[]>([]);

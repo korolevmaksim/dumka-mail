@@ -11,6 +11,9 @@ import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
 import { ToastHost } from './components/Toast';
 import { GoogleAuthBanner } from './components/GoogleAuthBanner';
+import { MailboxSyncBanner } from './components/MailboxSyncBanner';
+import { ConnectGmailPanel } from './components/ConnectGmailPanel';
+import { MailboxEmptyState } from './components/MailboxEmptyState';
 import { ThreadMessageList } from './components/ThreadMessageList';
 import { AgenticThreadPanel } from './components/AgenticThreadPanel';
 import { ThreadLabelMoveMenu } from './components/ThreadLabelMoveMenu';
@@ -29,6 +32,7 @@ import { ShortcutGuideOverlay } from './components/layout/ShortcutGuideOverlay';
 import { TodayHome } from './components/today/TodayHome';
 import { CalendarWorkspace } from './calendar/CalendarWorkspace';
 import { emitToast } from './lib/toastBus';
+import { composeOrConnectAccount } from './lib/composeOrConnect';
 import { resolveComposeAccountId } from './lib/composeAccount';
 import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { shouldCloseReaderForSearchChange } from './lib/searchReaderBehavior';
@@ -40,6 +44,8 @@ import { buildLabelTree, flattenLabelTree, labelDefinitionsForAccount, labelPres
 import { reverseMailActionKind } from '../../shared/mailActions';
 import { aggregateMailActionResults, isUndoableMailActionLog } from '../../shared/mailActionFeedback';
 import { presentMailActionFeedback, undoPayloadJson } from './lib/presentMailAction';
+import { keymapShortcut } from '../../shared/appKeymap';
+import { mailboxEmptyCopy } from '../../shared/mailboxEmptyCopy';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
 import { visibleSplitTabs } from '../../shared/splitTabs';
 import type { Draft, MailboxView, MailThread } from '../../shared/types';
@@ -250,14 +256,7 @@ function AppContent() {
       switch (cmdId) {
         case 'file.newDraft': {
           if (store.workspaceView === 'today') break;
-          const draft = store.startNewDraft();
-          if (!draft) {
-            store.setWorkspaceView('mail');
-            store.setSettingsOpen(true);
-            store.setCleanupOpen(false);
-            emitToast({ type: 'warning', message: 'Connect an account before composing.' });
-            break;
-          }
+          composeOrConnectAccount(store);
           break;
         }
         case 'edit.undo':
@@ -293,7 +292,8 @@ function AppContent() {
   useEffect(() => {
     if (!window.electronAPI?.setMenuCommandState) return;
 
-    const canCreateDraft = Boolean(resolveComposeAccountId(store.activeAccount, store.accounts));
+    const canCreateDraft = store.accounts.length === 0
+      || Boolean(resolveComposeAccountId(store.activeAccount, store.accounts));
     const canUndo = hasActiveDraft
       || store.actionLog.some(isUndoableMailActionLog);
 
@@ -808,32 +808,12 @@ function AppContent() {
   const activeMailbox = mailboxTabs.find(mailbox => mailbox.id === store.mailboxView) || mailboxTabs[0];
   const EmptyMailboxIcon = activeMailbox.icon;
   const ActiveMailboxIcon = activeMailbox.icon;
-  const emptyMailboxCopy = {
-    inbox: {
-      title: 'Clear inbox split',
-      body: 'Jump to other splits or press C to compose.',
-    },
-    drafts: {
-      title: 'No saved drafts',
-      body: 'Unsent compose drafts appear here when draft restore is enabled.',
-    },
-    sent: {
-      title: 'No sent conversations',
-      body: 'Recent sent mail appears here after sync.',
-    },
-    trash: {
-      title: 'Trash is empty',
-      body: 'Deleted conversations appear here while they are cached locally.',
-    },
-    spam: {
-      title: 'Spam is empty',
-      body: 'Reported spam appears here while it is cached locally.',
-    },
-    muted: {
-      title: 'No muted conversations',
-      body: 'Ignored threads appear here when they carry the Dumka muted label.',
-    },
-  }[activeMailbox.id];
+  const emptyMailboxCopy = mailboxEmptyCopy(
+    activeMailbox.id,
+    isDraftsMailbox ? '' : store.searchQuery,
+    store.settings.shortcuts,
+  );
+  const composeShortcut = keymapShortcut('compose', store.settings.shortcuts) || '⌘N';
   const visibleMailboxRowCount = isDraftsMailbox ? store.draftsList.length : store.visibleThreads.length;
   const mailboxListLabel = `${activeMailbox.label} mailbox, ${visibleMailboxRowCount} ${
     isDraftsMailbox
@@ -863,6 +843,7 @@ function AppContent() {
         {/* MAIN LAYOUT SPLIT: Left Workspace | Right Context panels */}
         <div className="dm-workspace-frame flex flex-1 flex-col overflow-hidden bg-[var(--app-bg)]">
           <GoogleAuthBanner />
+          <MailboxSyncBanner />
           <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* 3. AI COPILOT PANEL (Moved next to Left Rail & Undockable) */}
           {store.aiPanelOpen && <AICopilotPanel />}
@@ -952,16 +933,9 @@ function AppContent() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => {
-                    const draft = store.startNewDraft();
-                    if (!draft) {
-                      store.setWorkspaceView('mail');
-                      store.setSettingsOpen(true);
-                      store.setCleanupOpen(false);
-                      emitToast({ type: 'warning', message: 'Connect an account before composing.' });
-                      return;
-                    }
+                    composeOrConnectAccount(store);
                   }}
-                  title="Compose Message (C)"
+                  title={`Compose Message (${composeShortcut})`}
                   className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-all duration-150 active:scale-90"
                 >
                   <SquarePen className="w-3.5 h-3.5" />
@@ -984,6 +958,8 @@ function AppContent() {
                 <SettingsPanel />
               ) : store.cleanupOpen ? (
                 <CleanupPanel />
+              ) : store.accounts.length === 0 ? (
+                <ConnectGmailPanel />
               ) : (
                 <>
                   {/* THREAD LIST CONTAINER */}
@@ -1015,11 +991,11 @@ function AppContent() {
                     >
                       {isDraftsMailbox ? (
                         store.draftsList.length === 0 ? (
-                          <div role="status" aria-live="polite" className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
-                            <EmptyMailboxIcon aria-hidden="true" className="w-10 h-10 mb-2 opacity-30" />
-                            <p className="font-semibold">{emptyMailboxCopy.title}</p>
-                            <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">{emptyMailboxCopy.body}</p>
-                          </div>
+                          <MailboxEmptyState
+                            icon={EmptyMailboxIcon}
+                            copy={emptyMailboxCopy}
+                            onClearSearch={() => store.setSearchQuery('')}
+                          />
                         ) : (
                           store.draftsList.map((draft) => (
                             <DraftRow
@@ -1031,11 +1007,11 @@ function AppContent() {
                           ))
                         )
                       ) : store.visibleThreads.length === 0 ? (
-                        <div role="status" aria-live="polite" className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
-                          <EmptyMailboxIcon aria-hidden="true" className="w-10 h-10 mb-2 opacity-30" />
-                          <p className="font-semibold">{emptyMailboxCopy.title}</p>
-                          <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">{emptyMailboxCopy.body}</p>
-                        </div>
+                        <MailboxEmptyState
+                          icon={EmptyMailboxIcon}
+                          copy={emptyMailboxCopy}
+                          onClearSearch={() => store.setSearchQuery('')}
+                        />
                       ) : (
                         <div
                           role="presentation"

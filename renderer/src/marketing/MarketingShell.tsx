@@ -62,7 +62,7 @@ export function MarketingShell({ scene, children, assistant, context }: Marketin
         {context && <aside className="demo-context">{context}</aside>}
       </div>
       <footer className="demo-bottom-bar">
-        <div><span><kbd>Z</kbd> undo</span><span><kbd>R</kbd> reply</span><span><kbd>A</kbd> reply all</span><span><kbd>F</kbd> forward</span><span><kbd>S</kbd> summarize</span><span><kbd>E</kbd> done</span><span><kbd>U</kbd> read/unread</span><span><kbd>C</kbd> compose</span><span><kbd>/</kbd> search</span><span><kbd>G/⇧G</kbd> mailbox</span><span><kbd>⌘⇧P</kbd> queue</span><span><kbd>⌘J</kbd> ask AI</span><span><kbd>J/K</kbd> move</span><span><kbd>↵/O</kbd> open</span></div>
+        <div><span><kbd>Z</kbd> undo</span><span><kbd>R</kbd> reply</span><span><kbd>A</kbd> reply all</span><span><kbd>F</kbd> forward</span><span><kbd>S</kbd> summarize</span><span><kbd>E</kbd> done</span><span><kbd>U</kbd> read/unread</span><span><kbd>C</kbd> compose</span><span><kbd>/</kbd> search</span><span><kbd>G/⇧G</kbd> mailbox</span><span><kbd>Backspace</kbd> trash</span><span><kbd>!</kbd> spam</span><span><kbd>M</kbd> ignore</span><span><kbd>⌘J</kbd> ask AI</span><span><kbd>J/K</kbd> move</span><span><kbd>↵/O</kbd> open</span></div>
         <span><kbd>⌘J</kbd> AI · <kbd>⌘K</kbd> Commands</span>
       </footer>
     </div>

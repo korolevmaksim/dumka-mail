@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
-import { deriveShortcuts } from '../../../shared/keyboard';
+import { deriveShortcuts, physicalKeyChar, resolveSingleKey } from '../../../shared/keyboard';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
 import { visibleSplitTabs } from '../../../shared/splitTabs';
-import { emitToast } from '../lib/toastBus';
+import { composeOrConnectAccount } from '../lib/composeOrConnect';
 import type { MailThread } from '../../../shared/types';
 
 interface KeyboardOptions {
@@ -266,124 +266,78 @@ export function useKeyboard(options: KeyboardOptions) {
 
       // Letter shortcuts below require single-key mode to be enabled.
       if (!sc.singleKey) return;
+      if (!(noModifiers || e.key === 'Backspace' || e.key === 'Delete')) return;
 
-      // O: open
-      if (noModifiers && (e.code === 'KeyO' || e.key === 'o')) {
-        e.preventDefault();
-        if (focusedThread) {
-          currentStore.setWorkspaceView('mail');
-          currentStore.openThread(focusedThread);
-        }
+      const action = resolveSingleKey(physicalKeyChar(e.key, e.code), sc);
+      if (action === 'none' || action === 'search' || action === 'shortcutGuide' || action === 'next' || action === 'prev') {
         return;
       }
 
-      // E: archive/done
-      if (noModifiers && (e.code === 'KeyE' || e.key === 'e')) {
-        e.preventDefault();
-        const targetId = currentStore.openedThread?.id || currentStore.focusedThreadId;
-        if (targetId) {
-          const nextIdx = Math.min(visible.length - 1, currentIdx + 1);
-          if (nextIdx !== currentIdx && visible[nextIdx]) currentStore.setFocusedThreadId(visible[nextIdx].id);
-          currentStore.executeMailAction('markDone', targetId);
-        }
-        return;
-      }
-
-      // U: toggle read/unread (KC-C3)
-      if (noModifiers && (e.code === 'KeyU' || e.key === 'u')) {
-        e.preventDefault();
-        const target = currentStore.openedThread || focusedThread;
-        if (target) currentStore.executeMailAction(target.isUnread ? 'markRead' : 'markUnread', target.id);
-        return;
-      }
-
-      // Backspace/Delete: move to trash.
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        e.preventDefault();
-        const target = currentStore.openedThread || focusedThread;
-        if (target) currentStore.executeMailAction('moveToTrash', target.id);
-        return;
-      }
-
-      // !: move to spam, M: ignore thread.
-      if (noModifiers && e.key === '!') {
-        e.preventDefault();
-        const target = currentStore.openedThread || focusedThread;
-        if (target) currentStore.executeMailAction('reportSpam', target.id);
-        return;
-      }
-      if (noModifiers && (e.code === 'KeyM' || e.key === 'm')) {
-        e.preventDefault();
-        const target = currentStore.openedThread || focusedThread;
-        if (target) currentStore.muteThread(target.id);
-        return;
-      }
-
-      // R: reply / A: reply-all / F: forward (KC-C2) — operate on the open thread.
-      if (noModifiers && (e.code === 'KeyR' || e.key === 'r')) {
-        e.preventDefault();
-        if (lastMsg) currentStore.startReply(lastMsg);
-        else if (focusedThread) {
-          currentStore.setWorkspaceView('mail');
-          currentStore.openThread(focusedThread);
-        }
-        return;
-      }
-      if (noModifiers && (e.code === 'KeyA' || e.key === 'a')) {
-        e.preventDefault();
-        if (lastMsg) currentStore.startReply(lastMsg, true);
-        return;
-      }
-      if (noModifiers && (e.code === 'KeyF' || e.key === 'f')) {
-        e.preventDefault();
-        if (lastMsg) currentStore.startForward(lastMsg);
-        return;
-      }
-
-      // H: open the Remind me chooser for the current thread.
-      if (noModifiers && sc.reminderKey && (e.code === 'KeyH' || e.key === 'h')) {
-        e.preventDefault();
-        const target = currentStore.openedThread || focusedThread;
-        if (target) currentOptions.onOpenReminder(target);
-        return;
-      }
-
-      // S: summarize the open thread, or run a triage plan from the list (KC-C3).
-      if (noModifiers && (e.code === 'KeyS' || e.key === 's')) {
-        e.preventDefault();
-        if (currentStore.openedThread) currentStore.runAIAction('summarize');
-        else currentStore.runAITriagePlan();
-        return;
-      }
-
-      // C: compose
-      if (noModifiers && sc.composeKey && (e.code === 'KeyC' || e.key === 'c')) {
-        e.preventDefault();
-        const draft = currentStore.startNewDraft();
-        if (!draft) {
-          currentStore.setWorkspaceView('mail');
-          currentStore.setSettingsOpen(true);
-          currentStore.setCleanupOpen(false);
-          emitToast({ type: 'warning', message: 'Connect an account before composing.' });
+      e.preventDefault();
+      const target = currentStore.openedThread || focusedThread;
+      switch (action) {
+        case 'open':
+          if (focusedThread) {
+            currentStore.setWorkspaceView('mail');
+            currentStore.openThread(focusedThread);
+          }
+          return;
+        case 'archive': {
+          const targetId = currentStore.openedThread?.id || currentStore.focusedThreadId;
+          if (targetId) {
+            const nextIdx = Math.min(visible.length - 1, currentIdx + 1);
+            if (nextIdx !== currentIdx && visible[nextIdx]) currentStore.setFocusedThreadId(visible[nextIdx].id);
+            currentStore.executeMailAction('markDone', targetId);
+          }
           return;
         }
-        return;
-      }
-
-      // Z: undo last action
-      if (noModifiers && (e.code === 'KeyZ' || e.key === 'z')) {
-        e.preventDefault();
-        currentStore.undoLastAction();
-        return;
-      }
-
-      // X: Toggle selection of focused thread
-      if (noModifiers && (e.code === 'KeyX' || e.key === 'x')) {
-        e.preventDefault();
-        if (currentStore.focusedThreadId) {
-          currentStore.toggleThreadSelection(currentStore.focusedThreadId);
+        case 'toggleRead':
+          if (target) currentStore.executeMailAction(target.isUnread ? 'markRead' : 'markUnread', target.id);
+          return;
+        case 'trash':
+          if (target) currentStore.executeMailAction('moveToTrash', target.id);
+          return;
+        case 'spam':
+          if (target) currentStore.executeMailAction('reportSpam', target.id);
+          return;
+        case 'mute':
+          if (target) currentStore.muteThread(target.id);
+          return;
+        case 'reply':
+          if (lastMsg) currentStore.startReply(lastMsg);
+          else if (focusedThread) {
+            currentStore.setWorkspaceView('mail');
+            currentStore.openThread(focusedThread);
+          }
+          return;
+        case 'replyAll':
+          if (lastMsg) currentStore.startReply(lastMsg, true);
+          return;
+        case 'forward':
+          if (lastMsg) currentStore.startForward(lastMsg);
+          return;
+        case 'remind':
+          if (target) currentOptions.onOpenReminder(target);
+          return;
+        case 'summarize':
+          if (currentStore.openedThread) currentStore.runAIAction('summarize');
+          else currentStore.runAITriagePlan();
+          return;
+        case 'compose':
+          composeOrConnectAccount(currentStore);
+          return;
+        case 'undo':
+          currentStore.undoLastAction();
+          return;
+        case 'select':
+          if (currentStore.focusedThreadId) {
+            currentStore.toggleThreadSelection(currentStore.focusedThreadId);
+          }
+          return;
+        default: {
+          const _exhaustive: never = action;
+          return _exhaustive;
         }
-        return;
       }
 
     };

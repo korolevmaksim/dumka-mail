@@ -16,6 +16,7 @@
 // settings objects) are omitted; everything else is ported verbatim, including
 // the exact single-key swaps, ordering, and layout constants/thresholds.
 
+import { barShortcutKeys, keymapShortcut, type AppKeyBindingId } from './appKeymap'
 import type { ShortcutSettings } from './types'
 
 export type HintContext = 'list' | 'reader' | 'compose' | 'search'
@@ -33,18 +34,6 @@ function effectiveSingleKey(s: ShortcutSettings): boolean {
   return s.mode !== 'appleMail' && s.singleKeyShortcuts
 }
 
-function effectiveComposeShortcut(s: ShortcutSettings): boolean {
-  return effectiveSingleKey(s) && s.composeShortcutEnabled
-}
-
-function effectiveVimNavigation(s: ShortcutSettings): boolean {
-  // effectiveSingleKeyShortcuts && (mode == .superhuman || mode == .gmail || vimNavigation)
-  return (
-    effectiveSingleKey(s) &&
-    (s.mode === 'superhuman' || s.mode === 'gmail' || s.vimNavigation)
-  )
-}
-
 // --- Hint factories ---
 
 // Ported from `ShortcutHintFactory.mailList` (Swift 208-250). The reminder hint
@@ -54,49 +43,35 @@ function effectiveVimNavigation(s: ShortcutSettings): boolean {
 // thread is already open).
 function mailListHints(s: ShortcutSettings, isThreadOpen: boolean): ShortcutHint[] {
   const singleKey = effectiveSingleKey(s)
-  const replyKey = singleKey ? 'R' : '⌘R'
-  const replyAllKey = singleKey ? 'A' : '⌘⇧R'
-  const forwardKey = singleKey ? 'F' : '⌘⇧F'
-  const summarizeKey = singleKey ? 'S' : '⌘⇧S'
-  // Swift: `singleKey && inbox.archiveOnDoneShortcut ? "E" : "⌘⇧E"`. Without
-  // InboxSettings here, archive-on-done is treated as the default-on behavior,
-  // matching the existing target bar's "E … (done)" hint.
-  const doneKey = singleKey ? 'E' : '⌘⇧E'
-  const readKey = singleKey ? 'U' : '⌘⇧U'
-  const readLabel = singleKey ? 'read/unread' : 'read'
-  const undoKey = singleKey ? 'Z' : '⌘Z'
-  const composeKey = singleKey && effectiveComposeShortcut(s) ? 'C' : '⌘N'
-  const searchKey = singleKey ? '/' : '⌘F'
-
-  const hints: ShortcutHint[] = [
-    { keys: replyKey, label: 'reply' },
-    { keys: replyAllKey, label: 'reply all' },
-    { keys: forwardKey, label: 'forward' },
-    { keys: summarizeKey, label: 'summarize' },
-    { keys: doneKey, label: 'done' },
-    { keys: readKey, label: readLabel },
-    { keys: composeKey, label: 'compose' },
-    { keys: searchKey, label: 'search' },
-    { keys: 'G/⇧G', label: 'mailbox' },
-    { keys: '⌘⇧P', label: 'queue' },
-    { keys: '⌘J', label: 'ask AI' },
-  ]
-
-  // Swift inserts undo at index 0.
-  hints.unshift({ keys: undoKey, label: 'undo' })
-
-  if (effectiveVimNavigation(s)) {
-    hints.push({ keys: 'J/K', label: isThreadOpen ? 'next/prev' : 'move' })
+  const hints: ShortcutHint[] = []
+  const add = (id: AppKeyBindingId, label: string) => {
+    const keys = keymapShortcut(id, s)
+    if (keys) hints.push({ keys: barShortcutKeys(keys, singleKey), label })
   }
+
+  add('undo', 'undo')
+  add('reply', 'reply')
+  add('replyAll', 'reply all')
+  add('forward', 'forward')
+  add('summarize', 'summarize')
+  add('markDone', 'done')
+  if (singleKey) add('toggleRead', 'read/unread')
+  else add('markRead', 'read')
+  add('compose', 'compose')
+  add('searchMailbox', 'search')
+  add('switchMailbox', 'mailbox')
+  add('openAiAssistant', 'ask AI')
+
+  const vimKeys = keymapShortcut('vimNavigation', s)
+  if (vimKeys) hints.push({ keys: vimKeys, label: isThreadOpen ? 'next/prev' : 'move' })
   if (!isThreadOpen) {
-    hints.push({ keys: singleKey ? '↩/O' : '↩', label: 'open' })
+    const keys = keymapShortcut('openThread', s)
+    if (keys) hints.push({ keys: barShortcutKeys(keys, singleKey), label: 'open' })
   }
-  if (s.commandPaletteEnabled) {
-    hints.push({ keys: '⌘K', label: 'commands' })
-  }
-  if (singleKey) {
-    hints.push({ keys: '?', label: 'shortcuts' })
-  }
+  const paletteKeys = keymapShortcut('commandPalette', s)
+  if (paletteKeys) hints.push({ keys: paletteKeys, label: 'commands' })
+  const guideKeys = keymapShortcut('shortcutGuide', s)
+  if (guideKeys) hints.push({ keys: guideKeys, label: 'shortcuts' })
 
   return hints
 }
@@ -105,16 +80,15 @@ function mailListHints(s: ShortcutSettings, isThreadOpen: boolean): ShortcutHint
 // (`snippets.enabled && snippets.expandWithTab`) is omitted because it depends
 // on `SnippetSettings`, which is outside this function's signature.
 function composeHints(s: ShortcutSettings): ShortcutHint[] {
-  const hints: ShortcutHint[] = [
-    { keys: '⌘↩/⌘⇧D', label: 'send' },
-    { keys: '⌘⇧A', label: 'attach' },
-    { keys: '⌘J', label: 'ask AI' },
-    { keys: 'esc', label: 'discard' },
-  ]
-  if (s.commandPaletteEnabled) {
-    // Swift: insert at `min(3, hints.count)`.
-    hints.splice(Math.min(3, hints.length), 0, { keys: '⌘K', label: 'commands' })
-  }
+  const hints: ShortcutHint[] = []
+  const sendKeys = keymapShortcut('sendDraft', s)
+  if (sendKeys) hints.push({ keys: sendKeys, label: 'send' })
+  const aiKeys = keymapShortcut('openAiAssistant', s)
+  if (aiKeys) hints.push({ keys: aiKeys, label: 'ask AI' })
+  const paletteKeys = keymapShortcut('commandPalette', s)
+  if (paletteKeys) hints.push({ keys: paletteKeys, label: 'commands' })
+  const dismissKeys = keymapShortcut('dismiss', s)
+  hints.push({ keys: dismissKeys === 'Esc' ? 'esc' : (dismissKeys || 'esc'), label: 'discard' })
   return hints
 }
 
@@ -126,18 +100,17 @@ function searchHints(s: ShortcutSettings): ShortcutHint[] {
   const singleKey = effectiveSingleKey(s)
   const hints: ShortcutHint[] = [
     { keys: 'esc', label: 'close' },
-    { keys: singleKey ? '↩/O' : '↩', label: 'open' },
-    { keys: '⌘J', label: 'ask AI' },
   ]
-  if (effectiveVimNavigation(s)) {
-    hints.push({ keys: 'J/K', label: 'move' })
-  }
-  if (s.commandPaletteEnabled) {
-    hints.push({ keys: '⌘K', label: 'commands' })
-  }
-  if (singleKey) {
-    hints.push({ keys: '?', label: 'shortcuts' })
-  }
+  const openKeys = keymapShortcut('openThread', s)
+  if (openKeys) hints.push({ keys: barShortcutKeys(openKeys, singleKey), label: 'open' })
+  const aiKeys = keymapShortcut('openAiAssistant', s)
+  if (aiKeys) hints.push({ keys: aiKeys, label: 'ask AI' })
+  const vimKeys = keymapShortcut('vimNavigation', s)
+  if (vimKeys) hints.push({ keys: vimKeys, label: 'move' })
+  const paletteKeys = keymapShortcut('commandPalette', s)
+  if (paletteKeys) hints.push({ keys: paletteKeys, label: 'commands' })
+  const guideKeys = keymapShortcut('shortcutGuide', s)
+  if (guideKeys) hints.push({ keys: guideKeys, label: 'shortcuts' })
   return hints
 }
 
@@ -155,6 +128,10 @@ export function hintsForContext(ctx: HintContext, s: ShortcutSettings): Shortcut
       return composeHints(s)
     case 'search':
       return searchHints(s)
+    default: {
+      const _exhaustive: never = ctx
+      return _exhaustive
+    }
   }
 }
 

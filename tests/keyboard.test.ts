@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   deriveShortcuts,
+  physicalKeyChar,
   resolveSingleKey,
   ResolvedShortcuts,
 } from '../shared/keyboard';
@@ -97,6 +98,15 @@ describe('deriveShortcuts', () => {
   });
 });
 
+describe('physicalKeyChar', () => {
+  it('maps a physical Latin key from KeyboardEvent.code on non-Latin layouts', () => {
+    expect(physicalKeyChar('к', 'KeyR')).toBe('r');
+    expect(physicalKeyChar('у', 'KeyE')).toBe('e');
+    expect(physicalKeyChar('!', 'Digit1')).toBe('!');
+    expect(physicalKeyChar('Backspace', 'Backspace')).toBe('Backspace');
+  });
+});
+
 describe('resolveSingleKey', () => {
   const full = deriveShortcuts(defaults); // everything enabled, vim on
 
@@ -109,6 +119,11 @@ describe('resolveSingleKey', () => {
     expect(resolveSingleKey('s', full)).toBe('summarize');
     expect(resolveSingleKey('o', full)).toBe('open');
     expect(resolveSingleKey('z', full)).toBe('undo');
+    expect(resolveSingleKey('m', full)).toBe('mute');
+    expect(resolveSingleKey('x', full)).toBe('select');
+    expect(resolveSingleKey('!', full)).toBe('spam');
+    expect(resolveSingleKey('Backspace', full)).toBe('trash');
+    expect(resolveSingleKey('Delete', full)).toBe('trash');
   });
 
   it('maps compose (c) when composeKey is on and gates it off otherwise', () => {
@@ -152,14 +167,13 @@ describe('resolveSingleKey', () => {
   });
 
   it('returns none for unbound keys', () => {
-    expect(resolveSingleKey('x', full)).toBe('none');
     expect(resolveSingleKey('1', full)).toBe('none');
     expect(resolveSingleKey('', full)).toBe('none');
   });
 
   it('returns none for every key in appleMail mode (single-key disabled)', () => {
     const apple = deriveShortcuts(make({ mode: 'appleMail' }));
-    for (const k of ['e', 'u', 'r', 'a', 'f', 's', 'c', 'h', 'o', 'z', 'j', 'k', '?', '/']) {
+    for (const k of ['e', 'u', 'r', 'a', 'f', 's', 'c', 'h', 'o', 'z', 'j', 'k', '?', '/', 'm', 'x', '!', 'Backspace']) {
       expect(resolveSingleKey(k, apple)).toBe('none');
     }
   });

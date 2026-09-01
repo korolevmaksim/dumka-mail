@@ -46,7 +46,6 @@ describe('hintsForContext — list', () => {
       'C compose',
       '/ search',
       'G/⇧G mailbox',
-      '⌘⇧P queue',
       '⌘J ask AI',
       'J/K move', // vim effective in superhuman mode
       '↩/O open', // list context (thread not open)
@@ -58,19 +57,12 @@ describe('hintsForContext — list', () => {
   it('uses combo shortcuts and no vim in appleMail mode', () => {
     const hints = hintsForContext('list', appleMail);
     expect(pairs(hints)).toEqual([
-      '⌘Z undo',
-      '⌘R reply',
-      '⌘⇧R reply all',
-      '⌘⇧F forward',
-      '⌘⇧S summarize',
       '⌘⇧E done',
       '⌘⇧U read',
       '⌘N compose',
-      '⌘F search',
+      '/ search',
       'G/⇧G mailbox',
-      '⌘⇧P queue',
       '⌘J ask AI',
-      // no J/K — vim is not effective when single-key shortcuts are disabled
       '↩ open',
       '⌘K commands',
     ]);
@@ -120,8 +112,7 @@ describe('hintsForContext — compose', () => {
   it('inserts the commands hint at index 3 (before discard)', () => {
     const hints = hintsForContext('compose', superhuman);
     expect(pairs(hints)).toEqual([
-      '⌘↩/⌘⇧D send',
-      '⌘⇧A attach',
+      '⌘↩ send',
       '⌘J ask AI',
       '⌘K commands',
       'esc discard',
@@ -131,8 +122,7 @@ describe('hintsForContext — compose', () => {
   it('omits the commands hint when the palette is disabled', () => {
     const hints = hintsForContext('compose', { ...superhuman, commandPaletteEnabled: false });
     expect(pairs(hints)).toEqual([
-      '⌘↩/⌘⇧D send',
-      '⌘⇧A attach',
+      '⌘↩ send',
       '⌘J ask AI',
       'esc discard',
     ]);
@@ -236,6 +226,6 @@ describe('opensCommandPalette', () => {
 
   it('returns false for ordinary action hints', () => {
     expect(opensCommandPalette({ keys: 'R', label: 'reply' })).toBe(false);
-    expect(opensCommandPalette({ keys: '⌘⇧P', label: 'queue' })).toBe(false);
+    expect(opensCommandPalette({ keys: '⌘⇧T', label: 'theme' })).toBe(false);
   });
 });
