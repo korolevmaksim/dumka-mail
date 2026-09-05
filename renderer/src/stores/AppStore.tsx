@@ -1,3 +1,4 @@
+import { useProductivityState, type ProductivityState } from './useProductivityState';
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Account,
@@ -385,7 +386,7 @@ interface CalendarFocusRequest {
   eventId: string;
 }
 
-interface AppStoreContextType {
+interface AppStoreContextType extends ProductivityState {
   settingsLoaded: boolean;
   theme: 'light' | 'dark' | 'system';
   setTheme: (t: 'light' | 'dark' | 'system') => void;
@@ -689,7 +690,11 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     executeMailAction: mailState.executeMailAction,
   });
 
+  const productivityState = useProductivityState(mailState.accounts, mailState.activeAccount);
+
   const aiState = useAIState({
+    reviewCorrections: productivityState.reviewCorrections,
+    correctionsLoaded: productivityState.productivityLoaded,
     settings: settingsState.settings,
     accounts: mailState.accounts,
     activeAccount: mailState.activeAccount,
@@ -1034,6 +1039,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...draftsState,
     ...aiState,
     ...replyPipelineState,
+    ...productivityState,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,
@@ -1083,6 +1089,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     draftsState,
     aiState,
     replyPipelineState,
+    productivityState,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,

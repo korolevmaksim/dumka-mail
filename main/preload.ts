@@ -1,3 +1,4 @@
+import type { ProductivityRecord } from '../shared/productivity';
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   Account,
@@ -44,6 +45,9 @@ import type { SystemLogEntry, SystemLogPage, SystemLogQuery, SystemLogStats } fr
 import type { MailboxExportProgress, MailboxExportScope } from '../shared/mboxExport';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  listProductivity: (accountIds: string[]): Promise<ProductivityRecord[]> => ipcRenderer.invoke('db:listProductivity', accountIds),
+  saveProductivity: (record: ProductivityRecord): Promise<ProductivityRecord> => ipcRenderer.invoke('db:saveProductivity', record),
+  deleteProductivity: (accountId: string, id: string, revision: number): Promise<void> => ipcRenderer.invoke('db:deleteProductivity', accountId, id, revision),
   // Accounts
   listAccounts: () => ipcRenderer.invoke('db:listAccounts'),
   getAccount: (id: string) => ipcRenderer.invoke('db:getAccount', id),

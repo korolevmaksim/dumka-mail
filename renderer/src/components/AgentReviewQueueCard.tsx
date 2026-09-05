@@ -1,3 +1,4 @@
+import { ReviewCorrectionControl } from './ReviewCorrectionControl';
 import { AlertCircle, CheckCircle2, ExternalLink, FileText, MailCheck, MailMinus, MailPlus, ShieldAlert, Tag, X } from 'lucide-react';
 import type { AgentPlanActionKind, AgentPlanItem, AgentPlanRiskLevel } from '../../../shared/types';
 import { useAppStore } from '../stores/AppStore';
@@ -210,13 +211,7 @@ export function AgentReviewQueueCard() {
                     >
                       Approve {ACTION_LABEL[item.action]}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => store.rejectAgentPlanItem(item.id)}
-                      className="rounded border border-[var(--border)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]"
-                    >
-                      Reject
-                    </button>
+                    <ReviewCorrectionControl item={item} />
                   </div>
                 </div>
               </div>

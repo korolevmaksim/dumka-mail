@@ -132,7 +132,9 @@ export const AccountsRepo = {
     const db = getDatabase();
     const purgeCache = options.purgeCache !== false;
     db.transaction(() => {
+      const account = AccountsRepo.get(id);
       db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+      if (purgeCache && account) db.prepare('DELETE FROM productivity_records WHERE account_id = ?').run(account.email.toLowerCase());
       if (!purgeCache) return;
       db.prepare('DELETE FROM threads WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM messages WHERE account_id = ?').run(id);

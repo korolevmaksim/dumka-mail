@@ -849,3 +849,12 @@ body {
     visibility: hidden !important;
   }
 }
+
+/* Shared controls for Today, search filters, and inline preference editors. */
+.dm-productivity { font-size: calc(12px * var(--font-scale)); color: var(--text-primary); }
+.dm-productivity-input { min-height: 32px; border: 1px solid var(--strong-border); border-radius: var(--control-radius); background: var(--panel-bg); color: var(--text-primary); padding: 5px 8px; }
+.dm-productivity-input::placeholder { color: var(--text-secondary); }
+.dm-productivity-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--strong-border); border-radius: var(--control-radius); background: var(--panel-bg); color: var(--text-primary); cursor: pointer; }
+.dm-productivity-button:hover:not(:disabled) { background: var(--hover-row); }
+.dm-productivity-button:disabled, .dm-productivity-input:disabled { opacity: .55; cursor: not-allowed; }
+.dm-productivity :is(button, input, select, summary):focus-visible, .dm-productivity-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import type { ProductivityRecord } from '../../shared/productivity';
 import {
   Account,
   AgentPlanItem,
@@ -63,6 +64,9 @@ import type { MailboxExportProgress, MailboxExportResult, MailboxExportScope } f
 import type { BackupRunResult, RestoreStageResult } from '../../shared/backupPlan';
 
 export interface IElectronAPI {
+  listProductivity: (accountIds: string[]) => Promise<ProductivityRecord[]>;
+  saveProductivity: (record: ProductivityRecord) => Promise<ProductivityRecord>;
+  deleteProductivity: (accountId: string, id: string, revision: number) => Promise<void>;
   // Accounts
   listAccounts: () => Promise<Account[]>;
   getAccount: (id: string) => Promise<Account | null>;

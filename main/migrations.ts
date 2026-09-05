@@ -17,6 +17,12 @@ export function runMigrations(db: Database.Database) {
     console.error('Self-healing ai_conversations check failed:', e);
   }
 
+  db.exec(`CREATE TABLE IF NOT EXISTS productivity_records (
+    account_id TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL,
+    revision INTEGER NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (account_id, id)
+  )`);
+
   // Execute base tables
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (

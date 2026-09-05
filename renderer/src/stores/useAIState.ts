@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
+import { applyReviewCorrections } from '../../../shared/reviewCorrections';
+import type { ReviewCorrection } from '../../../shared/productivity';
+import { useState, useMemo, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
 import { Account, MailThread, MailMessage, MailLabelDefinition, MailSyncCompletion, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness, MailActionExecutionResult } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
 import { formatAIUserError } from '../../../shared/aiErrors';
@@ -19,6 +21,8 @@ import {
 } from '../../../shared/operatorHomeState';
 
 interface UseAIStateProps {
+  reviewCorrections: ReviewCorrection[];
+  correctionsLoaded: boolean;
   settings: AppSettings;
   accounts: Account[];
   activeAccount: Account | null;
@@ -68,6 +72,7 @@ function mergeDailyBriefings(accountId: string, briefings: DailyBriefing[], sett
 }
 
 export function useAIState({
+  reviewCorrections, correctionsLoaded,
   settings,
   accounts,
   activeAccount,
@@ -90,11 +95,13 @@ export function useAIState({
   const [activeAIConversation, setActiveAIConversation] = useState<AIConversation | null>(null);
   const [activeAIMessages, setActiveAIMessages] = useState<AIChatMessage[]>([]);
   const [triagePlan, setTriagePlan] = useState<MailTriagePlan | null>(null);
-  const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
+  const [rawAgentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
   const [dailyBriefing, setDailyBriefing] = useState<DailyBriefing | null>(null);
   const [dailyBriefingLoading, setDailyBriefingLoading] = useState<boolean>(false);
   const [aiPanelLoading, setAiPanelLoading] = useState<boolean>(false);
   const [aiModel, setAiModel] = useState<string>('');
+
+  const agentPlan = useMemo(() => correctionsLoaded ? applyReviewCorrections(rawAgentPlan, reviewCorrections) : null, [rawAgentPlan, reviewCorrections, correctionsLoaded]);
 
   const [selectedAgentPlanItemIds, setSelectedAgentPlanItemIds] = useState<Set<string>>(new Set());
   const [credentialsValidByAccount, setCredentialsValidByAccount] = useState<Record<string, boolean>>({});
@@ -221,7 +228,7 @@ export function useAIState({
     const timeout = globalThis.setTimeout(() => {
       void window.electronAPI.saveOperatorHomeState({
         scopeId: operatorScopeId,
-        agentPlan,
+        agentPlan: rawAgentPlan,
         selectedAgentPlanItemIds: Array.from(selectedAgentPlanItemIds),
         dailyBriefing,
         lastAutoRefreshWindow,
@@ -231,7 +238,7 @@ export function useAIState({
       });
     }, 120);
     return () => globalThis.clearTimeout(timeout);
-  }, [agentPlan, dailyBriefing, lastAutoRefreshWindow, loadedOperatorScope, operatorScopeId, selectedAgentPlanItemIds]);
+  }, [rawAgentPlan, dailyBriefing, lastAutoRefreshWindow, loadedOperatorScope, operatorScopeId, selectedAgentPlanItemIds]);
 
   // Resolve active AI provider descriptors
   useEffect(() => {

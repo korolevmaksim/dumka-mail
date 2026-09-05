@@ -1,3 +1,6 @@
+import { AttentionQueue } from './AttentionQueue';
+import { CommitmentsSection } from './CommitmentsSection';
+import { ReviewPreferences } from './ReviewPreferences';
 import { useMemo } from 'react';
 import { Archive, CalendarDays, CheckCircle2, ExternalLink, RefreshCw, Sparkles } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
@@ -37,7 +40,7 @@ export function TodayHome() {
   const showReview = shouldShowTodaySection(reviewCount > 0);
   const showBriefing = shouldShowTodaySection(Boolean(store.dailyBriefing && briefingCount > 0));
   const showRecentActions = shouldShowTodaySection(recentActions.length > 0);
-  const allClear = !showReview && pipelineCount === 0 && !showBriefing && unresolvedActions === 0;
+
 
   const openActivityThread = (threadId: string) => {
     const thread = store.threads.find(candidate => candidate.id === threadId);
@@ -71,6 +74,8 @@ export function TodayHome() {
             <button
               type="button"
               onClick={() => {
+                void store.refreshProductivity();
+                void store.loadReplyPipeline();
                 void store.loadFollowUpRadar();
                 void store.runDailyBriefing(undefined, { openPanel: false });
               }}
@@ -83,36 +88,16 @@ export function TodayHome() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Review queue</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{reviewCount}</div>
-          </div>
-          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Reply pipeline</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{pipelineCount}</div>
-          </div>
-          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Briefing items</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{briefingCount}</div>
-          </div>
-          <div className="dm-summary-card dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <div className="text-[calc(11px*var(--font-scale))] uppercase tracking-normal text-[var(--text-tertiary)]">Needs attention</div>
-            <div className="mt-1 text-[calc(22px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{unresolvedActions}</div>
-          </div>
-        </div>
-
+        <AttentionQueue />
+        <CommitmentsSection key={`commitments:${store.activeAccount?.id}`} />
+        <ReviewPreferences key={`preferences:${store.activeAccount?.id}`} />
+        {unresolvedActions > 0 && <div className="dm-productivity border-y border-[var(--border)] py-3" role="status">
+          <strong>{unresolvedActions} mail actions need attention</strong>
+          <ActivityTimeline logs={store.actionLog.filter(action => action.status === 'failed' || action.status === 'pending_sync')} onOpenThread={openActivityThread} />
+        </div>}
+        <details className="dm-productivity"><summary className="cursor-pointer py-3 font-medium">All queues and tools · {reviewCount} proposals · {pipelineCount} reply items</summary>
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
           <div className="flex min-w-0 flex-col gap-4">
-            {allClear && (
-              <section className="dm-panel rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-4 text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)]">
-                <div className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
-                  <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-                  All clear
-                </div>
-                <p className="mt-1">No review items, failed actions, or briefing cards need attention.</p>
-              </section>
-            )}
             {showReview && <AgentReviewQueueCard />}
             <ReplyPipelineSection />
             {showBriefing && <DailyBriefingCard />}
@@ -174,6 +159,7 @@ export function TodayHome() {
             )}
           </aside>
         </div>
+        </details>
       </div>
     </main>
   );

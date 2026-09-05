@@ -1,3 +1,4 @@
+import { ProductivityRepo } from './productivityRepository';
 import { app, BrowserWindow, Menu, ipcMain, dialog, Notification, screen, shell, type NotificationAction } from 'electron';
 import { execFileSync } from 'child_process';
 import path from 'path';
@@ -1104,6 +1105,10 @@ function requireCalendarRange(startAt: unknown, endAt: unknown): { startAt: stri
   }
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
+
+registerSecureHandler('db:listProductivity', (_, accountIds: string[]) => ProductivityRepo.list(accountIds));
+registerSecureHandler('db:saveProductivity', (_, record: unknown) => ProductivityRepo.save(record));
+registerSecureHandler('db:deleteProductivity', (_, accountId: string, id: string, revision: number) => ProductivityRepo.delete(accountId, id, revision));
 
 registerSecureHandler('db:listAccounts', () => AccountsRepo.list());
 registerSecureHandler('db:getAccount', (_, id) => AccountsRepo.get(id));

@@ -1,6 +1,8 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
+import { SearchFiltersPanel } from './SearchFiltersPanel';
+import { serializeSearchQuery } from '../../../../shared/searchFilters';
+import { forwardRef, type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
-import { AlertTriangle, Check, LoaderCircle, Search, Sparkles, X } from 'lucide-react';
+import { SlidersHorizontal, AlertTriangle, Check, LoaderCircle, Search, Sparkles, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
 import { getSearchIndicatorState } from './searchIndicator';
@@ -9,6 +11,7 @@ import { isIncompleteBackfillProgress } from '../../../../shared/syncStatusAffor
 export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
   const { searchQuery, searchStatus, setSearchQuery, settingsOpen, setSettingsOpen, cleanupOpen, setCleanupOpen, setWorkspaceView } = store;
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [draftQuery, setDraftQuery] = useState(searchQuery);
   const [showNavigationActivity, setShowNavigationActivity] = useState(false);
   const committedQueryRef = useRef(searchQuery);
@@ -48,7 +51,8 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
     commitController.cancel();
     setDraftQuery(value);
     commitRef.current(value);
-  }, [commitController]);
+    if (value.trim()) { setSettingsOpen(false); setCleanupOpen(false); setWorkspaceView('mail'); }
+  }, [commitController, setSettingsOpen, setCleanupOpen, setWorkspaceView]);
 
   const scheduleSearchCommit = useCallback((value: string) => {
     setDraftQuery(value);
@@ -71,53 +75,29 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
     searchState: searchStatus,
   });
   
-  const appendOperator = (op: string) => {
-    const current = draftQuery.trim();
-    const rebuilt = current ? `${current} ${op}` : op;
-    commitSearchImmediately(rebuilt);
-    if (ref && 'current' in ref && ref.current) {
-      ref.current.focus();
-    }
-  };
-
   const removeSearchField = (key: string, termVal?: string) => {
-    const rebuiltParts: string[] = [];
-    if (key !== 'from' && parsedSearch.from) rebuiltParts.push(`from:${parsedSearch.from}`);
-    if (key !== 'domain' && parsedSearch.domain) rebuiltParts.push(`domain:${parsedSearch.domain}`);
-    if (key !== 'hasAttachment' && parsedSearch.hasAttachment !== undefined) {
-      rebuiltParts.push(parsedSearch.hasAttachment ? 'has:attachment' : 'has:noattachment');
-    }
-    if (key !== 'isUnread' && parsedSearch.isUnread !== undefined) {
-      rebuiltParts.push(parsedSearch.isUnread ? 'is:unread' : 'is:read');
-    }
-    if (key !== 'label' && parsedSearch.label) rebuiltParts.push(`label:${parsedSearch.label}`);
-    if (key !== 'inSplit' && parsedSearch.inSplit) rebuiltParts.push(`in:${parsedSearch.inSplit}`);
-    if (key !== 'after' && parsedSearch.after) rebuiltParts.push(`after:${parsedSearch.after}`);
-    if (key !== 'before' && parsedSearch.before) rebuiltParts.push(`before:${parsedSearch.before}`);
-    
-    const terms = key === 'textTerms' && termVal 
-      ? parsedSearch.textTerms.filter((t: string) => t !== termVal)
-      : parsedSearch.textTerms;
-    rebuiltParts.push(...terms);
-    
-    commitSearchImmediately(rebuiltParts.join(' '));
+    const next = { ...parsedSearch };
+    if (key === 'textTerms') next.textTerms = next.textTerms.filter(term => term !== termVal);
+    else delete next[key as keyof Omit<typeof next, 'textTerms'>];
+    commitSearchImmediately(serializeSearchQuery(next));
   };
 
   return (
     <div
       className="dm-search-chrome dm-toolbar panel-surface flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
-      style={{ WebkitAppRegion: 'drag' } as any}
+      style={{ WebkitAppRegion: 'drag' } as CSSProperties}
     >
       <div className="flex items-center justify-between h-[var(--top-chrome-h)] min-h-[40px] px-4 gap-4 w-full">
         <div 
           className="dm-search-field dm-control flex items-center flex-1 gap-2 bg-[var(--app-bg)] rounded-lg px-2 border border-[var(--border)] max-w-[600px] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-1"
-          style={{ WebkitAppRegion: 'no-drag' } as any}
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
+          <button type="button" aria-label="Search filters and saved searches" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(open => !open)} className="rounded p-1 hover:bg-[var(--hover-row)]"><SlidersHorizontal className="h-4 w-4" /></button>
           <Search className="w-4 h-4 text-[var(--text-tertiary)]" />
           <input
             ref={ref}
             type="text"
-            placeholder="Search mail: from: domain: has:attachment is:unread"
+            placeholder="Search mail"
             value={draftQuery}
             onChange={(e) => {
               const nextQuery = e.target.value;
@@ -176,14 +156,14 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
             </button>
           )}
           {draftQuery && (
-            <button onClick={() => commitSearchImmediately('')} className="cursor-pointer">
+            <button aria-label="Clear search" onClick={() => commitSearchImmediately('')} className="cursor-pointer">
               <X className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
             </button>
           )}
         </div>
 
         {/* Status & Sync text */}
-        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
           {showNavigationActivity && store.navigationActivity.phase !== 'idle' && (
             <span
               aria-live="polite"
@@ -204,11 +184,12 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
         </div>
       </div>
 
-      {/* Suggested operators & Active Query chips */}
+      {filtersOpen && <div style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}><SearchFiltersPanel key={store.activeAccount?.id} query={draftQuery} onChange={commitSearchImmediately} /></div>}
+      {/* Active query chips */}
       {showSearchIntelligence && (
         <div 
           className="flex flex-wrap items-center gap-2 px-4 pb-2 -mt-1 text-[calc(10px*var(--font-scale))] border-t border-[var(--border)]/30 pt-2"
-          style={{ WebkitAppRegion: 'no-drag' } as any}
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
           <span className="text-[var(--text-secondary)] font-semibold shrink-0">Filters:</span>
           
@@ -216,66 +197,59 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           {parsedSearch.from && (
             <span className="flex items-center gap-1 bg-[var(--accent)]/15 text-[var(--accent)] px-2 py-0.5 rounded-full border border-[var(--accent)]/20">
               From: {parsedSearch.from}
-              <button type="button" onClick={() => removeSearchField('from')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove sender filter" onClick={() => removeSearchField('from')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.domain && (
             <span className="flex items-center gap-1 bg-[var(--accent)]/15 text-[var(--accent)] px-2 py-0.5 rounded-full border border-[var(--accent)]/20">
               Domain: {parsedSearch.domain}
-              <button type="button" onClick={() => removeSearchField('domain')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove domain filter" onClick={() => removeSearchField('domain')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.hasAttachment !== undefined && (
             <span className="flex items-center gap-1 bg-[var(--info)]/15 text-[var(--info)] px-2 py-0.5 rounded-full border border-[var(--info)]/20">
               {parsedSearch.hasAttachment ? 'Has Attachments' : 'No Attachments'}
-              <button type="button" onClick={() => removeSearchField('hasAttachment')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove attachment filter" onClick={() => removeSearchField('hasAttachment')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.isUnread !== undefined && (
             <span className="flex items-center gap-1 bg-[var(--success)]/15 text-[var(--success)] px-2 py-0.5 rounded-full border border-[var(--success)]/20">
               {parsedSearch.isUnread ? 'Unread' : 'Read'}
-              <button type="button" onClick={() => removeSearchField('isUnread')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove read status filter" onClick={() => removeSearchField('isUnread')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.label && (
             <span className="flex items-center gap-1 bg-[var(--ai-accent)]/15 text-[var(--ai-accent)] px-2 py-0.5 rounded-full border border-[var(--ai-accent)]/20">
               Label: {parsedSearch.label}
-              <button type="button" onClick={() => removeSearchField('label')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove label filter" onClick={() => removeSearchField('label')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.inSplit && (
             <span className="flex items-center gap-1 bg-[var(--warning)]/15 text-[var(--warning)] px-2 py-0.5 rounded-full border border-[var(--warning)]/20">
               Split: {parsedSearch.inSplit}
-              <button type="button" onClick={() => removeSearchField('inSplit')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove split filter" onClick={() => removeSearchField('inSplit')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.after && (
             <span className="flex items-center gap-1 bg-[var(--text-tertiary)]/15 text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               After: {parsedSearch.after}
-              <button type="button" onClick={() => removeSearchField('after')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove start date filter" onClick={() => removeSearchField('after')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.before && (
             <span className="flex items-center gap-1 bg-[var(--text-tertiary)]/15 text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               Before: {parsedSearch.before}
-              <button type="button" onClick={() => removeSearchField('before')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove end date filter" onClick={() => removeSearchField('before')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.textTerms.map((term: string, i: number) => (
             <span key={i} className="flex items-center gap-1 bg-[var(--border)] text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               "{term}"
-              <button type="button" onClick={() => removeSearchField('textTerms', term)} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label={`Remove search term ${term}`} onClick={() => removeSearchField('textTerms', term)} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           ))}
 
-          {/* Suggestions */}
-          <div className="flex items-center gap-1.5 ml-auto border-l border-[var(--border)] pl-3">
-            <span className="text-[var(--text-tertiary)]">Suggest:</span>
-            <button type="button" onClick={() => appendOperator('from:')} className="px-1.5 py-0.5 bg-[var(--border)]/30 hover:bg-[var(--border)] rounded cursor-pointer">from:</button>
-            <button type="button" onClick={() => appendOperator('domain:')} className="px-1.5 py-0.5 bg-[var(--border)]/30 hover:bg-[var(--border)] rounded cursor-pointer">domain:</button>
-            <button type="button" onClick={() => appendOperator('has:attachment')} className="px-1.5 py-0.5 bg-[var(--border)]/30 hover:bg-[var(--border)] rounded cursor-pointer">has:attachment</button>
-            <button type="button" onClick={() => appendOperator('is:unread')} className="px-1.5 py-0.5 bg-[var(--border)]/30 hover:bg-[var(--border)] rounded cursor-pointer">is:unread</button>
-          </div>
+
         </div>
       )}
     </div>

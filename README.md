@@ -85,6 +85,10 @@ Application activity and sync failures can be inspected from Settings -> Logging
 
 Do not commit local OAuth files, provider keys, refresh tokens, SQLite databases, logs, or app exports.
 
+## Productivity workflows
+
+Today includes a prioritized attention list, confirmed commitments, and reversible AI preferences. Search supports visual filters and saved queries. See [docs/PRODUCTIVITY.md](docs/PRODUCTIVITY.md) for workflows, scope, and verification boundaries.
+
 ## Development
 
 Run the app in development mode:
