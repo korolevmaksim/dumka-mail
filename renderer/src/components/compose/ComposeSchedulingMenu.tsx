@@ -1,5 +1,6 @@
 import { CalendarPlus, Link2 } from 'lucide-react';
 import { SendLaterMenu } from './SendLaterMenu';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 
 interface ComposeSchedulingMenuProps {
   onScheduleSend: (date: Date) => void;
@@ -7,6 +8,8 @@ interface ComposeSchedulingMenuProps {
   onInsertAvailability: () => void;
   onInsertCalendly: () => void;
   onInsertCalCom: () => void;
+  /** Esc closes the menu (not the draft behind it). */
+  onClose?: () => void;
 }
 
 export function ComposeSchedulingMenu({
@@ -15,7 +18,9 @@ export function ComposeSchedulingMenu({
   onInsertAvailability,
   onInsertCalendly,
   onInsertCalCom,
+  onClose,
 }: ComposeSchedulingMenuProps) {
+  useEscapeLayer(true, onClose);
   return (
     <div className="dm-overlay absolute bottom-10 right-16 z-50 w-[270px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
       <SendLaterMenu onSchedule={onScheduleSend} floating={false} />

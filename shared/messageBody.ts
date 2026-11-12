@@ -7,6 +7,7 @@
 
 import type { AttachmentMetadata } from './types';
 import { htmlToText } from './aiContext';
+import { MAIL_HTML_SCAN_LIMIT, skipWhitespace } from './htmlScan';
 
 /**
  * Maximum number of characters rendered inline for a plain-text body before it
@@ -37,6 +38,11 @@ export function hasRenderableHtmlBody(
   if (!html?.trim()) {
     return false;
   }
+  // Too large to inspect cheaply on every render: keep the HTML body (the
+  // fail-safe; a body this size is almost always designed mail).
+  if (html.length > MAIL_HTML_SCAN_LIMIT) {
+    return true;
+  }
 
   const readableHtml = normalizeBodyText(htmlToText(html));
   const readablePlain = normalizeBodyText(plainText || '');
@@ -53,7 +59,33 @@ export function hasRenderableHtmlBody(
   // path even when they have no readable text nodes.
   return /<(?:img|picture|svg|canvas|video|audio|hr)\b/i.test(html)
     || /\bbackground\s*=/i.test(html)
-    || /\bbackground(?:-image)?\s*:\s*[^;}]*\b(?:url|linear-gradient|radial-gradient)\s*\(/i.test(html);
+    || hasCssBackgroundImage(html);
+}
+
+const CSS_IMAGE_FUNCTION = /\b(?:url|linear-gradient|radial-gradient)\s*\(/i;
+
+/**
+ * `/\bbackground(?:-image)?\s*:\s*[^;}]*\b(?:url|linear-gradient|radial-gradient)\s*\(/i`
+ * without the quadratic backtracking (`background:` repeated with no `;`
+ * rescans the rest of the run from each one). Each declaration value runs to
+ * the next `;` or `}`; a later declaration in the same run only sees a suffix
+ * of a value already checked, so each run is checked once.
+ */
+function hasCssBackgroundImage(html: string): boolean {
+  const property = /\bbackground(?:-image)?\s*:/gi;
+  // End of the last value run checked; a declaration starting inside it only
+  // sees a suffix of that run, which cannot match if the whole run did not.
+  let checkedRunEnd = -1;
+  let match: RegExpExecArray | null;
+  while ((match = property.exec(html)) !== null) {
+    const valueStart = skipWhitespace(html, match.index + match[0].length);
+    if (valueStart <= checkedRunEnd) continue;
+    let valueEnd = valueStart;
+    while (valueEnd < html.length && html[valueEnd] !== ';' && html[valueEnd] !== '}') valueEnd += 1;
+    if (CSS_IMAGE_FUNCTION.test(html.slice(valueStart, valueEnd))) return true;
+    checkedRunEnd = valueEnd;
+  }
+  return false;
 }
 
 function normalizeBodyText(text: string): string {

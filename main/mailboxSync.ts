@@ -14,6 +14,12 @@ export interface MailboxSyncDeps {
   deleteThread(accountId: string, threadId: string): void;
   listPendingActions(email: string): MailActionLog[];
   publishDelta(accountId: string, upserts: MailThread[], deletedThreadIds: string[]): MailboxDelta;
+  /**
+   * Runs once threads and their messages are persisted (sender rules, SPEC §7)
+   * and returns the threads as they are locally afterwards, so the published
+   * delta matches SQLite.
+   */
+  afterPersist?(accountId: string, threads: MailThread[]): Promise<MailThread[]>;
   now?: () => Date;
   logger?: {
     warning(scope: string, message: string, extra?: Record<string, unknown>): void;
@@ -71,12 +77,22 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     await deps.saveMessages(overlaid, options);
   };
 
+  const afterPersist = async (threads: MailThread[]): Promise<MailThread[]> => {
+    if (!deps.afterPersist || threads.length === 0) return threads;
+    try {
+      return await deps.afterPersist(email, threads);
+    } catch (err: unknown) {
+      deps.logger?.warning('Mailbox Sync', 'Post-persist actions failed.', { accountId: email, error: err });
+      return threads;
+    }
+  };
+
   if (!syncState?.historyId) {
     const fullSync = await deps.syncInbox(email);
     const saved = await persistThreads(fullSync.threads);
     await persistMessages(fullSync.messages);
     deps.saveSyncState(deps.nextSyncState(email, syncState, fullSync.historyId, now().toISOString()));
-    upserts.push(...saved);
+    upserts.push(...await afterPersist(saved));
     return deps.publishDelta(email, upserts, deletedThreadIds);
   }
 
@@ -90,8 +106,8 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
         await persistMessages(messages, { notifyOfNew: true });
         const thread = buildMailThreadFromMessages(email, threadId, messages);
         if (thread) {
-          const [saved] = await persistThreads([thread]);
-          upserts.push(saved);
+          const saved = await persistThreads([thread]);
+          upserts.push(...await afterPersist(saved));
         }
       } catch (err: unknown) {
         deps.logger?.warning('Mailbox Sync', 'Failed to fetch synchronized thread details.', {
@@ -122,7 +138,7 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
       const saved = await persistThreads(fullSync.threads);
       await persistMessages(fullSync.messages);
       deps.saveSyncState(deps.nextSyncState(email, syncState, fullSync.historyId, now().toISOString()));
-      upserts.push(...saved);
+      upserts.push(...await afterPersist(saved));
       return deps.publishDelta(email, upserts, deletedThreadIds);
     }
     throw err;

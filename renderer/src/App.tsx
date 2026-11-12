@@ -1,178 +1,66 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore, AppStoreProvider } from './stores/AppStore';
 import { useKeyboard } from './hooks/useKeyboard';
+import { useEscapeLayer } from './hooks/useEscapeLayer';
 import {
-  ArchiveRestore, Bell, Inbox, Clock, CheckCircle, X, ArrowLeft,
-  Reply, ReplyAll, Forward, SquarePen, Command, Mail, Sparkles, Send,
-  ChevronUp, ChevronDown, MailOpen, Trash2, OctagonAlert, BellOff, Tags, FileText, Printer,
-  CalendarPlus
+  ArchiveRestore, Bell, Inbox, Clock, CheckCircle, X,
+  Mail, Sparkles, MailOpen, Trash2, OctagonAlert, BellOff, Tags,
 } from 'lucide-react';
-import { ThreadRow } from './components/ThreadRow';
 import { SnoozeMenu } from './components/SnoozeMenu';
 import { ToastHost } from './components/Toast';
 import { GoogleAuthBanner } from './components/GoogleAuthBanner';
 import { MailboxSyncBanner } from './components/MailboxSyncBanner';
 import { ConnectGmailPanel } from './components/ConnectGmailPanel';
-import { MailboxEmptyState } from './components/MailboxEmptyState';
-import { ThreadMessageList } from './components/ThreadMessageList';
-import { AgenticThreadPanel } from './components/AgenticThreadPanel';
 import { ThreadLabelMoveMenu } from './components/ThreadLabelMoveMenu';
 import { SettingsPanel } from './components/settings/SettingsPanel';
-import { CleanupPanel } from './components/CleanupPanel';
 import { LeftRail } from './components/layout/LeftRail';
 import { AICopilotPanel } from './components/layout/AICopilotPanel';
 import { SearchCockpitBar } from './components/layout/SearchCockpitBar';
-import { SplitTabBar } from './components/layout/SplitTabBar';
 import { BottomShortcutBar } from './components/layout/BottomShortcutBar';
-import { RightContextPanel } from './components/layout/RightContextPanel';
 import { CommandPalette } from './components/layout/CommandPalette';
-import { InlineReplyComposer } from './components/layout/InlineReplyComposer';
 import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer';
 import { ShortcutGuideOverlay } from './components/layout/ShortcutGuideOverlay';
-import { TodayHome } from './components/today/TodayHome';
+import { MailboxList } from './components/mailbox/MailboxList';
+import { MailboxListHeader } from './components/mailbox/MailboxListHeader';
+import { ClearGroupPane, DoneSummaryPane, FetchingInboxPane, PreparedPane } from './components/mailbox/ReadingAreaPanes';
+import { MoveToSectionPopover } from './components/mailbox/MoveToSectionPopover';
+import { SenderRuleConsentDialog } from './components/mailbox/SenderRuleRows';
+import { UnsubscribeConfirmSheet } from './components/UnsubscribeConfirmSheet';
+import { NARROW_MAIL_LAYOUT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
+import { useInviteRsvp } from './hooks/useInviteRsvp';
+import { useNoReplyReminders } from './hooks/useNoReplyReminders';
+import { ThreadReader, type ThreadFindState } from './components/reader/ThreadReader';
 import { CalendarWorkspace } from './calendar/CalendarWorkspace';
 import { emitToast } from './lib/toastBus';
 import { composeOrConnectAccount } from './lib/composeOrConnect';
 import { resolveComposeAccountId } from './lib/composeAccount';
-import { resolveThreadHeaderIdentity } from './lib/threadHeader';
 import { shouldCloseReaderForSearchChange } from './lib/searchReaderBehavior';
 import { applyEmailSearchHighlights, clearEmailSearchHighlights, EMAIL_BODY_READY_EVENT } from './lib/emailSearchHighlights';
 import { isTextEditingElement } from './lib/undoRouting';
-import { densityMetrics } from './lib/density';
-import { calculateVirtualWindow, scrollTopForIndex } from './lib/virtualList';
 import { buildLabelTree, flattenLabelTree, labelDefinitionsForAccount, labelPresenceInThreads } from '../../shared/labels';
 import { reverseMailActionKind } from '../../shared/mailActions';
 import { aggregateMailActionResults, isUndoableMailActionLog } from '../../shared/mailActionFeedback';
 import { presentMailActionFeedback, undoPayloadJson } from './lib/presentMailAction';
-import { keymapShortcut } from '../../shared/appKeymap';
-import { mailboxEmptyCopy } from '../../shared/mailboxEmptyCopy';
-import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../shared/mailboxNavigation';
-import { filterEnabledSplitTabs } from '../../shared/inboxSplits';
-import { visibleSplitTabs } from '../../shared/splitTabs';
-import type { Draft, MailboxView, MailThread } from '../../shared/types';
-
-const getMaxWidthStyle = (option?: string) => {
-  switch (option) {
-    case 'full': return '100%';
-    case 'wide': return '1000px';
-    case 'narrow': return '600px';
-    case 'standard':
-    default:
-      return '800px';
-  }
-};
-
-function formatDraftRecipientLine(draft: Draft): string {
-  const recipients = [...draft.to, ...draft.cc, ...draft.bcc]
-    .map(recipient => recipient.email)
-    .filter(Boolean);
-  return recipients.length > 0 ? `To ${recipients.join(', ')}` : 'No recipients';
-}
-
-function formatDraftUpdatedAt(updatedAt: string): string {
-  const date = new Date(updatedAt);
-  if (!Number.isFinite(date.getTime())) return '';
-  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDraftSendAt(sendAt?: string | null): string | null {
-  if (!sendAt) return null;
-  const date = new Date(sendAt);
-  if (!Number.isFinite(date.getTime())) return null;
-  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function DraftRow({
-  draft,
-  onOpen,
-  onDiscard,
-}: {
-  draft: Draft;
-  onOpen: () => void;
-  onDiscard: () => void;
-}) {
-  const subject = draft.subject.trim() || '(no subject)';
-  const snippet = draft.bodyPlain.trim() || 'No body text';
-  const updatedAt = formatDraftUpdatedAt(draft.updatedAt);
-  const sendAt = formatDraftSendAt(draft.sendAt);
-  const recipientLine = formatDraftRecipientLine(draft);
-  const draftStatus = sendAt ? `Scheduled for ${sendAt}` : recipientLine;
-  const draftAccessibilityLabel = [
-    sendAt ? 'Scheduled draft' : 'Draft',
-    `subject ${subject}`,
-    draftStatus,
-    updatedAt ? `last updated ${updatedAt}` : null,
-    snippet ? `preview ${snippet}` : null,
-  ].filter(Boolean).join(', ');
-
-  return (
-    <div
-      role="listitem"
-      className="dm-mail-row group flex w-full min-w-0 items-start gap-2 border-b border-[var(--border)] px-4 py-3 hover:bg-[var(--hover-row)]"
-    >
-      <button
-        type="button"
-        aria-label={`Open ${draftAccessibilityLabel}`}
-        onClick={onOpen}
-        className="flex min-w-0 flex-1 items-start gap-3 text-left"
-      >
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--raised-surface)] text-[var(--accent)]">
-          <FileText aria-hidden="true" className="h-4 w-4" />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-center justify-between gap-3">
-            <span className="truncate text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{subject}</span>
-            {updatedAt && (
-              <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{updatedAt}</span>
-            )}
-          </span>
-          <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
-            {draftStatus}
-          </span>
-          <span className="line-clamp-2 text-[calc(11px*var(--font-scale))] leading-snug text-[var(--text-tertiary)]">{snippet}</span>
-        </span>
-      </button>
-      <button
-        type="button"
-        title="Discard draft"
-        aria-label={`Discard draft: ${subject}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onDiscard();
-        }}
-        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--border)] hover:text-[var(--danger)] group-hover:opacity-100 focus:opacity-100"
-      >
-        <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
+import { threadNeedsInviteAnswer } from '../../shared/inviteRsvp';
+import type { MailThread } from '../../shared/types';
 
 function AppContent() {
   const store = useAppStore();
-  const threadHeaderIdentity = store.openedThread
-    ? resolveThreadHeaderIdentity(store.openedThread, store.openedThreadMessages, {
-      messagesKey: store.openedThreadMessagesKey,
-      status: store.openedThreadMessagesStatus,
-    })
-    : null;
+  const inviteRsvp = useInviteRsvp();
+  useNoReplyReminders();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutGuideOpen, setShortcutGuideOpen] = useState(false);
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [reminderTargetThread, setReminderTargetThread] = useState<MailThread | null>(null);
-  const [labelMenuOpen, setLabelMenuOpen] = useState(false);
   const [batchLabelMenuOpen, setBatchLabelMenuOpen] = useState(false);
-  const [mailboxMenuOpen, setMailboxMenuOpen] = useState(false);
+  const [moveToSectionThread, setMoveToSectionThread] = useState<MailThread | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
-    thread: any;
+    thread: MailThread;
   } | null>(null);
+  const narrowLayout = useMediaQuery(NARROW_MAIL_LAYOUT_QUERY);
   const previousSearchQueryRef = useRef(store.searchQuery);
   const startupBehaviorAppliedRef = useRef(false);
-  const mailboxListRef = useRef<HTMLDivElement>(null);
-  const [mailboxViewport, setMailboxViewport] = useState({ scrollTop: 0, height: 0 });
-  const [measuredThreadRowHeight, setMeasuredThreadRowHeight] = useState<number | null>(null);
   const selectedThreads = useMemo(
     () => store.threads.filter(thread => store.selectedThreadIds.has(thread.id)),
     [store.selectedThreadIds, store.threads],
@@ -181,18 +69,11 @@ function AppContent() {
     const accountIds = Array.from(new Set(selectedThreads.map(thread => thread.accountId)));
     return accountIds.length === 1 ? accountIds[0] : null;
   }, [selectedThreads]);
-  const openedThreadAccountId = store.openedThread?.accountId || null;
   const selectedUserLabelNodes = useMemo(
     () => flattenLabelTree(buildLabelTree(
       labelDefinitionsForAccount(store.labelDefinitions, selectedThreadsAccountId).filter(label => label.type !== 'system')
     )),
     [selectedThreadsAccountId, store.labelDefinitions],
-  );
-  const openedUserLabelNodes = useMemo(
-    () => flattenLabelTree(buildLabelTree(
-      labelDefinitionsForAccount(store.labelDefinitions, openedThreadAccountId).filter(label => label.type !== 'system')
-    )),
-    [openedThreadAccountId, store.labelDefinitions],
   );
   const selectedLabelPresenceById = useMemo(() => {
     const presenceById: Record<string, 'some' | 'all'> = {};
@@ -204,30 +85,6 @@ function AppContent() {
     return presenceById;
   }, [selectedThreads, selectedUserLabelNodes]);
   const isDraftsMailbox = store.mailboxView === 'drafts';
-  const openDraftFromList = async (draft: Draft) => {
-    const thread = draft.threadId
-      ? store.threads.find(candidate => candidate.id === draft.threadId && candidate.accountId === draft.accountId) || null
-      : null;
-
-    store.setWorkspaceView('mail');
-    if (thread) {
-      await store.openThread(thread);
-      store.setComposeLayout('inline');
-    } else {
-      await store.openThread(null);
-      store.setComposeLayout('floating');
-    }
-    store.setActiveDraft(draft);
-  };
-  const printOpenedThread = () => {
-    if (!store.openedThread) return;
-    window.print();
-  };
-  const estimatedThreadRowHeight = Math.max(
-    56,
-    Math.round(densityMetrics(store.settings.appearance.density).threadRowHeight * (store.settings.appearance.fontScale ?? 1)),
-  );
-  const threadRowHeight = measuredThreadRowHeight ?? estimatedThreadRowHeight;
 
   // Set platform attribute for cross-platform layout padding overrides (macOS vs Windows/Linux titlebars)
   useEffect(() => {
@@ -240,13 +97,11 @@ function AppContent() {
     startupBehaviorAppliedRef.current = true;
     store.setSettingsOpen(false);
     store.setCleanupOpen(false);
-    if (store.settings.general.startupBehavior === 'today') {
-      store.setWorkspaceView('today');
-    } else {
-      store.setWorkspaceView('mail');
-      if (store.settings.general.startupBehavior === 'commandPalette') {
-        setCommandPaletteOpen(true);
-      }
+    // Today is no longer a screen of its own (SPEC §2): a saved "today"
+    // startup preference opens the inbox.
+    store.setWorkspaceView('mail');
+    if (store.settings.general.startupBehavior === 'commandPalette') {
+      setCommandPaletteOpen(true);
     }
   }, [store.settings.general.startupBehavior, store.settingsLoaded]);
 
@@ -305,40 +160,6 @@ function AppContent() {
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const [lastSelectedThreadId, setLastSelectedThreadId] = useState<string | null>(null);
-
-  const handleThreadSelectToggle = (e: React.MouseEvent, threadId: string) => {
-    if (e.shiftKey && lastSelectedThreadId && store.selectedThreadIds.has(lastSelectedThreadId)) {
-      const allVisible = store.visibleThreads;
-      const lastIdx = allVisible.findIndex(t => t.id === lastSelectedThreadId);
-      const clickedIdx = allVisible.findIndex(t => t.id === threadId);
-      if (lastIdx !== -1 && clickedIdx !== -1) {
-        const start = Math.min(lastIdx, clickedIdx);
-        const end = Math.max(lastIdx, clickedIdx);
-        const rangeThreads = allVisible.slice(start, end + 1);
-        
-        const newSelected = new Set(store.selectedThreadIds);
-        const shouldSelect = !store.selectedThreadIds.has(threadId);
-        
-        rangeThreads.forEach(t => {
-          if (shouldSelect) {
-            newSelected.add(t.id);
-          } else {
-            newSelected.delete(t.id);
-          }
-        });
-        
-        store.setSelectedThreadIds(newSelected);
-        setLastSelectedThreadId(threadId);
-        return;
-      }
-    }
-
-    store.toggleThreadSelection(threadId);
-    setLastSelectedThreadId(threadId);
-  };
-
-
   // Reader search states
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchQuery, setThreadSearchQuery] = useState('');
@@ -357,15 +178,21 @@ function AppContent() {
     }
   };
 
-  const handleThreadInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        prevThreadMatch();
-      } else {
-        nextThreadMatch();
-      }
-    }
+  const threadFind: ThreadFindState = {
+    open: threadSearchOpen,
+    query: threadSearchQuery,
+    matchesCount: threadMatchesCount,
+    activeIndex: threadActiveMatchIndex,
+    setQuery: (query) => {
+      setThreadSearchQuery(query);
+      setThreadActiveMatchIndex(0);
+    },
+    next: nextThreadMatch,
+    prev: prevThreadMatch,
+    close: () => {
+      setThreadSearchOpen(false);
+      setThreadSearchQuery('');
+    },
   };
 
   // Manage highlights in the thread reader pane DOM. Re-run when a mail iframe
@@ -423,25 +250,11 @@ function AppContent() {
   }, [store.openedThread]);
 
   useEffect(() => {
-    if (!snoozeOpen) return;
-    const close = () => setSnoozeOpen(false);
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [snoozeOpen]);
-
-  useEffect(() => {
     if (!reminderTargetThread) return;
     const close = () => setReminderTargetThread(null);
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [reminderTargetThread]);
-
-  useEffect(() => {
-    if (!labelMenuOpen) return;
-    const close = () => setLabelMenuOpen(false);
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [labelMenuOpen]);
 
   useEffect(() => {
     if (!batchLabelMenuOpen) return;
@@ -451,19 +264,8 @@ function AppContent() {
   }, [batchLabelMenuOpen]);
 
   useEffect(() => {
-    if (!mailboxMenuOpen) return;
-    const close = () => setMailboxMenuOpen(false);
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [mailboxMenuOpen]);
-
-  useEffect(() => {
     if (store.selectedThreadIds.size === 0) setBatchLabelMenuOpen(false);
   }, [store.selectedThreadIds.size]);
-
-  useEffect(() => {
-    setMailboxMenuOpen(false);
-  }, [store.mailboxView]);
 
   const runSelectedLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
     const threadIds = Array.from(store.selectedThreadIds);
@@ -521,17 +323,6 @@ function AppContent() {
     })();
   };
 
-  const runOpenedThreadLabelAction = (kind: 'moveToLabel' | 'applyLabel' | 'removeLabel', labelId: string) => {
-    const threadId = store.openedThread?.id;
-    if (!threadId) return;
-    setLabelMenuOpen(false);
-    if (kind === 'removeLabel') {
-      void store.executeMailAction('removeLabel', threadId, null, undefined, JSON.stringify({ labelId }));
-      return;
-    }
-    void store.moveThreadToLabel(labelId, threadId, kind === 'moveToLabel');
-  };
-
   const unmuteSelectedThreads = () => {
     const threadIds = Array.from(store.selectedThreadIds);
     if (threadIds.length === 0) return;
@@ -587,15 +378,10 @@ function AppContent() {
     };
   }, [contextMenu]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && contextMenu) {
-        setContextMenu(null);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [contextMenu]);
+  // The row context menu is the innermost layer while open: Esc closes only it.
+  useEscapeLayer(Boolean(contextMenu), () => setContextMenu(null));
+  // Stable, so the popover's dialog focus effect does not re-run each render.
+  const closeMoveToSection = useCallback(() => setMoveToSectionThread(null), []);
 
   useEffect(() => {
     const previousSearchQuery = previousSearchQueryRef.current;
@@ -612,112 +398,28 @@ function AppContent() {
     }
   }, [store.searchQuery, store.openedThread, store.enablePreviewPane]);
 
-  useEffect(() => {
-    const element = mailboxListRef.current;
-    if (!element) return;
-
-    const syncViewport = () => {
-      setMailboxViewport(prev => {
-        const next = { scrollTop: element.scrollTop, height: element.clientHeight };
-        if (Math.abs(prev.scrollTop - next.scrollTop) < 1 && Math.abs(prev.height - next.height) < 1) {
-          return prev;
-        }
-        return next;
-      });
-    };
-
-    syncViewport();
-    const observer = new ResizeObserver(syncViewport);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [store.settingsOpen, store.enablePreviewPane, store.previewPaneWidth, store.mailboxView]);
-
-  useEffect(() => {
-    if (isDraftsMailbox) {
-      setMeasuredThreadRowHeight(null);
-      return;
-    }
-
-    const frameId = window.requestAnimationFrame(() => {
-      const row = mailboxListRef.current?.querySelector<HTMLElement>('[data-thread-row]');
-      const measuredHeight = row?.getBoundingClientRect().height ?? 0;
-      if (measuredHeight <= 0) return;
-      setMeasuredThreadRowHeight(prev => {
-        if (prev !== null && Math.abs(prev - measuredHeight) < 1) return prev;
-        return Math.round(measuredHeight);
-      });
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [
-    isDraftsMailbox,
-    store.visibleThreads.length,
-    store.settings.appearance.density,
-    store.settings.appearance.fontScale,
-    mailboxViewport.height,
-  ]);
-
-  type MailboxRow =
-    | { kind: 'header'; id: 'top' | 'all'; label: string }
-    | { kind: 'thread'; thread: MailThread; threadIndex: number };
-
-  const mailboxRows = useMemo<MailboxRow[]>(() => {
-    const rows: MailboxRow[] = [];
-    const topCount = store.searchTopCount;
-    store.visibleThreads.forEach((thread, threadIndex) => {
-      if (topCount > 0 && threadIndex === 0) rows.push({ kind: 'header', id: 'top', label: 'Top results' });
-      if (topCount > 0 && threadIndex === topCount) rows.push({ kind: 'header', id: 'all', label: 'All matches' });
-      rows.push({ kind: 'thread', thread, threadIndex });
-    });
-    return rows;
-  }, [store.visibleThreads, store.searchTopCount]);
-
-  useEffect(() => {
-    if (isDraftsMailbox || store.visibleThreads.length === 0 || mailboxViewport.height <= 0) return;
-
-    const targetId = store.openedThread?.id || store.focusedThreadId;
-    if (!targetId) return;
-
-    const targetIndex = mailboxRows.findIndex(row => row.kind === 'thread' && row.thread.id === targetId);
-    if (targetIndex === -1) return;
-
-    const element = mailboxListRef.current;
-    if (!element) return;
-
-    const nextScrollTop = scrollTopForIndex({
-      index: targetIndex,
-      rowHeight: threadRowHeight,
-      viewportHeight: mailboxViewport.height,
-      currentScrollTop: element.scrollTop,
-      itemCount: mailboxRows.length,
-      marginRows: 2,
-    });
-
-    if (Math.abs(element.scrollTop - nextScrollTop) < 1) return;
-    element.scrollTop = nextScrollTop;
-    setMailboxViewport(prev => ({ ...prev, scrollTop: nextScrollTop }));
-  }, [
-    isDraftsMailbox,
-    store.focusedThreadId,
-    store.openedThread?.id,
-    mailboxRows,
-    threadRowHeight,
-    mailboxViewport.height,
-  ]);
-
   const openReminderPicker = (thread: MailThread) => {
-    setSnoozeOpen(false);
     setCommandPaletteOpen(false);
     setReminderTargetThread(thread);
   };
 
   const openReminderForCurrentTarget = () => {
-    const target = store.openedThread || store.visibleThreads.find(t => t.id === store.focusedThreadId) || store.visibleThreads[0];
+    const target = store.openedThread || store.listNavigationThreads.find(t => t.id === store.focusedThreadId) || store.listNavigationThreads[0];
     if (!target) {
       emitToast({ type: 'info', message: 'No thread selected.' });
       return;
     }
     openReminderPicker(target);
+  };
+
+  const openMoveToSectionForCurrentTarget = () => {
+    const target = store.openedThread
+      || (store.focusedCollapsedGroup ? null : store.listNavigationThreads.find(t => t.id === store.focusedThreadId));
+    if (!target || store.mailboxView !== 'inbox') {
+      emitToast({ type: 'info', message: 'Open or focus an inbox conversation to move it.' });
+      return;
+    }
+    setMoveToSectionThread(target);
   };
 
   useKeyboard({
@@ -735,6 +437,19 @@ function AppContent() {
       setShortcutGuideOpen(true);
     },
     onOpenReminder: openReminderPicker,
+    onOpenMoveToSection: (thread) => {
+      setCommandPaletteOpen(false);
+      setMoveToSectionThread(thread);
+    },
+    onAnswerInvite: (thread, answer) => {
+      setCommandPaletteOpen(false);
+      void inviteRsvp.answer(thread, answer);
+    },
+    // Layers close innermost first. Popovers and menus (compose menus, More,
+    // the mailbox switcher, search filters, the row context menu) take Esc
+    // before this chain via `useEscapeLayer`; dialogs with `useDialogFocus`
+    // stop it too. Here: find-in-thread bar → sheets / dialogs → Ask Dumka →
+    // reply dock → Today → reader → search.
     onEscape: () => {
       if (threadSearchOpen) {
         setThreadSearchOpen(false);
@@ -745,97 +460,44 @@ function AppContent() {
         setCommandPaletteOpen(false);
       } else if (reminderTargetThread) {
         setReminderTargetThread(null);
-      } else if (snoozeOpen) {
-        setSnoozeOpen(false);
-      } else if (mailboxMenuOpen) {
-        setMailboxMenuOpen(false);
+      } else if (moveToSectionThread) {
+        setMoveToSectionThread(null);
       } else if (store.settingsOpen) {
         store.setSettingsOpen(false);
       } else if (store.cleanupOpen) {
         store.setCleanupOpen(false);
+      } else if (store.aiPanelOpen) {
+        // The floating Ask Dumka panel sits over the reader and the reply dock;
+        // it returns focus to where it was opened from when it unmounts.
+        store.setAiPanelOpen(false);
+      } else if (store.activeDraft) {
+        // Esc in the reply/compose editor keeps the draft (SPEC §3).
+        void store.closeDraftKeepingIt();
       } else if (store.workspaceView === 'today') {
         store.setWorkspaceView('mail');
-      } else if (store.searchQuery) {
-        store.setSearchQuery('');
-      } else if (store.activeDraft) {
-        store.setActiveDraft(null);
       } else if (store.openedThread) {
         void store.closeOpenedThread();
+      } else if (store.searchQuery) {
+        store.setSearchQuery('');
       }
     }
   });
 
-  const hideEmptySplits = store.settings.inbox.hideEmptySplits;
-  const activeCategoryTabs = visibleSplitTabs(
-    filterEnabledSplitTabs(
-      store.tabCategories.filter(c => {
-        if (c.isSystem) return true;
-        if (!store.activeAccount || store.activeAccount.id === 'unified') return true;
-        return !c.accountId || c.accountId === 'global' || c.accountId === store.activeAccount.email;
-      }),
-      store.settings.inbox,
-    ),
-    store.splitCounts,
-    hideEmptySplits,
-    store.activeSplit,
-  );
-
-  // Never leave the selection on a hidden or disabled split tab.
-  useEffect(() => {
-    if (activeCategoryTabs.length === 0) return;
-    if (activeCategoryTabs.some(c => c.id === store.activeSplit)) return;
-    store.setActiveSplit(activeCategoryTabs[0].id);
-  }, [activeCategoryTabs, store.activeSplit]);
-  const mailboxIcons: Record<MailboxView, typeof Inbox> = {
-    inbox: Inbox,
-    drafts: FileText,
-    sent: Send,
-    trash: Trash2,
-    spam: OctagonAlert,
-    muted: BellOff,
-  };
-  const mailboxSubtitles: Record<MailboxView, string> = {
-    inbox: 'Split inbox categories',
-    drafts: 'Local unsent drafts',
-    sent: 'Recent sent conversations',
-    trash: 'Deleted conversations',
-    spam: 'Reported spam',
-    muted: 'Ignored conversations',
-  };
-  const mailboxTabs = MAILBOX_VIEW_ORDER.map(id => ({
-    id,
-    label: MAILBOX_VIEW_LABELS[id],
-    icon: mailboxIcons[id],
-    count: id === 'drafts' ? store.draftsList.length : store.mailboxCounts[id],
-    subtitle: mailboxSubtitles[id],
-  }));
-  const activeMailbox = mailboxTabs.find(mailbox => mailbox.id === store.mailboxView) || mailboxTabs[0];
-  const EmptyMailboxIcon = activeMailbox.icon;
-  const ActiveMailboxIcon = activeMailbox.icon;
-  const emptyMailboxCopy = mailboxEmptyCopy(
-    activeMailbox.id,
-    isDraftsMailbox ? '' : store.searchQuery,
-    store.settings.shortcuts,
-  );
-  const composeShortcut = keymapShortcut('compose', store.settings.shortcuts) || '⌘N';
-  const visibleMailboxRowCount = isDraftsMailbox ? store.draftsList.length : store.visibleThreads.length;
-  const mailboxListLabel = `${activeMailbox.label} mailbox, ${visibleMailboxRowCount} ${
-    isDraftsMailbox
-      ? visibleMailboxRowCount === 1 ? 'draft' : 'drafts'
-      : visibleMailboxRowCount === 1 ? 'thread' : 'threads'
-  }`;
-  const hasMailboxRows = visibleMailboxRowCount > 0;
-  const virtualThreadWindow = useMemo(() => calculateVirtualWindow({
-    itemCount: mailboxRows.length,
-    rowHeight: threadRowHeight,
-    viewportHeight: mailboxViewport.height || 600,
-    scrollTop: mailboxViewport.scrollTop,
-    overscan: 10,
-  }), [mailboxRows.length, threadRowHeight, mailboxViewport.height, mailboxViewport.scrollTop]);
-  const virtualRows = useMemo(
-    () => mailboxRows.slice(virtualThreadWindow.startIndex, virtualThreadWindow.endIndex),
-    [mailboxRows, virtualThreadWindow.startIndex, virtualThreadWindow.endIndex],
-  );
+  const hasOpenThread = Boolean(store.openedThread);
+  // Three columns at most: rail, list, reading area (SPEC §2/§3). Below
+  // 1100 px (or with the preview pane off) an open thread replaces the list;
+  // Esc goes back.
+  const readerReplacesList = hasOpenThread && (narrowLayout || !store.enablePreviewPane);
+  const showReadingArea = hasOpenThread || (store.enablePreviewPane && !narrowLayout);
+  const listWidth = !showReadingArea
+    ? '100%'
+    : hasOpenThread ? 'clamp(320px, 30.5vw, 480px)' : 'clamp(380px, 43vw, 680px)';
+  const inboxHome = store.mailboxView === 'inbox' && !store.searchQuery.trim() && store.accounts.length > 0;
+  const idleReadingPane = !inboxHome ? null
+    : store.groupViewStates.clear?.expanded ? <ClearGroupPane />
+    : store.fetchingInbox ? <FetchingInboxPane />
+    : store.visibleThreads.length > 0 ? <PreparedPane />
+    : <DoneSummaryPane />;
 
   return (
     <div className="dm-app-shell flex flex-col h-screen w-full overflow-hidden select-none text-[calc(12px*var(--font-scale))] leading-tight">
@@ -849,227 +511,39 @@ function AppContent() {
           <GoogleAuthBanner />
           <MailboxSyncBanner />
           <div className="flex min-h-0 flex-1 overflow-hidden">
-          {/* 3. AI COPILOT PANEL (Moved next to Left Rail & Undockable) */}
-          {store.aiPanelOpen && <AICopilotPanel />}
+          {/* The assistant (⌘J) floats over the reading area; it is no longer a column. */}
+          {store.aiPanelOpen && <AICopilotPanel floatingOnly />}
 
-          {/* LEFT WORKSPACE (Header + Split Tabs + Lists) */}
           <div className="dm-workspace relative flex flex-col flex-1 overflow-hidden">
             {store.workspaceView === 'calendar' && (
               <div className="absolute inset-0 z-30">
                 <CalendarWorkspace />
               </div>
             )}
-            {/* SEARCH COCKPIT BAR */}
             {store.workspaceView !== 'calendar' && (
               <SearchCockpitBar ref={searchInputRef} />
             )}
 
-            {/* SPLIT TABS BAR */}
-            <div className="dm-mail-tabs dm-toolbar flex items-center h-[var(--split-tabs-h)] min-h-[36px] px-4 border-b border-[var(--border)] bg-[var(--panel-bg)] justify-between select-none">
-              <div className="flex min-w-0 h-full flex-1 items-end gap-2">
-                <div className="relative flex h-[var(--split-tab-h)] shrink-0 items-center" onClick={(event) => event.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => setMailboxMenuOpen(value => !value)}
-                    title="Switch mailbox (G / Shift+G)"
-                    className="dm-mailbox-switcher flex h-full min-w-[112px] items-center justify-between gap-2 rounded-md bg-transparent px-2 text-tab text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <ActiveMailboxIcon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
-                      <span className="truncate font-semibold">{activeMailbox.label}</span>
-                      {activeMailbox.count > 0 && (
-                        <span className="rounded-full bg-[var(--border)] px-1 text-[calc(10px*var(--font-scale))] font-normal text-[var(--text-primary)]">
-                          {activeMailbox.count}
-                        </span>
-                      )}
-                    </span>
-                    <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
-                  </button>
-                  {mailboxMenuOpen && (
-                    <div className="dm-overlay absolute left-0 top-[calc(100%+4px)] z-40 w-48 rounded-md border border-[var(--strong-border)] bg-[var(--panel-bg)] p-1 shadow-lg">
-                      {mailboxTabs.map(mailbox => {
-                        const Icon = mailbox.icon;
-                        const isActive = store.mailboxView === mailbox.id;
-                        return (
-                          <button
-                            key={mailbox.id}
-                            type="button"
-                            onClick={() => {
-                              store.setWorkspaceView('mail');
-                              store.setMailboxView(mailbox.id);
-                              store.setSettingsOpen(false);
-                              store.setCleanupOpen(false);
-                              setMailboxMenuOpen(false);
-                            }}
-                            className={`flex w-full min-w-0 items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] ${
-                              isActive
-                                ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
-                                : 'text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]'
-                            }`}
-                          >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <Icon className="h-3.5 w-3.5 shrink-0" />
-                              <span className="truncate">{mailbox.label}</span>
-                            </span>
-                            {mailbox.count > 0 && (
-                              <span className="shrink-0 rounded-full bg-[var(--border)] px-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]">
-                                {mailbox.count}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {store.mailboxView === 'inbox' ? (
-                  <SplitTabBar categories={activeCategoryTabs} />
-                ) : (
-                  <div className="flex h-full items-center min-w-0">
-                    <div className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] truncate">
-                      {activeMailbox.subtitle}
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => {
-                    composeOrConnectAccount(store);
-                  }}
-                  title={`Compose Message (${composeShortcut})`}
-                  className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-all duration-150 active:scale-90"
-                >
-                  <SquarePen className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setCommandPaletteOpen(true)}
-                  title="Command Palette (Cmd+K)"
-                  className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-all duration-150 active:scale-90"
-                >
-                  <Command className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* SPLIT SCREEN WORKSPACE: Thread List + Reader pane OR Settings Panel */}
             <div className="flex flex-1 overflow-hidden">
-              {store.workspaceView === 'today' ? (
-                <TodayHome />
-              ) : store.settingsOpen ? (
+              {store.settingsOpen ? (
                 <SettingsPanel />
-              ) : store.cleanupOpen ? (
-                <CleanupPanel />
               ) : store.accounts.length === 0 ? (
                 <ConnectGmailPanel />
               ) : (
                 <>
-                  {/* THREAD LIST CONTAINER */}
+                  {/* MAILBOX LIST */}
                   <div
-                    className="dm-thread-list relative flex flex-col border-r border-[var(--border)] h-full overflow-hidden"
+                    className="dm-thread-list relative flex h-full shrink-0 flex-col overflow-hidden border-r border-[var(--border)]"
+                    data-list-width={hasOpenThread ? 'reading' : 'home'}
                     style={{
-                      width: store.enablePreviewPane 
-                        ? `${store.previewPaneWidth}px` 
-                        : (store.openedThread ? '0px' : '100%'),
-                      display: !store.enablePreviewPane && store.openedThread ? 'none' : 'flex'
+                      width: listWidth,
+                      display: readerReplacesList ? 'none' : 'flex',
                     }}
                   >
-                    {/* SCROLLABLE THREAD LIST */}
-                    <div
-                      ref={mailboxListRef}
-                      className="flex-1 overflow-y-auto flex flex-col"
-                      role={hasMailboxRows ? 'list' : undefined}
-                      aria-label={hasMailboxRows ? mailboxListLabel : undefined}
-                      onScroll={(event) => {
-                        const element = event.currentTarget;
-                        setMailboxViewport(prev => {
-                          const next = { scrollTop: element.scrollTop, height: element.clientHeight };
-                          if (Math.abs(prev.scrollTop - next.scrollTop) < 1 && Math.abs(prev.height - next.height) < 1) {
-                            return prev;
-                          }
-                          return next;
-                        });
-                      }}
-                    >
-                      {isDraftsMailbox ? (
-                        store.draftsList.length === 0 ? (
-                          <MailboxEmptyState
-                            icon={EmptyMailboxIcon}
-                            copy={emptyMailboxCopy}
-                            onClearSearch={() => store.setSearchQuery('')}
-                          />
-                        ) : (
-                          store.draftsList.map((draft) => (
-                            <DraftRow
-                              key={draft.id}
-                              draft={draft}
-                              onOpen={() => void openDraftFromList(draft)}
-                              onDiscard={() => void store.discardDraft(draft.id)}
-                            />
-                          ))
-                        )
-                      ) : store.visibleThreads.length === 0 ? (
-                        <MailboxEmptyState
-                          icon={EmptyMailboxIcon}
-                          copy={emptyMailboxCopy}
-                          onClearSearch={() => store.setSearchQuery('')}
-                        />
-                      ) : (
-                        <div
-                          role="presentation"
-                          className="relative shrink-0"
-                          style={{ height: `${virtualThreadWindow.totalHeight}px` }}
-                        >
-                          <div
-                            role="presentation"
-                            className="absolute left-0 right-0 top-0 flex flex-col"
-                            style={{ transform: `translateY(${virtualThreadWindow.offsetTop}px)` }}
-                          >
-                            {virtualRows.map((row) => {
-                              if (row.kind === 'header') {
-                                return (
-                                  <div
-                                    key={`section-${row.id}`}
-                                    role="presentation"
-                                    style={{ height: `${threadRowHeight}px` }}
-                                    className="flex items-end pb-1.5 px-3 text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]"
-                                  >
-                                    {row.label}
-                                  </div>
-                                );
-                              }
-                              const thread = row.thread;
-                              return (
-                                <ThreadRow
-                                  key={thread.id}
-                                  thread={thread}
-                                  isFocused={store.focusedThreadId === thread.id}
-                                  isOpened={store.openedThread?.id === thread.id}
-                                  showAvatars={store.settings.appearance.showAvatars}
-                                  isSelected={store.selectedThreadIds.has(thread.id)}
-                                  isSelectionModeActive={store.selectedThreadIds.size > 0}
-                                  isSemanticMatch={store.semanticMatchThreadIds.has(thread.id)}
-                                  positionInSet={row.threadIndex + 1}
-                                  setSize={store.visibleThreads.length}
-                                  onClick={() => {
-                                    store.setWorkspaceView('mail');
-                                    store.openThread(thread);
-                                  }}
-                                  onToggleSelect={(e) => handleThreadSelectToggle(e, thread.id)}
-                                  onContextMenu={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setContextMenu({ x: e.clientX, y: e.clientY, thread });
-                                  }}
-                                />
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    <MailboxListHeader onOpenCommandPalette={() => setCommandPaletteOpen(true)} />
+                    <MailboxList
+                      onThreadContextMenu={(event, thread) => setContextMenu({ x: event.clientX, y: event.clientY, thread })}
+                    />
 
                     {/* FLOATING BATCH ACTIONS BAR */}
                     {!isDraftsMailbox && store.selectedThreadIds.size > 0 && (
@@ -1198,294 +672,18 @@ function AppContent() {
                     )}
                   </div>
 
-
-                  {/* RESIZER BAR */}
-                  {store.enablePreviewPane && (
-                    <div
-                      className="w-[4px] hover:w-[6px] active:w-[6px] bg-transparent hover:bg-[var(--accent)]/50 active:bg-[var(--accent)] cursor-col-resize transition-all h-full select-none shrink-0"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        const startX = e.clientX;
-                        const startWidth = store.previewPaneWidth;
-                        
-                        const handleMouseMove = (moveEvent: MouseEvent) => {
-                          const newWidth = Math.max(200, Math.min(600, startWidth + (moveEvent.clientX - startX)));
-                          store.setPreviewPaneWidth(newWidth);
-                        };
-                        
-                        const handleMouseUp = () => {
-                          document.removeEventListener('mousemove', handleMouseMove);
-                          document.removeEventListener('mouseup', handleMouseUp);
-                        };
-                        
-                        document.addEventListener('mousemove', handleMouseMove);
-                        document.addEventListener('mouseup', handleMouseUp);
-                      }}
+                  {/* READING AREA */}
+                  {showReadingArea && (store.openedThread ? (
+                    <ThreadReader
+                      key={`${store.openedThread.accountId}:${store.openedThread.id}`}
+                      thread={store.openedThread}
+                      readerReplacesList={readerReplacesList}
+                      find={threadFind}
+                      onOpenReminder={openReminderPicker}
+                      onOpenMoveToSection={(thread) => setMoveToSectionThread(thread)}
                     />
-                  )}
-
-                  {/* THREAD READER PANE */}
-                  {(store.enablePreviewPane || store.openedThread) && (store.openedThread ? (
-                    <div id="thread-reader-pane" className="dm-thread-reader panel-surface flex-1 flex flex-col overflow-y-auto bg-[var(--panel-bg)] p-6 relative">
-                      
-                      {/* Floating Reader Find in Page Bar */}
-                      {threadSearchOpen && (
-                        <div className="dm-overlay print-hidden absolute top-4 right-6 z-20 flex items-center gap-2 px-3 py-1.5 bg-[var(--panel-bg)] border border-[var(--strong-border)] rounded-lg shadow-xl animate-fade-in select-none">
-                          <input
-                            id="thread-search-input"
-                            type="text"
-                            placeholder="Find in email…"
-                            value={threadSearchQuery}
-                            onChange={(e) => {
-                              setThreadSearchQuery(e.target.value);
-                              setThreadActiveMatchIndex(0);
-                            }}
-                            onKeyDown={handleThreadInputKeyDown}
-                            className="w-48 bg-transparent border-0 outline-none text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
-                          />
-                          {threadSearchQuery && (
-                            <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] px-1 border-r border-[var(--border)] shrink-0 font-medium">
-                              {threadMatchesCount > 0 ? `${threadActiveMatchIndex + 1} of ${threadMatchesCount}` : '0 of 0'}
-                            </span>
-                          )}
-                          <div className="flex items-center gap-0.5 shrink-0">
-                            <button
-                              onClick={prevThreadMatch}
-                              title="Previous match (Shift+Enter)"
-                              className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                            >
-                              <ChevronUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={nextThreadMatch}
-                              title="Next match (Enter)"
-                              className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                  setThreadSearchOpen(false);
-                                  setThreadSearchQuery('');
-                              }}
-                              className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      <div
-                        className="w-full mx-auto flex flex-col flex-1"
-                        style={{ maxWidth: getMaxWidthStyle(store.settings.appearance.readerMaxWidth) }}
-                      >
-                        {/* Header Info */}
-                        <div className="dm-reader-header flex justify-between items-start border-b border-[var(--border)] pb-4 mb-4 select-text shrink-0">
-                          <div>
-                            {!store.enablePreviewPane && (
-                              <button
-                                onClick={() => void store.closeOpenedThread()}
-                                className="print-hidden flex items-center gap-1 mb-3 text-[calc(11px*var(--font-scale))] text-[var(--accent)] font-medium hover:underline cursor-pointer select-none bg-[var(--hover-row)] px-2 py-1 rounded"
-                              >
-                                <ArrowLeft className="w-3.5 h-3.5" />
-                                {store.returnWorkspaceView === 'today' ? 'Back to Today' : 'Back to List'}
-                              </button>
-                            )}
-                            <h1 className="text-thread-title mb-2 text-[var(--text-primary)] select-text">
-                              {store.openedThread.subject}
-                            </h1>
-                            <div className="flex items-center gap-2">
-                              {threadHeaderIdentity ? (
-                                <>
-                                  <span className="font-semibold text-[var(--text-primary)] text-[calc(12px*var(--font-scale))]">
-                                    {threadHeaderIdentity.senderName}
-                                  </span>
-                                  <span className="text-[var(--text-secondary)] text-[calc(11px*var(--font-scale))]">
-                                    &lt;{threadHeaderIdentity.senderEmail}&gt;
-                                  </span>
-                                </>
-                              ) : (
-                                <span className="text-[var(--text-secondary)] text-[calc(11px*var(--font-scale))]">
-                                  Loading sender...
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          
-                          {/* Actions buttons */}
-                          <div className="print-hidden flex items-center gap-1">
-                            {store.openedThreadMessages.length > 0 && (() => {
-                              const lastMsg = store.openedThreadMessages[store.openedThreadMessages.length - 1];
-                              return (
-                                <>
-                                  <button onClick={() => store.startReply(lastMsg)} title="Reply (R)" className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"><Reply className="w-4 h-4" /></button>
-                                  <button onClick={() => store.startReply(lastMsg, true)} title="Reply All (A)" className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"><ReplyAll className="w-4 h-4" /></button>
-                                  <button onClick={() => store.startForward(lastMsg)} title="Forward (F)" className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"><Forward className="w-4 h-4" /></button>
-                                  <span className="w-px h-4 bg-[var(--border)] mx-1" />
-                                </>
-                              );
-                            })()}
-                            <button
-                              onClick={() => store.startCalendarEventFromThread(store.openedThread)}
-                              title="Create Calendar Event"
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--accent)]"
-                            >
-                              <CalendarPlus className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={printOpenedThread}
-                              title="Print Thread"
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                            >
-                              <Printer className="w-4 h-4" />
-                            </button>
-                            <div className="relative">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setSnoozeOpen(o => !o); }}
-                                title="Snooze / Remind (H)"
-                                className={`p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer ${store.openedThread?.reminderAt ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
-                              >
-                                <Clock className="w-4 h-4" />
-                              </button>
-                              {snoozeOpen && store.openedThread && (
-                                <SnoozeMenu
-                                  onPick={(d) => store.snoozeThread(store.openedThread!, d)}
-                                  onClose={() => setSnoozeOpen(false)}
-                                  targetSubject={store.openedThread.subject}
-                                />
-                              )}
-                            </div>
-                            {store.mailboxView === 'inbox' && (
-                              <button
-                                onClick={() => store.executeMailAction('markDone', store.openedThread!.id)}
-                                title="Archive Thread (E)"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                              >
-                                <CheckCircle className="w-4 h-4 text-[var(--success)]" />
-                              </button>
-                            )}
-                            <div className="relative">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setLabelMenuOpen(value => !value);
-                                }}
-                                title="Move or apply label"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                              >
-                                <Tags className="w-4 h-4" />
-                              </button>
-                            {labelMenuOpen && (
-                                <ThreadLabelMoveMenu
-                                  nodes={openedUserLabelNodes}
-                                  onSyncLabels={() => {
-                                    if (openedThreadAccountId) void store.syncLabels(openedThreadAccountId);
-                                  }}
-                                  onMove={(labelId) => runOpenedThreadLabelAction('moveToLabel', labelId)}
-                                  onApply={(labelId) => runOpenedThreadLabelAction('applyLabel', labelId)}
-                                  onRemove={(labelId) => runOpenedThreadLabelAction('removeLabel', labelId)}
-                                  onClose={() => setLabelMenuOpen(false)}
-                                  currentLabelIds={store.openedThread?.labelIds || []}
-                                  className="absolute right-0 top-8"
-                                />
-                              )}
-                            </div>
-                            {store.mailboxView === 'muted' ? (
-                              <button
-                                onClick={() => store.unmuteThread(store.openedThread!.id)}
-                                title="Unmute Thread"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--success)]"
-                              >
-                                <Bell className="w-4 h-4" />
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => store.muteThread(store.openedThread!.id)}
-                                title="Ignore / Mute Thread"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                              >
-                                <BellOff className="w-4 h-4" />
-                              </button>
-                            )}
-                            {store.mailboxView === 'spam' ? (
-                              <button
-                                onClick={() => store.executeMailAction('restoreFromSpam', store.openedThread!.id)}
-                                title="Not Spam"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--success)]"
-                              >
-                                <Inbox className="w-4 h-4" />
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => store.executeMailAction('reportSpam', store.openedThread!.id)}
-                                title="Move to Spam"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--warning)]"
-                              >
-                                <OctagonAlert className="w-4 h-4" />
-                              </button>
-                            )}
-                            {store.mailboxView === 'trash' ? (
-                              <button
-                                onClick={() => store.executeMailAction('restoreFromTrash', store.openedThread!.id)}
-                                title="Restore from Trash"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--success)]"
-                              >
-                                <ArchiveRestore className="w-4 h-4" />
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => store.executeMailAction('moveToTrash', store.openedThread!.id)}
-                                title="Move to Trash"
-                                className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--danger)]"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => void store.closeOpenedThread()}
-                              className="p-1.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                              title={store.returnWorkspaceView === 'today' ? 'Back to Today' : 'Close thread'}
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Messages Body */}
-                        <AgenticThreadPanel />
-                        <ThreadMessageList
-                          threadKey={`${store.openedThread.accountId}:${store.openedThread.id}`}
-                          messages={store.openedThreadMessages}
-                          status={store.openedThreadMessagesStatus}
-                          defaultLoadImages={store.settings.privacy.loadRemoteImages}
-                          collapseReadMessages={store.settings.inbox.collapseReadThreads}
-                        />
-
-                        {/* Inline Draft Reply Affordance */}
-                        <InlineReplyComposer />
-
-                        {!store.activeDraft && store.openedThreadMessages.length > 0 && (() => {
-                          const lastMsg = store.openedThreadMessages[store.openedThreadMessages.length - 1];
-                          return (
-                            <div className="print-hidden mt-6 flex gap-3 select-none shrink-0">
-                              <button
-                                onClick={() => store.startReply(lastMsg)}
-                                className="px-4 py-2 bg-[var(--raised-surface)] border border-[var(--border)] rounded-[8px] text-[calc(13px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)] cursor-pointer transition-all flex items-center gap-2 font-medium"
-                              >
-                                <Reply className="w-4 h-4" /> Reply
-                              </button>
-                              <button
-                                onClick={() => store.startReply(lastMsg, true)}
-                                className="px-4 py-2 bg-[var(--raised-surface)] border border-[var(--border)] rounded-[8px] text-[calc(13px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-secondary)] cursor-pointer transition-all flex items-center gap-2 font-medium"
-                              >
-                                <ReplyAll className="w-4 h-4" /> Reply All
-                              </button>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
+                  ) : idleReadingPane ? (
+                    idleReadingPane
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-secondary)] bg-[var(--panel-bg)]">
                       <Mail className="w-12 h-12 mb-3 opacity-25" />
@@ -1497,9 +695,6 @@ function AppContent() {
               )}
             </div>
           </div>
-
-          {/* 2. RIGHT PANEL (Context + Diagnostics + Health + Ledger) */}
-          {store.workspaceView !== 'calendar' && <RightContextPanel />}
           </div>
         </div>
       </div>
@@ -1530,6 +725,16 @@ function AppContent() {
         isOpen={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         onOpenReminder={openReminderForCurrentTarget}
+        onOpenMoveToSection={openMoveToSectionForCurrentTarget}
+        onAnswerInvite={(answer) => {
+          const target = store.openedThread
+            || (store.focusedCollapsedGroup ? null : store.listNavigationThreads.find(t => t.id === store.focusedThreadId));
+          if (!target || !threadNeedsInviteAnswer(target)) {
+            emitToast({ type: 'info', message: 'Open or focus an invitation that still needs an answer.' });
+            return;
+          }
+          void inviteRsvp.answer(target, answer);
+        }}
       />
 
       <ShortcutGuideOverlay
@@ -1550,6 +755,25 @@ function AppContent() {
           targetSubject={reminderTargetThread.subject}
           onPick={(date) => store.snoozeThread(reminderTargetThread, date)}
           onClose={() => setReminderTargetThread(null)}
+        />
+      )}
+
+      {moveToSectionThread && (
+        <MoveToSectionPopover
+          thread={moveToSectionThread}
+          hasModel={store.hasModel}
+          currentSection={store.sectionOfThread(moveToSectionThread)}
+          onChoose={(decision) => void store.moveThreadToSection(moveToSectionThread, decision)}
+          onClose={closeMoveToSection}
+        />
+      )}
+
+      {store.unsubscribeReviewTargets && (
+        <UnsubscribeConfirmSheet
+          targets={store.unsubscribeReviewTargets}
+          busy={store.unsubscribeReviewBusy}
+          onConfirm={(options) => void store.confirmUnsubscribeReview(options)}
+          onCancel={store.cancelUnsubscribeReview}
         />
       )}
 
@@ -1684,6 +908,19 @@ function AppContent() {
             <span>Remind Tomorrow</span>
           </button>
 
+          {store.mailboxView === 'inbox' && (
+            <button
+              onClick={() => {
+                setMoveToSectionThread(contextMenu.thread);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <Tags className="w-3.5 h-3.5 opacity-80" />
+              <span>Move to Section…</span>
+            </button>
+          )}
+
           <div className="h-[1px] bg-[var(--border)] my-1 mx-2" />
 
           <button
@@ -1700,20 +937,28 @@ function AppContent() {
             <span>Reply</span>
           </button>
 
-          <button
-            onClick={() => {
-              store.setWorkspaceView('mail');
-              store.openThread(contextMenu.thread).then(() => {
-                store.runAITriagePlan();
-              });
-              setContextMenu(null);
-            }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 opacity-80 text-[var(--ai-accent)] hover:text-white" />
-            <span>AI Triage Queue</span>
-          </button>
+          {store.senderRuleMenuState(contextMenu.thread) === 'available' && (
+            <button
+              data-context-sender-rule
+              onClick={() => {
+                store.requestSenderRule(contextMenu.thread);
+                setContextMenu(null);
+              }}
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 opacity-80 text-[var(--ai-accent)] hover:text-white" />
+              <span>Always archive from this sender…</span>
+            </button>
+          )}
         </div>
+      )}
+
+      {store.senderRuleConsent && (
+        <SenderRuleConsentDialog
+          consent={store.senderRuleConsent}
+          onConfirm={() => void store.confirmSenderRuleConsent()}
+          onCancel={store.cancelSenderRuleConsent}
+        />
       )}
     </div>
   );

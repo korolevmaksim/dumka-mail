@@ -11,6 +11,8 @@ import {
 } from './database';
 import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
 import { databaseWorkerClient } from './databaseWorkerClient';
+import { fetchWithSafeRedirects, UnsafeRedirectError } from './safeRedirectFetch';
+import { truncateProviderText } from '../shared/aiErrors';
 import type { EmbeddingCandidate, ThreadSecurityMode } from './mailAnalysisJobs';
 import { GmailSyncService } from './gmail';
 import {
@@ -26,6 +28,7 @@ import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/em
 import { normalizeEmbeddingText } from '../shared/semantic';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import { SystemLogger } from './systemLogger';
+import { resolveAccountSetting } from '../shared/accountSettings';
 import type {
   AgentDraftSuggestion,
   AgentRulesSettings,
@@ -145,6 +148,14 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       replyTone: 'direct',
       personalizationNotes: '',
     };
+  }
+}
+
+function accountAllowsMailText(accountId: string): boolean {
+  try {
+    return resolveAccountSetting(JSON.parse(SettingsRepo.get('appSettings') || '{}'), accountId, 'modelMayReadMail').value === true;
+  } catch {
+    return false;
   }
 }
 
@@ -278,6 +289,8 @@ function automationModelOverride(settings: RuntimeAgentSettings): string | undef
 async function generateDraftForThread(thread: MailThread, messages: MailMessage[]): Promise<AgentDraftSuggestion | null> {
   const settings = readAgentSettings(thread.accountId);
   if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return null;
+  // Per-account "Mail text may be sent to the model" (SPEC §8) also gates this legacy path.
+  if (!accountAllowsMailText(thread.accountId)) return null;
 
   const latest = latestMessage(messages);
   if (!latest) return null;
@@ -617,16 +630,21 @@ function chooseUnsubscribeCandidate(messages: MailMessage[]): UnsubscribeCandida
 
 async function performUnsubscribe(accountId: string, method: UnsubscribeMethod): Promise<string> {
   if (method.kind === 'httpPost') {
-    if (!isSafePublicHttpUrl(method.url)) {
-      throw new Error('Unsubscribe URL rejected: non-public address.');
+    // Every redirect hop passes the same public-http(s) check as the first URL.
+    let res: Response;
+    try {
+      res = await fetchWithSafeRedirects(method.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'List-Unsubscribe=One-Click',
+        signal: AbortSignal.timeout(20_000),
+      }, { isAllowedUrl: isSafePublicHttpUrl, maxRedirects: 3 });
+    } catch (error) {
+      if (error instanceof UnsafeRedirectError) throw new Error(`Unsubscribe ${error.message}`);
+      throw error;
     }
-    const res = await fetch(method.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'List-Unsubscribe=One-Click',
-    });
     if (!res.ok) {
-      throw new Error(`Unsubscribe HTTP ${res.status}: ${await res.text()}`);
+      throw new Error(`Unsubscribe HTTP ${res.status}: ${truncateProviderText(await res.text().catch(() => ''), 200)}`);
     }
     return 'httpPost';
   }
@@ -746,7 +764,8 @@ export const AgenticService = {
 
   async runBackgroundPass(maxThreadsPerAccount = 8): Promise<void> {
     for (const account of AccountsRepo.list()) {
-      const recentThreads = ThreadsRepo.listRecentInbox(account.email, maxThreadsPerAccount);
+      // Inbox scan on the database worker, not the main event loop.
+      const recentThreads = (await databaseWorkerClient.agentPrepInbox(account.email, maxThreadsPerAccount)).threads;
 
       for (const thread of recentThreads) {
         await processThreadInternal(account.email, thread.id);
@@ -851,7 +870,12 @@ export const AgenticService = {
     };
   },
 
-  async unsubscribeThread(accountId: string, threadId: string, sourceMessageId?: string): Promise<{ method: string; archived: boolean; senderEmail: string | null }> {
+  async unsubscribeThread(
+    accountId: string,
+    threadId: string,
+    sourceMessageId?: string,
+    options: { archive?: boolean } = {},
+  ): Promise<{ method: string; archived: boolean; senderEmail: string | null }> {
     const messages = await databaseWorkerClient.listMessagesForThread(accountId, threadId);
     let candidate: UnsubscribeCandidate | null;
     if (sourceMessageId) {
@@ -877,6 +901,9 @@ export const AgenticService = {
     const senderEmail = (candidate.senderEmail || messages[0]?.senderEmail || '').trim().toLowerCase();
     if (senderEmail) {
       UnsubscribedSendersRepo.mark(accountId, senderEmail, { threadId, method });
+    }
+    if (options.archive === false) {
+      return { method, archived: false, senderEmail: senderEmail || null };
     }
     ThreadsRepo.updateLabels(accountId, threadId, [], ['INBOX']);
     await GmailSyncService.modifyLabels(accountId, threadId, [], ['INBOX']);

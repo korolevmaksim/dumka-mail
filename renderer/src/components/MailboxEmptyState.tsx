@@ -1,4 +1,4 @@
-import type { LucideIcon } from 'lucide-react';
+import { LoaderCircle, type LucideIcon } from 'lucide-react';
 import type { MailboxEmptyCopy } from '../../../shared/mailboxEmptyCopy';
 
 export function MailboxEmptyState({
@@ -12,7 +12,9 @@ export function MailboxEmptyState({
 }) {
   return (
     <div role="status" aria-live="polite" className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
-      <Icon aria-hidden="true" className="w-10 h-10 mb-2 opacity-30" />
+      {copy.busy
+        ? <LoaderCircle aria-hidden="true" className="w-8 h-8 mb-2 animate-spin text-[var(--accent)] opacity-70 motion-reduce:animate-none" />
+        : <Icon aria-hidden="true" className="w-10 h-10 mb-2 opacity-30" />}
       <p className="font-semibold">{copy.title}</p>
       <p className="text-[calc(11px*var(--font-scale))] opacity-75 mt-1">{copy.body}</p>
       {copy.action === 'clearSearch' && (

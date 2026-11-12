@@ -1,3 +1,4 @@
+import { isSqliteBusyError } from './sqliteWriteGuard';
 import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
 import { createRfcMessageId, resolveActionRfcMessageId } from '../shared/rfcMessageId';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
@@ -261,6 +262,18 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       deps.actionLog.save(action);
       logger.log(`[Sync Worker] Successfully synced action ${action.id} of kind ${action.kind}`);
     } catch (err: any) {
+      if (isSqliteBusyError(err)) {
+        // The local database stayed busy past the write retries. That is not a
+        // Gmail failure: never roll back or fail the action, retry next pass.
+        logger.log(`[Sync Worker] Local database busy, will retry action ${action.id} later.`);
+        try {
+          action.status = 'pending_sync';
+          deps.actionLog.save(action);
+        } catch {
+          // Still busy; the action keeps its stored status and is retried.
+        }
+        break;
+      }
       if (isRetryableRemoteError(err)) {
         logger.log(`[Sync Worker] Remote access is unavailable, will retry action ${action.id} later:`, err.message);
         action.status = 'pending_sync';

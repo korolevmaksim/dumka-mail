@@ -4,6 +4,7 @@ import { MailThread } from '../../../shared/types';
 import { primaryRowLabel } from '../../../shared/labels';
 import { normalizePreview } from '../../../shared/textNormalizer';
 import { listTimestamp } from '../../../shared/dateFormat';
+import { threadRowSender } from '../../../shared/threadCounterparty';
 
 function avatarColor(s: string): string {
   let hash = 0;
@@ -19,6 +20,8 @@ interface ThreadRowProps {
   isSelected: boolean;
   isSelectionModeActive: boolean;
   isSemanticMatch?: boolean;
+  /** Display name of the thread's account, so the row names the other party, not the account. */
+  accountName?: string;
   positionInSet?: number;
   setSize?: number;
   onClick: () => void;
@@ -38,13 +41,15 @@ function ThreadRow({
   isSelected,
   isSelectionModeActive,
   isSemanticMatch,
+  accountName,
   positionInSet,
   setSize,
   onClick,
   onToggleSelect,
   onContextMenu
 }: ThreadRowProps) {
-  const senderText = thread.senderNames.length > 0 ? thread.senderNames.join(', ') : thread.senderEmail;
+  // Same counterparty rule as the inbox rows: the other party, never the account itself.
+  const senderText = threadRowSender(thread, { email: thread.accountId, displayName: accountName });
   const initials = (senderText || '?').trim().substring(0, 2).toUpperCase();
   const label = primaryRowLabel(thread);
   const preview = normalizePreview(thread.snippet);
@@ -100,6 +105,10 @@ function ThreadRow({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onKeyDown={(e) => {
+        // Only the row itself: a nested control (selection button) activates natively.
+        if (e.target !== e.currentTarget) return;
+        // ⌘↩ / ⌘⇧↩ belong to the reply dock (send), not to the row.
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onClick();

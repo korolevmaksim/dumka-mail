@@ -26,8 +26,9 @@ import {
   X,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { emitToast } from '../../lib/toastBus';
-import { formatAIUserError } from '../../../../shared/aiErrors';
+import { AI_UNREACHABLE_MESSAGE, formatAIUserError } from '../../../../shared/aiErrors';
 import { withAIRequestTimeout } from '../../../../shared/aiRequest';
 import { resolveAIModelForPurpose } from '../../../../shared/aiModelPurpose';
 import {
@@ -87,6 +88,8 @@ export function FloatingComposeDrawer() {
   const [linkSelectedText, setLinkSelectedText] = useState('');
   const [linkSelectionRange, setLinkSelectionRange] = useState<Range | null>(null);
   const [reminderOpen, setReminderOpen] = useState(false);
+  // The AI compose strip is a sub-panel of the draft: Esc closes it first.
+  useEscapeLayer(aiOpen, () => setAiOpen(false));
   const [subject, setSubject] = useState('');
   const [liveBodyPlain, setLiveBodyPlain] = useState('');
   const [liveBodyHtml, setLiveBodyHtml] = useState<string | null>(null);
@@ -440,7 +443,8 @@ export function FloatingComposeDrawer() {
       setAiOpen(false);
       emitToast({ type: 'success', message: mode === 'draft' ? 'AI draft inserted.' : 'AI rewrite inserted.' });
     } catch (error) {
-      emitToast({ type: 'error', message: formatAIUserError(error) });
+      console.error('AI compose request failed:', formatAIUserError(error));
+      emitToast({ type: 'error', message: `${AI_UNREACHABLE_MESSAGE}. Try again.` });
     } finally {
       setAiBusy(false);
     }
@@ -715,6 +719,7 @@ export function FloatingComposeDrawer() {
               onInsertAvailability={() => void insertAvailability()}
               onInsertCalendly={() => void insertSchedulingLink('calendly')}
               onInsertCalCom={() => void insertSchedulingLink('calCom')}
+              onClose={() => setSchedulingOpen(false)}
             />
           )}
 
@@ -724,6 +729,7 @@ export function FloatingComposeDrawer() {
               onInsertDefaultSnippet={insertDefaultSnippet}
               onInsertTemplate={insertSnippetTemplate}
               onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
+              onClose={() => setTemplatesOpen(false)}
             />
           )}
         </div>

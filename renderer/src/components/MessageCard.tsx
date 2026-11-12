@@ -14,13 +14,14 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
   const [copied, setCopied] = useState(false);
   const [showRawModal, setShowRawModal] = useState(false);
-  const renderHtmlBody = hasRenderableHtmlBody(msg.bodyHtml, msg.bodyPlain);
+  // Body scans run once per body, not on every render (state changes, copy, images).
+  const renderHtmlBody = useMemo(() => hasRenderableHtmlBody(msg.bodyHtml, msg.bodyPlain), [msg.bodyHtml, msg.bodyPlain]);
   const htmlBody = renderHtmlBody ? msg.bodyHtml || '' : '';
-  const remoteImages = htmlBody ? hasRemoteImages(htmlBody) : false;
+  const remoteImages = useMemo(() => (htmlBody ? hasRemoteImages(htmlBody) : false), [htmlBody]);
   const initials = (msg.senderName || msg.senderEmail || '?').trim().substring(0, 2).toUpperCase();
   const [inlineAttachmentData, setInlineAttachmentData] = useState<Record<string, string>>({});
 
-  const htmlHasCidReferences = /cid:/i.test(htmlBody);
+  const htmlHasCidReferences = useMemo(() => /cid:/i.test(htmlBody), [htmlBody]);
   const inlineImageAttachments = useMemo(
     () => msg.attachments.filter(att => shouldTreatAsInlineImage(att, htmlBody)),
     [msg.attachments, htmlBody]
@@ -329,7 +330,7 @@ function shouldTreatAsInlineImage(att: AttachmentMetadata, html: string): boolea
   return att.isInline === true || Boolean(att.contentId) || att.filename.toLowerCase() === 'inline';
 }
 
-function RawMessageModal({
+export function RawMessageModal({
   accountId,
   messageId,
   onClose,

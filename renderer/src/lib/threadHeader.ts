@@ -1,4 +1,5 @@
 import { MailMessage, MailThread } from '../../../shared/types';
+import { messageCounterparty } from '../../../shared/threadCounterparty';
 
 export type ThreadHeaderMessagesStatus = 'idle' | 'loading' | 'ready';
 
@@ -32,13 +33,15 @@ export function resolveThreadHeaderIdentity(
 
   const threadMessages = messages.filter(message => (
     message.threadId === thread.id && message.accountId === thread.accountId
-  )).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  ));
 
-  const firstMessage = threadMessages[0];
-  if (firstMessage) {
+  // The other party: the first sender, or the latest sender who is not the
+  // account when the account started the thread.
+  const counterparty = messageCounterparty(threadMessages, thread.accountId);
+  if (counterparty) {
     return {
-      senderName: (firstMessage.senderName || firstMessage.senderEmail).trim(),
-      senderEmail: firstMessage.senderEmail,
+      senderName: counterparty.name,
+      senderEmail: counterparty.email,
       source: 'message',
     };
   }

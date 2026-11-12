@@ -4,6 +4,7 @@ import type { CalendarAttendeeResponse, CalendarInvite } from '../../../shared/t
 import { calendarEventMatchesInvite, findCalendarInviteConflicts, type CalendarConflict } from '../../../shared/calendarAvailability';
 import { useAppStore } from '../stores/AppStore';
 import { emitToast } from '../lib/toastBus';
+import { useInviteRsvp } from '../hooks/useInviteRsvp';
 
 interface CalendarInviteCardProps {
   invite: CalendarInvite;
@@ -46,7 +47,10 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
   const [isAdding, setIsAdding] = useState(false);
   const [pendingResponse, setPendingResponse] = useState<CalendarAttendeeResponse | null>(null);
   const [calendarChecked, setCalendarChecked] = useState(false);
-  const canUseCalendar = store.googleIntegrationStatus?.calendarEnabled === true;
+  const rsvp = useInviteRsvp();
+  // Per account: a unified inbox can show invites for an account other than the primary one.
+  const calendarAccess = rsvp.calendarConnected(accountId);
+  const canUseCalendar = calendarAccess === true;
   const matchingCalendarEvent = useMemo(
     () => store.calendarEvents.find(event => calendarEventMatchesInvite(event, invite)) || null,
     [invite, store.calendarEvents],
@@ -130,13 +134,14 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {!canUseCalendar ? (
+          {calendarAccess === null ? null : !canUseCalendar ? (
             <button
               type="button"
-              onClick={() => void store.authorizeGoogleIntegration('calendar', accountId)}
-              className="rounded-md bg-[var(--accent)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] font-semibold text-white"
+              onClick={() => rsvp.connectCalendar(accountId)}
+              data-invite-connect-calendar
+              className="rounded-md bg-[var(--accent)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
             >
-              Enable Calendar
+              Connect Calendar
             </button>
           ) : (
             <>
@@ -144,6 +149,7 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
                 <button
                   type="button"
                   title="Add to Calendar"
+                aria-label="Add to Calendar"
                   disabled={isAdding || Boolean(pendingResponse)}
                   onClick={() => void addToCalendar()}
                   className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent)] disabled:opacity-50"
@@ -154,6 +160,7 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
               <button
                 type="button"
                 title="Accept"
+                aria-label="Accept"
                 disabled={Boolean(pendingResponse)}
                 onClick={() => void respond('accepted')}
                 className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--success)] disabled:opacity-50"
@@ -163,6 +170,7 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
               <button
                 type="button"
                 title="Maybe"
+                aria-label="Maybe"
                 disabled={Boolean(pendingResponse)}
                 onClick={() => void respond('tentative')}
                 className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--warning)] disabled:opacity-50"
@@ -172,6 +180,7 @@ export function CalendarInviteCard({ invite, accountId }: CalendarInviteCardProp
               <button
                 type="button"
                 title="Decline"
+                aria-label="Decline"
                 disabled={Boolean(pendingResponse)}
                 onClick={() => void respond('declined')}
                 className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)] disabled:opacity-50"

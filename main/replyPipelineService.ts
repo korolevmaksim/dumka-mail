@@ -60,6 +60,7 @@ function emptyComposeSettings(): ComposeSettings {
     alwaysReplyAll: false,
     sendUndoDelay: 10,
     defaultFontSize: 'normal',
+    afterSend: 'archive',
   };
 }
 

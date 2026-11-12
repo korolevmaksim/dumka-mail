@@ -3,6 +3,7 @@ import { useAppStore } from '../../../stores/AppStore';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { SettingsAccountAvatar } from '../../AccountAvatar';
 import { Toggle } from '../SettingsControls';
+import { useConfirmDisconnectAccount } from '../accountActions';
 import { emitToast } from '../../../lib/toastBus';
 import { sanitizeGmailSignatureHtml } from '../../../../../shared/textNormalizer';
 import { createSnippetTemplateId } from '../../../../../shared/snippets';
@@ -13,6 +14,7 @@ import type { AutoUpdateStatus } from '../../../../../shared/autoUpdate';
 
 export function AccountsTab() {
   const store = useAppStore();
+  const confirmDisconnect = useConfirmDisconnectAccount();
 
   return (
     <div className="flex flex-col gap-5 max-w-[600px] select-text">
@@ -68,15 +70,7 @@ export function AccountsTab() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      emitToast({
-                        type: 'warning',
-                        message: `Disconnect ${acc.email}?`,
-                        actionLabel: 'Disconnect',
-                        onAction: () => store.disconnectAccount(acc.id),
-                        duration: 6000,
-                      });
-                    }}
+                    onClick={() => confirmDisconnect(acc)}
                     className="text-[calc(10px*var(--font-scale))] text-[var(--danger)] hover:underline cursor-pointer"
                   >
                     Disconnect
@@ -592,6 +586,27 @@ export function ComposeTab() {
               store.updateSettings(s => { s.compose.sendUndoDelay = val; });
             }}
           />
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <label htmlFor="compose-after-send" className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">After sending a reply</label>
+            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">What ⌘↩ does with the conversation. ⌘⇧↩ does the opposite.</span>
+          </div>
+          <select
+            id="compose-after-send"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            value={store.settings.compose.afterSend}
+            onChange={(e) => {
+              const value = e.target.value === 'keep' ? 'keep' : 'archive';
+              store.updateSettings(s => { s.compose.afterSend = value; });
+            }}
+          >
+            <option value="archive">Send and archive</option>
+            <option value="keep">Send and keep in inbox</option>
+          </select>
         </div>
 
         <div className="w-full h-[1px] bg-[var(--border)]" />

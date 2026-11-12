@@ -236,32 +236,64 @@ function isPrivateIpv4(host: string): boolean {
     (a === 100 && b >= 64 && b <= 127);    // 100.64.0.0/10 (CGNAT)
 }
 
+/** Parses an IPv6 literal into its eight 16-bit groups; null when malformed. */
+function parseIpv6Groups(host: string): number[] | null {
+  let text = host;
+  let tail: number[] = [];
+  // A trailing dotted IPv4 (::ffff:1.2.3.4, ::1.2.3.4) is two groups.
+  const dotted = text.match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) {
+    const octets = dotted[2].split('.').map(Number);
+    if (octets.some(octet => octet > 255)) return null;
+    tail = [(octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]];
+    text = dotted[1].endsWith('::') ? dotted[1] : dotted[1].slice(0, -1);
+  }
+  const parseGroups = (part: string): number[] | null => {
+    if (!part) return [];
+    const groups = part.split(':');
+    if (groups.some(group => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+    return groups.map(group => Number.parseInt(group, 16));
+  };
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const head = parseGroups(halves[0]);
+  if (!head) return null;
+  if (halves.length === 1) {
+    const groups = [...head, ...tail];
+    return groups.length === 8 ? groups : null;
+  }
+  const rest = parseGroups(halves[1]);
+  if (!rest) return null;
+  const known = head.length + rest.length + tail.length;
+  if (known > 7) return null;
+  return [...head, ...Array(8 - known).fill(0), ...rest, ...tail];
+}
+
+function embeddedIpv4(groups: number[]): string {
+  const [hi, lo] = [groups[6], groups[7]];
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
 function isPrivateIpv6(literal: string): boolean {
   const host = literal.split('%')[0].toLowerCase();
-  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true; // loopback
+  const groups = parseIpv6Groups(host);
+  if (!groups) return true; // unparseable: fail closed
 
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d, or the ::ffff:hhhh:hhhh hex form WHATWG
-  // URL normalizes it to) inherits the embedded IPv4 address's classification.
-  // Unparseable mapped forms fail closed as private.
-  const mapped = host.match(/^(?:0:0:0:0:0|:):ffff:(.+)$/);
-  if (mapped) {
-    const tail = mapped[1];
-    if (tail.includes('.')) return isPrivateIpv4(tail);
-    const groups = tail.split(':');
-    if (groups.length === 2) {
-      const hi = Number.parseInt(groups[0], 16);
-      const lo = Number.parseInt(groups[1], 16);
-      if (Number.isFinite(hi) && Number.isFinite(lo)) {
-        return isPrivateIpv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
-      }
-    }
-    return true;
+  const firstSixZero = groups.slice(0, 6).every(group => group === 0);
+  // ::/96 covers :: (unspecified), ::1 (loopback) and the deprecated
+  // IPv4-compatible form ::a.b.c.d; none is a public destination.
+  if (firstSixZero) return true;
+  // IPv4-mapped (::ffff:0:0/96) and NAT64 (64:ff9b::/96) carry an IPv4
+  // address and inherit its classification.
+  if (groups.slice(0, 5).every(group => group === 0) && groups[5] === 0xffff) return isPrivateIpv4(embeddedIpv4(groups));
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every(group => group === 0)) {
+    return isPrivateIpv4(embeddedIpv4(groups));
   }
-
-  const firstGroup = (host.split(':')[0] || '').padStart(4, '0');
-  if (firstGroup.startsWith('fc') || firstGroup.startsWith('fd')) return true; // fc00::/7 (unique local)
-  const value = Number.parseInt(firstGroup, 16);
-  return Number.isFinite(value) && value >= 0xfe80 && value <= 0xfebf; // fe80::/10 (link-local)
+  if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 (unique local)
+  if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
+  if ((groups[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 (deprecated site-local)
+  if ((groups[0] & 0xff00) === 0xff00) return true; // ff00::/8 (multicast)
+  return false;
 }
 
 /**
@@ -283,7 +315,7 @@ export function isSafePublicHttpUrl(url: string): boolean {
 
   const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
   if (!host) return false;
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
   if (host.startsWith('[') && host.endsWith(']')) return !isPrivateIpv6(host.slice(1, -1));
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return !isPrivateIpv4(host);
   return true;

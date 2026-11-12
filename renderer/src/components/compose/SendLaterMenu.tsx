@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Clock, Send } from 'lucide-react';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 
 interface SendLaterMenuProps {
   onSchedule: (date: Date) => void;
@@ -38,6 +39,9 @@ function fromDatetimeLocalValue(value: string): Date | null {
 }
 
 export function SendLaterMenu({ onSchedule, onClose, align = 'right', floating = true }: SendLaterMenuProps) {
+  // Esc closes this menu, not the draft behind it. Embedded (non-floating) it
+  // belongs to its parent menu, which owns Esc.
+  useEscapeLayer(floating, onClose);
   const [customValue, setCustomValue] = useState(() => toDatetimeLocalValue(nextAt(9, 0, 1)));
   const [error, setError] = useState('');
   const presets = useMemo(() => [

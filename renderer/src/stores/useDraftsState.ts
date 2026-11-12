@@ -8,6 +8,7 @@ import { presentMailActionFeedback } from '../lib/presentMailAction';
 import { replyDraftPlaceholderValidationMessage } from '../../../shared/replyPipeline';
 import { filesToAttachments } from '../lib/composeHtmlHelpers';
 import { createRfcMessageId } from '../../../shared/rfcMessageId';
+import { resolveAccountSetting } from '../../../shared/accountSettings';
 import {
   DRAFT_AUTOSAVE_DEBOUNCE_MS,
   DRAFT_DISCARD_UNDO_MS,
@@ -20,14 +21,59 @@ import {
   type DraftPersistReason,
   type DraftSaveStatus,
 } from '../../../shared/draftLifecycle';
+import {
+  archiveAfterSendFailedMessage,
+  deliverThenRecord,
+  deliveryEvent,
+  resolveAfterSend,
+  restoredDraftPlacement,
+  restoredSendMessage,
+  shouldArchiveOnSend,
+  shouldCloseReaderAfterSend,
+  stepPendingSend,
+  type PendingSendEvent,
+  type PendingSendPhase,
+  type PendingSendRestoreCause,
+  type SendIntent,
+} from '../../../shared/sendFlow';
+
+interface PendingSendArchive {
+  thread: MailThread;
+  result: Promise<MailActionExecutionResult | null>;
+}
+
+interface PendingSendEntry {
+  /** The draft as it will be sent (carries its RFC Message-ID). */
+  draft: Draft;
+  /** The parked undo-send action; null when there is no undo window. */
+  action: MailActionLog | null;
+  /** Set when this send archived its thread at send time. */
+  archive: PendingSendArchive | null;
+  fallbackThreadId: string | null;
+  /** Resolves once the scheduled draft and its parked action are written (or the write failed). */
+  persisted?: Promise<void>;
+  /** Where this send is in its lifecycle; changed only through `advancePendingSend`. */
+  phase: PendingSendPhase;
+  /** Called once, only when the send was accepted (sent, or parked offline for sync). */
+  onSent?: () => void;
+  /** The failure was already reported (by executeMailAction). */
+  failureAnnounced?: boolean;
+}
+
+export interface SendDraftOptions {
+  intent?: SendIntent;
+  /** Positive evidence that the message went out (never fired for a cancelled or failed send). */
+  onSent?: () => void;
+}
 
 interface UseDraftsStateProps {
   settings: AppSettings;
   accounts: Account[];
   activeAccount: Account | null;
   openedThread: MailThread | null;
+  threads: MailThread[];
   openThread: (thread: MailThread | null) => Promise<void>;
-  executeMailAction: (kind: any, threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<MailActionExecutionResult>;
+  executeMailAction: (kind: MailActionLog['kind'], threadId?: string | null, draftId?: string | null, customAction?: any, payloadJson?: string | null) => Promise<MailActionExecutionResult>;
 }
 
 export function useDraftsState({
@@ -35,6 +81,7 @@ export function useDraftsState({
   accounts,
   activeAccount,
   openedThread,
+  threads,
   openThread,
   executeMailAction,
 }: UseDraftsStateProps) {
@@ -49,8 +96,7 @@ export function useDraftsState({
 
   const pendingSendTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingSendIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingDraftRef = useRef<Draft | null>(null);
-  const pendingSendActionRef = useRef<MailActionLog | null>(null);
+  const pendingSendRef = useRef<PendingSendEntry | null>(null);
   const activeDraftRef = useRef<Draft | null>(activeDraft);
   const openedThreadRef = useRef<MailThread | null>(openedThread);
   openedThreadRef.current = openedThread;
@@ -581,10 +627,306 @@ export function useDraftsState({
     return validation.valid ? null : validation.errors[0] || 'Fix draft before sending.';
   };
 
+  const executeMailActionRef = useRef(executeMailAction);
+  executeMailActionRef.current = executeMailAction;
+  const threadsRef = useRef<MailThread[]>(threads);
+  threadsRef.current = threads;
+  const openThreadRef = useRef(openThread);
+  openThreadRef.current = openThread;
+
+  const clearPendingSendTimers = () => {
+    if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
+    if (pendingSendIntervalRef.current) { clearInterval(pendingSendIntervalRef.current); pendingSendIntervalRef.current = null; }
+  };
+
+  /** Detach the entry from the undo window (if it is still the pending one). */
+  const releasePendingSend = (entry: PendingSendEntry): boolean => {
+    if (pendingSendRef.current !== entry) return false;
+    clearPendingSendTimers();
+    pendingSendRef.current = null;
+    setPendingSend(false);
+    setPendingSendSeconds(0);
+    return true;
+  };
+
+  /**
+   * The only place an entry changes phase: the first event that decides
+   * (timer, early commit, Undo, a failed write or delivery) wins, and the
+   * effect it calls for runs exactly once.
+   */
+  const advancePendingSend = (entry: PendingSendEntry, event: PendingSendEvent): PendingSendPhase => {
+    const step = stepPendingSend(entry.phase, event);
+    if (step.phase === entry.phase && step.effect === 'none') return entry.phase;
+    entry.phase = step.phase;
+    // Once anything has decided, the undo window is over.
+    if (step.phase !== 'waiting') releasePendingSend(entry);
+    if (step.effect === 'deliver') {
+      void deliverPendingSend(entry);
+    } else if (step.effect === 'restore') {
+      void restorePendingSend(entry, step.restoreCause ?? 'failed');
+    } else if (step.effect === 'notifySent') {
+      try {
+        entry.onSent?.();
+      } catch (error) {
+        console.error('onSent callback failed:', error);
+      }
+    }
+    return entry.phase;
+  };
+
+  // A new send (or schedule) while an undo window is open commits the pending
+  // message right away: it loses its remaining undo time but is never dropped.
+  const commitPendingSendNow = () => {
+    const entry = pendingSendRef.current;
+    if (!entry) return;
+    advancePendingSend(entry, 'commitNow');
+  };
+
+  const findThread = (accountId: string, threadId: string): MailThread | null => {
+    const opened = openedThreadRef.current;
+    if (opened && opened.id === threadId && opened.accountId === accountId) return opened;
+    return threadsRef.current.find(thread => thread.id === threadId && thread.accountId === accountId) || null;
+  };
+
+  const archiveThreadForSend = (thread: MailThread): PendingSendArchive => {
+    // Same optimistic path as `E`: local label change, offline parking,
+    // rollback on failure, and next-thread navigation. Silent on success (the
+    // send banner is the feedback), but a failure is never silent.
+    const result = executeMailActionRef.current(
+      'markDone',
+      thread.id,
+      null,
+      undefined,
+      JSON.stringify({ accountId: thread.accountId, silent: true }),
+    ).catch((error: unknown) => {
+      console.error('Archive after send failed:', error);
+      return null;
+    });
+    void result.then(outcome => {
+      if (outcome?.accepted) return;
+      emitToast({
+        type: 'warning',
+        message: archiveAfterSendFailedMessage(),
+        actionLabel: 'Retry',
+        duration: 8000,
+        onAction: () => {
+          void executeMailActionRef.current(
+            'markDone',
+            thread.id,
+            null,
+            undefined,
+            JSON.stringify({ accountId: thread.accountId }),
+          );
+        },
+      });
+    });
+    return { thread, result };
+  };
+
+  const undoArchiveForSend = async (archive: PendingSendArchive): Promise<void> => {
+    const result = await archive.result;
+    if (!result?.accepted) return;
+    if (result.offline && result.actionId) {
+      await cancelPendingMailAction({ id: result.actionId, accountId: archive.thread.accountId });
+    }
+    await executeMailActionRef.current(
+      'restoreInbox',
+      archive.thread.id,
+      null,
+      undefined,
+      JSON.stringify({ accountId: archive.thread.accountId, silent: true }),
+    );
+  };
+
+  const closeReaderIfStillOpen = (draft: Draft, archived: boolean) => {
+    const opened = openedThreadRef.current;
+    if (shouldCloseReaderAfterSend({
+      sent: { accountId: draft.accountId, threadId: draft.threadId },
+      opened: opened ? { accountId: opened.accountId, id: opened.id } : null,
+      archived,
+    })) {
+      void openThreadRef.current(null);
+    }
+  };
+
+  /**
+   * Saves and sends the draft. Throws only when the message was not handed
+   * over; removing the local draft afterwards is bookkeeping and only logged.
+   */
+  const sendPreparedDraft = async (draft: Draft, actionId: string) => {
+    const draftForSend = {
+      ...draft,
+      sendAt: null,
+      bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose, draft.accountId, draft.bodyHtml),
+    };
+    await window.electronAPI.saveDraft(draftForSend);
+    const outcome = await deliverThenRecord(
+      () => window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId),
+      async (res) => {
+        if (res && !res.offline) await window.electronAPI.deleteDraft(draft.id);
+      },
+    );
+    if (!outcome.delivered) throw outcome.error;
+    if (outcome.bookkeepingError) console.error('Message sent, but its local draft could not be removed:', outcome.bookkeepingError);
+    return outcome.result;
+  };
+
+  /** Starts delivery; reports the outcome back through `advancePendingSend`. */
+  const deliverPendingSend = async (entry: PendingSendEntry): Promise<void> => {
+    // A send committed early (by a newer send) may still be writing its parked action.
+    if (entry.persisted) await entry.persisted;
+    // The write failed meanwhile: the entry was already restored.
+    if (entry.phase !== 'sending') return;
+    const { draft, action: parked, archive } = entry;
+    // True from the moment the send call resolved: after that, no error may
+    // count as a failed send (the draft would come back and could go out twice).
+    let delivered = false;
+    try {
+      if (parked) {
+        const latest = (await window.electronAPI.listActionLog(parked.accountId)).find(log => log.id === parked.id);
+        if (!latest || (latest.status !== 'pending_sync' && latest.status !== 'queued')) {
+          // Handled elsewhere (the background worker sends overdue undo-sends).
+          if (latest?.status === 'completed') {
+            advancePendingSend(entry, 'sendSucceeded');
+          } else if (latest?.status === 'failed') {
+            advancePendingSend(entry, 'sendFailed');
+          } else {
+            console.warn('Undo-send action is no longer in the log; not restoring the draft.', parked.id);
+            advancePendingSend(entry, 'sendUnconfirmed');
+          }
+          loadDrafts();
+          return;
+        }
+        const outcome = await deliverThenRecord(
+          () => sendPreparedDraft(draft, parked.id),
+          async (res) => {
+            if (res?.offline) return;
+            await window.electronAPI.saveActionLog({
+              ...parked,
+              status: 'completed',
+              completedAt: new Date().toISOString(),
+              payloadJson: parked.payloadJson,
+            });
+          },
+        );
+        if (!outcome.delivered) {
+          console.error('Failed to send draft:', outcome.error);
+          advancePendingSend(entry, 'sendFailed');
+          return;
+        }
+        delivered = true;
+        if (outcome.bookkeepingError) console.error('Message sent, but the action log could not be updated:', outcome.bookkeepingError);
+        const offline = Boolean(outcome.result?.offline);
+        advancePendingSend(entry, 'sendSucceeded');
+        presentMailActionFeedback({
+          result: { accepted: true, offline, actionId: parked.id },
+          kind: 'send',
+        });
+        loadDrafts();
+        if (offline) return;
+        closeReaderIfStillOpen(draft, Boolean(archive));
+        return;
+      }
+      const result = await executeMailActionRef.current('send', draft.threadId || entry.fallbackThreadId, draft.id, async (sendActionId: string) => {
+        const res = await sendPreparedDraft(draft, sendActionId);
+        delivered = true;
+        return res;
+      }, JSON.stringify({ accountId: draft.accountId, rfcMessageId: draft.rfcMessageId }));
+      loadDrafts();
+      const event = deliveryEvent({ delivered, accepted: result.accepted });
+      if (event === 'sendFailed') {
+        // executeMailAction already reported the failure.
+        entry.failureAnnounced = true;
+        advancePendingSend(entry, 'sendFailed');
+        return;
+      }
+      if (!result.accepted) console.error('Message sent, but recording the send failed:', result.errorMessage);
+      advancePendingSend(entry, 'sendSucceeded');
+      if (result.offline) return;
+      closeReaderIfStillOpen(draft, Boolean(archive));
+    } catch (e) {
+      const event = deliveryEvent({ delivered });
+      if (event === 'sendSucceeded') {
+        console.error('Message sent; a later step failed:', e);
+      } else {
+        console.error('Failed to send draft:', e);
+      }
+      advancePendingSend(entry, event);
+    }
+  };
+
+  /**
+   * Gives a draft back after Undo, a failed write or a failed delivery. The
+   * editor only when it is free; a draft started since is never replaced, and
+   * the returned one is saved to Drafts instead (with a toast saying so).
+   * Placement is decided after every await, from the current editor state.
+   */
+  const restorePendingSend = async (entry: PendingSendEntry, cause: PendingSendRestoreCause): Promise<void> => {
+    const restored: Draft = { ...entry.draft, sendAt: null, updatedAt: new Date().toISOString() };
+    const placementNow = () => restoredDraftPlacement({ activeDraftId: activeDraftRef.current?.id, draftId: restored.id });
+
+    if (entry.archive) {
+      try {
+        await undoArchiveForSend(entry.archive);
+      } catch (error) {
+        console.error('Could not move the thread back to the inbox:', error);
+        emitToast({ type: 'error', message: 'The conversation could not be moved back to the inbox.' });
+      }
+    }
+
+    // Undo of a send-and-archive goes back to its thread, but only if the
+    // editor is still free (re-checked after the await below).
+    let reopened = false;
+    if (cause === 'cancelled' && entry.archive && placementNow() === 'editor') {
+      const thread = entry.archive.thread;
+      const inboxLabels = thread.labelIds.some(label => label.toUpperCase() === 'INBOX')
+        ? thread.labelIds
+        : [...thread.labelIds, 'INBOX'];
+      await openThreadRef.current({ ...thread, labelIds: inboxLabels });
+      reopened = true;
+    }
+
+    let placement = placementNow();
+    if (placement === 'drafts') {
+      const saved = await persistDraftNow(restored, 'send');
+      loadDrafts();
+      if (!saved) {
+        // Never lose the text: if Drafts could not take it, the editor does
+        // (replacing the active draft saves that one first). Re-read after the await.
+        placement = placementNow() === 'alreadyOpen' ? 'alreadyOpen' : 'editor';
+      }
+    }
+
+    // No await between reading the editor state and writing it from here on.
+    const current = activeDraftRef.current;
+    if (placement === 'alreadyOpen') {
+      if (current && current.id === restored.id) {
+        // The user reopened this very draft: keep their latest text, drop the send time.
+        const cleared = { ...current, sendAt: null };
+        replaceActiveDraft(cleared);
+        void persistDraftNow(cleared, 'send');
+      }
+    } else if (placement === 'editor') {
+      void persistDraftNow(restored, 'send');
+      replaceActiveDraft(restored);
+      // Show it where it can be seen: inline under its own thread, otherwise
+      // in the floating composer (the reader may have moved on since).
+      const opened = openedThreadRef.current;
+      const ownThreadOpen = Boolean(restored.threadId && opened
+        && opened.id === restored.threadId && opened.accountId === restored.accountId);
+      setComposeLayout(reopened || ownThreadOpen ? 'inline' : 'floating');
+    }
+
+    const message = restoredSendMessage(cause, placement);
+    // A failure executeMailAction already reported only needs the "where" when it is not in the editor.
+    if (message && !(entry.failureAnnounced && placement !== 'drafts')) {
+      emitToast({ type: cause === 'cancelled' ? 'info' : 'error', message, duration: 8000 });
+    }
+  };
+
   const scheduleDraftSend = async (date: Date) => {
     const currentDraft = activeDraftRef.current;
     if (!currentDraft || !activeAccount) return;
-    if (pendingSend) return;
 
     const sendAt = date.toISOString();
     if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) {
@@ -598,6 +940,8 @@ export function useDraftsState({
       return;
     }
 
+    commitPendingSendNow();
+
     const rfcMessageId = currentDraft.rfcMessageId || createRfcMessageId();
     const scheduledDraft: Draft = {
       ...currentDraft,
@@ -609,7 +953,7 @@ export function useDraftsState({
     const log: MailActionLog = {
       id: crypto.randomUUID(),
       accountId: scheduledDraft.accountId,
-      threadId: scheduledDraft.threadId || openedThread?.id || null,
+      threadId: scheduledDraft.threadId || openedThreadRef.current?.id || null,
       draftId: scheduledDraft.id,
       kind: 'send',
       status: 'pending_sync',
@@ -621,100 +965,55 @@ export function useDraftsState({
     await window.electronAPI.saveDraft(scheduledDraft);
     await window.electronAPI.saveActionLog(log);
     replaceActiveDraft(null);
-    pendingDraftRef.current = null;
     loadDrafts();
     emitToast({ type: 'success', message: `Message scheduled for ${date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.` });
   };
 
-  const sendDraftWithUndo = async () => {
+  /** Resolves true when the draft entered the send flow (false: validation kept it in the editor). */
+  const sendDraftWithUndo = async (options: SendDraftOptions = {}): Promise<boolean> => {
     const currentDraft = activeDraftRef.current;
-    if (!currentDraft || !activeAccount) return;
-    if (pendingSend) return;
+    if (!currentDraft || !activeAccount) return false;
 
     const draftToSend = currentDraft;
     const validationError = validateDraftForSend(draftToSend);
     if (validationError) {
       emitToast({ type: 'warning', message: validationError });
-      return;
+      return false;
     }
+
+    // Never drop a second send during the undo window: the earlier message
+    // goes out now and this one gets its own window.
+    commitPendingSendNow();
 
     await flushDraftPersistence();
     const rfcMessageId = draftToSend.rfcMessageId || createRfcMessageId();
-    pendingDraftRef.current = { ...draftToSend, rfcMessageId };
-
-    const sendPreparedDraft = async (draft: Draft, actionId: string) => {
-      const draftForSend = {
-        ...draft,
-        rfcMessageId,
-        sendAt: null,
-        bodyHtml: compileDraftBodyHtml(draft.bodyPlain, settings.compose, draft.accountId, draft.bodyHtml),
-      };
-      await window.electronAPI.saveDraft(draftForSend);
-      const res = await window.electronAPI.sendDraft(draft.accountId, draftForSend, actionId);
-      if (res && !res.offline) {
-        await window.electronAPI.deleteDraft(draft.id);
-      }
-      return res;
-    };
-
-    const performSend = async () => {
-      if (pendingSendIntervalRef.current) { clearInterval(pendingSendIntervalRef.current); pendingSendIntervalRef.current = null; }
-      pendingSendTimerRef.current = null;
-      setPendingSend(false);
-      setPendingSendSeconds(0);
-      const draft = pendingDraftRef.current;
-      const parked = pendingSendActionRef.current;
-      pendingDraftRef.current = null;
-      pendingSendActionRef.current = null;
-      if (!draft) return;
-      try {
-        if (parked) {
-          const latest = (await window.electronAPI.listActionLog(parked.accountId)).find(log => log.id === parked.id);
-          if (!latest || (latest.status !== 'pending_sync' && latest.status !== 'queued')) {
-            return;
-          }
-          const res = await sendPreparedDraft(draft, parked.id);
-          if (!res?.offline) {
-            await window.electronAPI.saveActionLog({
-              ...parked,
-              status: 'completed',
-              completedAt: new Date().toISOString(),
-              payloadJson: parked.payloadJson,
-            });
-          }
-          const result = presentMailActionFeedback({
-            result: { accepted: true, offline: Boolean(res?.offline), actionId: parked.id },
-            kind: 'send',
-          });
-          loadDrafts();
-          if (result.offline) return;
-          if (draft.threadId === openedThread?.id) openThread(null);
-          return;
-        }
-        const result = await executeMailAction('send', draft.threadId || openedThread?.id, draft.id, async (sendActionId: string) => {
-          return sendPreparedDraft(draft, sendActionId);
-        }, JSON.stringify({ accountId: draft.accountId, rfcMessageId }));
-        loadDrafts();
-        if (!result.accepted) {
-          replaceActiveDraft(draft);
-          return;
-        }
-        if (result.offline) return;
-        if (draft.threadId === openedThread?.id) openThread(null);
-      } catch (e) {
-        console.error('Failed to send draft:', e);
-        replaceActiveDraft(draft);
-        emitToast({ type: 'error', message: 'Failed to send message.' });
-      }
-    };
+    const fallbackThreadId = openedThreadRef.current?.id || null;
+    // Per-account "After sending a reply" (SPEC §8), inheriting compose.afterSend.
+    const accountAfterSend = resolveAccountSetting(settings, draftToSend.accountId, 'afterSend').value;
+    const afterSend = resolveAfterSend(accountAfterSend, options.intent ?? 'default');
+    const replyThread = draftToSend.threadId ? findThread(draftToSend.accountId, draftToSend.threadId) : null;
+    const archiveNow = shouldArchiveOnSend({
+      afterSend,
+      threadId: draftToSend.threadId,
+      threadLabelIds: replyThread?.labelIds,
+    });
 
     const delaySec = Math.max(0, Math.round(settings.compose.sendUndoDelay ?? 10));
     replaceActiveDraft(null);
     setDraftSaveStatus('idle');
+    const archive = archiveNow && replyThread ? archiveThreadForSend(replyThread) : null;
 
     if (delaySec === 0) {
-      await performSend();
-      return;
+      const entry: PendingSendEntry = {
+        draft: { ...draftToSend, rfcMessageId },
+        action: null,
+        archive,
+        fallbackThreadId,
+        phase: 'sending',
+        onSent: options.onSent,
+      };
+      await deliverPendingSend(entry);
+      return true;
     }
 
     const scheduledAt = undoSendScheduledAt(delaySec);
@@ -729,7 +1028,7 @@ export function useDraftsState({
     const log: MailActionLog = {
       id: actionId,
       accountId: scheduledDraft.accountId,
-      threadId: scheduledDraft.threadId || openedThread?.id || null,
+      threadId: scheduledDraft.threadId || fallbackThreadId,
       draftId: scheduledDraft.id,
       kind: 'send',
       status: 'pending_sync',
@@ -737,43 +1036,79 @@ export function useDraftsState({
       scheduledAt: workerScheduledAt,
       payloadJson: JSON.stringify({ sendAt: scheduledAt, rfcMessageId, undoSend: true }),
     };
-    pendingSendActionRef.current = log;
-    pendingDraftRef.current = scheduledDraft;
-    await persistDraftNow(scheduledDraft, 'send');
-    await window.electronAPI.saveActionLog(log);
+    let markPersisted: () => void = () => undefined;
+    const persisted = new Promise<void>(resolve => { markPersisted = resolve; });
+    const entry: PendingSendEntry = {
+      draft: scheduledDraft,
+      action: log,
+      archive,
+      fallbackThreadId,
+      persisted,
+      phase: 'waiting',
+      onSent: options.onSent,
+    };
+    pendingSendRef.current = entry;
+    // The thread is already archived and the editor cleared: a failed write
+    // must undo both, or the message is neither sent nor anywhere to be found.
+    let persistError: unknown = null;
+    try {
+      const saved = await persistDraftNow(scheduledDraft, 'send');
+      if (!saved) throw new Error('The draft could not be saved before sending.');
+      await window.electronAPI.saveActionLog(log);
+    } catch (error) {
+      persistError = error;
+    } finally {
+      markPersisted();
+    }
     loadDrafts();
+    if (persistError) {
+      console.error('Could not prepare the undo-send:', persistError);
+      advancePendingSend(entry, 'persistFailed');
+      return true;
+    }
 
+    if (pendingSendRef.current !== entry || entry.phase !== 'waiting') {
+      // Another send committed this one while it was being persisted.
+      return true;
+    }
     setPendingSend(true);
     setPendingSendSeconds(delaySec);
     pendingSendIntervalRef.current = setInterval(() => {
       setPendingSendSeconds(s => (s > 1 ? s - 1 : 0));
     }, 1000);
     pendingSendTimerRef.current = setTimeout(() => {
-      void performSend();
+      advancePendingSend(entry, 'timerFired');
     }, delaySec * 1000);
+    return true;
   };
 
   const cancelPendingSend = async () => {
-    const parked = pendingSendActionRef.current;
-    const draft = pendingDraftRef.current;
-    if (parked) {
-      const cancelled = await cancelPendingMailAction(parked);
+    const entry = pendingSendRef.current;
+    if (!entry) return;
+    // Undo decides now: from here the timer and early commits are no-ops.
+    if (advancePendingSend(entry, 'cancelRequested') !== 'cancelling') return;
+    if (entry.persisted) await entry.persisted;
+    // The write failed meanwhile: the draft has already been given back.
+    if (entry.phase !== 'cancelling') return;
+    if (entry.action) {
+      const cancelled = await cancelPendingMailAction(entry.action);
       if (!cancelled) {
-        emitToast({ type: 'error', message: 'Could not cancel send. The message may still go out.' });
+        emitToast({ type: 'error', message: "Couldn't cancel the send. The message is being sent." });
+        advancePendingSend(entry, 'cancelFailed');
         return;
       }
     }
-    if (pendingSendTimerRef.current) { clearTimeout(pendingSendTimerRef.current); pendingSendTimerRef.current = null; }
-    if (pendingSendIntervalRef.current) { clearInterval(pendingSendIntervalRef.current); pendingSendIntervalRef.current = null; }
-    setPendingSend(false);
-    setPendingSendSeconds(0);
-    pendingSendActionRef.current = null;
-    pendingDraftRef.current = null;
-    if (draft) {
-      const restored = { ...draft, sendAt: null, updatedAt: new Date().toISOString() };
-      void persistDraftNow(restored, 'send');
-      replaceActiveDraft(restored);
-    }
+    advancePendingSend(entry, 'cancelSucceeded');
+  };
+
+  const closeDraftKeepingIt = async () => {
+    const draft = activeDraftRef.current;
+    if (!draft) return;
+    await flushDraftPersistence();
+    const persisted = shouldPersistDraftWrite({ keepDraftsAcrossLaunches, autoSaveDrafts, reason: 'explicit' });
+    replaceActiveDraft(null);
+    setDraftSaveStatus('idle');
+    emitToast({ type: persisted ? 'success' : 'info', message: persisted ? 'Draft saved' : 'Draft closed' });
   };
 
   return {
@@ -802,6 +1137,7 @@ export function useDraftsState({
     discardDraft,
     scheduleDraftSend,
     sendDraftWithUndo,
-    cancelPendingSend
+    cancelPendingSend,
+    closeDraftKeepingIt,
   };
 }

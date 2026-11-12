@@ -5,7 +5,7 @@
 // mock it with this double so the same jobs run inline against whatever
 // `../main/database` mock the test installed, keeping repository-level
 // assertions meaningful without spawning a worker.
-import { MessagesRepo } from '../../main/database';
+import { MessagesRepo, ThreadsRepo } from '../../main/database';
 import {
   collectBriefingThreadBatch,
   collectPendingEmbeddingCandidates,
@@ -22,6 +22,10 @@ export function createDatabaseWorkerClientDouble() {
   return {
     listMessagesForThread: async (accountId: string, threadId: string) =>
       MessagesRepo.listForThread(accountId, threadId),
+    agentPrepInbox: async (accountId: string, limit: number) => ({
+      threads: ThreadsRepo.listRecentInbox(accountId, limit),
+      decisions: [],
+    }),
     threadSecurityInsights: async (
       accountId: string,
       threadId: string,

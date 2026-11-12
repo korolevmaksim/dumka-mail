@@ -73,6 +73,7 @@ describe('shortcutGuideSections', () => {
       expect(keysFor(sections, 'Command Palette')).toBe('⌘K');
       expect(keysFor(sections, 'Keyboard Shortcuts')).toBe('?');
       expect(keysFor(sections, 'Send Draft')).toBe('⌘↩');
+      expect(keysFor(sections, 'Send, Opposite of After-Send Setting')).toBe('⌘⇧↩');
     });
 
     it('does not advertise unbound command-key combos', () => {
@@ -83,10 +84,13 @@ describe('shortcutGuideSections', () => {
       expect(findItem(sections, 'Search')).toBeUndefined();
     });
 
-    it('includes vim navigation and split shortcuts', () => {
+    it('includes vim navigation and the decision-section keys, not the removed split keys', () => {
       expect(keysFor(sections, 'Vim Navigation')).toBe('J/K');
-      expect(keysFor(sections, 'Open Important')).toBe('1');
-      expect(keysFor(sections, 'Open Other')).toBe('5');
+      expect(keysFor(sections, 'Open / Archive the Clear Section')).toBe('⇧E');
+      expect(keysFor(sections, 'Move the Later Section to Its Time')).toBe('⇧H');
+      expect(keysFor(sections, 'Move to Another Section')).toBe('V');
+      expect(findItem(sections, 'Open Important')).toBeUndefined();
+      expect(findItem(sections, 'Open Other')).toBeUndefined();
     });
   });
 
@@ -104,18 +108,12 @@ describe('shortcutGuideSections', () => {
       expect(keysFor(sections, 'Open Thread')).toBe('↩');
     });
 
-    it('keeps mailbox and split keys and omits vim navigation', () => {
+    it('keeps arrow navigation, omits vim navigation and the single-key section keys', () => {
       expect(findItem(sections, 'Vim Navigation')).toBeUndefined();
-      expect(keysFor(sections, 'Open Important')).toBe('1');
+      expect(findItem(sections, 'Move to Another Section')).toBeUndefined();
+      expect(findItem(sections, 'Open / Archive the Clear Section')).toBeUndefined();
       const nav = section(sections, 'Navigation');
-      expect(nav!.items.map((i) => i.label)).toEqual([
-        'Move / Scroll',
-        'Open Important',
-        'Open Purchases',
-        'Open LinkedIn',
-        'Open Automation',
-        'Open Other',
-      ]);
+      expect(nav!.items.map((i) => i.label)).toEqual(['Move / Scroll']);
     });
   });
 });

@@ -38,6 +38,7 @@ const compose: ComposeSettings = {
   alwaysReplyAll: false,
   sendUndoDelay: 10,
   defaultFontSize: 'normal',
+  afterSend: 'archive',
 };
 
 describe('renderTokens', () => {

@@ -27,7 +27,9 @@ import {
   ActionLogRepo,
   AIConversationsRepo,
   ThreadsRepo,
+  ThreadDecisionsRepo,
 } from './database';
+import { normalizeUserDecisionRecord } from '../shared/inboxSections';
 import { SystemLogRepo } from './systemLogRepository';
 import { SystemLogger } from './systemLogger';
 import {
@@ -35,18 +37,27 @@ import {
   RENDERER_CRASH_WINDOW_MS,
   shouldReloadAfterRendererCrash,
 } from './rendererCrashPolicy';
-import { isRetryableRemoteError, scheduledAtForRetry, startBackgroundSyncWorker } from './actionReconciler';
+import { isNetworkError, isRetryableRemoteError, scheduledAtForRetry, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
 import { createRfcMessageId } from '../shared/rfcMessageId';
 import { parseMailActionPayload } from '../shared/mailActionFeedback';
-import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES } from './gmailOAuth';
+import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES, GoogleSignInFailure } from './gmailOAuth';
+import { classifyGoogleSignInFailure, encodeGoogleSignInError, hasAllScopes, integrationScopesGranted, isGmailScopeMissing } from '../shared/googleSignInErrors';
+import { truncateProviderText } from '../shared/aiErrors';
+import { localSaveFailedErrorMessage } from '../shared/mailActionErrors';
 import { googleAuthState } from './googleAuthState';
 import { GoogleCalendarSyncTokenExpiredError, GoogleWorkspaceService } from './googleWorkspace';
 import { optimisticCalendarEvent, queueCalendarMutation, startCalendarMutationWorker } from './calendarMutationWorker';
 import { startCalendarNotificationWorker } from './calendarNotifications';
 import { deleteRefreshToken, getRefreshToken, saveRefreshToken } from './keychain';
 import { getAIProviderDescriptor, completeAI, saveAIConfigAsync, listProviderModels, loadAIConfigForRenderer } from './ai';
+import { AgentPrepService } from './agentPrepService';
+import { SenderRulesRepo } from './senderRulesRepository';
+import { SenderRulesService } from './senderRulesService';
+import { isValidAIRequestId } from '../shared/agentPrompts';
+import { isAIProviderPreference } from '../shared/aiProviderPreference';
+import type { AIChatMessage } from '../shared/types';
 import {
   validateAgentActionProposalItem,
   validateAgentActionProposalMutation,
@@ -77,6 +88,8 @@ import { cancelMailboxExport, exportMailboxMbox } from './exportService';
 import type { MailboxExportScope } from '../shared/mboxExport';
 import { checkForAppUpdates, getAutoUpdateStatus, initializeAutoUpdates, installDownloadedAppUpdate } from './autoUpdate';
 import { shouldNotifyForMessage } from '../shared/mailSecurity';
+import { shouldNotifyForAccount } from '../shared/accountNotifications';
+import { normalizeAccountOverrides, type AccountSettingsSource } from '../shared/accountSettings';
 import { buildAutoReplyDraft, shouldAutoReplyToMessage } from '../shared/autoReply';
 import { buildMailRuleShadowLog, evaluateMailRules, evaluateShadowMailRules, normalizeMailRulesSettings, type MailRuleEffect } from '../shared/mailRules';
 import { escapeHtml } from '../shared/draftHtml';
@@ -103,6 +116,7 @@ import type {
   FollowUpRadarListOptions,
   MailMessage,
   MailboxDelta,
+  MailboxBackfillProgressEvent,
   MailboxSyncHealthEvent,
   MailNotificationSettings,
   MailRuleAction,
@@ -232,6 +246,22 @@ function readNotificationSettings(): MailNotificationSettings {
   } catch (err) {
     console.error('Failed to read notification settings:', err);
     return DEFAULT_NOTIFICATION_SETTINGS;
+  }
+}
+
+/** Per-account notification overrides (SPEC §8); empty when settings are missing or unreadable. */
+function readAccountNotificationSource(): AccountSettingsSource {
+  try {
+    const rawSettings = SettingsRepo.get('appSettings');
+    if (!rawSettings) return {};
+    const parsed = JSON.parse(rawSettings);
+    return {
+      accountDefaults: parsed?.accountDefaults ?? null,
+      accountOverrides: normalizeAccountOverrides(parsed?.accountOverrides),
+    };
+  } catch (err) {
+    console.error('Failed to read account notification settings:', err);
+    return {};
   }
 }
 
@@ -477,8 +507,10 @@ function notifyOfNewMessages(messages: MailMessage[]) {
   }
 
   const icon = getNotificationIconPath();
+  const accountSettings = readAccountNotificationSource();
   for (const message of messages) {
     if (!shouldNotifyOfNewMessage(message, settings)) continue;
+    if (!shouldNotifyForAccount(message, accountSettings)) continue;
 
     try {
       const sender = message.senderName || message.senderEmail || 'New mail';
@@ -943,8 +975,26 @@ app.whenReady().then(async () => {
   startReminderNotificationWorker();
   startCalendarMutationWorker(() => mainWindow);
   startCalendarNotificationWorker(() => mainWindow);
+  // Sender rules (SPEC §7): archive on arrival through the same remote path as `E`.
+  SenderRulesService.configure({
+    runRemoteArchive: (accountId, threadId) => runRemoteLabelAction(accountId, threadId, [], ['INBOX'], 'markDone'),
+    publish: event => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      mainWindow.webContents.send('api:senderRulesChanged', event);
+    },
+    logError: (message, error, extra) => SystemLogger.error('Sender Rules', message, error, extra),
+  });
   startBackgroundMailboxSyncWorker();
+  startHistoryBackfillAtLaunch();
+  scheduleThreadMaintenance(THREAD_MAINTENANCE_STARTUP_DELAY_MS);
   startBackgroundAgenticWorker();
+  // Agent preparation (decisions, prepared drafts): first pass shortly after launch.
+  AgentPrepService.start({
+    publish: (channel, payload) => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      mainWindow.webContents.send(channel, payload);
+    },
+  });
   startAutoBackupScheduler();
 
   // Initialize MCPManager with stored settings
@@ -1043,6 +1093,8 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  threadMaintenanceStopped = true;
+  if (threadMaintenanceTimer) clearTimeout(threadMaintenanceTimer);
   MCPManager.shutdown();
   databaseWorkerClient.shutdown();
   semanticSearchWorkerClient.shutdown();
@@ -1075,8 +1127,18 @@ async function saveMessagesToDatabase(messages: MailMessage[], options?: { notif
     SystemLogger.error('Reply Pipeline', 'Failed to reconcile persisted messages.', pipelineError);
   }
 
+  // Threads a sender rule archives on arrival raise no desktop notification.
+  let ruleHandledThreadIds = new Set<string>();
+  try {
+    ruleHandledThreadIds = SenderRulesService.noteArrivals(messages, newMessages);
+  } catch (rulesError) {
+    SystemLogger.error('Sender Rules', 'Failed to evaluate sender rules for new mail.', rulesError);
+  }
+
   if (options?.notifyOfNew && newMessages.length > 0) {
-    notifyOfNewMessages(newMessages);
+    notifyOfNewMessages(ruleHandledThreadIds.size > 0
+      ? newMessages.filter(message => !ruleHandledThreadIds.has(message.threadId))
+      : newMessages);
     void AgenticService.processNewMessages(newMessages);
   }
 }
@@ -1113,10 +1175,60 @@ registerSecureHandler('db:deleteProductivity', (_, accountId: string, id: string
 registerSecureHandler('db:listAccounts', () => AccountsRepo.list());
 registerSecureHandler('db:getAccount', (_, id) => AccountsRepo.get(id));
 registerSecureHandler('db:saveAccount', (_, account) => AccountsRepo.save(account));
-registerSecureHandler('db:deleteAccount', (_, id, options?: { purgeCache?: boolean }) => AccountsRepo.delete(id, options));
+registerSecureHandler('db:deleteAccount', (_, id, options?: { purgeCache?: boolean }) => {
+  if (typeof id !== 'string' || !id.trim()) throw new Error('Invalid account id.');
+  stopAccountWork(id);
+  // Same default as the repository: purge unless the caller explicitly keeps the cache.
+  return AccountsRepo.delete(id, { purgeCache: options?.purgeCache !== false });
+});
 
 registerSecureHandler('db:listThreads', (_, accountId) => databaseWorkerClient.listThreads([accountId]));
 registerSecureHandler('db:listThreadsForAccounts', (_, accountIds: string[]) => databaseWorkerClient.listThreads(accountIds));
+registerSecureHandler('db:countInboxThreads', (_, accountIds: unknown) => {
+  const ids = Array.isArray(accountIds) ? accountIds.filter((id): id is string => typeof id === 'string').slice(0, 50) : [];
+  return databaseWorkerClient.countInboxThreads(ids);
+});
+// Decision-section seams (design-review/SPEC.md §1, §2): the renderer reads the
+// cached decisions and stores only user corrections (`V`); model rows are
+// written by the main process.
+registerSecureHandler('db:listThreadDecisions', (_, accountId: unknown) => {
+  if (typeof accountId !== 'string' || !accountId.trim()) return [];
+  return ThreadDecisionsRepo.listForAccount(accountId);
+});
+registerSecureHandler('db:saveThreadDecision', (_, row: unknown) => {
+  const record = normalizeUserDecisionRecord(row);
+  if (!record) throw new Error('Invalid thread decision.');
+  ThreadDecisionsRepo.upsertMany([record]);
+  return record;
+});
+registerSecureHandler('db:deleteThreadDecision', (_, accountId: unknown, threadId: unknown) => {
+  if (typeof accountId !== 'string' || typeof threadId !== 'string' || !accountId || !threadId) return;
+  // The renderer owns only user corrections; model rows stay.
+  ThreadDecisionsRepo.deleteForThread(accountId, threadId, 'user');
+});
+// Sender rules (SPEC §7). Rules are settings; these are the learning counters
+// and the "Handled for you" list, written by the main process.
+function requireAccountArg(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() && value.length <= 512 ? value.trim().toLowerCase() : null;
+}
+registerSecureHandler('db:listSenderRuleStats', (_, accountId: unknown) => {
+  const id = requireAccountArg(accountId);
+  return id ? SenderRulesRepo.listStats(id) : [];
+});
+registerSecureHandler('db:dismissSenderRuleOffer', (_, accountId: unknown, senderEmail: unknown) => {
+  const id = requireAccountArg(accountId);
+  if (!id || typeof senderEmail !== 'string' || !senderEmail.trim() || senderEmail.length > 512) return;
+  SenderRulesRepo.dismissOffer(id, senderEmail);
+});
+registerSecureHandler('db:listSenderRuleHandled', (_, accountId: unknown) => {
+  const id = requireAccountArg(accountId);
+  return id ? SenderRulesRepo.listHandled(id) : [];
+});
+registerSecureHandler('db:markSenderRuleHandledReviewed', (_, accountId: unknown) => {
+  const id = requireAccountArg(accountId);
+  return id ? SenderRulesRepo.markHandledReviewed(id) : 0;
+});
+
 registerSecureHandler('db:saveThreads', (_, threads) => saveThreadsToDatabase(threads));
 registerSecureHandler('db:deleteThread', (_, accountId, threadId) => ThreadsRepo.delete(accountId, threadId));
 
@@ -1232,6 +1344,8 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
   } catch (err) {
     SystemLogger.error('Settings', 'Failed to apply settings update side effects.', err);
   }
+  // Provider, models or per-account "Mail text may be sent to the model" may have changed.
+  AgentPrepService.onConfigChanged();
 
   return result;
 });
@@ -1250,21 +1364,82 @@ registerSecureHandler('api:verifyMCPServer', async (_, config) => {
 });
 
 // === Bind IPC API / Service Channels ===
+/** Gmail + Calendar in one consent (SPEC §4). Contacts stays a separate, explicit opt-in. */
+const SIGN_IN_SCOPES: readonly string[] = [...GOOGLE_OAUTH_SCOPES, ...GOOGLE_CALENDAR_SCOPES];
+
+/**
+ * Runs the browser OAuth flow and converts any failure into a typed error the
+ * renderer can explain. The raw detail goes to the system log only.
+ */
+async function runGoogleSignIn(channel: string, emailHint: string | undefined, scopes: readonly string[]) {
+  try {
+    return await startOAuthFlow(emailHint, scopes);
+  } catch (error) {
+    const typed = classifyGoogleSignInFailure(error);
+    SystemLogger.error('Google Sign-in', 'Google sign-in did not complete.', error, { channel, code: typed.code });
+    throw new Error(encodeGoogleSignInError(typed));
+  }
+}
+
+function signInFailure(channel: string, failure: GoogleSignInFailure): Error {
+  SystemLogger.error('Google Sign-in', 'Google sign-in did not complete.', failure, { channel, code: failure.code });
+  return new Error(encodeGoogleSignInError({ code: failure.code, expectedPath: failure.expectedPath }));
+}
+
+/**
+ * Granular consent lets the user untick mail access. Fails the sign-in before
+ * any token is saved or the account is touched, so a Calendar-only token never
+ * replaces a working one.
+ */
+function assertGmailScopeGranted(channel: string, grantedScopes: readonly string[]): void {
+  if (!isGmailScopeMissing(grantedScopes)) return;
+  throw signInFailure(channel, new GoogleSignInFailure(
+    'GOOGLE_OAUTH_GMAIL_SCOPE_NOT_GRANTED',
+    `Google granted ${grantedScopes.length} scope(s) without Gmail access.`,
+  ));
+}
+
+/** Turns calendar on only when Google actually granted every calendar scope. */
+function enableCalendarIfGranted(email: string, grantedScopes: readonly string[]): boolean {
+  if (!hasAllScopes(grantedScopes, GOOGLE_CALENDAR_SCOPES)) return false;
+  AccountIntegrationsRepo.patch(email, { calendarEnabled: true });
+  return true;
+}
+
+/**
+ * Starts this account's mailbox sync right away without making the IPC call
+ * wait; the renderer learns about progress through `api:mailboxDelta` and
+ * `api:mailboxSyncHealth`, and a successful sync queues history backfill.
+ */
+function startMailboxSyncSoon(email: string): void {
+  void runMailboxSyncForAccount(email).catch(() => {
+    // runMailboxSyncForAccount already logged and published the failure.
+  });
+}
+
 registerSecureHandler('api:onboardAccount', async (_, emailHint) => {
-  const profile = await startOAuthFlow(emailHint);
+  const profile = await runGoogleSignIn('api:onboardAccount', emailHint, SIGN_IN_SCOPES);
   const email = normalizeOAuthEmail(profile.email);
   const existingAccount = AccountsRepo.get(email);
   const account = buildOnboardedAccount(profile, existingAccount);
   let signatureSync;
   let signatureSyncError;
 
+  assertGmailScopeGranted('api:onboardAccount', profile.grantedScopes);
   if (!profile.refreshToken) {
-    throw new Error('No refresh token returned. Revoke permissions first.');
+    throw signInFailure('api:onboardAccount', new GoogleSignInFailure('GOOGLE_OAUTH_NO_REFRESH_TOKEN', 'No refresh token returned. Revoke permissions first.'));
   }
   await saveRefreshToken(account.email, profile.refreshToken);
   AccountsRepo.save(account);
   AccountIntegrationsRepo.patch(account.email, { gmailEnabled: true });
+  const calendarEnabled = enableCalendarIfGranted(account.email, profile.grantedScopes);
   googleAuthState.clear(account.email);
+  SystemLogger.info('Google Sign-in', 'Account connected.', {
+    accountId: account.email,
+    calendarEnabled,
+    grantedScopeCount: profile.grantedScopes.length,
+  });
+  startMailboxSyncSoon(account.email);
 
   try {
     signatureSync = await GmailSyncService.fetchDefaultSignature(account.email);
@@ -1291,30 +1466,41 @@ registerSecureHandler('api:reauthorizeAccount', async (_, email) => {
   }
 
   const integrationStatus = AccountIntegrationsRepo.get(expectedEmail);
+  // Same combined Gmail + Calendar consent as sign-in. Contacts is only kept
+  // when the user already opted into it, so reconnecting does not drop it.
   const scopes = [
-    ...GOOGLE_OAUTH_SCOPES,
-    ...(integrationStatus.calendarEnabled ? GOOGLE_CALENDAR_SCOPES : []),
+    ...SIGN_IN_SCOPES,
     ...(integrationStatus.contactsEnabled ? GOOGLE_CONTACTS_SCOPES : []),
   ];
-  const profile = await startOAuthFlow(expectedEmail, scopes);
+  const profile = await runGoogleSignIn('api:reauthorizeAccount', expectedEmail, scopes);
   const authorizedEmail = normalizeOAuthEmail(profile.email);
   if (authorizedEmail !== expectedEmail) {
-    throw new Error(`Google authorized ${authorizedEmail}, but ${expectedEmail} must be reconnected.`);
+    throw signInFailure('api:reauthorizeAccount', new GoogleSignInFailure(
+      'GOOGLE_OAUTH_WRONG_ACCOUNT',
+      `Google authorized ${authorizedEmail}, but ${expectedEmail} must be reconnected.`,
+    ));
   }
+  assertGmailScopeGranted('api:reauthorizeAccount', profile.grantedScopes);
   if (!profile.refreshToken) {
-    throw new Error('Google did not return a refresh token. Remove Dumka Mail access from your Google Account and try again.');
+    throw signInFailure('api:reauthorizeAccount', new GoogleSignInFailure(
+      'GOOGLE_OAUTH_NO_REFRESH_TOKEN',
+      'Google did not return a refresh token. Remove Dumka Mail access from your Google Account and try again.',
+    ));
   }
 
   const account = buildOnboardedAccount(profile, existingAccount);
   await saveRefreshToken(expectedEmail, profile.refreshToken);
   AccountsRepo.save(account);
   AccountIntegrationsRepo.patch(expectedEmail, { gmailEnabled: true });
+  enableCalendarIfGranted(expectedEmail, profile.grantedScopes);
   googleAuthState.clear(expectedEmail);
+  startMailboxSyncSoon(expectedEmail);
   return account;
 });
 
 registerSecureHandler('api:disconnectAccount', async (_, email, options?: { purgeCache?: boolean; revokeToken?: boolean }) => {
   const normalizedEmail = normalizeOAuthEmail(email);
+  stopAccountWork(normalizedEmail);
   let revokeStatus: 'skipped' | 'missing' | 'revoked' | 'failed' = 'skipped';
 
   if (options?.revokeToken !== false) {
@@ -1326,6 +1512,9 @@ registerSecureHandler('api:disconnectAccount', async (_, email, options?: { purg
     }
   }
 
+  // Stop background work before anything is deleted, so nothing in flight
+  // writes rows for the account after the purge.
+  stopAccountWork(normalizedEmail);
   await deleteRefreshToken(normalizedEmail);
   AccountsRepo.delete(normalizedEmail, { purgeCache: options?.purgeCache !== false });
   googleAuthState.clear(normalizedEmail);
@@ -1360,13 +1549,25 @@ registerSecureHandler('api:authorizeGoogleIntegration', async (_, email, integra
   if (authorizedEmail !== expectedEmail) {
     throw new Error(`Google authorized ${authorizedEmail}, but ${expectedEmail} is selected in Dumka Mail.`);
   }
+  // The new token replaces the stored one: it must still carry mail access.
+  assertGmailScopeGranted('api:authorizeGoogleIntegration', profile.grantedScopes);
   if (profile.refreshToken) {
     await saveRefreshToken(expectedEmail, profile.refreshToken);
     googleAuthState.clear(expectedEmail);
   }
-  AccountIntegrationsRepo.patch(expectedEmail, integration === 'calendar'
-    ? { calendarEnabled: true }
-    : { contactsEnabled: true });
+  if (integration === 'calendar') {
+    // An explicit calendar consent whose response did not list scopes counts as granted.
+    if (integrationScopesGranted(profile.grantedScopes, GOOGLE_CALENDAR_SCOPES)) {
+      AccountIntegrationsRepo.patch(expectedEmail, { calendarEnabled: true });
+    } else {
+      SystemLogger.warning('Google Sign-in', 'Calendar access was not granted; calendar stays off.', {
+        accountId: expectedEmail,
+        grantedScopeCount: profile.grantedScopes.length,
+      });
+    }
+  } else if (integrationScopesGranted(profile.grantedScopes, GOOGLE_CONTACTS_SCOPES)) {
+    AccountIntegrationsRepo.patch(expectedEmail, { contactsEnabled: true });
+  }
   return AccountIntegrationsRepo.get(expectedEmail);
 });
 
@@ -1704,7 +1905,19 @@ registerSecureHandler('api:syncMailboxNow', async (_, accountIds: string[]): Pro
 registerSecureHandler('api:syncSent', (_, email) => GmailSyncService.syncSent(email));
 registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
-registerSecureHandler('api:runBackfillPage', (_, email) => runBackfillPageForAccount(email));
+// Manual "Resume Older Mail Indexing": nudges the main-process loop and
+// returns the current progress immediately; pages arrive via api:backfillProgress.
+registerSecureHandler('api:runBackfillPage', (_, email: string) => {
+  const accountId = normalizeOAuthEmail(email);
+  requestHistoryBackfill(accountId, { manual: true });
+  const state = SyncStateRepo.get(accountId);
+  return {
+    threadsIndexed: state?.historyBackfillThreadsSynced || 0,
+    pageThreadsIndexed: 0,
+    completed: Boolean(state?.historyBackfillCompletedAt),
+    busy: historyBackfillRunningAccount === accountId || historyBackfillQueue.includes(accountId),
+  };
+});
 registerSecureHandler('api:syncGmailSignature', (_, email) => GmailSyncService.fetchDefaultSignature(email));
 registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
 registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
@@ -2079,12 +2292,26 @@ async function runMailRulesForThreads(threads: MailThread[]) {
 registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds, removeLabelIds, actionId?: string, actionKind?: string, payloadJson?: string) => {
   const resolvedKind = actionKind || inferLabelActionKind(addLabelIds, removeLabelIds);
   assertLabelProposalReadyForMutation(payloadJson, email, threadId, addLabelIds, removeLabelIds, resolvedKind);
+  // Sender-rule learning (SPEC §7) reads the thread as it was before the write.
+  const archivesFromInbox = resolvedKind === 'markDone' && removeLabelIds.includes('INBOX');
+  const restoresToInbox = addLabelIds.includes('INBOX');
+  const threadBeforeArchive = archivesFromInbox ? SenderRulesService.readThreadBeforeArchive(email, threadId) : null;
+  const noteSenderRuleLearning = () => {
+    if (archivesFromInbox) SenderRulesService.noteArchive(email, threadBeforeArchive, actionId, payloadJson);
+    if (restoresToInbox) SenderRulesService.noteRestore(email, threadId);
+  };
   // 1. Optimistically write to local SQLite database first for instant persistence
-  ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
-  
+  //    (immediate transaction + bounded busy retry inside the repository).
+  try {
+    ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
+  } catch (localError) {
+    throw localSaveFailure('api:modifyLabels', localError, { accountId: email, actionKind: resolvedKind });
+  }
+
   try {
     // 2. Perform the actual remote Gmail API sync
     await runRemoteLabelAction(email, threadId, addLabelIds, removeLabelIds, resolvedKind);
+    noteSenderRuleLearning();
     return { offline: false };
   } catch (err: any) {
     if (isRetryableRemoteError(err)) {
@@ -2094,32 +2321,54 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         error: err,
       });
       const parkedId = actionId || crypto.randomUUID();
-      const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
-      const scheduledAt = scheduledAtForRetry(err);
-      if (log) {
-        log.status = 'pending_sync';
-        log.payloadJson = payloadJson || log.payloadJson || null;
-        if (scheduledAt) log.scheduledAt = scheduledAt;
-        ActionLogRepo.save(log);
-      } else {
-        ActionLogRepo.save({
-          id: parkedId,
-          accountId: email,
-          threadId,
-          kind: resolvedKind,
-          status: 'pending_sync',
-          createdAt: new Date().toISOString(),
-          scheduledAt,
-          payloadJson
-        });
+      try {
+        const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
+        const scheduledAt = scheduledAtForRetry(err);
+        if (log) {
+          log.status = 'pending_sync';
+          log.payloadJson = payloadJson || log.payloadJson || null;
+          if (scheduledAt) log.scheduledAt = scheduledAt;
+          ActionLogRepo.save(log);
+        } else {
+          ActionLogRepo.save({
+            id: parkedId,
+            accountId: email,
+            threadId,
+            kind: resolvedKind,
+            status: 'pending_sync',
+            createdAt: new Date().toISOString(),
+            scheduledAt,
+            payloadJson
+          });
+        }
+      } catch (parkError) {
+        // Not parked means it would never sync: undo the local change instead.
+        rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
+        throw localSaveFailure('api:modifyLabels', parkError, { accountId: email, actionKind: resolvedKind });
       }
+      // Parked actions replay through the reconciler; they are counted once, here.
+      noteSenderRuleLearning();
       return { offline: true };
     }
     // 3. Roll back local database state on remote network/API failure
-    ThreadsRepo.updateLabels(email, threadId, removeLabelIds, addLabelIds);
+    rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
     throw err;
   }
 });
+
+function localSaveFailure(channel: string, error: unknown, extra: Record<string, unknown>): Error {
+  SystemLogger.error('Local Database', 'A local write failed after retries.', error, { channel, ...extra });
+  return new Error(localSaveFailedErrorMessage());
+}
+
+function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): void {
+  try {
+    ThreadsRepo.updateLabels(email, threadId, removeLabelIds, addLabelIds);
+  } catch (rollbackError) {
+    // The renderer reloads from SQLite after a failure; the next sync repairs labels.
+    SystemLogger.error('Local Database', 'Could not roll back a local label change.', rollbackError, { accountId: email, threadId });
+  }
+}
 registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string) => {
   if (!draft || typeof draft.accountId !== 'string'
     || draft.accountId.trim().toLowerCase() !== email.trim().toLowerCase()) {
@@ -2135,7 +2384,12 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
   if (draft?.id) {
     const existing = DraftsRepo.get(draft.id);
     if (existing && existing.rfcMessageId !== rfcMessageId) {
-      DraftsRepo.save({ ...existing, rfcMessageId });
+      try {
+        DraftsRepo.save({ ...existing, rfcMessageId });
+      } catch (localError) {
+        // Nothing was sent yet; the renderer keeps the draft and offers Retry.
+        throw localSaveFailure('api:sendDraft', localError, { accountId: email });
+      }
     }
   }
   try {
@@ -2152,26 +2406,31 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
         error: err,
       });
       if (actionId) {
-        const log = ActionLogRepo.list(email).find(l => l.id === actionId);
-        const scheduledAt = scheduledAtForRetry(err);
-        const payloadJson = mergeActionPayload(log?.payloadJson, { rfcMessageId });
-        if (log) {
-          log.status = 'pending_sync';
-          log.payloadJson = payloadJson;
-          if (scheduledAt) log.scheduledAt = scheduledAt;
-          ActionLogRepo.save(log);
-        } else {
-          ActionLogRepo.save({
-            id: actionId,
-            accountId: email,
-            draftId: draft.id,
-            threadId: draft.threadId,
-            kind: 'send',
-            status: 'pending_sync',
-            createdAt: new Date().toISOString(),
-            scheduledAt,
-            payloadJson,
-          });
+        try {
+          const log = ActionLogRepo.list(email).find(l => l.id === actionId);
+          const scheduledAt = scheduledAtForRetry(err);
+          const payloadJson = mergeActionPayload(log?.payloadJson, { rfcMessageId });
+          if (log) {
+            log.status = 'pending_sync';
+            log.payloadJson = payloadJson;
+            if (scheduledAt) log.scheduledAt = scheduledAt;
+            ActionLogRepo.save(log);
+          } else {
+            ActionLogRepo.save({
+              id: actionId,
+              accountId: email,
+              draftId: draft.id,
+              threadId: draft.threadId,
+              kind: 'send',
+              status: 'pending_sync',
+              createdAt: new Date().toISOString(),
+              scheduledAt,
+              payloadJson,
+            });
+          }
+        } catch (parkError) {
+          // Not queued and not sent: surface it so the draft is restored.
+          throw localSaveFailure('api:sendDraft', parkError, { accountId: email });
         }
       }
       return { offline: true };
@@ -2181,13 +2440,32 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
 });
 
 registerSecureHandler('api:getAIProviderDescriptor', (_, preference, overrideModel) => getAIProviderDescriptor(preference, overrideModel));
-registerSecureHandler('api:completeAI', (_, request, preference, overrideModel) => completeAI(request, preference, overrideModel));
+registerSecureHandler('api:completeAI', async (_, request, preference, overrideModel) => {
+  try {
+    return await completeAI(request, preference, overrideModel);
+  } catch (error) {
+    // The renderer shows only "Couldn't reach the model"; the provider detail
+    // (status, the start of the response body; never the request) is logged bounded.
+    SystemLogger.error('AI', 'Model request failed.', new Error(truncateProviderText(error instanceof Error ? error.message : String(error))), {
+      action: typeof request?.action === 'string' ? request.action : null,
+      preference: typeof preference === 'string' ? preference : null,
+    });
+    throw error;
+  }
+});
 registerSecureHandler('api:validateAgentActionProposal', (_, item: AgentPlanItem) => validateAgentActionProposalItem(item));
 registerSecureHandler('api:getThreadAgentInsights', async (_, accountId, threadId) => {
   const messages = await databaseWorkerClient.listMessageMetadataForThread(accountId, threadId);
   return AgenticService.getThreadInsights(accountId, threadId, messages);
 });
-registerSecureHandler('api:buildDailyBriefing', (_, accountId, options) => AgenticService.buildDailyBriefing(accountId, options));
+registerSecureHandler('api:buildDailyBriefing', async (_, accountId, options) => {
+  try {
+    return await AgenticService.buildDailyBriefing(accountId, options);
+  } catch (error) {
+    SystemLogger.error('Daily Briefing', 'Daily briefing build failed.', error, { accountId });
+    throw error;
+  }
+});
 registerSecureHandler('api:dismissAgentDraftSuggestion', (_, id) => AgenticService.dismissDraftSuggestion(id));
 registerSecureHandler('api:markAgentDraftSuggestionApplied', (_, id) => AgenticService.markDraftSuggestionApplied(id));
 registerSecureHandler('api:testEmbeddingConfig', (_, settings) => AgenticService.testEmbeddingConfig(settings));
@@ -2212,7 +2490,10 @@ registerSecureHandler('api:searchSemantic', async (_, accountId, query, limit) =
     };
   }
 });
-registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, actionId?: string, sourceMessageId?: string) => {
+registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, actionId?: string, sourceMessageId?: string, options?: { archive?: unknown }) => {
+  // Archive stays the default for existing callers (approved agent proposals);
+  // the confirmation sheet archives through the renderer's undoable batch path.
+  const archive = options?.archive !== false;
   const id = actionId || crypto.randomUUID();
   const now = new Date().toISOString();
   ActionLogRepo.save({
@@ -2225,7 +2506,7 @@ registerSecureHandler('api:unsubscribeThread', async (_, email, threadId, action
   });
 
   try {
-    const result = await AgenticService.unsubscribeThread(email, threadId, sourceMessageId);
+    const result = await AgenticService.unsubscribeThread(email, threadId, sourceMessageId, { archive });
     ActionLogRepo.save({
       id,
       accountId: email,
@@ -2255,7 +2536,56 @@ registerSecureHandler('api:listCleanupSenderStats', (_, accountId: string) => da
 registerSecureHandler('api:listRecentSenderMessages', (_, accountId: string, senderEmail: string, limit = 3) =>
   databaseWorkerClient.recentSenderMessages(accountId, senderEmail, limit));
 registerSecureHandler('api:loadAIConfig', () => loadAIConfigForRenderer());
-registerSecureHandler('api:saveAIConfig', (_, config) => saveAIConfigAsync(config));
+registerSecureHandler('api:saveAIConfig', async (_, config) => {
+  const result = await saveAIConfigAsync(config);
+  AgentPrepService.onConfigChanged(true);
+  return result;
+});
+
+// --- Agent preparation and streaming (design-review/SPEC.md §5) ---------------
+// Model status, on-demand summaries / reply drafts, streaming chat and
+// cancellation. Deltas go to the renderer on `api:aiStream`.
+function requireAgentPrepId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > 512 || value.includes('\0')) {
+    throw new Error(`Invalid ${field}.`);
+  }
+  return value;
+}
+
+function requireAIRequestId(value: unknown): string {
+  if (!isValidAIRequestId(value)) throw new Error('Invalid AI request id.');
+  return value;
+}
+
+registerSecureHandler('api:getModelStatus', () => AgentPrepService.getModelStatus());
+registerSecureHandler('api:retryAgentPrep', () => AgentPrepService.retry());
+registerSecureHandler('api:cancelAI', (_, requestId: unknown) => {
+  if (isValidAIRequestId(requestId)) AgentPrepService.cancelRequest(requestId);
+});
+registerSecureHandler('api:requestThreadSummary', (_, accountId: unknown, threadId: unknown, requestId: unknown) =>
+  AgentPrepService.requestThreadSummary(requireAgentPrepId(accountId, 'account'), requireAgentPrepId(threadId, 'thread'), requireAIRequestId(requestId)));
+registerSecureHandler('api:requestAgentDraft', (_, accountId: unknown, threadId: unknown, requestId: unknown) =>
+  AgentPrepService.requestAgentDraft(requireAgentPrepId(accountId, 'account'), requireAgentPrepId(threadId, 'thread'), requireAIRequestId(requestId)));
+registerSecureHandler('api:streamAIChat', (_, requestId: unknown, request: unknown, preference: unknown, overrideModel: unknown) => {
+  const id = requireAIRequestId(requestId);
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid AI request.');
+  const raw = request as Record<string, unknown>;
+  // The account is required: the main process decides from its own settings
+  // whether message text may reach the model (subjects and senders otherwise).
+  const scope = raw.mailScope && typeof raw.mailScope === 'object' ? raw.mailScope as Record<string, unknown> : null;
+  const accountId = normalizeOAuthEmail(requireAgentPrepId(scope?.accountId, 'account'));
+  if (!AccountsRepo.list().some(account => normalizeOAuthEmail(account.email) === accountId)) throw new Error('Unknown account.');
+  const threadId = typeof scope?.threadId === 'string' && scope.threadId ? requireAgentPrepId(scope.threadId, 'thread') : null;
+  const history = Array.isArray(raw.conversationHistory) ? raw.conversationHistory.slice(-40) : [];
+  return AgentPrepService.streamChat(id, { accountId, threadId }, {
+    action: typeof raw.action === 'string' ? raw.action.slice(0, 64) : 'chat',
+    context: typeof raw.context === 'string' ? raw.context : '',
+    conversationHistory: history.filter((message): message is AIChatMessage => Boolean(message)
+      && typeof (message as AIChatMessage).text === 'string' && typeof (message as AIChatMessage).role === 'string'),
+    userInstruction: typeof raw.userInstruction === 'string' ? raw.userInstruction : '',
+  }, typeof preference === 'string' && isAIProviderPreference(preference) ? preference : 'automatic',
+  typeof overrideModel === 'string' && overrideModel.trim() ? overrideModel : undefined);
+});
 registerSecureHandler('api:listProviderModels', (_, provider, apiKey, baseUrl) => listProviderModels(provider, apiKey, baseUrl));
 registerSecureHandler('api:setMenuCommandState', (_, state) => updateApplicationMenuCommandState(state));
 registerSecureHandler('api:undoFocusedInput', (event) => event.sender.undo());
@@ -2309,6 +2639,7 @@ function publishMailboxDelta(
   accountId: string,
   upserts: MailThread[],
   deletedThreadIds: string[],
+  source: MailboxDelta['source'] = 'sync',
 ): MailboxDelta {
   const delta: MailboxDelta = {
     accountId,
@@ -2316,13 +2647,17 @@ function publishMailboxDelta(
     deletedThreadIds: Array.from(new Set(deletedThreadIds)),
     revision: ++mailboxSyncRevision,
     completedAt: new Date().toISOString(),
+    source,
   };
-  mainWindow?.webContents.send('api:mailboxDelta', delta);
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('api:mailboxDelta', delta);
+  }
   return delta;
 }
 
 function publishMailboxSyncHealth(event: MailboxSyncHealthEvent): void {
-  mainWindow?.webContents.send('api:mailboxSyncHealth', event);
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('api:mailboxSyncHealth', event);
 }
 
 function startReminderNotificationWorker() {
@@ -2394,10 +2729,17 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
     SystemLogger.info('Mailbox Backfill', 'Started a mailbox history page.', { accountId: email });
 
     const page = await GmailSyncService.syncBackfillPage(email, syncState?.historyBackfillPageToken || undefined);
+    // Disconnect may have purged the account while the page was being fetched.
+    if (!accountStillConfigured(email)) throw new BackfillAccountRemovedError(email);
     await saveThreadsToDatabase(page.threads);
     await saveMessagesToDatabase(page.messages);
+    if (!accountStillConfigured(email)) {
+      // Removed during the worker writes: take this page's rows back out.
+      for (const thread of page.threads) ThreadsRepo.delete(email, thread.id);
+      throw new BackfillAccountRemovedError(email);
+    }
     if (page.threads.length > 0) {
-      publishMailboxDelta(email, page.threads, []);
+      publishMailboxDelta(email, page.threads, [], 'backfill');
     }
 
     const now = new Date().toISOString();
@@ -2430,14 +2772,247 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
     });
     return result;
   } catch (error) {
-    SystemLogger.error('Mailbox Backfill', 'Mailbox history page failed.', error, {
-      accountId: email,
-      durationMs: Date.now() - startedAt,
-    });
+    if (error instanceof BackfillAccountRemovedError) {
+      SystemLogger.info('Mailbox Backfill', 'Dropped a history page for a removed account.', { accountId: email });
+    } else {
+      SystemLogger.error('Mailbox Backfill', 'Mailbox history page failed.', error, {
+        accountId: email,
+        durationMs: Date.now() - startedAt,
+      });
+    }
     throw error;
   } finally {
     activeBackfillAccounts.delete(email);
   }
+}
+
+// === History backfill loop (main-process owned) ===
+// One account at a time, page after page from the persisted cursor, with a
+// short pause between pages. Stops on network/auth/other errors and resumes on
+// the next successful mailbox sync or app start. Never two loops per account.
+const HISTORY_BACKFILL_PAGE_PAUSE_MS = 300;
+const HISTORY_BACKFILL_STARTUP_DELAY_MS = 3000;
+const historyBackfillQueue: string[] = [];
+let historyBackfillRunningAccount: string | null = null;
+let historyBackfillDraining = false;
+
+const HISTORY_BACKFILL_RETRY_BASE_MS = 60_000;
+const HISTORY_BACKFILL_RETRY_MAX_MS = 60 * 60_000;
+/** Per-account backoff after a failed page, so a page that always fails is not retried on every successful sync. */
+const historyBackfillBackoff = new Map<string, { failures: number; retryAt: number }>();
+
+/** The account was removed while a page was in flight; its page must not be persisted. */
+class BackfillAccountRemovedError extends Error {
+  constructor(accountId: string) {
+    super(`Account ${accountId} was removed during history backfill.`);
+    this.name = 'BackfillAccountRemovedError';
+  }
+}
+
+function accountStillConfigured(email: string): boolean {
+  try {
+    return Boolean(AccountsRepo.get(email));
+  } catch {
+    return false;
+  }
+}
+
+function publishBackfillProgress(event: MailboxBackfillProgressEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('api:backfillProgress', event);
+}
+
+function noteHistoryBackfillFailure(email: string): void {
+  const failures = (historyBackfillBackoff.get(email)?.failures || 0) + 1;
+  const delay = Math.min(HISTORY_BACKFILL_RETRY_BASE_MS * 2 ** (failures - 1), HISTORY_BACKFILL_RETRY_MAX_MS);
+  historyBackfillBackoff.set(email, { failures, retryAt: Date.now() + delay });
+}
+
+/** Disconnect / delete: the account leaves the queue; a running loop stops at its next check. */
+function dropFromHistoryBackfill(email: string): void {
+  const key = normalizeOAuthEmail(email);
+  for (let index = historyBackfillQueue.length - 1; index >= 0; index -= 1) {
+    if (normalizeOAuthEmail(historyBackfillQueue[index]) === key) historyBackfillQueue.splice(index, 1);
+  }
+  for (const queued of Array.from(historyBackfillBackoff.keys())) {
+    if (normalizeOAuthEmail(queued) === key) historyBackfillBackoff.delete(queued);
+  }
+}
+
+/** Everything the main process does in the background for an account stops here. */
+function stopAccountWork(email: string): void {
+  AgentPrepService.cancelAccount(email);
+  SenderRulesService.forgetAccount(email);
+  dropFromHistoryBackfill(email);
+}
+
+function hasCompletedFirstSync(state: SyncState | null): boolean {
+  return Boolean(state?.lastFullSyncAt || state?.historyId);
+}
+
+function requestHistoryBackfill(email: string, options: { manual?: boolean } = {}): void {
+  if (!email) return;
+  // The user's own "index older mail" nudge skips the failure backoff.
+  if (options.manual) historyBackfillBackoff.delete(email);
+  const state = SyncStateRepo.get(email);
+  if (state?.historyBackfillCompletedAt) return;
+  if (!hasCompletedFirstSync(state)) return;
+  if (historyBackfillRunningAccount === email || historyBackfillQueue.includes(email)) return;
+  const backoff = historyBackfillBackoff.get(email);
+  if (backoff && Date.now() < backoff.retryAt) return;
+  historyBackfillQueue.push(email);
+  if (historyBackfillRunningAccount) {
+    // Waiting behind another account: still show that older mail is being indexed.
+    publishBackfillProgress({
+      accountId: email,
+      threadsIndexed: state?.historyBackfillThreadsSynced || 0,
+      completed: false,
+      running: true,
+      pausedReason: null,
+    });
+  }
+  void drainHistoryBackfillQueue();
+}
+
+async function drainHistoryBackfillQueue(): Promise<void> {
+  if (historyBackfillDraining) return;
+  historyBackfillDraining = true;
+  try {
+    while (historyBackfillQueue.length > 0) {
+      const email = historyBackfillQueue.shift() as string;
+      historyBackfillRunningAccount = email;
+      try {
+        await runHistoryBackfillLoop(email);
+      } catch (error) {
+        SystemLogger.error('Mailbox Backfill', 'History backfill loop stopped unexpectedly.', error, { accountId: email });
+      } finally {
+        historyBackfillRunningAccount = null;
+      }
+    }
+  } finally {
+    historyBackfillDraining = false;
+  }
+}
+
+async function runHistoryBackfillLoop(email: string): Promise<void> {
+  for (;;) {
+    if (!AccountsRepo.get(email)) return;
+    const state = SyncStateRepo.get(email);
+    const threadsIndexed = state?.historyBackfillThreadsSynced || 0;
+    if (state?.historyBackfillCompletedAt) {
+      publishBackfillProgress({ accountId: email, threadsIndexed, completed: true, running: false, pausedReason: null });
+      return;
+    }
+    if (googleAuthState.requiresReauthorization(email)) {
+      publishBackfillProgress({ accountId: email, threadsIndexed, completed: false, running: false, pausedReason: 'reauthorization' });
+      return;
+    }
+    publishBackfillProgress({ accountId: email, threadsIndexed, completed: false, running: true, pausedReason: null });
+
+    let result: Awaited<ReturnType<typeof runBackfillPageForAccount>>;
+    try {
+      result = await runBackfillPageForAccount(email);
+    } catch (error) {
+      if (error instanceof BackfillAccountRemovedError || !accountStillConfigured(email)) return;
+      noteHistoryBackfillFailure(email);
+      const pausedReason = googleAuthState.requiresReauthorization(email)
+        ? 'reauthorization'
+        : isNetworkError(error) || isRetryableRemoteError(error) ? 'network' : 'error';
+      SystemLogger.warning('Mailbox Backfill', 'History backfill paused; it resumes after the next successful sync.', {
+        accountId: email,
+        pausedReason,
+      });
+      publishBackfillProgress({
+        accountId: email,
+        threadsIndexed: SyncStateRepo.get(email)?.historyBackfillThreadsSynced || threadsIndexed,
+        completed: false,
+        running: false,
+        pausedReason,
+      });
+      return;
+    }
+
+    if (!accountStillConfigured(email)) return;
+    historyBackfillBackoff.delete(email);
+    if (result.completed) {
+      publishBackfillProgress({ accountId: email, threadsIndexed: result.threadsIndexed, completed: true, running: false, pausedReason: null });
+      SystemLogger.info('Mailbox Backfill', 'All mail indexed.', { accountId: email, threadsIndexed: result.threadsIndexed });
+      return;
+    }
+    publishBackfillProgress({ accountId: email, threadsIndexed: result.threadsIndexed, completed: false, running: true, pausedReason: null });
+    await new Promise(resolve => setTimeout(resolve, HISTORY_BACKFILL_PAGE_PAUSE_MS));
+  }
+}
+
+// === Thread maintenance (in_inbox flags, inbox signals) ===
+// Old rows get `in_inbox` and current-rule signals in small chunks on the
+// database worker: once after launch at idle and after syncs, until the pass
+// reports done. Updated threads are published as a delta so the inbox
+// re-sorts without a reload.
+const THREAD_MAINTENANCE_STARTUP_DELAY_MS = 20_000;
+const THREAD_MAINTENANCE_CHUNK_PAUSE_MS = 250;
+const THREAD_MAINTENANCE_RETRY_MS = 5 * 60_000;
+let threadMaintenanceDone = false;
+let threadMaintenanceStopped = false;
+let threadMaintenanceRunning = false;
+let threadMaintenanceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleThreadMaintenance(delayMs = 0): void {
+  if (threadMaintenanceDone || threadMaintenanceRunning || threadMaintenanceTimer || threadMaintenanceStopped) return;
+  threadMaintenanceTimer = setTimeout(() => {
+    threadMaintenanceTimer = null;
+    void runThreadMaintenance();
+  }, delayMs);
+}
+
+async function runThreadMaintenance(): Promise<void> {
+  if (threadMaintenanceDone || threadMaintenanceRunning) return;
+  threadMaintenanceRunning = true;
+  let failed = false;
+  try {
+    while (!threadMaintenanceStopped) {
+      const result = await databaseWorkerClient.runThreadMaintenance();
+      await publishMaintainedThreads(result.signalsUpdated);
+      if (result.done) {
+        threadMaintenanceDone = true;
+        SystemLogger.info('Database', 'Thread inbox flags and signals are up to date.');
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, THREAD_MAINTENANCE_CHUNK_PAUSE_MS));
+    }
+  } catch (error) {
+    failed = true;
+    SystemLogger.warning('Database', 'Thread maintenance paused; it resumes later.', { error });
+  } finally {
+    threadMaintenanceRunning = false;
+  }
+  if (failed) scheduleThreadMaintenance(THREAD_MAINTENANCE_RETRY_MS);
+}
+
+async function publishMaintainedThreads(updated: { accountId: string; threadId: string }[]): Promise<void> {
+  if (updated.length === 0) return;
+  const byAccount = new Map<string, string[]>();
+  for (const entry of updated) {
+    const ids = byAccount.get(entry.accountId);
+    if (ids) ids.push(entry.threadId);
+    else byAccount.set(entry.accountId, [entry.threadId]);
+  }
+  for (const [accountId, threadIds] of byAccount) {
+    if (!accountStillConfigured(accountId)) continue;
+    const threads = await databaseWorkerClient.getThreads(accountId, threadIds);
+    if (threads.length > 0) publishMailboxDelta(accountId, threads, [], 'backfill');
+    AgentPrepService.onMailboxSynced(accountId);
+  }
+}
+
+function startHistoryBackfillAtLaunch(): void {
+  setTimeout(() => {
+    try {
+      for (const account of AccountsRepo.list()) requestHistoryBackfill(account.email);
+    } catch (error) {
+      SystemLogger.error('Mailbox Backfill', 'Could not resume history backfill at launch.', error);
+    }
+  }, HISTORY_BACKFILL_STARTUP_DELAY_MS);
 }
 
 function mergeActionPayload(payloadJson: string | null | undefined, extra: Record<string, unknown>): string {
@@ -2460,6 +3035,7 @@ async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta
     deleteThread: (accountId, threadId) => ThreadsRepo.delete(accountId, threadId),
     listPendingActions: accountId => ActionLogRepo.listOpenMutations(accountId),
     publishDelta: publishMailboxDelta,
+    afterPersist: (accountId, threads) => SenderRulesService.applyToPersistedThreads(accountId, threads),
     logger: {
       warning: (scope, message, extra) => SystemLogger.warning(scope, message, extra),
     },
@@ -2491,6 +3067,11 @@ function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
         lastError: null,
         completedAt: delta.completedAt,
       });
+      // First sync done (or Gmail reachable again): continue older-mail indexing.
+      requestHistoryBackfill(email);
+      scheduleThreadMaintenance(THREAD_MAINTENANCE_CHUNK_PAUSE_MS);
+      // Fresh inbox state: refine decisions / prepare drafts for new threads.
+      AgentPrepService.onMailboxSynced(email);
       return delta;
     })
     .catch(error => {

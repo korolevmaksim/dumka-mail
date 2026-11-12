@@ -29,6 +29,14 @@ describe('AppSettings defaults and migrations', () => {
     expect(merged.appearance.interfaceStyle).toBe('classic');
   });
 
+  it('defaults "After sending a reply" to archive and keeps stored choices', () => {
+    expect(DEFAULT_SETTINGS.compose.afterSend).toBe('archive');
+    // Settings stored before the option existed load with the default.
+    expect(mergeSettings({ compose: { sendUndoDelay: 5 } }).compose).toMatchObject({ sendUndoDelay: 5, afterSend: 'archive' });
+    expect(mergeSettings({ compose: { afterSend: 'keep' } }).compose.afterSend).toBe('keep');
+    expect(mergeSettings({ compose: { afterSend: 'sometimes' } }).compose.afterSend).toBe('archive');
+  });
+
   it('ships with system language as the default interface locale', () => {
     expect(DEFAULT_SETTINGS.general.language).toBe('system');
   });

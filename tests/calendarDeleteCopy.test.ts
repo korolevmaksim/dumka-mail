@@ -78,9 +78,5 @@ describe('calendarDeleteCopy', () => {
     const workspaceSource = readFileSync(join(repoRoot, 'renderer/src/calendar/CalendarWorkspace.tsx'), 'utf8');
     expect(workspaceSource).toContain('calendarDeleteSuccessMessage(wasRecurring, mutationScope)');
 
-    const agendaSource = readFileSync(join(repoRoot, 'renderer/src/components/CalendarAgendaPanel.tsx'), 'utf8');
-    expect(agendaSource).toContain('calendarDeleteSuccessMessage(wasRecurring, mutationScope)');
-    expect(agendaSource).toContain('mutationScope');
-    expect(agendaSource).toContain('recurringEventId: editingEvent.recurringEventId');
   });
 });

@@ -99,6 +99,32 @@ function makeDeps(options: {
 }
 
 describe('performMailboxSyncForAccount', () => {
+  it('publishes threads as the post-persist step (sender rules) left them', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ['t1', 't2'], deletedThreadIds: [], historyId: '20' },
+    });
+    const calls: string[][] = [];
+    h.deps.afterPersist = async (_accountId, threads) => {
+      calls.push(threads.map(item => item.id));
+      expect(h.savedMessages.length).toBeGreaterThan(0);
+      return threads.map(item => item.id === 't1' ? { ...item, labelIds: [] } : item);
+    };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(calls).toEqual([['t1'], ['t2']]);
+    expect(h.deltas[0].upserts.map(item => [item.id, item.labelIds])).toEqual([['t1', []], ['t2', ['INBOX']]]);
+  });
+
+  it('runs the post-persist step after messages on a full sync and survives its failure', async () => {
+    const h = makeDeps();
+    h.deps.afterPersist = async () => {
+      expect(h.savedMessages).toHaveLength(1);
+      throw new Error('boom');
+    };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.deltas[0].upserts.map(item => item.id)).toEqual(['inbox']);
+  });
+
   it('does not advance the history cursor when a thread fetch fails', async () => {
     const h = makeDeps({
       historyId: '10',

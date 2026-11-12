@@ -150,6 +150,7 @@ export function RecipientField({
               }
               if (event.key === 'Escape' && visibleSuggestions.length > 0) {
                 event.preventDefault();
+                event.stopPropagation();
                 setSuggestionsOpen(false);
                 return;
               }

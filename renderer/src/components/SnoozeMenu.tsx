@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 
 import { parseReminderInput } from '../../../shared/reminderInput';
 import { REMINDER_PRESETS, reminderDate, describeReminder } from '../../../shared/reminders';
 import { CalendarClock, Check, Clock, LoaderCircle, Search, X } from 'lucide-react';
+import { useEscapeLayer } from '../hooks/useEscapeLayer';
 
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
@@ -56,6 +57,8 @@ export function SnoozeMenu({
   floating?: boolean;
   targetSubject?: string;
 }) {
+  // Esc closes the picker first, wherever focus is (also inside the composer).
+  useEscapeLayer(true, onClose);
   const now = useMemo(() => new Date(), []);
   const presetOptions = useMemo(() => (
     REMINDER_PRESETS

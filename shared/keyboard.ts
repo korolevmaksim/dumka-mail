@@ -167,3 +167,49 @@ export function resolveSingleKey(key: string, r: ResolvedShortcuts): MailKeyActi
       return 'none';
   }
 }
+
+/** Decision-section keys (SPEC §2, §9): `⇧E`, `⇧H`, `V`. */
+export type SectionKeyAction = 'archiveClearSection' | 'remindLaterSection' | 'moveToSection' | 'none';
+
+/**
+ * Resolves the section keys. Checked before `resolveSingleKey`, which
+ * lower-cases letters and would otherwise treat `⇧E` as a plain `E`.
+ * Same gating as other single keys; the caller skips inputs and editors.
+ * `Y` / `N` are invitation answers, see `resolveInviteKey`.
+ */
+export function resolveSectionKey(
+  key: string,
+  code: string,
+  modifiers: { shiftKey: boolean; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean },
+  r: ResolvedShortcuts,
+): SectionKeyAction {
+  if (!r.singleKey || modifiers.metaKey || modifiers.ctrlKey || modifiers.altKey) return 'none';
+  const letter = physicalKeyChar(key, code).toLowerCase();
+  if (modifiers.shiftKey && letter === 'e') return 'archiveClearSection';
+  if (modifiers.shiftKey && letter === 'h') return 'remindLaterSection';
+  if (!modifiers.shiftKey && letter === 'v') return 'moveToSection';
+  return 'none';
+}
+
+/** Invitation keys (SPEC §3, §9): `Y` accepts, `N` declines. */
+export type InviteKeyAction = 'acceptInvite' | 'declineInvite' | 'none';
+
+/**
+ * Resolves `Y` / `N`. Bound only when the focused or open thread needs an
+ * answer (`needsAnswer`); otherwise both keys stay unbound. Same gating as
+ * other single keys; the caller skips inputs and editors.
+ */
+export function resolveInviteKey(
+  key: string,
+  code: string,
+  modifiers: { shiftKey: boolean; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean },
+  r: ResolvedShortcuts,
+  needsAnswer: boolean,
+): InviteKeyAction {
+  if (!needsAnswer || !r.singleKey) return 'none';
+  if (modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey || modifiers.altKey) return 'none';
+  const letter = physicalKeyChar(key, code).toLowerCase();
+  if (letter === 'y') return 'acceptInvite';
+  if (letter === 'n') return 'declineInvite';
+  return 'none';
+}

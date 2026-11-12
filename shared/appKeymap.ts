@@ -33,13 +33,14 @@ export const APP_KEY_BINDING_IDS = [
   'toggleSelect',
   'selectAll',
   'sendDraft',
+  'sendDraftAlternate',
   'moveScroll',
   'vimNavigation',
-  'openSplit1',
-  'openSplit2',
-  'openSplit3',
-  'openSplit4',
-  'openSplit5',
+  'archiveClearSection',
+  'remindLaterSection',
+  'moveToSection',
+  'acceptInvite',
+  'declineInvite',
 ] as const;
 
 export type AppKeyBindingId = typeof APP_KEY_BINDING_IDS[number];
@@ -84,7 +85,7 @@ export function appKeymapBindings(settings: ShortcutSettings): AppKeyBinding[] {
     item('compose', 'Compose', 'Universal', joinShortcutParts(['⌘N', sc.composeKey ? 'C' : null])),
     item('searchMailbox', 'Search mailbox', 'Universal', '/'),
     item('findInMessage', 'Find in message', 'Mail List', '⌘F'),
-    item('openAiAssistant', 'Open AI Assistant', 'Universal', '⌘J'),
+    item('openAiAssistant', 'Ask Dumka', 'Universal', '⌘J'),
     item('openCalendar', 'Open Calendar', 'Universal', '⌘⇧C'),
     item('switchMailbox', 'Switch Mailbox', 'Universal', 'G/⇧G'),
     item('commandPalette', 'Command Palette', 'Universal', sc.commandPalette ? '⌘K' : null),
@@ -109,14 +110,17 @@ export function appKeymapBindings(settings: ShortcutSettings): AppKeyBinding[] {
     item('remind', 'Remind...', 'Mail List', joinShortcutParts(['⌘⇧H', sc.reminderKey ? 'H' : null])),
     item('toggleSelect', 'Toggle Selection', 'Mail List', sc.singleKey ? 'X' : null),
     item('selectAll', 'Select All Threads', 'Mail List', '⌘A'),
+    // Decision sections (design-review/SPEC.md §2, §9).
+    item('archiveClearSection', 'Open / Archive the Clear Section', 'Mail List', sc.singleKey ? '⇧E' : null),
+    item('remindLaterSection', 'Move the Later Section to Its Time', 'Mail List', sc.singleKey ? '⇧H' : null),
+    item('moveToSection', 'Move to Another Section', 'Mail List', sc.singleKey ? 'V' : null),
+    // Only active on a thread whose invitation still needs an answer.
+    item('acceptInvite', 'Accept Invitation', 'Mail List', sc.singleKey ? 'Y' : null),
+    item('declineInvite', 'Decline Invitation', 'Mail List', sc.singleKey ? 'N' : null),
     item('sendDraft', 'Send Draft', 'Compose', '⌘↩'),
+    item('sendDraftAlternate', 'Send, Opposite of After-Send Setting', 'Compose', '⌘⇧↩'),
     item('moveScroll', 'Move / Scroll', 'Navigation', '↑ / ↓'),
     item('vimNavigation', 'Vim Navigation', 'Navigation', sc.vim ? 'J/K' : null),
-    item('openSplit1', 'Open Important', 'Navigation', '1'),
-    item('openSplit2', 'Open Purchases', 'Navigation', '2'),
-    item('openSplit3', 'Open LinkedIn', 'Navigation', '3'),
-    item('openSplit4', 'Open Automation', 'Navigation', '4'),
-    item('openSplit5', 'Open Other', 'Navigation', '5'),
   ].filter((binding): binding is AppKeyBinding => binding !== null);
 }
 

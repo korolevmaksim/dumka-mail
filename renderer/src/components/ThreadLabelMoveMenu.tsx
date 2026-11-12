@@ -7,6 +7,7 @@ import {
   type LabelPresence,
   type LabelTreeNode,
 } from '../../../shared/labels';
+import { useEscapeLayer } from '../hooks/useEscapeLayer';
 
 interface ThreadLabelMoveMenuProps {
   nodes: LabelTreeNode[];
@@ -31,6 +32,7 @@ export function ThreadLabelMoveMenu({
   labelPresenceById = {},
   className = '',
 }: ThreadLabelMoveMenuProps) {
+  useEscapeLayer(true, onClose);
   const inputRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState('');

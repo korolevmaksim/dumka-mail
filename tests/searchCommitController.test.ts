@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSearchCommitController, SEARCH_INPUT_COMMIT_DELAY_MS } from '../renderer/src/components/layout/searchCommitController';
 
 describe('search commit controller', () => {
+  it('commits typed search input after an 80 ms pause', () => {
+    expect(SEARCH_INPUT_COMMIT_DELAY_MS).toBe(80);
+  });
+
   it('debounces rapid search input changes into one store commit', async () => {
     vi.useFakeTimers();
     const commit = vi.fn();

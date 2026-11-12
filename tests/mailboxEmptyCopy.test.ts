@@ -14,7 +14,7 @@ const superhuman: ShortcutSettings = {
 describe('mailboxEmptyCopy', () => {
   it('keeps mailbox-specific copy when there is no search', () => {
     expect(mailboxEmptyCopy('inbox', '')).toMatchObject({
-      title: 'Clear inbox split',
+      title: 'Inbox is clear',
       action: 'none',
     });
     expect(mailboxEmptyCopy('drafts', '   ')).toMatchObject({
@@ -25,10 +25,10 @@ describe('mailboxEmptyCopy', () => {
 
   it('advertises the bound compose shortcut for an empty inbox', () => {
     expect(mailboxEmptyCopy('inbox', '', superhuman).body).toBe(
-      'Jump to other splits or press ⌘N / C to compose.',
+      'New conversations appear here as they arrive. Press ⌘N / C to compose.',
     );
     expect(mailboxEmptyCopy('inbox', '', { ...superhuman, mode: 'appleMail' }).body).toBe(
-      'Jump to other splits or press ⌘N to compose.',
+      'New conversations appear here as they arrive. Press ⌘N to compose.',
     );
   });
 
@@ -38,5 +38,19 @@ describe('mailboxEmptyCopy', () => {
       body: 'Nothing in this mailbox matches “from:ada”.',
       action: 'clearSearch',
     });
+  });
+});
+
+describe('mailboxEmptyCopy while the first sync runs', () => {
+  it('shows Fetching inbox… instead of an empty-inbox message', () => {
+    const copy = mailboxEmptyCopy('inbox', '', undefined, { fetchingInbox: true });
+    expect(copy.title).toBe('Fetching inbox…');
+    expect(copy.busy).toBe(true);
+    expect(copy.title).not.toBe('Inbox is clear');
+  });
+
+  it('keeps the normal copy once the first sync completed, and search copy always', () => {
+    expect(mailboxEmptyCopy('inbox', '', undefined, { fetchingInbox: false }).title).toBe('Inbox is clear');
+    expect(mailboxEmptyCopy('inbox', 'invoice', undefined, { fetchingInbox: true }).action).toBe('clearSearch');
   });
 });

@@ -1,4 +1,4 @@
-import { CalendarDays, Eraser, Home, Inbox, Plus, Sun, Moon, Monitor, Settings, Sparkles } from 'lucide-react';
+import { CalendarDays, Inbox, Plus, Sun, Moon, Monitor, Settings } from 'lucide-react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { AccountAvatar } from '../AccountAvatar';
 
@@ -8,23 +8,8 @@ export function LeftRail() {
   return (
     <div className="dm-left-rail flex flex-col items-center justify-between w-[84px] border-r border-[var(--border)] bg-[var(--rail-bg)] py-4 traffic-light-margin shrink-0">
       <div className="flex flex-col gap-3 items-center w-full">
-        <button
-          onClick={() => {
-            store.setWorkspaceView('today');
-            store.setSettingsOpen(false);
-            store.setCleanupOpen(false);
-          }}
-          title="Today"
-          aria-current={store.workspaceView === 'today' ? 'page' : undefined}
-          className={`dm-rail-button flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
-            store.workspaceView === 'today'
-              ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm'
-              : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] opacity-60 hover:opacity-100'
-          }`}
-        >
-          <Home className="w-5 h-5" />
-        </button>
-        <div className="w-8 h-[1px] bg-[var(--border)] opacity-60" />
+        {/* Today, Privacy & Cleanup and the AI column left the navigation (SPEC §2);
+            their data and services remain. */}
         <button
           onClick={() => {
             store.setWorkspaceView('calendar');
@@ -79,6 +64,7 @@ export function LeftRail() {
               store.setCleanupOpen(false);
             }}
             title={acc.email}
+            aria-label={`${acc.email}, ${store.inboxCountsByAccount[acc.email] ?? 0} left in the inbox`}
             aria-current={store.activeAccount?.id === acc.id ? 'page' : undefined}
             className={`dm-account-button relative flex items-center justify-center w-10 h-10 rounded-xl font-semibold border text-white transition-[border-color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
               store.activeAccount?.id === acc.id 
@@ -88,6 +74,15 @@ export function LeftRail() {
             style={{ backgroundColor: acc.colorHex }}
           >
             <AccountAvatar acc={acc} showAvatars={store.settings.appearance.showAvatars} />
+            {(store.inboxCountsByAccount[acc.email] ?? 0) > 0 && (
+              <span
+                data-rail-inbox-count={acc.email}
+                aria-hidden="true"
+                className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full border border-[var(--rail-bg)] bg-[var(--panel-bg)] px-1 text-center text-[calc(9px*var(--font-scale))] font-semibold leading-[15px] tabular-nums text-[var(--text-primary)] shadow-sm"
+              >
+                {store.inboxCountsByAccount[acc.email]}
+              </span>
+            )}
             <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/70 text-white rounded-full px-1">
               ⌘{index + 1}
             </span>
@@ -123,17 +118,6 @@ export function LeftRail() {
         <button
           onClick={() => {
             store.setWorkspaceView('mail');
-            store.setCleanupOpen(!store.cleanupOpen);
-            store.setSettingsOpen(false);
-          }}
-          title="Privacy & Cleanup"
-          className={`cursor-pointer ${store.cleanupOpen ? 'text-[var(--accent)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
-        >
-          <Eraser className="w-4.5 h-4.5" />
-        </button>
-        <button
-          onClick={() => {
-            store.setWorkspaceView('mail');
             store.setSettingsOpen(!store.settingsOpen);
             store.setCleanupOpen(false);
           }}
@@ -141,13 +125,6 @@ export function LeftRail() {
           className={`cursor-pointer ${store.settingsOpen ? 'text-[var(--accent)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
         >
           <Settings className="w-4.5 h-4.5" />
-        </button>
-        <button
-          onClick={() => store.setAiPanelOpen(!store.aiPanelOpen)}
-          title="Toggle AI Copilot"
-          className={`cursor-pointer ${store.aiPanelOpen ? 'text-[var(--ai-accent)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
-        >
-          <Sparkles className="w-5 h-5" />
         </button>
       </div>
     </div>

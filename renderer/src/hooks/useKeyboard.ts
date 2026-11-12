@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
-import { deriveShortcuts, physicalKeyChar, resolveSingleKey } from '../../../shared/keyboard';
+import { deriveShortcuts, physicalKeyChar, resolveInviteKey, resolveSectionKey, resolveSingleKey } from '../../../shared/keyboard';
+import { threadNeedsInviteAnswer, type InviteAnswer } from '../../../shared/inviteRsvp';
+import { activeReplyDock } from '../lib/replyDockBridge';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
-import { filterEnabledSplitTabs } from '../../../shared/inboxSplits';
-import { visibleSplitTabs } from '../../../shared/splitTabs';
 import { composeOrConnectAccount } from '../lib/composeOrConnect';
+import { emitToast } from '../lib/toastBus';
 import type { MailThread } from '../../../shared/types';
 
 interface KeyboardOptions {
@@ -15,6 +16,10 @@ interface KeyboardOptions {
   setCommandPaletteOpen: (open: boolean) => void;
   onOpenShortcutGuide: () => void;
   onOpenReminder: (thread: MailThread) => void;
+  /** `V`: open the "Move to section" popover for this thread. */
+  onOpenMoveToSection: (thread: MailThread) => void;
+  /** `Y` / `N` on a thread whose invitation still needs an answer. */
+  onAnswerInvite: (thread: MailThread, answer: InviteAnswer) => void;
   onEscape: () => void;
 }
 
@@ -34,8 +39,11 @@ export function useKeyboard(options: KeyboardOptions) {
 
       // Check if an input field is focused (so we don't trigger hotkeys while typing)
       const activeEl = document.activeElement;
+      // Checkboxes (group rows) and other non-text inputs do not take typing.
+      const isTextInput = activeEl instanceof HTMLInputElement
+        && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes(activeEl.type);
       const isInputFocused = activeEl && (
-        activeEl.tagName === 'INPUT' ||
+        isTextInput ||
         activeEl.tagName === 'TEXTAREA' ||
         (activeEl as HTMLElement).isContentEditable
       );
@@ -49,9 +57,20 @@ export function useKeyboard(options: KeyboardOptions) {
       }
 
       // Compose specific shortcut: Command+Return to send email
+      // ⌘↩ follows "After sending a reply"; ⌘⇧↩ does the opposite.
+      // The reply dock goes first: it also sends a prepared draft that is
+      // shown but not yet opened for editing, and arms "Remind me if no reply".
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.altKey && currentStore.openedThread) {
+        const focusOutsideDock = Boolean(isInputFocused) && !(activeEl instanceof HTMLElement && activeEl.closest('[data-reply-dock]'));
+        const dock = focusOutsideDock ? null : activeReplyDock();
+        if (dock?.send(e.shiftKey ? 'alternate' : 'default')) {
+          e.preventDefault();
+          return;
+        }
+      }
       if (currentOptions.isComposeActive && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        currentStore.sendDraftWithUndo();
+        void currentStore.sendDraftWithUndo({ intent: e.shiftKey ? 'alternate' : 'default' });
         return;
       }
 
@@ -176,31 +195,7 @@ export function useKeyboard(options: KeyboardOptions) {
         return;
       }
 
-      // Split switching (unmodified keys 1 to 9 based on the visible tabs)
-      if (noModifiers && e.key >= '1' && e.key <= '9') {
-        const activeTabs = visibleSplitTabs(
-          filterEnabledSplitTabs(
-            currentStore.tabCategories.filter(c => {
-              if (c.isSystem) return true;
-              if (!currentStore.activeAccount || currentStore.activeAccount.id === 'unified') return true;
-              return !c.accountId || c.accountId === 'global' || c.accountId === currentStore.activeAccount.email;
-            }),
-            currentStore.settings.inbox,
-          ),
-          currentStore.splitCounts,
-          currentStore.settings.inbox.hideEmptySplits,
-          currentStore.activeSplit,
-        );
-        const idx = parseInt(e.key, 10) - 1;
-        if (activeTabs[idx]) {
-          e.preventDefault();
-          currentStore.setWorkspaceView('mail');
-          currentStore.setActiveSplit(activeTabs[idx].id);
-          currentStore.setSettingsOpen(false);
-          currentStore.setCleanupOpen(false);
-          return;
-        }
-      }
+      // The split tabs (unmodified 1–5) were removed with the decision-sections inbox.
 
       // Slash (/): Focus search
       if (noModifiers && (e.code === 'Slash' || e.key === '/')) {
@@ -218,7 +213,7 @@ export function useKeyboard(options: KeyboardOptions) {
         || e.key === 'ArrowUp'
         || e.key === 'ArrowDown'
         || e.key === '!'
-        || (noModifiers && ['a', 'c', 'e', 'f', 'h', 'j', 'k', 'm', 'o', 'r', 's', 'u', 'x', 'z'].includes(e.key.toLowerCase()));
+        || (noModifiers && ['a', 'c', 'e', 'f', 'h', 'j', 'k', 'm', 'n', 'o', 'r', 's', 'u', 'x', 'y', 'z'].includes(e.key.toLowerCase()));
       if (isTodayWorkspace && mailOnlyKey) {
         e.preventDefault();
         return;
@@ -229,7 +224,9 @@ export function useKeyboard(options: KeyboardOptions) {
 
       // Mode-aware resolution (KC-C1): Apple Mail disables single keys;
       // superhuman/gmail force vim navigation.
-      const visible = currentStore.visibleThreads;
+      // Display order: decision sections reorder the inbox; a collapsed group
+      // is one stop (its first thread stands in for the group row).
+      const visible = currentStore.listNavigationThreads;
       const currentIdx = visible.findIndex(t => t.id === currentStore.focusedThreadId);
       const focusedThread = currentIdx !== -1 ? visible[currentIdx] : null;
       const lastMsg = currentStore.openedThreadMessages.length > 0
@@ -237,11 +234,17 @@ export function useKeyboard(options: KeyboardOptions) {
         : null;
 
       // Arrows always navigate; vim j/k only when enabled.
+      // "Handled for you" (SPEC §7) sits above the first row: K / ↑ from the top reaches it.
+      const handledRowAvailable = currentStore.sectioned && currentStore.handledItems.length > 0 && !currentStore.openedThread;
+      const handledFocused = handledRowAvailable && currentStore.handledRowFocused;
+
       if (e.key === 'ArrowUp' || (sc.vim && noModifiers && (e.code === 'KeyK' || e.key === 'k'))) {
         e.preventDefault();
         if (currentStore.openedThread) {
           const reader = document.getElementById('thread-reader-pane');
           if (reader) reader.scrollTop -= 60;
+        } else if (handledRowAvailable && (handledFocused || currentIdx <= 0)) {
+          currentStore.setHandledRowFocused(true);
         } else if (visible.length) {
           currentStore.setFocusedThreadId(visible[Math.max(0, currentIdx - 1)].id);
         }
@@ -252,16 +255,53 @@ export function useKeyboard(options: KeyboardOptions) {
         if (currentStore.openedThread) {
           const reader = document.getElementById('thread-reader-pane');
           if (reader) reader.scrollTop += 60;
+        } else if (handledFocused) {
+          currentStore.setHandledRowFocused(false);
+          if (visible.length && currentIdx === -1) currentStore.setFocusedThreadId(visible[0].id);
         } else if (visible.length) {
           currentStore.setFocusedThreadId(visible[Math.min(visible.length - 1, currentIdx + 1)].id);
         }
         return;
       }
 
-      // Enter opens the focused thread (works in every mode).
+      const focusedGroup = currentStore.focusedCollapsedGroup;
+
+      // Enter on a focused button / link activates it natively — including a
+      // control nested inside a row; only the list rows themselves (thread rows,
+      // group rows) and the bare list hand Enter to the mailbox.
+      const onListRow = activeEl instanceof HTMLElement && activeEl.matches('[data-thread-row],[data-group-row],[data-handled-row]');
+      if (e.key === 'Enter' && isInteractiveFocused && !onListRow) return;
+
+      if (handledFocused) {
+        if (e.key === 'Enter' || (sc.singleKey && noModifiers && resolveSingleKey(physicalKeyChar(e.key, e.code), sc) === 'open')) {
+          e.preventDefault();
+          currentStore.toggleHandledExpanded();
+          return;
+        }
+        // The row stands for several archived threads: only undo and global keys apply.
+        const handledAction = sc.singleKey && noModifiers ? resolveSingleKey(physicalKeyChar(e.key, e.code), sc) : 'none';
+        if (handledAction === 'undo') {
+          e.preventDefault();
+          currentStore.undoLastAction();
+          return;
+        }
+        if (handledAction === 'compose') {
+          e.preventDefault();
+          composeOrConnectAccount(currentStore);
+          return;
+        }
+        if (handledAction !== 'none' || mailOnlyKey) {
+          e.preventDefault();
+          return;
+        }
+      }
+
+      // Enter opens the focused thread (works in every mode); on a collapsed group it opens the group.
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (focusedThread) {
+        if (focusedGroup) {
+          currentStore.toggleSectionGroup(focusedGroup, true);
+        } else if (focusedThread) {
           currentStore.setWorkspaceView('mail');
           currentStore.openThread(focusedThread);
         }
@@ -272,8 +312,45 @@ export function useKeyboard(options: KeyboardOptions) {
       if (!sc.singleKey) return;
       if (!(noModifiers || e.key === 'Backspace' || e.key === 'Delete')) return;
 
+      const sectionAction = resolveSectionKey(e.key, e.code, e, sc);
+      if (sectionAction !== 'none') {
+        e.preventDefault();
+        const section = focusedGroup || currentStore.focusedSection;
+        if (sectionAction === 'archiveClearSection') {
+          if (!currentStore.sectioned) return;
+          if (section === 'clear') void currentStore.runClearGroupAction();
+          else emitToast({ type: 'info', message: 'Move to the Clear section to archive it as a group.' });
+          return;
+        }
+        if (sectionAction === 'remindLaterSection') {
+          if (!currentStore.sectioned) return;
+          if (section === 'later') void currentStore.remindLaterGroup();
+          else emitToast({ type: 'info', message: 'Move to the Later section to schedule it as a group.' });
+          return;
+        }
+        const target = currentStore.openedThread || (focusedGroup ? null : focusedThread);
+        if (target && currentStore.mailboxView === 'inbox') currentOptions.onOpenMoveToSection(target);
+        return;
+      }
+
+      // Y / N answer an invitation; bound only while the target needs an answer.
+      const inviteTarget = currentStore.openedThread || (focusedGroup ? null : focusedThread);
+      const inviteAction = resolveInviteKey(e.key, e.code, e, sc, threadNeedsInviteAnswer(inviteTarget));
+      if (inviteAction !== 'none' && inviteTarget) {
+        e.preventDefault();
+        currentOptions.onAnswerInvite(inviteTarget, inviteAction === 'acceptInvite' ? 'accepted' : 'declined');
+        return;
+      }
+
       const action = resolveSingleKey(physicalKeyChar(e.key, e.code), sc);
       if (action === 'none' || action === 'search' || action === 'shortcutGuide' || action === 'next' || action === 'prev') {
+        return;
+      }
+
+      // A collapsed group row stands for several threads: only opening it,
+      // undo and global keys apply; single-thread actions would hit a hidden row.
+      if (focusedGroup && action !== 'open' && action !== 'undo' && action !== 'compose') {
+        e.preventDefault();
         return;
       }
 
@@ -281,7 +358,9 @@ export function useKeyboard(options: KeyboardOptions) {
       const target = currentStore.openedThread || focusedThread;
       switch (action) {
         case 'open':
-          if (focusedThread) {
+          if (focusedGroup) {
+            currentStore.toggleSectionGroup(focusedGroup, true);
+          } else if (focusedThread) {
             currentStore.setWorkspaceView('mail');
             currentStore.openThread(focusedThread);
           }
@@ -308,6 +387,8 @@ export function useKeyboard(options: KeyboardOptions) {
           if (target) currentStore.muteThread(target.id);
           return;
         case 'reply':
+          // The dock focuses an open editor or opens a prepared / saved draft.
+          if (currentStore.openedThread && activeReplyDock()?.reply()) return;
           if (lastMsg) currentStore.startReply(lastMsg);
           else if (focusedThread) {
             currentStore.setWorkspaceView('mail');
@@ -325,7 +406,6 @@ export function useKeyboard(options: KeyboardOptions) {
           return;
         case 'summarize':
           if (currentStore.openedThread) currentStore.runAIAction('summarize');
-          else currentStore.runAITriagePlan();
           return;
         case 'compose':
           composeOrConnectAccount(currentStore);

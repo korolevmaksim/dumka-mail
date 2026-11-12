@@ -1,4 +1,11 @@
+import { normalizeComposeAfterSend, type SendIntent } from '../../../shared/sendFlow';
+import { DEFAULT_ACCOUNT_DEFAULTS, normalizeAccountDefaults, normalizeAccountOverrides, resolveAccountSetting } from '../../../shared/accountSettings';
+import type { GoogleSignInError } from '../../../shared/googleSignInErrors';
+import type { UnsubscribeTarget } from '../../../shared/unsubscribeConfirm';
+import type { AIRequestFailure } from './useAIState';
 import { useProductivityState, type ProductivityState } from './useProductivityState';
+import { useInboxSections, type InboxSectionsState } from './useInboxSections';
+import { useSenderRules, type SenderRulesState } from './useSenderRules';
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Account,
@@ -29,7 +36,6 @@ import {
   CustomClassifierRule,
   TabCategory,
   AppSettings,
-  MailTriagePlan,
   AgentPlan,
   AgentPlanItem,
   AgentPlanActionPreview,
@@ -85,10 +91,13 @@ export const DEFAULT_CATEGORIES: TabCategory[] = [
   { id: 'other', displayName: 'Other', isSystem: true, active: true },
 ];
 
-export const SETTINGS_SCHEMA_VERSION = 21;
+// 22: per-account settings (`accountDefaults`, `accountOverrides`).
+export const SETTINGS_SCHEMA_VERSION = 22;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+  accountDefaults: { ...DEFAULT_ACCOUNT_DEFAULTS },
+  accountOverrides: {},
   profile: {
     fullName: '',
     role: '',
@@ -144,7 +153,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     smartCompose: true,
     alwaysReplyAll: false,
     sendUndoDelay: 10,
-    defaultFontSize: 'normal'
+    defaultFontSize: 'normal',
+    afterSend: 'archive',
   },
   calendar: {
     showAgendaInRightPanel: true,
@@ -348,6 +358,10 @@ export function mergeSettings(parsed: any): AppSettings {
   if (!['classic', 'soft'].includes(merged.appearance.interfaceStyle)) {
     merged.appearance.interfaceStyle = 'classic';
   }
+  merged.compose.afterSend = normalizeComposeAfterSend(merged.compose.afterSend);
+  merged.accountDefaults = normalizeAccountDefaults(merged.accountDefaults);
+  // Keeps overrides of accounts that are not connected right now.
+  merged.accountOverrides = normalizeAccountOverrides(merged.accountOverrides);
   if (!['today', 'inbox', 'lastSelectedAccount', 'commandPalette'].includes(merged.general.startupBehavior)) {
     merged.general.startupBehavior = 'inbox';
   }
@@ -386,7 +400,7 @@ interface CalendarFocusRequest {
   eventId: string;
 }
 
-interface AppStoreContextType extends ProductivityState {
+interface AppStoreContextType extends ProductivityState, InboxSectionsState, SenderRulesState {
   settingsLoaded: boolean;
   theme: 'light' | 'dark' | 'system';
   setTheme: (t: 'light' | 'dark' | 'system') => void;
@@ -413,6 +427,8 @@ interface AppStoreContextType extends ProductivityState {
   dismissAgentDraftSuggestion: (id: string) => Promise<void>;
   markAgentDraftSuggestionApplied: (id: string) => Promise<void>;
   unsubscribeThread: (threadId?: string | null) => Promise<void>;
+  /** Confirmed unsubscribe (see UnsubscribeConfirmSheet); Undo restores only the archive. */
+  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean }) => Promise<void>;
   mailboxView: MailboxView;
   setMailboxView: (view: MailboxView) => void;
   mailboxCounts: Record<MailboxView, number>;
@@ -515,7 +531,11 @@ interface AppStoreContextType extends ProductivityState {
   updateDraft: (patch: Partial<Draft>) => void;
   updateDraftBody: (body: string, bodyHtml?: string | null) => void;
   scheduleDraftSend: (date: Date) => Promise<void>;
-  sendDraftWithUndo: () => Promise<void>;
+  /** `intent: 'alternate'` (⌘⇧↩) does the opposite of `compose.afterSend`. */
+  /** Resolves true when the draft entered the send flow; `onSent` fires only once the send is accepted. */
+  sendDraftWithUndo: (options?: { intent?: SendIntent; onSent?: () => void }) => Promise<boolean>;
+  /** Esc in the editor: keep the draft, close the editor, toast `Draft saved`. */
+  closeDraftKeepingIt: () => Promise<void>;
   pendingSend: boolean;
   pendingSendSeconds: number;
   cancelPendingSend: () => Promise<void>;
@@ -526,6 +546,14 @@ interface AppStoreContextType extends ProductivityState {
   syncHealth: 'ready' | 'syncing' | 'indexing' | 'paused' | 'failed' | 'reconnect';
   syncStatusText: string;
   backfillProgress: string;
+  /** Some account in the active scope has never completed a first sync. */
+  fetchingInbox: boolean;
+  /** Some account in the active scope is still indexing older mail. */
+  olderMailIndexing: boolean;
+  /** Last Google sign-in failure (typed); rendered by ConnectGmailPanel. */
+  signInError: GoogleSignInError | null;
+  signInBusy: boolean;
+  clearSignInError: () => void;
   triggerBackfillManual: () => Promise<void>;
   isSyncing: boolean;
   lastSuccessfulSync: MailSyncCompletion | null;
@@ -536,6 +564,9 @@ interface AppStoreContextType extends ProductivityState {
   aiProvider: AIProviderPreference;
   setAiProvider: (pref: AIProviderPreference) => void;
   aiProviderDesc: AIProviderDescriptor | null;
+  /** Last failed model request (`Couldn't reach the model.` + Retry). */
+  aiRequestFailure: AIRequestFailure | null;
+  retryLastAIRequest: () => void;
   aiConversations: AIConversation[];
   activeAIConversation: AIConversation | null;
   activeAIMessages: AIChatMessage[];
@@ -544,19 +575,18 @@ interface AppStoreContextType extends ProductivityState {
   sendAIMessage: (text: string) => Promise<void>;
   runAIAction: (action: AIAction) => Promise<void>;
   runAIPromptShortcut: (shortcut: AIPromptShortcut) => Promise<void>;
-  runAITriagePlan: () => Promise<void>;
   runDailyBriefing: (options?: DailyBriefingBuildOptions, behavior?: { openPanel?: boolean; silent?: boolean; preserveOnError?: boolean; autoRefreshWindowKey?: string }) => Promise<boolean>;
   dismissDailyBriefingItem: (itemOrThreadId: DailyBriefingItem | string) => void;
   addDailyBriefingItemToAgentPlan: (item: DailyBriefingItem, labelId?: string | null) => void;
   addAgentPlanItems: (items: AgentPlanItem[]) => void;
-  triagePlan: MailTriagePlan | null;
-  setTriagePlan: (plan: MailTriagePlan | null) => void;
   agentPlan: AgentPlan | null;
   setAgentPlan: (plan: AgentPlan | null) => void;
   dailyBriefing: DailyBriefing | null;
   setDailyBriefing: (briefing: DailyBriefing | null) => void;
   dailyBriefingLoading: boolean;
   aiPanelLoading: boolean;
+  /** Assistant message receiving a streamed answer, if any. */
+  aiStreamingMessageId: string | null;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
   cleanupOpen: boolean;
@@ -565,13 +595,6 @@ interface AppStoreContextType extends ProductivityState {
   setWorkspaceView: (view: WorkspaceView) => void;
   /** When non-null, user-initiated thread close restores this workspace (Today / Follow-up Radar). */
   returnWorkspaceView: Exclude<WorkspaceView, 'mail'> | null;
-  /**
-   * Enter mail workspace while remembering Today as the back target.
-   * Use before openThread when the open path is not openThreadFromToday itself.
-   */
-  beginTodayThreadNavigation: () => void;
-  /** Open a thread from Today surfaces; Back/Escape returns to Today. */
-  openThreadFromToday: (thread: MailThread) => Promise<void>;
   openThreadFromCalendar: (thread: MailThread) => Promise<void>;
   /** Close the opened thread and restore returnWorkspaceView when present. */
   closeOpenedThread: () => Promise<void>;
@@ -686,6 +709,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     accounts: mailState.accounts,
     activeAccount: mailState.activeAccount,
     openedThread: mailState.openedThread,
+    threads: mailState.threads,
     openThread: mailState.openThread,
     executeMailAction: mailState.executeMailAction,
   });
@@ -700,8 +724,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     activeAccount: mailState.activeAccount,
     openedThread: mailState.openedThread,
     openedThreadMessages: mailState.openedThreadMessages,
-    visibleThreads: mailState.visibleThreads,
-    activeSplit: mailState.activeSplit,
     threads: mailState.threads,
     labelDefinitions,
     lastSuccessfulSync: mailState.lastSuccessfulSync,
@@ -709,6 +731,41 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     startReplyWithBody: draftsState.startReplyWithBody,
     executeMailAction: mailState.executeMailAction,
     setSpeedProof: mailState.setSpeedProof
+  });
+
+  const inboxSectionsState = useInboxSections({
+    accounts: mailState.accounts,
+    activeAccount: mailState.activeAccount,
+    mailboxView: mailState.mailboxView,
+    searchQuery: mailState.searchQuery,
+    visibleThreads: mailState.visibleThreads,
+    searchTopCount: mailState.searchTopCount,
+    focusedThreadId: mailState.focusedThreadId,
+    setFocusedThreadId: mailState.setFocusedThreadId,
+    setSelectedThreadIds: mailState.setSelectedThreadIds,
+    openedThread: mailState.openedThread,
+    inboxCount: mailState.mailboxCounts.inbox,
+    aiProviderDesc: aiState.aiProviderDesc,
+    // Model sections only when mail text may reach the model for an account in scope (SPEC §5, §8).
+    modelAllowedForScope: (mailState.activeAccount?.id === 'unified' ? mailState.accounts : mailState.activeAccount ? [mailState.activeAccount] : [])
+      .some(account => resolveAccountSetting(settingsState.settings, account.email, 'modelMayReadMail').value),
+    navigationOrderRef: mailState.navigationOrderRef,
+    executeMailAction: mailState.executeMailAction,
+    executeBatchMailAction: mailState.executeBatchMailAction,
+    undoMailActionBatch: mailState.undoMailActionBatch,
+    unsubscribeSenders: mailState.unsubscribeSenders,
+  });
+
+  const senderRulesState = useSenderRules({
+    activeAccount: mailState.activeAccount,
+    mailboxView: mailState.mailboxView,
+    searchQuery: mailState.searchQuery,
+    visibleThreads: mailState.visibleThreads,
+    settings: settingsState.settings,
+    updateSettings: settingsState.updateSettings,
+    executeMailAction: mailState.executeMailAction,
+    focusedThreadId: mailState.focusedThreadId,
+    openedThreadId: mailState.openedThread?.id || null,
   });
 
   const replyPipelineState = useReplyPipelineState({
@@ -992,23 +1049,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     settingsState.setCleanupOpen(false);
   }), [settingsState.setCleanupOpen, settingsState.setSettingsOpen, settingsState.setWorkspaceView]);
 
-  const beginTodayThreadNavigation = useCallback(() => {
-    settingsState.setReturnWorkspaceView('today');
-    settingsState.enterMailWorkspacePreservingReturn();
-    settingsState.setSettingsOpen(false);
-    settingsState.setCleanupOpen(false);
-  }, [
-    settingsState.enterMailWorkspacePreservingReturn,
-    settingsState.setCleanupOpen,
-    settingsState.setReturnWorkspaceView,
-    settingsState.setSettingsOpen,
-  ]);
-
-  const openThreadFromToday = useCallback(async (thread: MailThread) => {
-    beginTodayThreadNavigation();
-    await mailState.openThread(thread);
-  }, [beginTodayThreadNavigation, mailState.openThread]);
-
   const openThreadFromCalendar = useCallback(async (thread: MailThread) => {
     settingsState.setReturnWorkspaceView('calendar');
     settingsState.enterMailWorkspacePreservingReturn();
@@ -1040,6 +1080,8 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...aiState,
     ...replyPipelineState,
     ...productivityState,
+    ...inboxSectionsState,
+    ...senderRulesState,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,
@@ -1079,8 +1121,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     createGoogleMeetDraftEvent,
     fetchModelsForProvider,
     syncGmailSignature,
-    beginTodayThreadNavigation,
-    openThreadFromToday,
     openThreadFromCalendar,
     closeOpenedThread,
   }), [
@@ -1090,6 +1130,8 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     aiState,
     replyPipelineState,
     productivityState,
+    inboxSectionsState,
+    senderRulesState,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,
@@ -1127,8 +1169,6 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     createGoogleMeetDraftEvent,
     fetchModelsForProvider,
     syncGmailSignature,
-    beginTodayThreadNavigation,
-    openThreadFromToday,
     openThreadFromCalendar,
     closeOpenedThread,
   ]);

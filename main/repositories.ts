@@ -32,7 +32,19 @@ import {
   MessageSecurityInsight,
   SenderCleanupStat,
   CleanupSenderExclusion,
+  ThreadDecisionRecord,
+  ThreadSignals,
 } from '../shared/types';
+import { isDecision } from '../shared/decision';
+import { parseStoredThreadSignals } from '../shared/threadSignals';
+import { inboxThreadPredicate, inInboxValue, runThreadMaintenanceChunk, type ThreadMaintenanceResult } from './migrations';
+import { chunked, guardRepositoryWrites, runWriteTransaction } from './sqliteWriteGuard';
+
+// Bulk writers commit in chunks this size so the write lock is held briefly
+// and an interactive write on the other connection can get in between.
+const BULK_THREAD_CHUNK = 100;
+const BULK_MESSAGE_CHUNK = 40;
+const BULK_EMBEDDING_CHUNK = 100;
 import { buildFollowUpRadarResult, normalizeFollowUpAgeWindow } from '../shared/followUpRadar';
 import {
   normalizeOperatorHomeScopeId,
@@ -161,6 +173,10 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM agent_drafts WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM message_security WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM mail_embeddings WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM thread_decisions WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM thread_summaries WHERE account_id IN (?, ?)').run(id, id.toLowerCase());
+      db.prepare('DELETE FROM sender_rule_stats WHERE account_id = ?').run(id.toLowerCase());
+      db.prepare('DELETE FROM sender_rule_archives WHERE account_id = ?').run(id.toLowerCase());
     })();
   }
 };
@@ -271,7 +287,13 @@ export const LabelsRepo = {
   }
 };
 
+function signalsFromRow(value: string | null | undefined): ThreadSignals | undefined {
+  if (!value) return undefined;
+  return parseStoredThreadSignals(parseJsonValue(value, null));
+}
+
 function mapThreadRow(r: any): MailThread {
+  const signals = signalsFromRow(r.signals_json);
   return {
     id: r.id,
     accountId: r.account_id,
@@ -285,7 +307,8 @@ function mapThreadRow(r: any): MailThread {
     labelIds: JSON.parse(r.label_ids_json),
     hasAttachments: r.has_attachments === 1,
     isUnread: r.is_unread === 1,
-    reminderAt: r.reminder_at
+    reminderAt: r.reminder_at,
+    ...(signals ? { signals } : {})
   };
 }
 
@@ -321,6 +344,35 @@ export const ThreadsRepo = {
     return rows.map(mapThreadRow);
   },
 
+  /**
+   * Threads left in each account's inbox (INBOX label, no reminder still in the
+   * future) for the rail badges. Muted threads lose INBOX when muted.
+   */
+  countInbox(accountIds: string[], nowIso: string = new Date().toISOString()): Record<string, number> {
+    const ids = Array.from(new Set(accountIds.map(id => id.trim()).filter(Boolean)));
+    const counts: Record<string, number> = {};
+    for (const id of ids) counts[id] = 0;
+    if (ids.length === 0) return counts;
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`
+      SELECT t.account_id AS account_id, COUNT(*) AS n
+      FROM threads t
+      LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE t.account_id IN (${placeholders})
+        AND ${inboxThreadPredicate(db, 't')}
+        AND (r.reminder_at IS NULL OR r.reminder_at <= ?)
+      GROUP BY t.account_id
+    `).all(...ids, nowIso) as Array<{ account_id: string; n: number }>;
+    for (const row of rows) counts[row.account_id] = Number(row.n) || 0;
+    return counts;
+  },
+
+  /**
+   * The newest inbox threads of an account (≤ 100). Served by the
+   * `(account_id, in_inbox, last_message_at)` index once maintenance is done;
+   * call it through the database worker from background loops.
+   */
   listRecentInbox(accountId: string, limit = 8): MailThread[] {
     const db = getDatabase();
     const rows = db.prepare(`
@@ -328,12 +380,18 @@ export const ThreadsRepo = {
       FROM threads t
       LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
       WHERE t.account_id = ?
-        AND instr(upper(t.label_ids_json), '"INBOX"') > 0
+        AND ${inboxThreadPredicate(db, 't')}
       ORDER BY t.last_message_at DESC
       LIMIT ?
     `).all(accountId, Math.max(1, Math.min(100, limit))) as any[];
 
     return rows.map(mapThreadRow);
+  },
+
+  /** One committed chunk of the resumable `in_inbox` / signals maintenance pass (database worker only). */
+  runMaintenanceChunk(chunkSize?: number): ThreadMaintenanceResult {
+    const db = getDatabase();
+    return runWriteTransaction(db, () => runThreadMaintenanceChunk(db, chunkSize));
   },
 
   get(accountId: string, threadId: string): MailThread | null {
@@ -354,8 +412,8 @@ export const ThreadsRepo = {
       INSERT INTO threads (
         id, account_id, subject, snippet, last_message_at,
         sender_names_json, sender_email, to_recipients_json, cc_recipients_json,
-        label_ids_json, has_attachments, is_unread
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        label_ids_json, has_attachments, is_unread, signals_json, in_inbox
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, id) DO UPDATE SET
         subject=excluded.subject,
         snippet=excluded.snippet,
@@ -366,11 +424,15 @@ export const ThreadsRepo = {
         cc_recipients_json=excluded.cc_recipients_json,
         label_ids_json=excluded.label_ids_json,
         has_attachments=excluded.has_attachments,
-        is_unread=excluded.is_unread
+        is_unread=excluded.is_unread,
+        in_inbox=excluded.in_inbox,
+        -- Threads saved without signals (optimistic local edits, older
+        -- callers) keep the ones already stored.
+        signals_json=COALESCE(excluded.signals_json, threads.signals_json)
     `);
 
-    db.transaction(() => {
-      for (const t of threads) {
+    for (const chunk of chunked(threads, BULK_THREAD_CHUNK)) runWriteTransaction(db, () => {
+      for (const t of chunk) {
         insert.run(
           t.id,
           t.accountId,
@@ -383,10 +445,12 @@ export const ThreadsRepo = {
           JSON.stringify(t.cc || []),
           JSON.stringify(t.labelIds),
           t.hasAttachments ? 1 : 0,
-          t.isUnread ? 1 : 0
+          t.isUnread ? 1 : 0,
+          t.signals ? JSON.stringify(t.signals) : null,
+          inInboxValue(t.labelIds)
         );
       }
-    })();
+    });
   },
 
   delete(accountId: string, threadId: string) {
@@ -401,6 +465,9 @@ export const ThreadsRepo = {
       db.prepare('DELETE FROM agent_drafts WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM message_security WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
       db.prepare('DELETE FROM mail_embeddings WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM thread_decisions WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+      db.prepare('DELETE FROM thread_summaries WHERE account_id IN (?, ?) AND thread_id = ?').run(accountId, accountId.toLowerCase(), threadId);
+      db.prepare('DELETE FROM sender_rule_archives WHERE account_id = ? AND thread_id = ?').run(accountId.trim().toLowerCase(), threadId);
     })();
   },
 
@@ -414,8 +481,8 @@ export const ThreadsRepo = {
           if (!labels.includes(l)) labels.push(l);
         }
         labels = labels.filter(l => !removeLabelIds.includes(l));
-        db.prepare('UPDATE threads SET label_ids_json = ? WHERE account_id = ? AND id = ?')
-          .run(JSON.stringify(labels), accountId, threadId);
+        db.prepare('UPDATE threads SET label_ids_json = ?, in_inbox = ? WHERE account_id = ? AND id = ?')
+          .run(JSON.stringify(labels), inInboxValue(labels), accountId, threadId);
       }
 
       const messageRows = db.prepare('SELECT id, label_ids_json FROM messages WHERE account_id = ? AND thread_id = ?').all(accountId, threadId) as any[];
@@ -430,6 +497,116 @@ export const ThreadsRepo = {
       }
     })();
   }
+};
+
+// === Thread Decisions Repository ===
+// Cache of model decisions and user corrections (SPEC §1). Rule decisions are
+// recomputed from thread signals and are not stored.
+const THREAD_DECISION_SOURCES = new Set(['rule', 'model', 'user']);
+
+interface ThreadDecisionRow {
+  account_id: string;
+  thread_id: string;
+  last_message_id: string | null;
+  decision: string;
+  reason: string | null;
+  source: string;
+  later_at: string | null;
+  model: string | null;
+  created_at: string;
+}
+
+function mapThreadDecisionRow(row: ThreadDecisionRow): ThreadDecisionRecord | null {
+  if (!isDecision(row.decision) || !THREAD_DECISION_SOURCES.has(row.source)) return null;
+  return {
+    accountId: row.account_id,
+    threadId: row.thread_id,
+    lastMessageId: row.last_message_id,
+    decision: row.decision,
+    reason: row.reason || '',
+    source: row.source as ThreadDecisionRecord['source'],
+    laterAt: row.later_at,
+    model: row.model,
+    createdAt: row.created_at,
+  };
+}
+
+export const ThreadDecisionsRepo = {
+  listForAccount(accountId: string): ThreadDecisionRecord[] {
+    const db = getDatabase();
+    const rows = db.prepare('SELECT * FROM thread_decisions WHERE account_id = ?').all(accountId) as ThreadDecisionRow[];
+    const records: ThreadDecisionRecord[] = [];
+    for (const row of rows) {
+      const record = mapThreadDecisionRow(row);
+      if (record) records.push(record);
+    }
+    return records;
+  },
+
+  /** Decisions for the given threads only (bounded by the caller's list, ≤ 500 ids). */
+  listForThreads(accountId: string, threadIds: readonly string[]): ThreadDecisionRecord[] {
+    const ids = Array.from(new Set(threadIds.filter(id => typeof id === 'string' && id))).slice(0, 500);
+    if (ids.length === 0) return [];
+    const db = getDatabase();
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = db.prepare(`SELECT * FROM thread_decisions WHERE account_id = ? AND thread_id IN (${placeholders})`)
+      .all(accountId, ...ids) as ThreadDecisionRow[];
+    const records: ThreadDecisionRecord[] = [];
+    for (const row of rows) {
+      const record = mapThreadDecisionRow(row);
+      if (record) records.push(record);
+    }
+    return records;
+  },
+
+  upsertMany(records: ThreadDecisionRecord[]) {
+    const valid = records.filter(record => record.accountId && record.threadId && isDecision(record.decision)
+      && THREAD_DECISION_SOURCES.has(record.source));
+    if (valid.length === 0) return;
+    const db = getDatabase();
+    const upsert = db.prepare(`
+      INSERT INTO thread_decisions (
+        account_id, thread_id, last_message_id, decision, reason, source, later_at, model, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, thread_id, source) DO UPDATE SET
+        last_message_id=excluded.last_message_id,
+        decision=excluded.decision,
+        reason=excluded.reason,
+        later_at=excluded.later_at,
+        model=excluded.model,
+        created_at=excluded.created_at
+    `);
+    db.transaction(() => {
+      for (const record of valid) {
+        upsert.run(
+          record.accountId,
+          record.threadId,
+          record.lastMessageId || null,
+          record.decision,
+          record.reason || '',
+          record.source,
+          record.laterAt || null,
+          record.model || null,
+          record.createdAt || new Date().toISOString(),
+        );
+      }
+    })();
+  },
+
+  /** Without `source` both the model row and the user correction go; with it, only that row. */
+  deleteForThread(accountId: string, threadId: string, source?: ThreadDecisionRecord['source']) {
+    const db = getDatabase();
+    if (source) {
+      db.prepare('DELETE FROM thread_decisions WHERE account_id = ? AND thread_id = ? AND source = ?').run(accountId, threadId, source);
+      return;
+    }
+    db.prepare('DELETE FROM thread_decisions WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
+  },
+
+  purgeAccount(accountId: string) {
+    const db = getDatabase();
+    db.prepare('DELETE FROM thread_decisions WHERE account_id = ?').run(accountId);
+  },
 };
 
 function mapMessageRow(r: any): MailMessage {
@@ -558,8 +735,8 @@ export const MessagesRepo = {
     `);
     const deleteSearch = db.prepare('DELETE FROM mail_search WHERE account_id = ? AND message_id = ?');
 
-    db.transaction(() => {
-      for (const m of messages) {
+    for (const chunk of chunked(messages, BULK_MESSAGE_CHUNK)) runWriteTransaction(db, () => {
+      for (const m of chunk) {
         insertMsg.run(
           m.id,
           m.threadId,
@@ -596,7 +773,7 @@ export const MessagesRepo = {
           indexBodies ? (m.bodyPlain || '') : ''
         );
       }
-    })();
+    });
   },
 
   listRecent(accountId: string, limit = 100): MailMessage[] {
@@ -1540,8 +1717,8 @@ export const MailEmbeddingsRepo = {
         received_at=excluded.received_at,
         indexed_at=excluded.indexed_at
     `);
-    db.transaction(() => {
-      for (const row of rows) {
+    for (const chunk of chunked(rows, BULK_EMBEDDING_CHUNK)) runWriteTransaction(db, () => {
+      for (const row of chunk) {
         insert.run(
           row.accountId,
           row.messageId,
@@ -1557,7 +1734,7 @@ export const MailEmbeddingsRepo = {
           row.indexedAt
         );
       }
-    })();
+    });
   },
 
   // Converts legacy vector_json rows to vector_blob in place. Each call handles at
@@ -2497,3 +2674,32 @@ export const SettingsRepo = {
     `).run(key, value);
   }
 };
+
+// === Write coordination ===
+// Every interactive write below runs as one IMMEDIATE transaction with a
+// bounded SQLITE_BUSY retry (see sqliteWriteGuard.ts), so a label change or an
+// action-log write never fails because the database worker is committing a
+// sync/backfill chunk. Bulk writers (ThreadsRepo.save, MessagesRepo.save,
+// MailEmbeddingsRepo.saveMany, runMaintenanceChunk) chunk internally.
+guardRepositoryWrites(AccountsRepo, ['save', 'delete'], getDatabase);
+guardRepositoryWrites(AccountIntegrationsRepo, ['save', 'patch'], getDatabase);
+guardRepositoryWrites(LabelsRepo, ['saveMany', 'delete'], getDatabase);
+guardRepositoryWrites(ThreadsRepo, ['delete', 'updateLabels'], getDatabase);
+guardRepositoryWrites(ThreadDecisionsRepo, ['upsertMany', 'deleteForThread', 'purgeAccount'], getDatabase);
+guardRepositoryWrites(ContactsRepo, ['saveMany', 'updateLocal'], getDatabase);
+guardRepositoryWrites(ContactGroupsRepo, ['save', 'delete'], getDatabase);
+guardRepositoryWrites(SearchRepo, ['setBodyIndexEnabled'], getDatabase);
+guardRepositoryWrites(AgentDraftsRepo, ['save', 'setStatus'], getDatabase);
+guardRepositoryWrites(MessageSecurityRepo, ['save', 'saveMany'], getDatabase);
+guardRepositoryWrites(MailEmbeddingsRepo, ['deleteByModel', 'deleteOtherModels', 'migrateVectorJsonBatch'], getDatabase);
+guardRepositoryWrites(RemindersRepo, ['save', 'delete'], getDatabase);
+guardRepositoryWrites(UnsubscribedSendersRepo, ['mark'], getDatabase);
+guardRepositoryWrites(CleanupExclusionsRepo, ['save', 'delete'], getDatabase);
+guardRepositoryWrites(FollowUpRadarRepo, ['saveState', 'dismiss', 'snooze'], getDatabase);
+guardRepositoryWrites(OperatorHomeStateRepo, ['saveSnapshot', 'finalizeAutoRefreshWindow'], getDatabase);
+guardRepositoryWrites(ReplyPipelineRepo, ['save', 'delete'], getDatabase);
+guardRepositoryWrites(SyncStateRepo, ['save'], getDatabase);
+guardRepositoryWrites(ActionLogRepo, ['save'], getDatabase);
+guardRepositoryWrites(DraftsRepo, ['save', 'delete'], getDatabase);
+guardRepositoryWrites(AIConversationsRepo, ['saveConversation', 'deleteConversation'], getDatabase);
+guardRepositoryWrites(SettingsRepo, ['set'], getDatabase);

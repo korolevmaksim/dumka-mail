@@ -2,6 +2,7 @@ import { SearchFiltersPanel } from './SearchFiltersPanel';
 import { serializeSearchQuery } from '../../../../shared/searchFilters';
 import { forwardRef, type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { SlidersHorizontal, AlertTriangle, Check, LoaderCircle, Search, Sparkles, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
@@ -14,6 +15,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [draftQuery, setDraftQuery] = useState(searchQuery);
   const [showNavigationActivity, setShowNavigationActivity] = useState(false);
+  const filtersButtonRef = useRef<HTMLButtonElement | null>(null);
   const committedQueryRef = useRef(searchQuery);
   const commitRef = useRef<(value: string) => void>(() => undefined);
   const controllerRef = useRef<SearchCommitController | null>(null);
@@ -37,6 +39,13 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   useEffect(() => () => {
     commitController.cancel();
   }, [commitController]);
+
+  // The filters popover closes on the first Escape, before the global
+  // layer-closing shortcut (window bubble listener) clears the search.
+  useEscapeLayer(filtersOpen, () => {
+    setFiltersOpen(false);
+    filtersButtonRef.current?.focus();
+  });
 
   useEffect(() => {
     if (store.navigationActivity.phase === 'idle') {
@@ -84,7 +93,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
 
   return (
     <div
-      className="dm-search-chrome dm-toolbar panel-surface flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
+      className="dm-search-chrome dm-toolbar panel-surface relative z-30 flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
       style={{ WebkitAppRegion: 'drag' } as CSSProperties}
     >
       <div className="flex items-center justify-between h-[var(--top-chrome-h)] min-h-[40px] px-4 gap-4 w-full">
@@ -92,7 +101,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           className="dm-search-field dm-control flex items-center flex-1 gap-2 bg-[var(--app-bg)] rounded-lg px-2 border border-[var(--border)] max-w-[600px] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-1"
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
-          <button type="button" aria-label="Search filters and saved searches" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(open => !open)} className="rounded p-1 hover:bg-[var(--hover-row)]"><SlidersHorizontal className="h-4 w-4" /></button>
+          <button ref={filtersButtonRef} type="button" aria-label="Search filters and saved searches" aria-expanded={filtersOpen} aria-haspopup="dialog" onClick={() => setFiltersOpen(open => !open)} className="rounded p-1 hover:bg-[var(--hover-row)]"><SlidersHorizontal className="h-4 w-4" /></button>
           <Search className="w-4 h-4 text-[var(--text-tertiary)]" />
           <input
             ref={ref}
@@ -176,7 +185,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           {store.syncStatusText && (
             <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] font-normal tracking-wide">
               {store.syncStatusText}
-              {isIncompleteBackfillProgress(store.backfillProgress)
+              {isIncompleteBackfillProgress(store.backfillProgress) && store.backfillProgress !== store.syncStatusText
                 ? ` · ${store.backfillProgress}`
                 : ''}
             </span>
@@ -184,7 +193,25 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
         </div>
       </div>
 
-      {filtersOpen && <div style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}><SearchFiltersPanel key={store.activeAccount?.id} query={draftQuery} onChange={commitSearchImmediately} /></div>}
+      {filtersOpen && (
+        <div
+          role="dialog"
+          aria-label="Search filters"
+          className="absolute left-2 right-2 top-full z-40 mt-1 max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] shadow-xl"
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+        >
+          <SearchFiltersPanel key={store.activeAccount?.id} query={draftQuery} onChange={commitSearchImmediately} />
+        </div>
+      )}
+      {showSearchIntelligence && store.olderMailIndexing && (
+        <p
+          role="status"
+          className="px-4 pb-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]"
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+        >
+          Older mail is still being indexed
+        </p>
+      )}
       {/* Active query chips */}
       {showSearchIntelligence && (
         <div 

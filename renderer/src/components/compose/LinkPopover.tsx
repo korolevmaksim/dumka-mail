@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'lucide-react';
 import { normalizeLinkUrl } from '../../lib/linkUrl';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 
 interface LinkPopoverProps {
   selectedText: string;
@@ -13,6 +14,8 @@ export function LinkPopover({ selectedText, onSubmit, onCancel, className = '' }
   const inputRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Esc closes the popover wherever focus is, never the draft behind it.
+  useEscapeLayer(true, onCancel);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -30,6 +33,7 @@ export function LinkPopover({ selectedText, onSubmit, onCancel, className = '' }
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       onCancel();
       return;
     }

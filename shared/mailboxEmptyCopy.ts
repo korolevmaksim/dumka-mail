@@ -5,12 +5,29 @@ export interface MailboxEmptyCopy {
   title: string;
   body: string;
   action: 'none' | 'clearSearch';
+  /** True while the first sync of an account in scope is still running. */
+  busy?: boolean;
 }
+
+export const FETCHING_INBOX_EMPTY_COPY: MailboxEmptyCopy = {
+  title: 'Fetching inbox…',
+  body: 'Your newest conversations appear here as they arrive from Gmail.',
+  action: 'none',
+  busy: true,
+};
 
 const MAILBOX_EMPTY: Record<MailboxView, { title: string; body: string }> = {
   inbox: {
-    title: 'Clear inbox split',
-    body: 'Jump to other splits or compose a message.',
+    title: 'Inbox is clear',
+    body: 'New conversations appear here as they arrive.',
+  },
+  later: {
+    title: 'Nothing in Later',
+    body: 'Conversations you remind yourself about wait here until their time.',
+  },
+  waiting: {
+    title: 'Nothing waiting',
+    body: 'Conversations you answered and are waiting to hear back on appear here.',
   },
   drafts: {
     title: 'No saved drafts',
@@ -19,6 +36,10 @@ const MAILBOX_EMPTY: Record<MailboxView, { title: string; body: string }> = {
   sent: {
     title: 'No sent conversations',
     body: 'Recent sent mail appears here after sync.',
+  },
+  allMail: {
+    title: 'No cached mail',
+    body: 'Every conversation outside Trash and Spam appears here after sync.',
   },
   trash: {
     title: 'Trash is empty',
@@ -38,7 +59,12 @@ export function mailboxEmptyCopy(
   mailboxId: MailboxView,
   searchQuery: string,
   settings?: ShortcutSettings,
+  options: { fetchingInbox?: boolean } = {},
 ): MailboxEmptyCopy {
+  // Never claim an empty ("Inbox is clear") mailbox before the first sync.
+  if (options.fetchingInbox && !searchQuery.trim()) {
+    return { ...FETCHING_INBOX_EMPTY_COPY };
+  }
   if (searchQuery.trim()) {
     return {
       title: 'No matching conversations',
@@ -54,7 +80,7 @@ export function mailboxEmptyCopy(
   return {
     title: copy.title,
     body: composeKeys
-      ? `Jump to other splits or press ${composeKeys} to compose.`
+      ? `New conversations appear here as they arrive. Press ${composeKeys} to compose.`
       : copy.body,
     action: 'none',
   };

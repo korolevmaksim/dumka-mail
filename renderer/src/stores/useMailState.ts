@@ -1,4 +1,4 @@
-import { startTransition, useState, useEffect, useCallback, useRef } from 'react';
+import { startTransition, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem, MailboxDelta, NavigationActivity } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../../../shared/search';
@@ -13,6 +13,8 @@ import {
   mailActionPayloadFields,
 } from '../../../shared/mailActionFeedback';
 import { describeReminder } from '../../../shared/reminders';
+import { emptyMailboxCounts } from '../../../shared/mailboxNavigation';
+import { isThreadInMailbox, waitingThreadKey, type WaitingMailboxOptions } from '../../../shared/mailboxView';
 import { emitToast } from '../lib/toastBus';
 import { presentMailActionFeedback, undoPayloadJson } from '../lib/presentMailAction';
 import { cancelPendingMailAction } from '../lib/cancelPendingMailAction';
@@ -37,6 +39,14 @@ import {
   type MailboxIndex,
 } from './mailboxIndex';
 import { applyDeltaToThreads } from './mailboxDelta';
+import { mailActionFailureMessage } from '../../../shared/mailActionErrors';
+import {
+  selectThreadsToArchiveAfterUnsubscribe,
+  unsubscribeOutcomeFeedback,
+  type UnsubscribeTarget,
+} from '../../../shared/unsubscribeConfirm';
+
+type BatchMailActionKind = 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam';
 
 export interface SpeedProof {
   cacheReadyMs?: number;
@@ -133,7 +143,7 @@ export function useMailState({
   const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
   const [splitUnreadCounts, setSplitUnreadCounts] = useState<Record<string, number>>({});
   const [mailboxView, setMailboxViewState] = useState<MailboxView>('inbox');
-  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>({ inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
+  const [mailboxCounts, setMailboxCounts] = useState<Record<MailboxView, number>>(emptyMailboxCounts);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccount, setActiveAccountState] = useState<Account | null>(null);
   
@@ -174,6 +184,11 @@ export function useMailState({
   });
 
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
+  // Display order of the mailbox list (decision sections reorder the inbox);
+  // "next thread" after archive/trash follows it. Set by the store each render.
+  const navigationOrderRef = useRef<MailThread[] | null>(null);
+  const actionLogRef = useRef<MailActionLog[]>([]);
+  const waitingThreadsRef = useRef<MailThread[]>([]);
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
   const activeScopeKey = accountScopeKey(activeAccount, accounts);
   const mailboxIndexConfigKey = JSON.stringify({
@@ -308,7 +323,7 @@ export function useMailState({
     setMailboxViewState('inbox');
     setActiveSplitState(split);
     if (mailboxIndex && !searchQuery.trim()) {
-      setVisibleThreads(threadsForMailboxIndex(mailboxIndex, 'inbox', split));
+      setVisibleThreads(threadsForMailboxIndex(mailboxIndex, 'inbox', null));
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
     }
     setOpenedThread(null);
@@ -320,14 +335,14 @@ export function useMailState({
   const setMailboxView = useCallback((view: MailboxView) => {
     setMailboxViewState(view);
     if (mailboxIndex && !searchQuery.trim()) {
-      setVisibleThreads(threadsForMailboxIndex(mailboxIndex, view, activeSplit));
+      setVisibleThreads(view === 'waiting' ? waitingThreadsRef.current : threadsForMailboxIndex(mailboxIndex, view, null));
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
     }
     setOpenedThread(null);
     resetOpenedThreadMessages();
     setFocusedThreadId(null);
     setSelectedThreadIds(new Set());
-  }, [activeSplit, mailboxIndex, searchQuery]);
+  }, [mailboxIndex, searchQuery]);
 
 
   const getThreadCategory = useCallback((t: MailThread): string => (
@@ -417,7 +432,7 @@ export function useMailState({
     } else {
       setSplitCounts({});
       setSplitUnreadCounts({});
-      setMailboxCounts({ inbox: 0, drafts: 0, sent: 0, trash: 0, spam: 0, muted: 0 });
+      setMailboxCounts(emptyMailboxCounts());
       setNavigationActivity(account ? {
         phase: 'loadingAccount',
         label: 'Loading account…',
@@ -684,6 +699,11 @@ export function useMailState({
     disconnectAccount,
     triggerSyncManual,
     triggerBackfillManual,
+    fetchingInbox,
+    olderMailIndexing,
+    signInError,
+    signInBusy,
+    clearSignInError,
     setSyncHealth,
     setSyncStatusText,
     setBackfillProgress,
@@ -697,6 +717,7 @@ export function useMailState({
     applyMailboxDelta,
     setSpeedProof,
     applyGmailSignatureSyncResult,
+    reloadMailbox: () => { void loadThreadsFromDB(true); },
   });
 
   useEffect(() => {
@@ -883,6 +904,20 @@ export function useMailState({
     }
   }, [followUpRadar, loadFollowUpRadar]);
 
+  const waitingOptions = useMemo<WaitingMailboxOptions>(() => ({
+    radarThreadKeys: new Set((followUpRadar?.items || []).map(item => waitingThreadKey(item.accountId, item.threadId))),
+    maxAgeDays: inboxSettings.followUpMaxAgeDays,
+  }), [followUpRadar, inboxSettings.followUpMaxAgeDays]);
+  const waitingThreads = useMemo(() => {
+    const now = new Date();
+    return threads.filter(thread => isThreadInMailbox(thread, 'waiting', now, { mutedLabelIdsByAccount, waiting: waitingOptions }));
+  }, [mutedLabelIdsByAccount, threads, waitingOptions]);
+  waitingThreadsRef.current = waitingThreads;
+  const effectiveMailboxCounts = useMemo(
+    () => ({ ...mailboxCounts, waiting: waitingThreads.length }),
+    [mailboxCounts, waitingThreads.length],
+  );
+
   const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
     startTransition(() => {
       setVisibleThreads(filtered);
@@ -904,8 +939,12 @@ export function useMailState({
     }
 
     if (!searchQuery.trim()) {
-      if (!mailboxIndex) return;
-      publishVisibleThreads(threadsForMailboxIndex(mailboxIndex, mailboxView, activeSplit));
+      if (mailboxView === 'waiting') {
+        publishVisibleThreads(waitingThreads);
+      } else {
+        if (!mailboxIndex) return;
+        publishVisibleThreads(threadsForMailboxIndex(mailboxIndex, mailboxView, null));
+      }
       updateSearchState(IDLE_SEARCH_STATE);
       setSearchTopCount(0);
       setSemanticMatchThreadIds(prev => (prev.size === 0 ? prev : new Set()));
@@ -940,12 +979,13 @@ export function useMailState({
           threads,
           searchQuery,
           matches,
-          activeSplit,
+          activeSplit: null,
           mailboxView,
           now,
           tabCategories,
           labelDefinitions,
           mutedLabelIdsByAccount,
+          mailboxFilterOptions: { waiting: waitingOptions },
           getThreadCategory: indexedThreadCategory,
           isCancelled,
         });
@@ -1028,7 +1068,6 @@ export function useMailState({
   }, [
     threads,
     searchQuery,
-    activeSplit,
     mailboxView,
     mailboxIndex,
     activeAccount,
@@ -1038,6 +1077,8 @@ export function useMailState({
     mutedLabelIdsByAccount,
     publishVisibleThreads,
     updateSearchState,
+    waitingOptions,
+    waitingThreads,
   ]);
 
   // Open Thread Detail
@@ -1168,13 +1209,14 @@ export function useMailState({
     setActionLog(prev => [log, ...prev]);
 
     // OPTIMISTIC UI STATE TRANSITIONS
-    const currentIdx = targetThreadId ? visibleThreads.findIndex(t => t.id === targetThreadId) : -1;
+    const orderedThreads = navigationOrderRef.current || visibleThreads;
+    const currentIdx = targetThreadId ? orderedThreads.findIndex(t => t.id === targetThreadId) : -1;
     let nextThread: MailThread | null = null;
     if (currentIdx !== -1) {
-      if (currentIdx + 1 < visibleThreads.length) {
-        nextThread = visibleThreads[currentIdx + 1];
+      if (currentIdx + 1 < orderedThreads.length) {
+        nextThread = orderedThreads[currentIdx + 1];
       } else if (currentIdx - 1 >= 0) {
-        nextThread = visibleThreads[currentIdx - 1];
+        nextThread = orderedThreads[currentIdx - 1];
       }
     }
 
@@ -1201,7 +1243,9 @@ export function useMailState({
       fallbackReminder.setHours(9, 0, 0, 0);
       const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
       patchThread(targetAccountId, targetThreadId || '', current => ({ ...current, reminderAt }));
-      if (kind === 'autoMarkRead') {
+      // A snooze (H) leaves the list like an archive: move on to the next thread.
+      const advances = kind === 'autoMarkRead' || (payload.advance === true && payload.undo !== true);
+      if (advances) {
         if (openedThread?.id === targetThreadId) {
           openThread(nextThread);
         }
@@ -1211,6 +1255,8 @@ export function useMailState({
           setFocusedThreadId(null);
         }
       }
+    } else if (kind === 'clearReminder') {
+      if (targetThreadId) patchThread(targetAccountId, targetThreadId, current => ({ ...current, reminderAt: null }));
     } else if (kind === 'markRead') {
       if (targetThreadId) patchThread(targetAccountId, targetThreadId, current => ({ ...current, isUnread: false }));
     } else if (kind === 'markUnread') {
@@ -1359,6 +1405,8 @@ export function useMailState({
               reminderAt,
               payload.proposalValidationItem,
             );
+          } else if (kind === 'clearReminder' && targetThreadId) {
+            await window.electronAPI.deleteReminder(targetAccountId, targetThreadId);
           }
         }
 
@@ -1369,20 +1417,33 @@ export function useMailState({
         } else {
           log.status = 'completed';
           log.completedAt = new Date().toISOString();
-          await window.electronAPI.saveActionLog(log);
+          // The action already happened (for a send: Gmail accepted the
+          // message). Failing to record that is bookkeeping, not a failed
+          // action: reporting it as one would roll back and invite a repeat.
+          try {
+            await window.electronAPI.saveActionLog(log);
+          } catch (logError) {
+            console.error('Could not record the completed mail action:', logError);
+          }
           loadActionLog();
           return { accepted: true, offline: false, actionId };
         }
       } catch (err: any) {
         console.error('Background mail action failed:', err);
         log.status = 'failed';
-        log.failureMessage = err.message;
-        await window.electronAPI.saveActionLog(log);
+        // Raw detail stays in the action log; the toast gets a human sentence.
+        log.failureMessage = err?.message || String(err);
+        try {
+          await window.electronAPI.saveActionLog(log);
+        } catch (logError) {
+          console.error('Could not record the failed mail action:', logError);
+        }
         loadActionLog();
 
+        // Roll back the optimistic change from what SQLite actually holds.
         loadThreadsFromDB(true);
         if (propagateReviewedFailure) throw err;
-        return { accepted: false, offline: false, actionId, errorMessage: err.message };
+        return { accepted: false, offline: false, actionId, errorMessage: mailActionFailureMessage(err, kind) };
       }
     })();
 
@@ -1473,6 +1534,12 @@ export function useMailState({
     await reverseMailActionLogs(items);
   };
 
+  /** Reverses every undoable action of one batch (a group action's toast Undo). */
+  const undoMailActionBatch = async (batchId: string) => {
+    const items = actionLogRef.current.filter(log => mailActionBatchId(log.payloadJson) === batchId && isUndoableMailActionLog(log));
+    await reverseMailActionLogs(items);
+  };
+
   const clearThreadReminder = async (thread: MailThread) => {
     await window.electronAPI.deleteReminder(thread.accountId, thread.id);
     patchThread(thread.accountId, thread.id, current => ({ ...current, reminderAt: null }));
@@ -1484,9 +1551,10 @@ export function useMailState({
     const previousReminderAt = thread.reminderAt || null;
     let result: MailActionExecutionResult;
     try {
-      result = await executeMailAction('autoMarkRead', thread.id, null, async () => {
+      // Logged as setReminder so one Z clears it (SPEC §2: Later can be undone with Z).
+      result = await executeMailAction('setReminder', thread.id, null, async () => {
         await window.electronAPI.saveReminder(thread.accountId, thread.id, reminderAt);
-      }, JSON.stringify({ accountId: thread.accountId, reminderAt, silent: true }));
+      }, JSON.stringify({ accountId: thread.accountId, reminderAt, silent: true, advance: true }));
     } catch (error) {
       patchThread(thread.accountId, thread.id, current => ({ ...current, reminderAt: previousReminderAt }));
       throw error;
@@ -1558,10 +1626,35 @@ export function useMailState({
   }, []);
 
   const executeBatchMailAction = async (
-    kind: 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam',
+    kind: BatchMailActionKind,
     threadIds: string[]
   ) => {
-    if (!activeAccount || threadIds.length === 0) return;
+    const outcome = await runBatchMailAction(kind, threadIds);
+    if (!outcome) return;
+    presentMailActionFeedback({
+      result: outcome.aggregated,
+      kind,
+      count: threadIds.length,
+      succeeded: outcome.aggregated.succeeded,
+      failed: outcome.aggregated.failed,
+    }, {
+      onUndo: () => {
+        void outcome.undo().catch(error => {
+          console.error('Failed to undo batch mail action:', error);
+          emitToast({ type: 'error', message: 'Could not undo.' });
+        });
+      },
+      onRetry: () => { void executeBatchMailAction(kind, threadIds); },
+    });
+  };
+
+  // Shared batch engine: optimistic local change, per-thread offline-aware
+  // remote call, action log. Callers present their own feedback.
+  const runBatchMailAction = async (
+    kind: BatchMailActionKind,
+    threadIds: string[]
+  ): Promise<{ aggregated: ReturnType<typeof aggregateMailActionResults>; undo: () => Promise<void> } | null> => {
+    if (!activeAccount || threadIds.length === 0) return null;
 
     setSelectedThreadIds(new Set());
 
@@ -1573,7 +1666,7 @@ export function useMailState({
           : t
       )));
       if (mailboxView === 'inbox' && openedThread && threadIds.includes(openedThread.id)) {
-        const remainingVisible = visibleThreads.filter(t => !threadIds.includes(t.id));
+        const remainingVisible = (navigationOrderRef.current || visibleThreads).filter(t => !threadIds.includes(t.id));
         if (inboxSettings.openNextThreadAfterDone && remainingVisible.length > 0) {
           openThread(remainingVisible[0]);
         } else {
@@ -1656,13 +1749,13 @@ export function useMailState({
       } catch (err: any) {
         console.error(`Batch action item failed for thread ${targetThreadId}:`, err);
         log.status = 'failed';
-        log.failureMessage = err.message;
+        log.failureMessage = err?.message || String(err);
         try {
           await window.electronAPI.saveActionLog(log);
         } catch (saveErr) {
           console.error(`Failed to persist batch action failure for ${targetThreadId}:`, saveErr);
         }
-        results.push({ accepted: false, offline: false, actionId, errorMessage: err.message });
+        results.push({ accepted: false, offline: false, actionId, errorMessage: mailActionFailureMessage(err, kind) });
       }
       logs.push(log);
     });
@@ -1671,22 +1764,10 @@ export function useMailState({
     loadActionLog();
     await loadThreadsFromDB(true);
 
-    const aggregated = aggregateMailActionResults(results);
-    presentMailActionFeedback({
-      result: aggregated,
-      kind,
-      count: threadIds.length,
-      succeeded: aggregated.succeeded,
-      failed: aggregated.failed,
-    }, {
-      onUndo: () => {
-        void reverseMailActionLogs(logs.filter(isUndoableMailActionLog)).catch(error => {
-          console.error('Failed to undo batch mail action:', error);
-          emitToast({ type: 'error', message: 'Could not undo.' });
-        });
-      },
-      onRetry: () => { void executeBatchMailAction(kind, threadIds); },
-    });
+    return {
+      aggregated: aggregateMailActionResults(results),
+      undo: () => reverseMailActionLogs(logs.filter(isUndoableMailActionLog)),
+    };
   };
 
   const dismissAgentDraftSuggestion = useCallback(async (id: string) => {
@@ -1702,6 +1783,61 @@ export function useMailState({
       ? { ...current, draftSuggestion: null }
       : current);
   }, []);
+
+  // Runs only after the confirmation sheet (SPEC §6). The unsubscribe request
+  // itself is external and irreversible; the optional archive goes through the
+  // normal batch path so the toast's Undo restores only the archive.
+  const unsubscribeSenders = async (
+    targets: UnsubscribeTarget[],
+    options: { archive: boolean },
+  ): Promise<void> => {
+    if (targets.length === 0) return;
+    const succeeded: UnsubscribeTarget[] = [];
+    const failed: UnsubscribeTarget[] = [];
+    for (const target of targets) {
+      try {
+        await window.electronAPI.unsubscribeThread(
+          target.accountId,
+          target.threadId,
+          undefined,
+          target.sourceMessageId || undefined,
+          { archive: false },
+        );
+        succeeded.push(target);
+      } catch (error) {
+        console.error('Unsubscribe request failed:', error);
+        failed.push(target);
+      }
+    }
+    loadActionLog();
+
+    let archivedCount = 0;
+    let undo: (() => Promise<void>) | null = null;
+    if (options.archive && succeeded.length > 0) {
+      const archiveIds = selectThreadsToArchiveAfterUnsubscribe(threadsRef.current, succeeded).map(thread => thread.id);
+      const outcome = await runBatchMailAction('markDone', archiveIds);
+      if (outcome) {
+        archivedCount = outcome.aggregated.succeeded;
+        undo = outcome.undo;
+      }
+    }
+
+    const feedback = unsubscribeOutcomeFeedback({ succeeded, failed, archivedCount });
+    emitToast({
+      type: feedback.tone,
+      message: feedback.message,
+      ...(feedback.offerUndo && undo ? {
+        duration: 8000,
+        actionLabel: 'Undo',
+        onAction: () => {
+          void undo?.().catch(error => {
+            console.error('Failed to undo archive after unsubscribe:', error);
+            emitToast({ type: 'error', message: 'Could not undo.' });
+          });
+        },
+      } : {}),
+    });
+  };
 
   const unsubscribeThread = useCallback(async (threadId?: string | null) => {
     const targetThreadId = threadId || openedThread?.id || focusedThreadId;
@@ -1720,10 +1856,14 @@ export function useMailState({
   }, [activeAccount?.email, executeMailAction, focusedThreadId, openedThread, threads]);
 
 
+  actionLogRef.current = actionLog;
+
   return {
     mailboxView,
     setMailboxView,
-    mailboxCounts,
+    mailboxCounts: effectiveMailboxCounts,
+    navigationOrderRef,
+    undoMailActionBatch,
     navigationActivity,
     activeSplit,
     setActiveSplit,
@@ -1752,6 +1892,11 @@ export function useMailState({
     syncHealth,
     syncStatusText,
     backfillProgress,
+    fetchingInbox,
+    olderMailIndexing,
+    signInError,
+    signInBusy,
+    clearSignInError,
     isSyncing,
     lastSuccessfulSync,
     speedProof,
@@ -1780,6 +1925,7 @@ export function useMailState({
     dismissAgentDraftSuggestion,
     markAgentDraftSuggestionApplied,
     unsubscribeThread,
+    unsubscribeSenders,
     loadFollowUpRadar,
     dismissFollowUpRadarItem,
     snoozeFollowUpRadarItem,

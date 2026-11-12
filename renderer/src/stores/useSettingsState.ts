@@ -41,7 +41,7 @@ export function useSettingsState() {
     setWorkspaceViewState(view);
   }, []);
 
-  /** Switch to mail workspace without clearing returnWorkspaceView (used by openThreadFromToday). */
+  /** Switch to mail workspace without clearing returnWorkspaceView (used when a thread opens from another workspace). */
   const enterMailWorkspacePreservingReturn = useCallback(() => {
     setWorkspaceViewState('mail');
   }, []);

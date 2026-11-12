@@ -3,7 +3,7 @@ import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { Command, Search, X } from 'lucide-react';
 import { composeOrConnectAccount } from '../../lib/composeOrConnect';
 import { keymapShortcut, type AppKeyBindingId } from '../../../../shared/appKeymap';
-import { nextMailboxView } from '../../../../shared/mailboxNavigation';
+import { MAILBOX_VIEW_LABELS, nextMailboxView } from '../../../../shared/mailboxNavigation';
 import {
   DEFAULT_COMMAND_GROUP_ORDER,
   groupRankedCommands,
@@ -15,11 +15,15 @@ interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenReminder: () => void;
+  /** `V`: the "Move to section" popover for the open / focused thread. */
+  onOpenMoveToSection: () => void;
+  /** `Y` / `N`: answer the open / focused invitation. */
+  onAnswerInvite: (answer: 'accepted' | 'declined') => void;
 }
 
 type PaletteCommandWithAction = PaletteCommand & { action: () => void };
 
-export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSection, onAnswerInvite }: CommandPaletteProps) {
   const store = useAppStore();
   const [paletteSearch, setPaletteSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -31,17 +35,18 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
 
   // Rebuild each render so action closures always see current store fields.
   const commands: PaletteCommandWithAction[] = [
-    {
-      id: 'open-today',
+    ...(['later', 'waiting', 'allMail'] as const).map((view): PaletteCommandWithAction => ({
+      id: `open-mailbox-${view}`,
       group: 'navigation',
-      title: 'Open Today',
-      keywords: ['operator', 'home', 'today'],
+      title: `Open ${MAILBOX_VIEW_LABELS[view]}`,
+      keywords: view === 'later' ? ['reminders', 'snoozed'] : view === 'waiting' ? ['follow up', 'sent', 'no reply'] : ['archive', 'everything'],
       action: () => {
-        store.setWorkspaceView('today');
+        store.setWorkspaceView('mail');
+        store.setMailboxView(view);
         store.setSettingsOpen(false);
         store.setCleanupOpen(false);
       },
-    },
+    })),
     {
       id: 'open-calendar',
       group: 'navigation',
@@ -110,20 +115,52 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder }: CommandPalet
       action: onOpenReminder,
     },
     {
-      id: 'open-ai-assistant',
-      group: 'ai',
-      title: 'Open AI Assistant',
-      shortcut: shortcut('openAiAssistant'),
-      keywords: ['ai', 'assistant'],
-      action: () => store.setAiPanelOpen(true),
+      id: 'archive-clear-section',
+      group: 'mail',
+      title: 'Open / Archive the Clear Section',
+      shortcut: shortcut('archiveClearSection'),
+      keywords: ['clear', 'archive', 'group', 'batch', 'newsletters'],
+      action: () => void store.runClearGroupAction(),
     },
     {
-      id: 'ai-triage-queue',
+      id: 'remind-later-section',
+      group: 'mail',
+      title: 'Move the Later Section to Its Time',
+      shortcut: shortcut('remindLaterSection'),
+      keywords: ['later', 'remind', 'snooze', 'group'],
+      action: () => void store.remindLaterGroup(),
+    },
+    {
+      id: 'move-to-section',
+      group: 'mail',
+      title: 'Move to Another Section',
+      shortcut: shortcut('moveToSection'),
+      keywords: ['section', 'move', 'correct', 'sort'],
+      action: onOpenMoveToSection,
+    },
+    {
+      id: 'accept-invitation',
+      group: 'mail',
+      title: 'Accept Invitation',
+      shortcut: shortcut('acceptInvite'),
+      keywords: ['yes', 'rsvp', 'calendar', 'meeting', 'event'],
+      action: () => onAnswerInvite('accepted'),
+    },
+    {
+      id: 'decline-invitation',
+      group: 'mail',
+      title: 'Decline Invitation',
+      shortcut: shortcut('declineInvite'),
+      keywords: ['no', 'rsvp', 'calendar', 'meeting', 'event'],
+      action: () => onAnswerInvite('declined'),
+    },
+    {
+      id: 'open-ai-assistant',
       group: 'ai',
-      title: 'AI Triage Queue',
-      shortcut: shortcut('summarize'),
-      keywords: ['triage', 'queue'],
-      action: () => store.runAITriagePlan(),
+      title: 'Ask Dumka',
+      shortcut: shortcut('openAiAssistant'),
+      keywords: ['ai', 'assistant', 'ask', 'chat', 'question'],
+      action: () => store.setAiPanelOpen(true),
     },
     {
       id: 'compose-message',

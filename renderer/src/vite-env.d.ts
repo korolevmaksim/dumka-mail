@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import type { ProductivityRecord } from '../../shared/productivity';
+import type { AgentDraftReadyEvent, AgentDraftResult, AIStreamEvent, ModelStatus, ThreadSummaryResult } from '../../shared/agentPrompts';
 import {
   Account,
   AgentPlanItem,
@@ -33,7 +34,12 @@ import {
   MailboxSearchSource,
   MailboxDelta,
   MailboxSyncHealthEvent,
+  MailboxBackfillProgressEvent,
   MailThread,
+  ThreadDecisionRecord,
+  SenderRuleHandledItem,
+  SenderRuleStats,
+  SenderRulesChangedEvent,
   OnboardAccountResult,
   OperatorHomeStateSnapshot,
   ReplyPipelineCandidate,
@@ -76,6 +82,14 @@ export interface IElectronAPI {
   // Threads
   listThreads: (accountId: string) => Promise<MailThread[]>;
   listThreadsForAccounts: (accountIds: string[]) => Promise<MailThread[]>;
+  countInboxThreads: (accountIds: string[]) => Promise<Record<string, number>>;
+  listThreadDecisions: (accountId: string) => Promise<ThreadDecisionRecord[]>;
+  saveThreadDecision: (row: ThreadDecisionRecord) => Promise<ThreadDecisionRecord>;
+  deleteThreadDecision: (accountId: string, threadId: string) => Promise<void>;
+  listSenderRuleStats: (accountId: string) => Promise<SenderRuleStats[]>;
+  dismissSenderRuleOffer: (accountId: string, senderEmail: string) => Promise<void>;
+  listSenderRuleHandled: (accountId: string) => Promise<SenderRuleHandledItem[]>;
+  markSenderRuleHandledReviewed: (accountId: string) => Promise<number>;
   saveThreads: (threads: MailThread[]) => Promise<void>;
   deleteThread: (accountId: string, threadId: string) => Promise<void>;
 
@@ -221,7 +235,8 @@ export interface IElectronAPI {
   deleteEmbeddingIndex: (accountId: string, model: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   deleteOtherEmbeddingIndexes: (accountId: string) => Promise<{ deleted: number; status: EmbeddingIndexStatus }>;
   searchSemantic: (accountId: string, query: string, limit?: number) => Promise<SemanticSearchOutcome>;
-  unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string) => Promise<{ method: string; archived: boolean; senderEmail?: string | null }>;
+  /** `options.archive` defaults to true (agent-approved path); the confirmation sheet passes false and archives separately. */
+  unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string, options?: { archive?: boolean }) => Promise<{ method: string; archived: boolean; senderEmail?: string | null }>;
   listCleanupSenderStats: (accountId: string) => Promise<SenderCleanupStat[]>;
   listRecentSenderMessages: (accountId: string, senderEmail: string, limit?: number) => Promise<MailMessage[]>;
   loadAIConfig: () => Promise<Record<string, string>>;
@@ -262,6 +277,8 @@ export interface IElectronAPI {
   onReplyPipelineUpdated: (callback: (data: { accountId: string; threadId: string }) => void) => () => void;
   onMailboxDelta: (callback: (delta: MailboxDelta) => void) => () => void;
   onMailboxSyncHealth: (callback: (event: MailboxSyncHealthEvent) => void) => () => void;
+  /** Main-process history backfill progress (`api:backfillProgress`). */
+  onBackfillProgress: (callback: (event: MailboxBackfillProgressEvent) => void) => () => void;
   onActionLogChanged: (callback: () => void) => () => void;
   onGoogleAuthStateChanged: (callback: (change: GoogleAuthStateChange) => void) => () => void;
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
@@ -269,6 +286,19 @@ export interface IElectronAPI {
   onExecuteCommand: (callback: (cmdId: string) => void) => () => void;
   onFlushDrafts: (callback: () => void) => () => void;
   notifyDraftsFlushed: () => void;
+
+  // --- Agent preparation and streaming (design-review/SPEC.md §5) ---------------
+  getModelStatus: () => Promise<ModelStatus>;
+  retryAgentPrep: () => Promise<ModelStatus>;
+  cancelAI: (requestId: string) => Promise<void>;
+  requestThreadSummary: (accountId: string, threadId: string, requestId: string) => Promise<ThreadSummaryResult>;
+  requestAgentDraft: (accountId: string, threadId: string, requestId: string) => Promise<AgentDraftResult>;
+  streamAIChat: (requestId: string, request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string; cancelled?: boolean }>;
+  onAIStream: (callback: (event: AIStreamEvent) => void) => () => void;
+  onModelStatusChanged: (callback: (status: ModelStatus) => void) => () => void;
+  onThreadDecisionsChanged: (callback: (event: { accountId: string }) => void) => () => void;
+  onSenderRulesChanged: (callback: (event: SenderRulesChangedEvent) => void) => () => void;
+  onAgentDraftReady: (callback: (event: AgentDraftReadyEvent) => void) => () => void;
 }
 
 declare global {
