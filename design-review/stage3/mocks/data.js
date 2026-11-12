@@ -1,0 +1,67 @@
+// Synthetic inbox used by every mock: the same 28 conversations as design-review/stage0 (fictional people, .example domains).
+// decision: reply | read | event | later | clear | unsub
+window.DATA = {
+  account: { name: 'Alex Morgan', email: 'alex.morgan@northwind.example', initials: 'AM' },
+  second: { name: 'Alex Morgan', email: 'alex@morgan-family.example', initials: 'AM' },
+  threads: [
+    { id: 'pilot', decision: 'reply', from: 'Priya Raman', org: 'Lumen Labs', time: '16:36', subject: 'Q3 rollout: can we move the pilot to the 24th?',
+      why: 'Asks yes or no on moving the pilot to Thu 24th. She must confirm by end of day tomorrow.', due: 'Tomorrow' },
+    { id: 'board', decision: 'reply', from: 'Daniel Okafor', org: 'Northwind', time: '15:38', subject: "Need your numbers for Thursday's board deck",
+      why: 'Needs three inputs by Wednesday 5pm. Nora can pull retention.', due: 'Wed 17:00', remind: true },
+    { id: 'redlines', decision: 'reply', from: 'Sofia Lindqvist', org: 'Harbor & Pine', time: '14:08', subject: 'Contract redlines v3 — two open points',
+      why: 'Wants both open points confirmed so legal can issue the signature copy.', attach: 'MSA-redlines-v3.pdf' },
+    { id: 'interview', decision: 'reply', from: 'Marcus Lee', org: 'Northwind', time: '12:50', subject: 'Interview loop for Jamie Chen — are you free Wed 2–3pm?',
+      why: 'Scheduling question. Wed 14:00 or Thu 11:00.' },
+    { id: 'intro', decision: 'reply', from: 'Hannah Weiss', org: 'Northwind', time: 'Yesterday', subject: 'Intro: Alex <> Tomás (Brightwave)',
+      why: 'Intro waiting for your first reply since yesterday.' },
+
+    { id: 'onboarding', decision: 'read', from: 'Design Team', org: '14 messages', time: '06:56', subject: 'Onboarding flow v4 — feedback round',
+      why: 'You are on Cc. QA passed, ships Thursday. Daniel: no action unless you object.' },
+    { id: 'offsite', decision: 'read', from: 'Daniel Okafor', org: 'Northwind', time: '11:02', subject: 'FYI: offsite moved to October',
+      why: 'Offsite moves to 14–15 Oct. Nothing to do now.' },
+    { id: 'invoice', decision: 'read', from: 'Nora Petrov', org: 'Northwind', time: '09:44', subject: 'Re: Invoice #2291 approved',
+      why: 'Approved and scheduled for the next payment run.' },
+    { id: 'freeze', decision: 'read', from: 'Eng Announce', org: 'List', time: '08:14', subject: 'Deploy freeze Fri 18:00 – Mon 09:00',
+      why: 'Production deploys frozen over the weekend.' },
+    { id: 'sso', decision: 'read', from: 'Northwind SSO', org: 'Security', time: 'Yesterday', subject: 'New sign-in from Chrome on macOS',
+      why: 'Security notice. Berlin, Chrome on macOS. Check that it was you.' },
+
+    { id: 'weekly', decision: 'event', from: 'Priya Raman', org: 'Lumen Labs', time: '14:56', subject: 'Invitation: Lumen Labs weekly sync',
+      why: 'Sat 14 Nov, 20:14–20:44. No conflict in your calendar.', rsvp: true },
+    { id: 'oneonone', decision: 'event', from: 'Daniel Okafor', org: 'Northwind', time: '06:14', subject: 'Updated invitation: 1:1 Daniel / Alex',
+      why: 'Moved to Fri 13 Nov, 22:14–22:59. Needs your answer again.', rsvp: true },
+
+    { id: 'pr482', decision: 'later', from: 'CodeForge', org: 'northwind/api', time: '16:22', subject: 'Fix retry backoff for webhook delivery (#482)',
+      why: 'yuki-t requested your review. +84 −31, 4 files.', when: 'Tomorrow 09:00' },
+    { id: 'nw1432', decision: 'later', from: 'Trackline', org: 'NW-1432', time: '12:14', subject: 'Assigned to you: Export fails for large accounts',
+      why: 'High priority, sprint 41.', when: 'Tomorrow 09:00' },
+    { id: 'doccomment', decision: 'later', from: 'Pagewise Docs', org: 'Pilot plan', time: '12:20', subject: 'Priya Raman commented on “Pilot plan”',
+      why: 'Asks to add rollback criteria to section 3.', when: 'Tomorrow 09:00' },
+
+    { id: 'ci', decision: 'clear', kind: 'Notifications', from: 'CodeForge', time: '13:50', subject: 'Run failed: CI on main (build #9121)', why: 'Not your commit (ben-carter).' },
+    { id: 'nw1398', decision: 'clear', kind: 'Notifications', from: 'Trackline', time: '09:02', subject: 'NW-1398 moved to Done', why: 'Status change only.' },
+    { id: 'status', decision: 'clear', kind: 'Notifications', from: 'Northwind Status', time: '05:38', subject: 'Resolved: Elevated API latency (eu-west)', why: 'Incident resolved at 02:14 UTC.' },
+    { id: 'eticket', decision: 'clear', kind: 'Receipts and travel', from: 'Skyline Air', time: '02:14', subject: 'Your e-ticket: BER → LIS, 14 Oct', why: 'SK7Q2M, 09:25, seat 14C, €212.40.' },
+    { id: 'receipt', decision: 'clear', kind: 'Receipts and travel', from: 'Paperclip Cloud', time: '00:14', subject: 'Receipt for your subscription', why: '€29.00, invoice PC-2025-10-04412.' },
+    { id: 'parcel', decision: 'clear', kind: 'Receipts and travel', from: 'Parcelo', time: '10:26', subject: 'Your package arrives tomorrow', why: 'Tomorrow 10:00–14:00.' },
+    { id: 'dispatch', decision: 'clear', kind: 'Newsletters', from: 'The Pragmatic Dispatch', time: '06:44', subject: 'Issue #212: The hidden cost of flaky tests', why: 'Newsletter.' },
+    { id: 'pweekly', decision: 'clear', kind: 'Newsletters', from: 'Product Weekly', time: 'Yesterday', subject: '5 onboarding teardown lessons', why: 'Newsletter.' },
+    { id: 'people', decision: 'clear', kind: 'Newsletters', from: 'Northwind People Team', time: 'Yesterday', subject: 'October newsletter', why: 'Benefits enrollment opens on the 6th.' },
+    { id: 'devconf', decision: 'clear', kind: 'Newsletters', from: 'DevConf Europe', time: 'Yesterday', subject: 'Call for papers closes Friday', why: 'Newsletter.' },
+    { id: 'linkedin', decision: 'clear', kind: 'Social', from: 'LinkedIn', time: 'Yesterday', subject: 'You have 3 new connection requests', why: 'Social notification.' },
+
+    { id: 'fieldnote', decision: 'unsub', from: 'Fieldnote Pro', time: '03:14', subject: 'Last chance: 40% off annual plans', why: '9 promotions in 30 days, none opened.' },
+    { id: 'loft', decision: 'unsub', from: 'Loft & Linen', time: 'Yesterday', subject: 'New arrivals for autumn', why: '6 promotions in 30 days, none opened.' },
+  ],
+  pilotBody: [
+    'Hi Alex,',
+    'Our security review slipped by a few days, so the 17th is now tight for us. Could we move the pilot kickoff to Thursday the 24th instead? Same attendees, same agenda.',
+    'If the 24th does not work, the 25th morning is our fallback. I need to confirm with our CISO by end of day tomorrow.',
+    'Thanks,\nPriya',
+  ],
+  pilotDraft: [
+    'Hi Priya,',
+    'Thursday the 24th works for us — same attendees, same agenda. I will move the kickoff invite today so you can confirm with your CISO.',
+    'Best,\nAlex',
+  ],
+};

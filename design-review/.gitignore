@@ -1,0 +1,5 @@
+# Generated screenshots and renders (about 50 MB). Recreate them with the harness in
+# stage0/harness and the scripts in stage3/tools; see the READMEs there.
+stage0/shots/
+stage3/renders/
+stage3/compare/

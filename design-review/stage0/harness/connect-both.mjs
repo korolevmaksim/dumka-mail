@@ -1,0 +1,13 @@
+import { connect, sleep } from './cdp.mjs';
+const page = await connect();
+const waitRows = async sender => page.waitFor(`Array.from(document.querySelectorAll('[data-thread-row]')).some(r => r.getAttribute('aria-label').includes(${JSON.stringify(sender)}))`, { timeoutMs: 90000, intervalMs: 200 });
+await page.waitFor(`!!Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim() === 'Connect Gmail')`);
+let t = Date.now();
+await page.click({ text: 'Connect Gmail', selector: 'button', exact: true });
+await waitRows('Priya Raman');
+console.log('work rows after ms', Date.now() - t);
+t = Date.now();
+await page.click({ selector: 'button[title="Connect Gmail Account"]' });
+await waitRows('Mara Morgan');
+console.log('home rows after ms', Date.now() - t);
+page.close();

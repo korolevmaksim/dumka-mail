@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Было → стало</title>
+<style>
+  html, body { margin: 0; background: #0b0c0f; color: rgba(255,255,255,.9); font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; }
+  .wrap { width: 1440px; height: 520px; padding: 14px 16px; box-sizing: border-box; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  figure { margin: 0; } figcaption { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; font-size: 13px; }
+  figcaption b { font-weight: 650; } figcaption span { color: rgba(255,255,255,.55); }
+  img { width: 696px; height: 435px; display: block; border-radius: 8px; border: 1px solid rgba(255,255,255,.14); }
+  .tag { font-size: 11px; font-weight: 650; padding: 2px 8px; border-radius: 6px; }
+  .was { background: rgba(235,91,91,.16); color: #f08a8a; } .now { background: rgba(84,199,143,.16); color: #6fd6a3; }
+</style></head>
+<body><div class="wrap" id="w"></div>
+<script>
+  // hash: left-image|right-image|left caption|right caption  (paths relative to design-review/stage3/mocks/)
+  const [l, r, lc, rc] = decodeURIComponent(location.hash.slice(1)).split('|');
+  document.getElementById('w').innerHTML =
+    `<figure><figcaption><span class="tag was">было</span><b>${lc || ''}</b></figcaption><img src="${l}"></figure>` +
+    `<figure><figcaption><span class="tag now">стало</span><b>${rc || ''}</b></figcaption><img src="${r}"></figure>`;
+</script></body></html>
