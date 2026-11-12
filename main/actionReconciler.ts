@@ -9,6 +9,8 @@ export interface ReconcilerDeps {
     listPending(nowIso?: string): MailActionLog[];
     listRunning(): MailActionLog[];
     save(log: MailActionLog): void;
+    /** Current stored state of one action; lets the loop skip actions settled since the snapshot. */
+    get?(id: string): MailActionLog | null;
   };
   threads: {
     get(accountId: string, threadId: string): MailThread | null;
@@ -165,6 +167,14 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
     // mail-only reconciler from fabricating a successful no-op.
     if (action.kind === 'createCalendarEvent' || action.kind === 'updateCalendarEvent' || action.kind === 'deleteCalendarEvent') {
       continue;
+    }
+    // The list above is a snapshot, and earlier iterations await Gmail. An action
+    // cancelled, failed or completed in the meantime (for example a parked rule
+    // archive cancelled because the user brought the conversation back) must not
+    // be replayed, and must not be treated as a fresh rejection either.
+    if (deps.actionLog.get) {
+      const stored = deps.actionLog.get(action.id);
+      if (!stored || stored.status !== 'pending_sync') continue;
     }
     action.status = 'running';
     deps.actionLog.save(action);

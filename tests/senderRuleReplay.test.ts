@@ -95,6 +95,8 @@ interface Parked {
   gmail: { modifyLabels: ReturnType<typeof vi.fn> };
   published: unknown[];
   reconcile: () => Promise<void>;
+  /** Reconciles from a pending list read earlier, as the worker does while it awaits Gmail. */
+  reconcileFromSnapshot: (snapshot: MailActionLog[], options?: { withStatusLookup?: boolean }) => Promise<void>;
 }
 
 /** Applies the rule while Gmail is offline, leaving one parked archive. */
@@ -137,7 +139,16 @@ async function parkRuleArchive({ database, service, reconciler }: Modules): Prom
     onPermanentFailure: (failed: MailActionLog) => { service.SenderRulesService.afterReplayRejected(failed); },
     logger: { log: () => {}, error: () => {} },
   };
-  return { action, gmail, published, reconcile: () => reconciler.reconcilePendingActions(deps) };
+  const reconcileFromSnapshot: Parked['reconcileFromSnapshot'] = (snapshot, options = {}) => reconciler.reconcilePendingActions({
+    ...deps,
+    actionLog: {
+      listPending: () => snapshot,
+      listRunning: () => database.ActionLogRepo.listRunning(),
+      save: (log: MailActionLog) => database.ActionLogRepo.save(log),
+      ...(options.withStatusLookup === false ? {} : { get: (id: string) => database.ActionLogRepo.get(id) }),
+    },
+  });
+  return { action, gmail, published, reconcile: () => reconciler.reconcilePendingActions(deps), reconcileFromSnapshot };
 }
 
 function statusOf(database: Modules['database'], id: string) {
@@ -222,6 +233,32 @@ describe('parked sender-rule archives', () => {
       expect(inInbox(database)).toBe(true);
       // The bring-back still counts against the rule.
       expect(modules.repo.SenderRulesRepo.countBringBacksSince(accountId, thread.senderEmail, '2026-01-01T00:00:00.000Z')).toBe(1);
+    });
+  });
+
+  repositoryIt.each([
+    ['the worker re-reads the action before replaying it', true],
+    ['an older worker replays from its stale list', false],
+  ])('keeps the bring-back when the conversation comes back after the pending list was read (%s)', async (_label, withStatusLookup) => {
+    await withDatabase(async modules => {
+      const parked = await parkRuleArchive(modules);
+      const { database, service, repo } = modules;
+      // The worker has already read its pending list and is awaiting an earlier action.
+      const snapshot = database.ActionLogRepo.listPending();
+      expect(snapshot.map(item => item.id)).toContain(parked.action.id);
+      // Meanwhile the user brings the conversation back (what api:modifyLabels does for a restore).
+      service.SenderRulesService.cancelParkedArchivesOnRestore(accountId, thread.id);
+      database.ThreadsRepo.updateLabels(accountId, thread.id, ['INBOX'], []);
+      service.SenderRulesService.noteRestore(accountId, thread.id);
+
+      await parked.reconcileFromSnapshot(snapshot, { withStatusLookup });
+
+      expect(parked.gmail.modifyLabels).not.toHaveBeenCalled();
+      expect(statusOf(database, parked.action.id)?.status).toBe('failed');
+      expect(inInbox(database)).toBe(true);
+      // The bring-back is evidence against the rule and must survive the cleanup.
+      expect(repo.SenderRulesRepo.wasBroughtBackFromRule(accountId, thread.id)).toBe(true);
+      expect(repo.SenderRulesRepo.countBringBacksSince(accountId, thread.senderEmail, '2026-01-01T00:00:00.000Z')).toBe(1);
     });
   });
 

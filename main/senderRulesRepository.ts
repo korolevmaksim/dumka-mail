@@ -142,9 +142,14 @@ export const SenderRulesRepo = {
     return row ? { origin: row.origin, ruleId: row.rule_id, archivedAt: row.archived_at, broughtBackAt: row.brought_back_at } : null;
   },
 
-  /** A rule archive that failed permanently and was rolled back is forgotten. */
+  /**
+   * A rule archive that failed permanently and was rolled back is forgotten —
+   * unless the user already brought that conversation back. A bring-back is
+   * evidence against the rule (`wasBroughtBackFromRule`, `countBringBacksSince`)
+   * and must survive any later cleanup of the action it belongs to.
+   */
   forgetArchive(actionId: string) {
-    getDatabase().prepare('DELETE FROM sender_rule_archives WHERE action_id = ?').run(actionId);
+    getDatabase().prepare('DELETE FROM sender_rule_archives WHERE action_id = ? AND brought_back_at IS NULL').run(actionId);
   },
 
   /**
