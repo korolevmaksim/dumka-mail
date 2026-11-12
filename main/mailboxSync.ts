@@ -20,6 +20,11 @@ export interface MailboxSyncDeps {
    * delta matches SQLite.
    */
   afterPersist?(accountId: string, threads: MailThread[]): Promise<MailThread[]>;
+  /**
+   * Called with threads as Gmail has them, before the pending-label overlay is
+   * read: drops parked automatic actions those threads no longer qualify for.
+   */
+  revalidateParked?(accountId: string, threads: MailThread[]): void;
   now?: () => Date;
   logger?: {
     warning(scope: string, message: string, extra?: Record<string, unknown>): void;
@@ -77,6 +82,15 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     await deps.saveMessages(overlaid, options);
   };
 
+  const revalidateParked = (threads: MailThread[]) => {
+    if (!deps.revalidateParked || threads.length === 0) return;
+    try {
+      deps.revalidateParked(email, threads);
+    } catch (err: unknown) {
+      deps.logger?.warning('Mailbox Sync', 'Revalidating parked actions failed.', { accountId: email, error: err });
+    }
+  };
+
   const afterPersist = async (threads: MailThread[]): Promise<MailThread[]> => {
     if (!deps.afterPersist || threads.length === 0) return threads;
     try {
@@ -89,6 +103,7 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
 
   if (!syncState?.historyId) {
     const fullSync = await deps.syncInbox(email);
+    revalidateParked(fullSync.threads);
     const saved = await persistThreads(fullSync.threads);
     await persistMessages(fullSync.messages);
     deps.saveSyncState(deps.nextSyncState(email, syncState, fullSync.historyId, now().toISOString()));
@@ -103,8 +118,9 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     for (const threadId of incrementalSync.updatedThreadIds) {
       try {
         const messages = await deps.fetchThreadDetail(email, threadId);
-        await persistMessages(messages, { notifyOfNew: true });
         const thread = buildMailThreadFromMessages(email, threadId, messages);
+        if (thread) revalidateParked([thread]);
+        await persistMessages(messages, { notifyOfNew: true });
         if (thread) {
           const saved = await persistThreads([thread]);
           upserts.push(...await afterPersist(saved));
@@ -135,6 +151,7 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'HISTORY_EXPIRED') {
       const fullSync = await deps.syncInbox(email);
+      revalidateParked(fullSync.threads);
       const saved = await persistThreads(fullSync.threads);
       await persistMessages(fullSync.messages);
       deps.saveSyncState(deps.nextSyncState(email, syncState, fullSync.historyId, now().toISOString()));

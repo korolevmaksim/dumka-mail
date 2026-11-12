@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { MailThread, UnsubscribeCandidate } from '../shared/types';
+import type { MailThread, ThreadDecisionRecord, ThreadSignals, UnsubscribeCandidate } from '../shared/types';
+import { EMPTY_THREAD_SIGNALS } from '../shared/threadSignals';
 import {
+  isArchivableAfterUnsubscribe,
+  planArchiveAfterUnsubscribe,
   UNSUBSCRIBE_IRREVERSIBLE_NOTICE,
   describeUnsubscribeMethod,
   selectThreadsToArchiveAfterUnsubscribe,
@@ -24,8 +27,22 @@ function target(overrides: Partial<UnsubscribeTarget> = {}): UnsubscribeTarget {
   };
 }
 
-function thread(id: string, senderEmail: string, labelIds: string[], accountId = ACCOUNT): MailThread {
-  return { id, accountId, senderEmail, labelIds } as unknown as MailThread;
+const NEWSLETTER: Partial<ThreadSignals> = { hasListUnsubscribe: true, hasOneClickUnsubscribe: true, isBulk: true };
+
+function thread(
+  id: string,
+  senderEmail: string,
+  labelIds: string[],
+  accountId = ACCOUNT,
+  extra: { subject?: string; senderNames?: string[]; signals?: Partial<ThreadSignals> } = {},
+): MailThread {
+  return {
+    id, accountId, senderEmail, labelIds,
+    subject: extra.subject ?? 'This week at Brightcart',
+    senderNames: extra.senderNames ?? ['Brightcart Deals'],
+    lastMessageAt: '2026-10-10T12:00:00.000Z',
+    signals: { ...EMPTY_THREAD_SIGNALS, ...NEWSLETTER, lastMessageId: `${id}-m1`, ...extra.signals },
+  } as unknown as MailThread;
 }
 
 describe('unsubscribe confirmation', () => {
@@ -65,6 +82,62 @@ describe('unsubscribe confirmation', () => {
       thread('other-account', 'deals@brightcart.example', ['INBOX'], 'alex@morgan-family.example'),
     ];
     expect(selectThreadsToArchiveAfterUnsubscribe(threads, [target()]).map(item => item.id)).toEqual(['promo-1', 'promo-2']);
+  });
+
+  it('never archives a protected thread from the same sender', () => {
+    const threads = [
+      thread('promo-1', 'deals@brightcart.example', ['INBOX']),
+      // Same automated address, but a security notice: protected.
+      thread('password', 'deals@brightcart.example', ['INBOX'], ACCOUNT, {
+        subject: 'Your password was changed', signals: { hasOneClickUnsubscribe: false, isBulk: false, hasListUnsubscribe: false },
+      }),
+      // An invitation from the same address, state unknown: protected event.
+      thread('invite', 'deals@brightcart.example', ['INBOX'], ACCOUNT, {
+        subject: 'Invitation: Store opening', signals: { hasCalendarInvite: true, inviteStateKnown: false },
+      }),
+    ];
+    const plan = planArchiveAfterUnsubscribe(threads, [target()]);
+    expect(plan.threads.map(item => item.id)).toEqual(['promo-1']);
+    expect(plan.keptInInbox).toBe(2);
+  });
+
+  it("never archives a person's thread, even as the source thread", () => {
+    const person = thread('person', 'jordan.lee@brightcart.example', ['INBOX', 'CATEGORY_PERSONAL'], ACCOUNT, {
+      subject: 'Lunch?', senderNames: ['Jordan Lee'], signals: { hasListUnsubscribe: false, hasOneClickUnsubscribe: false, isBulk: false },
+    });
+    expect(isArchivableAfterUnsubscribe(person)).toBe(false);
+    const plan = planArchiveAfterUnsubscribe([person], [target({ threadId: 'person', senderEmail: 'jordan.lee@brightcart.example' })]);
+    expect(plan).toEqual({ threads: [], keptInInbox: 1 });
+  });
+
+  it('includes the source thread only when it is itself archivable', () => {
+    const source = thread('promo-1', 'deals@brightcart.example', ['INBOX']);
+    const automatedSource = thread('receipt', 'orders@brightcart.example', ['INBOX'], ACCOUNT, {
+      subject: 'Your receipt', signals: { hasListUnsubscribe: false, hasOneClickUnsubscribe: false, isBulk: false },
+    });
+    expect(selectThreadsToArchiveAfterUnsubscribe([source], [target()]).map(item => item.id)).toEqual(['promo-1']);
+    // Rule decision `automated`, not clear / unsubscribe: stays.
+    expect(selectThreadsToArchiveAfterUnsubscribe([automatedSource], [target({ threadId: 'receipt', senderEmail: 'orders@brightcart.example' })])).toEqual([]);
+  });
+
+  it('excludes a thread the user moved to another section', () => {
+    const moved = thread('promo-2', 'deals@brightcart.example', ['INBOX']);
+    const correction = (decision: ThreadDecisionRecord['decision'], lastMessageId = 'promo-2-m1'): ThreadDecisionRecord => ({
+      accountId: ACCOUNT, threadId: 'promo-2', lastMessageId, decision, reason: '', source: 'user', laterAt: null, model: null,
+      createdAt: '2026-10-10T12:00:00.000Z',
+    });
+    const decisions = (record: ThreadDecisionRecord) => ({ [ACCOUNT]: { 'promo-2': { user: record } } });
+    expect(isArchivableAfterUnsubscribe(moved, decisions(correction('read')))).toBe(false);
+    expect(isArchivableAfterUnsubscribe(moved, decisions(correction('clear')))).toBe(true);
+    // A correction for an older last message no longer applies.
+    expect(isArchivableAfterUnsubscribe(moved, decisions(correction('read', 'promo-2-m0')))).toBe(true);
+  });
+
+  it('says how many stayed in the inbox', () => {
+    expect(unsubscribeOutcomeFeedback({ succeeded: [target()], failed: [], archivedCount: 2, keptInInbox: 1 }).message)
+      .toBe('Unsubscribed from Brightcart Deals. 2 conversations archived. 1 conversation that may need your attention was left in the inbox.');
+    expect(unsubscribeOutcomeFeedback({ succeeded: [target()], failed: [], archivedCount: 0, keptInInbox: 2 }).message)
+      .toBe('Unsubscribed from Brightcart Deals. 2 conversations that may need your attention were left in the inbox.');
   });
 
   it('offers Undo only for the archive', () => {

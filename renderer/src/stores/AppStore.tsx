@@ -2,6 +2,7 @@ import { normalizeComposeAfterSend, type SendIntent } from '../../../shared/send
 import { DEFAULT_ACCOUNT_DEFAULTS, normalizeAccountDefaults, normalizeAccountOverrides, resolveAccountSetting } from '../../../shared/accountSettings';
 import type { GoogleSignInError } from '../../../shared/googleSignInErrors';
 import type { UnsubscribeTarget } from '../../../shared/unsubscribeConfirm';
+import type { ThreadDecisionMap } from '../../../shared/inboxSections';
 import type { AIRequestFailure } from './useAIState';
 import { useProductivityState, type ProductivityState } from './useProductivityState';
 import { useInboxSections, type InboxSectionsState } from './useInboxSections';
@@ -428,7 +429,7 @@ interface AppStoreContextType extends ProductivityState, InboxSectionsState, Sen
   markAgentDraftSuggestionApplied: (id: string) => Promise<void>;
   unsubscribeThread: (threadId?: string | null) => Promise<void>;
   /** Confirmed unsubscribe (see UnsubscribeConfirmSheet); Undo restores only the archive. */
-  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean }) => Promise<void>;
+  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean; decisions?: ThreadDecisionMap }) => Promise<void>;
   mailboxView: MailboxView;
   setMailboxView: (view: MailboxView) => void;
   mailboxCounts: Record<MailboxView, number>;
@@ -1073,6 +1074,16 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...publicSettingsState
   } = settingsState;
 
+  // Reader and agent panel unsubscribes archive with the same section
+  // corrections the inbox shows, so a thread moved out of Clear stays put.
+  const mailUnsubscribeSenders = mailState.unsubscribeSenders;
+  const sectionDecisions = inboxSectionsState.threadDecisions;
+  const unsubscribeSenders = useCallback(
+    (targets: UnsubscribeTarget[], options: { archive: boolean; decisions?: ThreadDecisionMap }) =>
+      mailUnsubscribeSenders(targets, { ...options, decisions: options.decisions ?? sectionDecisions }),
+    [mailUnsubscribeSenders, sectionDecisions],
+  );
+
   const storeValue: AppStoreContextType = useMemo(() => ({
     ...publicSettingsState,
     ...mailState,
@@ -1082,6 +1093,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...productivityState,
     ...inboxSectionsState,
     ...senderRulesState,
+    unsubscribeSenders,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,
@@ -1171,6 +1183,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     syncGmailSignature,
     openThreadFromCalendar,
     closeOpenedThread,
+    unsubscribeSenders,
   ]);
 
   return (

@@ -2,6 +2,8 @@
 // an external, irreversible action: it only runs after explicit confirmation,
 // and the toast's Undo only reverses the optional archive.
 
+import { decideByRules, isDecisionRecordCurrent } from './decision';
+import type { ThreadDecisionMap } from './inboxSections';
 import type { MailThread, UnsubscribeCandidate, UnsubscribeMethod } from './types';
 
 export interface UnsubscribeTarget {
@@ -46,28 +48,66 @@ export function senderKey(accountId: string, senderEmail: string): string {
   return `${accountId.trim().toLowerCase()}:${senderEmail.trim().toLowerCase()}`;
 }
 
+const ARCHIVABLE_AFTER_UNSUBSCRIBE = new Set(['clear', 'unsubscribe']);
+
 /**
- * Inbox threads to archive for "Also archive their messages": every cached
- * inbox thread from an unsubscribed sender (same account), plus the source
- * threads themselves when they are still in the inbox.
+ * Whether "Also archive their messages" may archive this thread: the
+ * deterministic decision is `clear` or `unsubscribe` and not protected (never
+ * a person, a security notice or an invitation), and no current user
+ * correction moved the thread to another section.
  */
-export function selectThreadsToArchiveAfterUnsubscribe(
+export function isArchivableAfterUnsubscribe(thread: MailThread, decisions?: ThreadDecisionMap | null): boolean {
+  const rule = decideByRules(thread, { accountEmail: thread.accountId });
+  if (rule.protected || !ARCHIVABLE_AFTER_UNSUBSCRIBE.has(rule.decision)) return false;
+  const user = decisions?.[thread.accountId]?.[thread.id]?.user;
+  if (user) {
+    const lastMessageId = thread.signals?.lastMessageId || null;
+    const current = isDecisionRecordCurrent(user, lastMessageId) || (!user.lastMessageId && !lastMessageId);
+    if (current && !ARCHIVABLE_AFTER_UNSUBSCRIBE.has(user.decision)) return false;
+  }
+  return true;
+}
+
+export interface UnsubscribeArchivePlan {
+  /** Threads the archive batch may contain. */
+  threads: MailThread[];
+  /** Inbox threads from the same senders (or the source threads) that stay in the inbox. */
+  keptInInbox: number;
+}
+
+/**
+ * Inbox threads to archive for "Also archive their messages": cached inbox
+ * threads from an unsubscribed sender (same account) and the source threads,
+ * each only when `isArchivableAfterUnsubscribe` allows it.
+ */
+export function planArchiveAfterUnsubscribe(
   threads: readonly MailThread[],
   unsubscribed: readonly UnsubscribeTarget[],
-): MailThread[] {
+  decisions?: ThreadDecisionMap | null,
+): UnsubscribeArchivePlan {
   const senders = new Set(unsubscribed.map(target => senderKey(target.accountId, target.senderEmail)));
   const sourceThreads = new Set(unsubscribed.map(target => `${target.accountId.trim().toLowerCase()}:${target.threadId}`));
   const seen = new Set<string>();
   const selected: MailThread[] = [];
+  let keptInInbox = 0;
   for (const thread of threads) {
     if (!thread.labelIds.some(label => label.toUpperCase() === 'INBOX')) continue;
     const key = `${thread.accountId.trim().toLowerCase()}:${thread.id}`;
     if (seen.has(key)) continue;
     if (!senders.has(senderKey(thread.accountId, thread.senderEmail)) && !sourceThreads.has(key)) continue;
     seen.add(key);
-    selected.push(thread);
+    if (isArchivableAfterUnsubscribe(thread, decisions)) selected.push(thread);
+    else keptInInbox += 1;
   }
-  return selected;
+  return { threads: selected, keptInInbox };
+}
+
+export function selectThreadsToArchiveAfterUnsubscribe(
+  threads: readonly MailThread[],
+  unsubscribed: readonly UnsubscribeTarget[],
+  decisions?: ThreadDecisionMap | null,
+): MailThread[] {
+  return planArchiveAfterUnsubscribe(threads, unsubscribed, decisions).threads;
 }
 
 function senderLabel(target: UnsubscribeTarget): string {
@@ -89,8 +129,11 @@ export function unsubscribeOutcomeFeedback(input: {
   succeeded: readonly UnsubscribeTarget[];
   failed: readonly UnsubscribeTarget[];
   archivedCount: number;
+  /** Conversations from these senders left in the inbox because they may need attention. */
+  keptInInbox?: number;
 }): UnsubscribeOutcomeFeedback {
   const { succeeded, failed, archivedCount } = input;
+  const kept = Math.max(0, input.keptInInbox || 0);
   if (succeeded.length === 0) {
     return {
       tone: 'error',
@@ -102,12 +145,15 @@ export function unsubscribeOutcomeFeedback(input: {
   }
   const who = succeeded.length === 1 ? senderLabel(succeeded[0]) : `${succeeded.length} senders`;
   const archived = archivedCount > 0 ? ` ${conversations(archivedCount)} archived.` : '';
+  const keptText = kept > 0
+    ? ` ${conversations(kept)} that may need your attention ${kept === 1 ? 'was' : 'were'} left in the inbox.`
+    : '';
   const failedText = failed.length > 0
     ? ` Could not unsubscribe from ${failed.length === 1 ? senderLabel(failed[0]) : `${failed.length} senders`}.`
     : '';
   return {
     tone: failed.length > 0 ? 'warning' : 'success',
-    message: `Unsubscribed from ${who}.${archived}${failedText}`,
+    message: `Unsubscribed from ${who}.${archived}${keptText}${failedText}`,
     offerUndo: archivedCount > 0,
   };
 }

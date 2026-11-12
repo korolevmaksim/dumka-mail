@@ -28,7 +28,14 @@ export interface ReconcilerDeps {
   buildForwardDraft(accountId: string, thread: MailThread, forwardTo: string): unknown;
   buildAutoReplyDraft(accountId: string, threadId: string, replyBody: string): unknown;
   onDraftSent?: (accountId: string, draftId: string) => void;
+  /**
+   * Throws when a parked `markDone` / `applyLabel` must not reach Gmail any
+   * more (AI proposals, sender-rule archives). A throw fails the action
+   * permanently and rolls back its local change; nothing is sent.
+   */
   validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
+  /** After an action failed permanently and its local change was rolled back. */
+  onPermanentFailure?: (action: MailActionLog) => void;
   shouldDeferAccount?: (accountId: string) => boolean;
   onActionLogChanged?: () => void;
   createRfcMessageId?: () => string;
@@ -321,6 +328,11 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
               deps.threads.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
             }
           }
+        }
+        try {
+          deps.onPermanentFailure?.(action);
+        } catch (hookError) {
+          logger.error('[Sync Worker] Post-failure hook failed:', hookError);
         }
       }
     }

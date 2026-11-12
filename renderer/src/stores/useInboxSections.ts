@@ -67,7 +67,7 @@ interface UseInboxSectionsProps {
   executeMailAction: ExecuteMailAction;
   executeBatchMailAction: (kind: 'markDone', threadIds: string[]) => Promise<void>;
   undoMailActionBatch: (batchId: string) => Promise<void>;
-  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean }) => Promise<void>;
+  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean; decisions?: ThreadDecisionMap }) => Promise<void>;
 }
 
 const UNSUBSCRIBE_PROBE_MESSAGES = 5;
@@ -413,13 +413,13 @@ export function useInboxSections({
     if (!targets) return;
     setUnsubscribeReviewBusy(true);
     try {
-      await unsubscribeSenders(targets, options);
+      await unsubscribeSenders(targets, { ...options, decisions: threadDecisions });
       setUnsubscribeReviewTargets(null);
       toggleSectionGroup('unsubscribe', false);
     } finally {
       setUnsubscribeReviewBusy(false);
     }
-  }, [toggleSectionGroup, unsubscribeReviewTargets, unsubscribeSenders]);
+  }, [threadDecisions, toggleSectionGroup, unsubscribeReviewTargets, unsubscribeSenders]);
 
   const cancelUnsubscribeReview = useCallback(() => setUnsubscribeReviewTargets(null), []);
 

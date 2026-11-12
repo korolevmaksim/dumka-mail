@@ -275,3 +275,15 @@ export function isSenderRuleActionPayload(payloadJson: string | null | undefined
     return false;
   }
 }
+
+/** The rule id of a sender-rule action payload, else null. */
+export function senderRuleIdFromPayload(payloadJson: string | null | undefined): string | null {
+  if (!payloadJson) return null;
+  try {
+    const parsed = JSON.parse(payloadJson) as { provenance?: { origin?: unknown; ruleId?: unknown } } | null;
+    if (parsed?.provenance?.origin !== SENDER_RULE_PROVENANCE_ORIGIN) return null;
+    return typeof parsed.provenance.ruleId === 'string' && parsed.provenance.ruleId ? parsed.provenance.ruleId : null;
+  } catch {
+    return null;
+  }
+}

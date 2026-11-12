@@ -24,6 +24,7 @@ import {
   isSenderRuleEligible,
   matchSenderRule,
   senderRuleActionPayload,
+  senderRuleIdFromPayload,
 } from '../shared/senderRules';
 import type { MailActionLog, MailMessage, MailThread, SenderRule, SenderRulesChangedEvent } from '../shared/types';
 
@@ -323,6 +324,142 @@ export const SenderRulesService = {
       ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
       deps?.logError('Sender rule archive was rejected by Gmail and rolled back.', error, { accountId, threadId: thread.id });
       return thread;
+    }
+  },
+
+  // --- Parked rule archives ------------------------------------------------------
+  //
+  // A rule archive that hit a retryable Gmail error waits as `pending_sync`.
+  // Before it may reach Gmail (on replay, or when a sync sees the thread
+  // again) it is checked against the current state with the same gate as on
+  // arrival (`ruleFor`); one that no longer qualifies is dropped, never sent.
+
+  /** Why a parked rule archive must not reach Gmail now; null while it still may. */
+  parkedArchiveBlockReason(action: MailActionLog, current?: MailThread | null): string | null {
+    const ruleId = senderRuleIdFromPayload(action.payloadJson);
+    if (!ruleId) return 'The action has no sender-rule provenance.';
+    if (!action.threadId) return 'The action has no thread.';
+    const thread = current === undefined ? this.readThreadBeforeArchive(action.accountId, action.threadId) : current;
+    if (!thread) return 'The conversation no longer exists.';
+    const archive = SenderRulesRepo.getArchive(action.id);
+    if (!archive || archive.origin !== 'senderRule') return 'The rule archive record is gone.';
+    if (archive.broughtBackAt) return 'The conversation was brought back.';
+    const settings = readSettings();
+    const accountId = normalizeAccountId(action.accountId);
+    const rule = getSenderRules(settings, accountId).find(candidate => candidate.id === ruleId);
+    if (!rule) return 'The sender rule was deleted.';
+    if (!rule.enabled) return 'The sender rule is switched off.';
+    if (resolveAccountSetting(settings, accountId, 'agentAutonomy').value !== 'prepareAndRules') {
+      return 'The account no longer lets the agent apply rules.';
+    }
+    // The authority: the arrival gate, judging the thread as it is now (its
+    // signals include any message that arrived since) as if still in the inbox.
+    const asInbox: MailThread = thread.labelIds.some(label => label.toUpperCase() === 'INBOX')
+      ? thread
+      : { ...thread, labelIds: [...thread.labelIds, 'INBOX'] };
+    const match = this.ruleFor(asInbox, archive.archivedAt, settings);
+    if (!match || match.id !== ruleId) {
+      return 'The conversation no longer qualifies (a person, a protected notice or invitation, a correction, or bring-backs).';
+    }
+    return null;
+  },
+
+  /**
+   * Ends a parked rule archive without sending it: the action is failed with
+   * `reason`, optionally the local archive is undone and the "Handled for
+   * you" record removed, and the renderer is told.
+   */
+  dropParkedArchive(action: MailActionLog, reason: string, options: { rollbackLocal: boolean; forgetRecord: boolean }) {
+    try {
+      const stored = ActionLogRepo.get(action.id) || action;
+      if (stored.status === 'pending_sync' || stored.status === 'queued' || stored.status === 'running') {
+        ActionLogRepo.save({ ...stored, status: 'failed', completedAt: now().toISOString(), failureMessage: `Sender rule archive not sent: ${reason}` });
+      }
+      if (options.rollbackLocal && action.threadId) ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
+      if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
+    } catch (error) {
+      deps?.logError('Could not drop a parked sender-rule archive.', error, { accountId: action.accountId, threadId: action.threadId });
+    }
+    safePublish({ accountId: normalizeAccountId(action.accountId) });
+  },
+
+  /**
+   * The reconciler's replay gate for sender-rule actions (passed as part of
+   * `validateAgentProposalReplay`). Throws when the parked archive must not
+   * reach Gmail; the reconciler then fails it and puts INBOX back locally.
+   */
+  assertParkedArchiveReplayable(action: MailActionLog) {
+    const reason = action.kind === 'markDone' ? this.parkedArchiveBlockReason(action) : 'Sender rules only archive.';
+    if (reason) throw new Error(`Sender rule archive not sent: ${reason}`);
+  },
+
+  /**
+   * The reconciler failed a rule archive permanently (rejected by the replay
+   * gate or by Gmail) and rolled back its local change: remove it from
+   * "Handled for you" and tell the renderer. Returns the thread as it is now
+   * for the mailbox delta, or null when this is not a rule archive.
+   */
+  afterReplayRejected(action: MailActionLog): MailThread | null {
+    if (!action.threadId || !isSenderRuleActionPayload(action.payloadJson)) return null;
+    this.dropParkedArchive(action, action.failureMessage || 'Rejected.', { rollbackLocal: false, forgetRecord: true });
+    return this.readThreadBeforeArchive(action.accountId, action.threadId);
+  },
+
+  /** Parked (not yet sent) rule archives of one thread. */
+  parkedArchivesFor(accountId: string, threadId: string): MailActionLog[] {
+    return ActionLogRepo.listOpenMutations(accountId).filter(action => (
+      action.threadId === threadId
+      && action.kind === 'markDone'
+      && (action.status === 'pending_sync' || action.status === 'queued')
+      && isSenderRuleActionPayload(action.payloadJson)
+    ));
+  },
+
+  /**
+   * A sync is about to persist these threads as Gmail has them (still in the
+   * inbox, since the archive never reached Gmail). A parked rule archive
+   * whose thread no longer qualifies (for example a new invitation or a
+   * person's reply arrived) is dropped first, so the pending-label overlay no
+   * longer hides the thread. Returns the ids of threads whose archive was dropped.
+   */
+  revalidateParkedArchives(accountId: string, threads: readonly MailThread[]): Set<string> {
+    const dropped = new Set<string>();
+    if (threads.length === 0) return dropped;
+    let parked: MailActionLog[];
+    try {
+      const ids = new Set(threads.map(thread => thread.id));
+      parked = ActionLogRepo.listOpenMutations(accountId).filter(action => (
+        action.threadId && ids.has(action.threadId)
+        && action.kind === 'markDone'
+        && (action.status === 'pending_sync' || action.status === 'queued')
+        && isSenderRuleActionPayload(action.payloadJson)
+      ));
+    } catch (error) {
+      deps?.logError('Could not read parked sender-rule archives.', error, { accountId });
+      return dropped;
+    }
+    for (const action of parked) {
+      const fresh = threads.find(thread => thread.id === action.threadId) || null;
+      const reason = this.parkedArchiveBlockReason(action, fresh);
+      if (!reason) continue;
+      this.dropParkedArchive(action, reason, { rollbackLocal: false, forgetRecord: true });
+      dropped.add(action.threadId!);
+    }
+    return dropped;
+  },
+
+  /**
+   * The user brought the thread back (Undo, restore, "Bring back"): no parked
+   * rule archive of it may ever replay. The archive record stays so the
+   * bring-back is counted against the rule.
+   */
+  cancelParkedArchivesOnRestore(accountId: string, threadId: string) {
+    try {
+      for (const action of this.parkedArchivesFor(accountId, threadId)) {
+        this.dropParkedArchive(action, 'The conversation was brought back.', { rollbackLocal: false, forgetRecord: false });
+      }
+    } catch (error) {
+      deps?.logError('Could not cancel parked sender-rule archives.', error, { accountId, threadId });
     }
   },
 

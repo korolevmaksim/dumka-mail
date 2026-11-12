@@ -41,10 +41,12 @@ import {
 import { applyDeltaToThreads } from './mailboxDelta';
 import { mailActionFailureMessage } from '../../../shared/mailActionErrors';
 import {
-  selectThreadsToArchiveAfterUnsubscribe,
+  isArchivableAfterUnsubscribe,
+  planArchiveAfterUnsubscribe,
   unsubscribeOutcomeFeedback,
   type UnsubscribeTarget,
 } from '../../../shared/unsubscribeConfirm';
+import type { ThreadDecisionMap } from '../../../shared/inboxSections';
 
 type BatchMailActionKind = 'markRead' | 'markUnread' | 'markDone' | 'moveToTrash' | 'restoreFromTrash' | 'reportSpam' | 'restoreFromSpam';
 
@@ -1789,7 +1791,7 @@ export function useMailState({
   // normal batch path so the toast's Undo restores only the archive.
   const unsubscribeSenders = async (
     targets: UnsubscribeTarget[],
-    options: { archive: boolean },
+    options: { archive: boolean; decisions?: ThreadDecisionMap },
   ): Promise<void> => {
     if (targets.length === 0) return;
     const succeeded: UnsubscribeTarget[] = [];
@@ -1812,9 +1814,22 @@ export function useMailState({
     loadActionLog();
 
     let archivedCount = 0;
+    let keptInInbox = 0;
     let undo: (() => Promise<void>) | null = null;
     if (options.archive && succeeded.length > 0) {
-      const archiveIds = selectThreadsToArchiveAfterUnsubscribe(threadsRef.current, succeeded).map(thread => thread.id);
+      // Only clear / unsubscribe threads that are not protected: a person, a
+      // security notice or an invitation from the same address stays put.
+      const plan = planArchiveAfterUnsubscribe(threadsRef.current, succeeded, options.decisions);
+      keptInInbox = plan.keptInInbox;
+      // Re-checked against the latest cached threads right at the batch boundary.
+      const latest = new Map(threadsRef.current.map(thread => [`${thread.accountId}:${thread.id}`, thread]));
+      const archiveIds = plan.threads
+        .filter(thread => {
+          const current = latest.get(`${thread.accountId}:${thread.id}`);
+          return Boolean(current) && isArchivableAfterUnsubscribe(current!, options.decisions);
+        })
+        .map(thread => thread.id);
+      keptInInbox += plan.threads.length - archiveIds.length;
       const outcome = await runBatchMailAction('markDone', archiveIds);
       if (outcome) {
         archivedCount = outcome.aggregated.succeeded;
@@ -1822,7 +1837,7 @@ export function useMailState({
       }
     }
 
-    const feedback = unsubscribeOutcomeFeedback({ succeeded, failed, archivedCount });
+    const feedback = unsubscribeOutcomeFeedback({ succeeded, failed, archivedCount, keptInInbox });
     emitToast({
       type: feedback.tone,
       message: feedback.message,

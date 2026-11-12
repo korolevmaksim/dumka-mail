@@ -941,8 +941,13 @@ app.whenReady().then(async () => {
     },
     validateAgentProposalReplay: (action, payload) => {
       const provenance = payload.provenance;
-      if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)
-        || (provenance as Record<string, unknown>).origin !== 'aiAssistant') return;
+      if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)) return;
+      if ((provenance as Record<string, unknown>).origin === 'senderRule') {
+        // Same gate as when the rule first applied, against the state now.
+        SenderRulesService.assertParkedArchiveReplayable(action);
+        return;
+      }
+      if ((provenance as Record<string, unknown>).origin !== 'aiAssistant') return;
       const item = payload.proposalValidationItem;
       if (!item || typeof item !== 'object' || Array.isArray(item) || !action.threadId) {
         throw new Error('This pending AI proposal is missing its replay validation proof.');
@@ -966,6 +971,12 @@ app.whenReady().then(async () => {
         labelId,
         allowOptimisticState: true,
       });
+    },
+    onPermanentFailure: action => {
+      // A rejected rule archive: the reconciler already put INBOX back locally;
+      // remove it from "Handled for you" and show the thread in the inbox again.
+      const thread = SenderRulesService.afterReplayRejected(action);
+      if (thread) publishMailboxDelta(action.accountId, [thread], []);
     },
     onActionLogChanged: () => {
       mainWindow?.webContents.send('api:actionLogChanged');
@@ -2296,6 +2307,9 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   const archivesFromInbox = resolvedKind === 'markDone' && removeLabelIds.includes('INBOX');
   const restoresToInbox = addLabelIds.includes('INBOX');
   const threadBeforeArchive = archivesFromInbox ? SenderRulesService.readThreadBeforeArchive(email, threadId) : null;
+  // Brought back (Undo, restore, "Bring back"): a parked rule archive of this
+  // thread must never replay, whatever happens to this request.
+  if (restoresToInbox) SenderRulesService.cancelParkedArchivesOnRestore(email, threadId);
   const noteSenderRuleLearning = () => {
     if (archivesFromInbox) SenderRulesService.noteArchive(email, threadBeforeArchive, actionId, payloadJson);
     if (restoresToInbox) SenderRulesService.noteRestore(email, threadId);
@@ -3036,6 +3050,7 @@ async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta
     listPendingActions: accountId => ActionLogRepo.listOpenMutations(accountId),
     publishDelta: publishMailboxDelta,
     afterPersist: (accountId, threads) => SenderRulesService.applyToPersistedThreads(accountId, threads),
+    revalidateParked: (accountId, threads) => { SenderRulesService.revalidateParkedArchives(accountId, threads); },
     logger: {
       warning: (scope, message, extra) => SystemLogger.warning(scope, message, extra),
     },

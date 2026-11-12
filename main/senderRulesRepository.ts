@@ -136,6 +136,12 @@ export const SenderRulesRepo = {
     return result.changes > 0;
   },
 
+  /** The archive record of one action (rule or user), or null. */
+  getArchive(actionId: string): { origin: SenderRuleArchiveOrigin; ruleId: string | null; archivedAt: string; broughtBackAt: string | null } | null {
+    const row = getDatabase().prepare('SELECT * FROM sender_rule_archives WHERE action_id = ?').get(actionId) as ArchiveRow | undefined;
+    return row ? { origin: row.origin, ruleId: row.rule_id, archivedAt: row.archived_at, broughtBackAt: row.brought_back_at } : null;
+  },
+
   /** A rule archive that failed permanently and was rolled back is forgotten. */
   forgetArchive(actionId: string) {
     getDatabase().prepare('DELETE FROM sender_rule_archives WHERE action_id = ?').run(actionId);
