@@ -6,6 +6,7 @@
 //   DR_PROFILE=<dir>   throwaway home directory (required)
 //   DR_OAUTH=0         do not provide a Google OAuth client file (first-run error state)
 //   DR_AI=1            pre-configure the fake OpenAI-compatible provider
+//   DR_THEME=dark      pin the system theme the app follows (dark | light)
 //   DR_CONTROL_PORT    port of the local control server (default 9334)
 'use strict';
 
@@ -20,7 +21,9 @@ if (!profile) throw new Error('DR_PROFILE is required');
 fs.mkdirSync(profile, { recursive: true });
 process.env.HOME = profile;
 
-const { app, shell, Notification, dialog } = require('electron');
+const { app, shell, Notification, dialog, nativeTheme } = require('electron');
+// The app follows the system theme by default; pin it so screenshots do not depend on the time of day.
+if (process.env.DR_THEME === 'dark' || process.env.DR_THEME === 'light') nativeTheme.themeSource = process.env.DR_THEME;
 app.setPath('userData', path.join(profile, 'userData'));
 app.setPath('downloads', path.join(profile, 'Downloads'));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');

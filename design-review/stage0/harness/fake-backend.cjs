@@ -38,15 +38,56 @@ function createBackend({ logDir, now = Date.now(), workBulk, homeBulk, bigInbox 
   const CALENDAR_SCOPES = ['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.freebusy', 'https://www.googleapis.com/auth/calendar.calendarlist.readonly'];
   const grantedScopes = () => [...GMAIL_SCOPES, ...(state.grantCalendar ? CALENDAR_SCOPES : [])].join(' ');
 
+  /** A plausible working week around today, all `.example` people. */
+  function syntheticEvents(email) {
+    const work = email === 'alex.morgan@northwind.example';
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    const at = (offsetDays, hour, minute = 0) => new Date(day.getTime() + offsetDays * 86400000 + hour * 3600000 + minute * 60000).toISOString();
+    const dateOnly = offsetDays => new Date(day.getTime() + offsetDays * 86400000 + 12 * 3600000).toISOString().slice(0, 10);
+    const me = { email, self: true, responseStatus: 'accepted' };
+    const person = (name, email, responseStatus = 'accepted') => ({ displayName: name, email, responseStatus });
+    const timed = (id, summary, offset, startHour, startMinute, minutes, attendees = [], extra = {}) => ({
+      id, status: 'confirmed', summary, htmlLink: `https://calendar.synthetic.example/${id}`,
+      start: { dateTime: at(offset, startHour, startMinute), timeZone: 'Europe/Berlin' },
+      end: { dateTime: new Date(Date.parse(at(offset, startHour, startMinute)) + minutes * 60000).toISOString(), timeZone: 'Europe/Berlin' },
+      organizer: { email: me.email, self: true }, attendees: attendees.length ? [me, ...attendees] : undefined,
+      created: at(-10, 9), updated: at(-1, 9), ...extra,
+    });
+    // Each account has its own calendar: the personal one only carries private plans.
+    if (!work) {
+      return [
+        timed('ev-dentist', 'Dentist', 5, 8, 30, 45),
+        timed('ev-bookclub', 'Book club', 2, 19, 0, 120, [person('Leo Fischer', 'leo.fischer@postbox.example')]),
+        timed('ev-lake', 'Weekend: lake with Mara', 2, 10, 0, 240),
+      ];
+    }
+    return [
+      timed('ev-standup', 'Rollouts stand-up', 0, 9, 30, 15, [person('Daniel Okafor', 'daniel.okafor@northwind.example'), person('Nora Petrov', 'nora.petrov@northwind.example')]),
+      timed('ev-focus', 'Focus: board deck numbers', 0, 10, 30, 90),
+      timed('ev-lumen', 'Lumen Labs weekly sync', 0, 14, 0, 45, [person('Priya Raman', 'priya.raman@lumenlabs.example')], { location: 'Video call', description: 'Pilot status, open risks, next steps.' }),
+      timed('ev-1on1', '1:1 Daniel / Alex', 1, 11, 0, 30, [person('Daniel Okafor', 'daniel.okafor@northwind.example')]),
+      timed('ev-interview', 'Interview loop: Jamie Chen', 1, 14, 0, 60, [person('Marcus Lee', 'marcus.lee@northwind.example', 'needsAction')]),
+      timed('ev-contract', 'Contract redlines review', 2, 16, 0, 45, [person('Sofia Lindqvist', 'sofia@harborpine.example', 'tentative')]),
+      timed('ev-design', 'Onboarding flow v4 walkthrough', -1, 15, 0, 60, [person('Yuki Tanaka', 'yuki.tanaka@northwind.example')]),
+      timed('ev-board', 'Board deck dry run', 3, 13, 0, 90, [person('Daniel Okafor', 'daniel.okafor@northwind.example'), person('Nora Petrov', 'nora.petrov@northwind.example')]),
+      { id: 'ev-freeze', status: 'confirmed', summary: 'Deploy freeze', start: { date: dateOnly(1) }, end: { date: dateOnly(4) }, organizer: { email: me.email, self: true }, created: at(-10, 9), updated: at(-1, 9) },
+    ];
+  }
+
   function handleCalendar(url, init) {
     const method = (init?.method || 'GET').toUpperCase();
     const body = init?.body && typeof init.body === 'string' ? safeJson(init.body) : {};
     log('calendar-requests.jsonl', { at: new Date().toISOString(), method, path: url.pathname, body });
     if (url.pathname.endsWith('/users/me/calendarList')) {
-      return json({ items: [{ id: 'primary', summary: 'Alex Morgan', primary: true, accessRole: 'owner', selected: true, backgroundColor: '#4986e7', foregroundColor: '#ffffff', timeZone: 'Europe/Berlin' }], nextSyncToken: 'cl-1' });
+      return json({ items: [{ id: 'primary', summary: mailboxes[emailForAuth(init)]?.profile?.name || 'Calendar', primary: true, accessRole: 'owner', selected: true, backgroundColor: emailForAuth(init) === 'alex.morgan@northwind.example' ? '#4986e7' : '#d06b64', foregroundColor: '#ffffff', timeZone: 'Europe/Berlin' }], nextSyncToken: 'cl-1' });
     }
     if (url.pathname.endsWith('/freeBusy')) return json({ calendars: {} });
-    if (method === 'GET' && /\/events$/.test(url.pathname)) return json({ items: [], nextSyncToken: 'ev-1', timeZone: 'Europe/Berlin' });
+    if (method === 'GET' && /\/events$/.test(url.pathname)) {
+      // A first (full) listing gets the synthetic week; incremental syncs have nothing new.
+      const items = url.searchParams.get('syncToken') ? [] : syntheticEvents(emailForAuth(init));
+      return json({ items, nextSyncToken: 'ev-1', timeZone: 'Europe/Berlin' });
+    }
     if (method === 'GET') return json({ error: { code: 404, message: 'Not Found' } }, 404);
     return json({ id: 'synthetic-event', status: 'confirmed', ...body });
   }
@@ -197,11 +238,20 @@ function createBackend({ logDir, now = Date.now(), workBulk, homeBulk, bigInbox 
       log('ai-requests.jsonl', { at: new Date().toISOString(), url: href, body });
       await sleep(state.aiLatencyMs);
       if (state.aiFail) return json({ error: { message: 'The model is overloaded. Please retry.' } }, 503);
-      if (url.pathname.endsWith('/models')) return json({ data: [{ id: 'synthetic-mail-model' }] });
+      if (url.pathname.endsWith('/models')) {
+        return json({ data: [{ id: 'synthetic-mail-model' }, { id: 'synthetic-mail-small' }, { id: 'synthetic-embedding' }] });
+      }
       const content = aiReply(body, { mailboxes, now });
       return json({ id: 'chatcmpl-synthetic', object: 'chat.completion', model: body.model || 'synthetic-mail-model',
         choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }],
         usage: { prompt_tokens: 1200, completion_tokens: 220, total_tokens: 1420 } });
+    }
+    // Model list only (for the settings picker); OpenAI completions are not faked.
+    if (url.hostname === 'api.openai.com' && url.pathname === '/v1/models') {
+      await sleep(state.aiLatencyMs);
+      if (state.aiFail) return json({ error: { message: 'The model is overloaded. Please retry.' } }, 503);
+      return json({ data: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-4.1', 'gpt-audio', 'gpt-realtime-2.1', 'gpt-image-2']
+        .map(id => ({ id, object: 'model' })) });
     }
     if (url.hostname === 'links.example') {
       log('unsubscribe-requests.jsonl', { at: new Date().toISOString(), url: href, method: init?.method || 'GET' });
