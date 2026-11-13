@@ -190,9 +190,32 @@ describe('performMailboxSyncForAccount', () => {
 
   it('falls back to a full inbox sync when history is expired', async () => {
     const h = makeDeps({ historyId: '10' });
+    const base = h.deps.getSyncState('me@example.com');
+    if (!base) throw new Error('Expected initial sync state');
+    const oldState = { ...base, historyBackfillPageToken: 'old-page',
+      historyBackfillThreadsSynced: 2000, historyBackfillCompletedAt: '2026-07-01T12:00:00Z' };
+    h.deps.getSyncState = () => oldState;
     h.deps.syncIncremental = async () => { throw new Error('HISTORY_EXPIRED'); };
     await performMailboxSyncForAccount('me@example.com', h.deps);
     expect(h.savedStates[0].historyId).toBe('100');
+    expect(h.savedStates[0]).toMatchObject({ historyBackfillPageToken: null, historyBackfillCompletedAt: null,
+      historyBackfillPagesSynced: 0, historyBackfillThreadsSynced: 0 });
     expect(h.deltas[0].upserts.map(thread => thread.id)).toEqual(['inbox']);
+  });
+
+  it('preserves backfill progress committed during an incremental thread fetch', async () => {
+    const h = makeDeps({ historyId: '10', incremental: { updatedThreadIds: ['t1'], deletedThreadIds: [], historyId: '20' } });
+    const current = h.deps.getSyncState('me@example.com');
+    if (!current) throw new Error('Expected initial sync state');
+    h.deps.getSyncState = () => current;
+    h.deps.fetchThreadDetail = async () => {
+      current.historyBackfillPageToken = 'new-page';
+      current.historyBackfillPagesSynced = 2;
+      current.historyBackfillThreadsSynced = 40;
+      return [message('t1')];
+    };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.savedStates[0]).toMatchObject({ historyId: '20', historyBackfillPageToken: 'new-page',
+      historyBackfillPagesSynced: 2, historyBackfillThreadsSynced: 40 });
   });
 });

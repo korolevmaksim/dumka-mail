@@ -40,6 +40,7 @@ import {
 import { isNetworkError, isRetryableRemoteError, scheduledAtForRetry, startBackgroundSyncWorker } from './actionReconciler';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
+import { completeHistoryBackfillPage, ensureHistoryCoverage, sameHistoryBackfillRun } from './mailboxHistoryRecovery';
 import { createRfcMessageId } from '../shared/rfcMessageId';
 import { parseMailActionPayload } from '../shared/mailActionFeedback';
 import { GOOGLE_CALENDAR_SCOPES, GOOGLE_CONTACTS_SCOPES, GOOGLE_OAUTH_SCOPES, GoogleSignInFailure } from './gmailOAuth';
@@ -2754,6 +2755,10 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
     const page = await GmailSyncService.syncBackfillPage(email, syncState?.historyBackfillPageToken || undefined);
     // Disconnect may have purged the account while the page was being fetched.
     if (!accountStillConfigured(email)) throw new BackfillAccountRemovedError(email);
+    if (!sameHistoryBackfillRun(syncState, SyncStateRepo.get(email))) {
+      return { threadsIndexed: SyncStateRepo.get(email)?.historyBackfillThreadsSynced || 0,
+        pageThreadsIndexed: 0, completed: false, busy: true };
+    }
     await saveThreadsToDatabase(page.threads);
     await saveMessagesToDatabase(page.messages);
     if (!accountStillConfigured(email)) {
@@ -2766,22 +2771,13 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
     }
 
     const now = new Date().toISOString();
-    const nextPagesSynced = (syncState?.historyBackfillPagesSynced || 0) + 1;
-    const nextThreadsSynced = (syncState?.historyBackfillThreadsSynced || 0) + page.threads.length;
-
-    SyncStateRepo.save({
-      accountId: email,
-      historyId: syncState?.historyId || null,
-      lastFullSyncAt: syncState?.lastFullSyncAt || null,
-      historyBackfillPageToken: page.nextPageToken || null,
-      lastHistoryBackfillAt: now,
-      historyBackfillCompletedAt: page.nextPageToken ? null : now,
-      historyBackfillPagesSynced: nextPagesSynced,
-      historyBackfillThreadsSynced: nextThreadsSynced
-    });
+    const nextState = completeHistoryBackfillPage(syncState, SyncStateRepo.get(email), page, now);
+    if (!nextState) return { threadsIndexed: SyncStateRepo.get(email)?.historyBackfillThreadsSynced || 0,
+      pageThreadsIndexed: 0, completed: false, busy: true };
+    SyncStateRepo.save(nextState);
 
     const result = {
-      threadsIndexed: nextThreadsSynced,
+      threadsIndexed: nextState.historyBackfillThreadsSynced,
       pageThreadsIndexed: page.threads.length,
       completed: !page.nextPageToken,
       busy: false
@@ -2875,6 +2871,12 @@ function hasCompletedFirstSync(state: SyncState | null): boolean {
 
 function requestHistoryBackfill(email: string, options: { manual?: boolean } = {}): void {
   if (!email) return;
+  if (ensureHistoryCoverage(email, {
+    getSyncState: accountId => SyncStateRepo.get(accountId),
+    saveSyncState: state => SyncStateRepo.save(state),
+    getSetting: key => SettingsRepo.get(key),
+    setSetting: (key, value) => SettingsRepo.set(key, value),
+  })) SystemLogger.info('Mailbox Backfill', 'Restarted history coverage from newest mail to repair possible gaps.', { accountId: email });
   // The user's own "index older mail" nudge skips the failure backoff.
   if (options.manual) historyBackfillBackoff.delete(email);
   const state = SyncStateRepo.get(email);

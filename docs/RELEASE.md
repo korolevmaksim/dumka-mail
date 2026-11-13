@@ -29,6 +29,20 @@ Windows/Linux packages are not code-signed by default.
 
 ## Gmail quota regression checks
 
+When Gmail History has expired, the initial 30-thread inbox fetch is only a
+preview. Historical coverage restarts from the newest page, even if an older
+backfill cursor or completion marker exists. A per-account policy marker makes
+existing installations restart coverage once on upgrade, repairing gaps left
+by the previous fallback without deleting cached messages. Sync and backfill
+re-read the current sync state before saving, so a slow page cannot overwrite a
+new live History cursor and a live sync cannot rewind backfill progress. Pages
+from a superseded backfill run are discarded. This recovery remains paced by
+the quota governor; complete historical coverage takes time.
+
+The sectioned inbox places People and other decision sections before automated
+mail. An old first row is not a global newest-mail timestamp; newer automated
+mail may appear further down the list.
+
 Gmail can return a temporary quota failure as HTTP 403 with `rateLimitExceeded`,
 `userRateLimitExceeded`, or `RATE_LIMIT_EXCEEDED`, as well as HTTP 429. These
 failures keep optimistic mail actions in `pending_sync` with a cooldown instead

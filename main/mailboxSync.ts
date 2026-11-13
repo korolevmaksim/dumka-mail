@@ -1,6 +1,7 @@
 import { applyPendingLabelDeltas } from '../shared/mailActions';
 import type { MailActionLog, MailboxDelta, MailMessage, MailThread, SyncState } from '../shared/types';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
+import { restartHistoryBackfill } from './mailboxHistoryRecovery';
 
 export interface MailboxSyncDeps {
   getSyncState(email: string): SyncState | null;
@@ -106,7 +107,7 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     revalidateParked(fullSync.threads);
     const saved = await persistThreads(fullSync.threads);
     await persistMessages(fullSync.messages);
-    deps.saveSyncState(deps.nextSyncState(email, syncState, fullSync.historyId, now().toISOString()));
+    deps.saveSyncState(restartHistoryBackfill(deps.nextSyncState(email, deps.getSyncState(email), fullSync.historyId, now().toISOString())));
     upserts.push(...await afterPersist(saved));
     return deps.publishDelta(email, upserts, deletedThreadIds);
   }
@@ -146,7 +147,7 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     }
 
     if (!threadFetchFailed) {
-      deps.saveSyncState(deps.nextSyncState(email, syncState, incrementalSync.historyId));
+      deps.saveSyncState(deps.nextSyncState(email, deps.getSyncState(email), incrementalSync.historyId));
     }
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'HISTORY_EXPIRED') {
@@ -154,7 +155,7 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
       revalidateParked(fullSync.threads);
       const saved = await persistThreads(fullSync.threads);
       await persistMessages(fullSync.messages);
-      deps.saveSyncState(deps.nextSyncState(email, syncState, fullSync.historyId, now().toISOString()));
+      deps.saveSyncState(restartHistoryBackfill(deps.nextSyncState(email, deps.getSyncState(email), fullSync.historyId, now().toISOString())));
       upserts.push(...await afterPersist(saved));
       return deps.publishDelta(email, upserts, deletedThreadIds);
     }
