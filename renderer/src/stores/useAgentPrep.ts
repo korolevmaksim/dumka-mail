@@ -12,6 +12,7 @@
 // configured, account allows mail text); a refused request reads as `idle`.
 import { useMemo, useSyncExternalStore } from 'react';
 import { parseSummaryBullets, type AIStreamEvent, type ModelStatus as PipelineModelStatus } from '../../../shared/agentPrompts';
+import { mayStartDraftRequest } from '../lib/agentDraftRequests';
 import type { MailThread } from '../../../shared/types';
 
 export type ModelStatus = PipelineModelStatus;
@@ -193,7 +194,7 @@ function requestAgentDraft(thread: MailThread, options: { inAdvance?: boolean } 
   const electronAPI = api();
   if (!electronAPI || modelStatus === 'none') return;
   const key = threadKey(thread);
-  if (drafts.has(key)) return;
+  if (!mayStartDraftRequest(drafts.get(key), Boolean(options.inAdvance))) return;
   const requestId = newRequestId();
   drafts.set(key, { state: { status: 'loading', bodyPlain: '' }, requestId, text: '', skipped: false });
   requestKeys.set(requestId, { kind: 'draft', key });
