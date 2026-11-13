@@ -23,13 +23,13 @@
   "main": "dist-electron/main/index.js",
   "type": "commonjs",
   "engines": {
-    "node": ">=22",
+    "node": ">=22.12.0",
     "npm": ">=10"
   },
   "scripts": {
     "dev": "vite",
     "dev:marketing": "VITE_MARKETING_DEMO=1 vite --host 127.0.0.1",
-    "build": "tsc && vite build",
+    "build": "node scripts/clean-build.mjs && tsc && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "release:preflight": "node scripts/release-preflight.mjs",
@@ -83,31 +83,29 @@
     }
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^12.11.1",
-    "eventsource": "^4.1.0"
-  },
-  "overrides": {
-    "@hono/node-server": "2.0.11"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "better-sqlite3": "13.1.1"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.1",
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/eventsource": "^1.1.15",
-    "@types/node": "^26.0.0",
-    "@types/react": "^19.0.10",
-    "@types/react-dom": "^19.0.10",
-    "@vitejs/plugin-react": "^6.0.3",
-    "electron": "^42.5.0",
-    "electron-builder": "^26.15.3",
-    "lucide-react": "^1.21.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "tailwindcss": "^4.3.1",
-    "typescript": "^6.0.3",
-    "vite": "^8.1.0",
-    "vite-plugin-electron": "^1.1.0",
-    "vite-plugin-electron-renderer": "^1.0.0",
-    "vitest": "^4.1.9"
+    "@tailwindcss/vite": "4.3.5",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0",
+    "lucide-react": "1.72.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.5",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vite-plugin-electron": "1.2.0",
+    "vite-plugin-electron-renderer": "1.0.0",
+    "vitest": "5.1.0"
+  },
+  "overrides": {
+    "minimatch@>=7.0.0 <11.0.1": "11.0.8"
   }
 }

@@ -79,10 +79,6 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
   StreamableHTTPClientTransport: sdkMock.FakeStreamableHTTPTransport,
 }));
 
-vi.mock('eventsource', () => ({
-  default: class FakeEventSource {},
-}));
-
 import { MCPManagerImpl } from '../main/mcpManager';
 
 describe('MCPManagerImpl transport and timeout behavior', () => {

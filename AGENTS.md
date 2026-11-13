@@ -39,7 +39,7 @@ Channel naming convention: `db:*` channels are thin wrappers over the repositori
 
 ### Data layer (`main/database.ts` + `main/migrations.ts`)
 
-`better-sqlite3` (synchronous). It is **externalized** from the Vite/Rollup bundle (`rollupOptions.external` in `vite.config.mts`) because it is a native module — it must remain a real `node_modules` dependency and is the only entry under `dependencies` in `package.json`.
+`better-sqlite3` (synchronous). It is **externalized** from the Vite/Rollup bundle (`rollupOptions.external` in `vite.config.mts`) because it is a native module — it must remain a real `node_modules` dependency and must remain under `dependencies` in `package.json` alongside the MCP SDK. Version 13 uses Node-API prebuilds; verify it loads in both Node and Electron instead of forcing a per-Electron ABI rebuild. See `docs/DEPENDENCIES.md` for pinned versions and the scoped security override.
 
 - DB lives at `~/Library/Application Support/dumka-mail/database.sqlite`, opened with WAL + `foreign_keys=ON`. The app migrates the pre-rename `dumka-mail-agy` support directory on first launch when the new directory does not exist.
 - Repositories are plain object literals (`AccountsRepo`, `ThreadsRepo`, `MessagesRepo`, `DraftsRepo`, `RemindersRepo`, `SyncStateRepo`, `ActionLogRepo`, `AIConversationsRepo`, `SearchRepo`, `SettingsRepo`) that map snake_case DB rows ↔ camelCase `shared/types.ts` interfaces. Full-text search uses an FTS5 virtual table `mail_search`.

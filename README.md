@@ -49,7 +49,7 @@ The complete asset guide, including the GitHub social preview, is in [docs/media
 ## Requirements
 
 - macOS for the currently tested desktop package. Windows/Linux use Electron safeStorage for local token persistence when OS encryption is available.
-- Node.js 22 or newer.
+- Node.js 22.12 or newer (Node.js 24 is used in CI and the Electron runtime).
 - npm 10 or newer.
 - A Google OAuth desktop client JSON file with Gmail API access. Calendar and Contacts scopes are requested later from Settings only when those integrations are enabled.
 
@@ -136,3 +136,5 @@ Please do not open public issues with secrets, tokens, real email content, or OA
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+Dependency versions, security resolution and compatibility checks are recorded in [Dependency maintenance](docs/DEPENDENCIES.md).

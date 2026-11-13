@@ -12,7 +12,6 @@ cp -R node_modules/better-sqlite3 node_modules/bindings node_modules/file-uri-to
 cp "release/mac/Dumka Mail.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
    "$DR_SCRATCH/app/node_modules/better-sqlite3/build/Release/"
 ln -s "$PWD/node_modules/@modelcontextprotocol/sdk" "$DR_SCRATCH/app/node_modules/@modelcontextprotocol/sdk"
-ln -s "$PWD/node_modules/eventsource" "$DR_SCRATCH/app/node_modules/eventsource"
 
 design-review/stage0/harness/launch.sh demo fresh=1            # пустой профиль
 design-review/stage0/harness/launch.sh demo DR_AI=1            # с заскриптованной моделью
