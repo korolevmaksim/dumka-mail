@@ -724,39 +724,38 @@ function abortedRequestError(): Error {
   return Object.assign(new Error('The request was cancelled.'), { name: 'AbortError' });
 }
 
-/** `fetch` with a timeout. An `init.signal` from the caller cancels the request as well. */
+/**
+ * `fetch` with a timeout on the wait for the response. An `init.signal` from
+ * the caller cancels the request too, and stays connected after the headers
+ * arrive: aborting while the body is still being read (`res.json()`,
+ * `res.text()`) cancels that read as well.
+ */
 function fetchWithTimeoutBase(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
   const controller = new AbortController();
   const callerSignal = init.signal || null;
+  if (callerSignal?.aborted) return Promise.reject(abortedRequestError());
+  // `AbortSignal.any` follows the caller's signal for the whole life of the
+  // request, body included, and holds no listener on it once the request is gone.
+  const signal = callerSignal ? AbortSignal.any([controller.signal, callerSignal]) : controller.signal;
   let settled = false;
   let timeout: ReturnType<typeof setTimeout> | null = null;
 
   return new Promise<Response>((resolve, reject) => {
-    const onCallerAbort = () => {
-      controller.abort();
-      finish(() => reject(abortedRequestError()));
-    };
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
-      callerSignal?.removeEventListener('abort', onCallerAbort);
       fn();
     };
-    if (callerSignal?.aborted) {
-      onCallerAbort();
-      return;
-    }
-    callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
 
     timeout = setTimeout(() => {
       controller.abort();
       finish(() => reject(new Error(`${label} request timed out after ${timeoutMs}ms.`)));
     }, timeoutMs);
 
-    fetch(url, { ...init, signal: controller.signal }).then(
+    fetch(url, { ...init, signal }).then(
       response => finish(() => resolve(response)),
-      error => finish(() => reject(error)),
+      error => finish(() => reject(callerSignal?.aborted ? abortedRequestError() : error)),
     );
   });
 }

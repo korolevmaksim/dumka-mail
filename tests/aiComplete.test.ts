@@ -220,6 +220,34 @@ describe('completeAI cancellation', () => {
     expect(providerSignal?.aborted).toBe(true);
   });
 
+  it('stays cancellable after the response headers arrive, while the body is still being read', async () => {
+    let providerSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      providerSignal = init.signal || undefined;
+      // Headers are back; the JSON body never finishes unless the request is aborted.
+      const body = new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(new TextEncoder().encode('{"content":['));
+          init.signal?.addEventListener('abort', () => stream.error(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+        },
+      });
+      return new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const controller = new AbortController();
+    const pending = completeAI(request, 'anthropic', undefined, { signal: controller.signal });
+    const outcome = pending.then(() => 'resolved', error => (error as Error).name);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // Let the headers be delivered and the body read begin.
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(providerSignal?.aborted).toBe(false);
+    controller.abort();
+
+    expect(providerSignal?.aborted).toBe(true);
+    expect(await outcome).toBe('AbortError');
+  });
+
   it('makes no provider request when the signal is already aborted', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
