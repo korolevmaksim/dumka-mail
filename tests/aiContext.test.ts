@@ -47,6 +47,7 @@ function makeAISettings(allowMailBodyContext: boolean): AISettings {
     globalDefaultModel: '',
     automationModel: '',
     automationProvider: '',
+    summary: { provider: '', model: '', language: 'auto', instructions: '' },
     sortingEngine: 'completion',
     decisionsModel: '',
     decisionsMinConfidence: 0.8,

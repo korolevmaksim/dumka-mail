@@ -3,6 +3,7 @@ import { ChevronDown } from 'lucide-react';
 import { useAppStore } from '../../../stores/AppStore';
 import { AddModelForm } from '../AddModelSheet';
 import { BackgroundWorkSection } from '../BackgroundWorkSection';
+import { SummarySettingsSection } from '../SummarySettingsSection';
 import { AISettingsTab } from './AISettingsTab';
 import { isAIModelMissing, isAIProviderUnavailable } from '../../../../../shared/aiErrors';
 
@@ -39,6 +40,7 @@ export function AIModelTab() {
       </section>
 
       <BackgroundWorkSection />
+      <SummarySettingsSection />
 
       <div className="flex flex-col gap-3">
         <button

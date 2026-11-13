@@ -848,3 +848,68 @@ describe('agent prep: OpenAI Decisions sorting', () => {
     expect(h.upserts).toHaveLength(0);
   });
 });
+
+
+describe('summary settings and cache invalidation', () => {
+  function longThreadHarness() {
+    const h = harness([personThread(0)]);
+    h.deps.listMessagesForThread = async () => Array.from({ length: 6 }, (_, index) => messageFor(personThread(0), index));
+    h.setCompletion(async () => ({ text: '- First point\n- Second point', model: 'summary-model', provider: 'anthropic' }));
+    return h;
+  }
+
+  it('routes summaries separately and only reuses an identical configuration', async () => {
+    const h = longThreadHarness();
+    let stored: Parameters<AgentPrepDeps['saveSummary']>[0] | undefined;
+    h.deps.saveSummary = record => { stored = record; };
+    h.deps.getSummary = (_a, _t, last, key) => stored?.lastMessageId === last && stored.cacheKey === key ? stored : null;
+    const summary = { provider: 'anthropic', model: 'summary-model', language: 'ru', instructions: 'Focus on my next steps.' };
+    h.setAI({ globalDefaultModel: 'main-model', summary });
+    const prep = service(h);
+    expect(await prep.requestThreadSummary(ACCOUNT, 't00', 'r1')).toMatchObject({ status: 'ready' });
+    expect(h.completions[0].options).toMatchObject({ preference: 'anthropic', overrideModel: 'summary-model' });
+    expect(h.completions[0].prompt.system).toContain('Write all summary bullets in Russian');
+    expect(h.completions[0].prompt.system).toContain(summary.instructions);
+    expect(stored?.cacheKey).toMatch(/^[a-f0-9]{64}$/);
+    await prep.requestThreadSummary(ACCOUNT, 't00', 'r2');
+    expect(h.completions).toHaveLength(1);
+    for (const change of [{ language: 'pl' }, { instructions: 'Focus on deadlines.' }, { model: 'other-summary-model' }]) {
+      Object.assign(summary, change);
+      h.setAI({ globalDefaultModel: 'main-model', summary: { ...summary } });
+      prep.onConfigChanged();
+      await prep.requestThreadSummary(ACCOUNT, 't00', `r${h.completions.length + 2}`);
+    }
+    expect(h.completions).toHaveLength(4);
+    expect(h.completions[3].options.overrideModel).toBe('other-summary-model');
+  });
+
+  it('discards an in-flight answer after its language or context changes', async () => {
+    const h = longThreadHarness();
+    const gate = deferred<void>();
+    const save = vi.fn(); h.deps.saveSummary = save;
+    h.setAI({ summary: { language: 'ru' } });
+    h.setCompletion(async () => {
+      await gate.promise;
+      return { text: '- Old point', model: 'test-model', provider: 'openAI' };
+    });
+    const prep = service(h);
+    const pending = prep.requestThreadSummary(ACCOUNT, 't00', 'r1');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    h.setAI({ summary: { language: 'pl', instructions: 'New context' } });
+    prep.onConfigChanged();
+    expect(h.completions[0].options.signal?.aborted).toBe(true);
+    gate.resolve();
+    expect(await pending).toMatchObject({ status: 'cancelled' });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('does not mark the main model as failed when a dedicated summary model fails', async () => {
+    const h = longThreadHarness();
+    h.setAI({ summary: { provider: 'anthropic', model: 'summary-model' } });
+    h.setCompletion(async () => { throw new ModelRequestError('network', 'anthropic', 'Offline'); });
+    const prep = service(h);
+    const before = prep.getModelStatus();
+    expect(await prep.requestThreadSummary(ACCOUNT, 't00', 'r1')).toMatchObject({ status: 'error' });
+    expect(prep.getModelStatus()).toBe(before);
+  });
+});

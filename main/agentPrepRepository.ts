@@ -11,6 +11,7 @@ export interface ThreadSummaryRecord {
   threadId: string;
   lastMessageId: string;
   bullets: string[];
+  cacheKey?: string;
   model: string;
   createdAt: string;
 }
@@ -20,6 +21,7 @@ interface ThreadSummaryRow {
   thread_id: string;
   last_message_id: string;
   bullets_json: string;
+  cache_key: string;
   model: string;
   created_at: string;
 }
@@ -37,10 +39,10 @@ function parseBullets(json: string): string[] | null {
 
 export const ThreadSummariesRepo = {
   /** The cached summary, only while `lastMessageId` is still the thread's last message. */
-  get(accountId: string, threadId: string, lastMessageId: string): ThreadSummaryRecord | null {
+  get(accountId: string, threadId: string, lastMessageId: string, cacheKey?: string): ThreadSummaryRecord | null {
     const row = getDatabase()
-      .prepare('SELECT * FROM thread_summaries WHERE account_id = ? AND thread_id = ? AND last_message_id = ?')
-      .get(accountId, threadId, lastMessageId) as ThreadSummaryRow | undefined;
+      .prepare('SELECT * FROM thread_summaries WHERE account_id = ? AND thread_id = ? AND last_message_id = ? AND (? IS NULL OR cache_key = ?)')
+      .get(accountId, threadId, lastMessageId, cacheKey ?? null, cacheKey ?? null) as ThreadSummaryRow | undefined;
     if (!row) return null;
     const bullets = parseBullets(row.bullets_json);
     if (!bullets) return null;
@@ -49,6 +51,7 @@ export const ThreadSummariesRepo = {
       threadId: row.thread_id,
       lastMessageId: row.last_message_id,
       bullets,
+      cacheKey: row.cache_key,
       model: row.model,
       createdAt: row.created_at,
     };
@@ -59,14 +62,15 @@ export const ThreadSummariesRepo = {
     const bullets = record.bullets.filter(Boolean).slice(0, SUMMARY_MAX_BULLETS);
     if (!record.accountId || !record.threadId || !record.lastMessageId || bullets.length === 0) return;
     getDatabase().prepare(`
-      INSERT INTO thread_summaries (account_id, thread_id, last_message_id, bullets_json, model, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO thread_summaries (account_id, thread_id, last_message_id, bullets_json, model, created_at, cache_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(account_id, thread_id) DO UPDATE SET
         last_message_id=excluded.last_message_id,
         bullets_json=excluded.bullets_json,
+        cache_key=excluded.cache_key,
         model=excluded.model,
         created_at=excluded.created_at
-    `).run(record.accountId, record.threadId, record.lastMessageId, JSON.stringify(bullets), record.model || '', record.createdAt);
+    `).run(record.accountId, record.threadId, record.lastMessageId, JSON.stringify(bullets), record.model || '', record.createdAt, record.cacheKey || '');
   },
 
   purgeAccount(accountId: string) {

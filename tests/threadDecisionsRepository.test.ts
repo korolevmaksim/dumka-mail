@@ -348,3 +348,20 @@ describe('thread maintenance (second review)', () => {
     });
   });
 });
+
+
+repositoryIt('ignores old summaries when the summary configuration cache key changes', async () => {
+  await withDatabase(async ({ AccountsRepo }) => {
+    const { ThreadSummariesRepo } = await import('../main/agentPrepRepository');
+    AccountsRepo.save({ id: accountId, email: accountId, displayName: 'Alex', colorHex: '#000000', createdAt: '2026-10-10T00:00:00.000Z' });
+    const record = { accountId, threadId: 'summary-config', lastMessageId: 'm1', bullets: ['Old summary'], model: 'test-model', createdAt: '2026-10-10T00:00:00.000Z' };
+    ThreadSummariesRepo.save(record);
+    expect(ThreadSummariesRepo.get(accountId, record.threadId, 'm1', 'config-a')).toBeNull();
+    ThreadSummariesRepo.save({ ...record, cacheKey: 'config-a' });
+    expect(ThreadSummariesRepo.get(accountId, record.threadId, 'm1', 'config-a')?.bullets).toEqual(['Old summary']);
+    expect(ThreadSummariesRepo.get(accountId, record.threadId, 'm1', 'config-b')).toBeNull();
+    ThreadSummariesRepo.save({ ...record, cacheKey: 'config-b', bullets: ['New summary'] });
+    expect(ThreadSummariesRepo.get(accountId, record.threadId, 'm1', 'config-b')?.bullets).toEqual(['New summary']);
+    expect(ThreadSummariesRepo.get(accountId, record.threadId, 'm1', 'config-a')).toBeNull();
+  });
+});

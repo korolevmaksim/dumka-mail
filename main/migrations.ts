@@ -374,6 +374,7 @@ export function runMigrations(db: Database.Database) {
         thread_id TEXT NOT NULL,
         last_message_id TEXT NOT NULL,
         bullets_json TEXT NOT NULL,
+        cache_key TEXT NOT NULL DEFAULT '',
         model TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         PRIMARY KEY (account_id, thread_id)
@@ -685,6 +686,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'contacts', column: 'local_display_name', definition: 'local_display_name TEXT' },
     { table: 'contacts', column: 'local_phone_numbers_json', definition: 'local_phone_numbers_json TEXT' },
     { table: 'contacts', column: 'local_organizations_json', definition: 'local_organizations_json TEXT' },
+    { table: 'thread_summaries', column: 'cache_key', definition: "cache_key TEXT NOT NULL DEFAULT ''" },
     { table: 'messages', column: 'attachments_json', definition: 'attachments_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'to_recipients_json', definition: 'to_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'cc_recipients_json', definition: 'cc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },

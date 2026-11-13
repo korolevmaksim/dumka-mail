@@ -17,6 +17,11 @@ import type { MailThread } from '../../../shared/types';
 
 export type ModelStatus = PipelineModelStatus;
 
+export interface SummaryRequestOptions {
+  cacheKey: string;
+  independentModel: boolean;
+}
+
 export interface ThreadSummaryState {
   status: 'idle' | 'loading' | 'ready' | 'error';
   /** 2–4 short bullet points; empty unless status is 'ready' (or partially filled while streaming). */
@@ -34,9 +39,9 @@ export interface AgentPrepApi {
   modelStatus: ModelStatus;
   /** Re-runs the pending preparation after a failure. */
   retryModel: () => void;
-  getThreadSummary: (thread: MailThread | null | undefined) => ThreadSummaryState;
+  getThreadSummary: (thread: MailThread | null | undefined, options?: SummaryRequestOptions) => ThreadSummaryState;
   /** Idempotent; safe to call on every open of a long thread. */
-  requestThreadSummary: (thread: MailThread) => void;
+  requestThreadSummary: (thread: MailThread, options?: SummaryRequestOptions) => void;
   getAgentDraft: (thread: MailThread | null | undefined) => AgentDraftState;
   /** Idempotent; asks for a reply draft for this thread if none is cached. */
   /** `inAdvance`: the reader picking up a draft prepared ahead of time, not the person asking for one. */
@@ -163,11 +168,11 @@ function settle<S>(map: Map<string, Entry<S>>, key: string, requestId: string, a
   emit();
 }
 
-function requestThreadSummary(thread: MailThread) {
+function requestThreadSummary(thread: MailThread, options?: SummaryRequestOptions) {
   ensureInitialized();
   const electronAPI = api();
-  if (!electronAPI || modelStatus === 'none') return;
-  const key = threadKey(thread);
+  if (!electronAPI || (modelStatus === 'none' && !options?.independentModel)) return;
+  const key = `${threadKey(thread)}\u0000${options?.cacheKey || ''}`;
   if (summaries.has(key)) return;
   const requestId = newRequestId();
   summaries.set(key, { state: { status: 'loading', bullets: [] }, requestId, text: '', skipped: false });
@@ -251,9 +256,9 @@ export function retryModel() {
   api()?.retryAgentPrep().then(setModelStatus).catch(error => console.warn('Retry of agent preparation failed:', error));
 }
 
-function getThreadSummary(thread: MailThread | null | undefined): ThreadSummaryState {
-  if (!thread || modelStatus === 'none') return IDLE_SUMMARY;
-  return summaries.get(threadKey(thread))?.state || IDLE_SUMMARY;
+function getThreadSummary(thread: MailThread | null | undefined, options?: SummaryRequestOptions): ThreadSummaryState {
+  if (!thread || (modelStatus === 'none' && !options?.independentModel)) return IDLE_SUMMARY;
+  return summaries.get(`${threadKey(thread)}\u0000${options?.cacheKey || ''}`)?.state || IDLE_SUMMARY;
 }
 
 function getAgentDraft(thread: MailThread | null | undefined): AgentDraftState {

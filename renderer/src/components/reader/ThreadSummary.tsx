@@ -1,3 +1,7 @@
+import { summarySettings, summarySettingsFingerprint } from '../../../../shared/summarySettings';
+import { getAIProviderConfig, isConfigurableAIProvider } from '../../../../shared/aiProviders';
+import { providerIsSetUp } from '../../../../shared/addModel';
+import { resolveAccountSetting } from '../../../../shared/accountSettings';
 import { useEffect } from 'react';
 import { Sparkles } from 'lucide-react';
 import { shouldSummarizeThread } from '../../../../shared/agentPrompts';
@@ -15,7 +19,8 @@ interface ThreadSummaryProps {
  * configured; renders nothing on error, when refused, or without a model.
  */
 export function ThreadSummary({ thread }: ThreadSummaryProps) {
-  const { openedThread, openedThreadMessages, openedThreadMessagesStatus } = useAppStore();
+  const store = useAppStore();
+  const { openedThread, openedThreadMessages, openedThreadMessagesStatus } = store;
   const { modelStatus, getThreadSummary, requestThreadSummary } = useAgentPrep();
 
   // The open thread's loaded messages tell the length without a round trip
@@ -24,17 +29,26 @@ export function ThreadSummary({ thread }: ThreadSummaryProps) {
   const isOpenThread = openedThread?.id === thread.id && openedThread.accountId === thread.accountId;
   const longEnough = !isOpenThread || (openedThreadMessagesStatus === 'ready'
     && shouldSummarizeThread(openedThreadMessages.filter(message => message.threadId === thread.id).length));
-  const eligible = modelStatus !== 'none' && longEnough;
+  const config = summarySettings(store.settings.ai);
+  const mainProvider = store.aiProviderDesc?.preference;
+  const provider = config.provider || (mainProvider && isConfigurableAIProvider(mainProvider) ? mainProvider : null);
+  const model = config.model || (config.provider && provider
+    ? store.customEnv[getAIProviderConfig(provider).modelEnv] || '' : store.settings.ai.globalDefaultModel?.trim() || store.aiProviderDesc?.model || '');
+  const independentModel = Boolean(config.provider || config.model);
+  const cacheKey = `${summarySettingsFingerprint(store.settings.ai)}\u0000${provider || ''}\u0000${model}`;
+  const eligible = Boolean(provider && providerIsSetUp(store.customEnv, provider) && model.trim())
+    && (independentModel || modelStatus !== 'none') && longEnough
+    && resolveAccountSetting(store.settings, thread.accountId, 'modelMayReadMail').value;
   const lastMessageId = thread.signals?.lastMessageId || '';
 
   useEffect(() => {
-    if (eligible) requestThreadSummary(thread);
-    // Re-request only for a different thread or a new last message.
+    if (eligible) requestThreadSummary(thread, { cacheKey, independentModel });
+    // Re-request when the thread, effective model or summary preferences change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligible, thread.accountId, thread.id, lastMessageId, requestThreadSummary]);
+  }, [eligible, thread.accountId, thread.id, lastMessageId, cacheKey, independentModel, requestThreadSummary]);
 
   if (!eligible) return null;
-  const summary = getThreadSummary(thread);
+  const summary = getThreadSummary(thread, { cacheKey, independentModel });
   if (summary.status === 'idle' || summary.status === 'error') return null;
   if (summary.status === 'loading' && summary.bullets.length === 0) {
     return (

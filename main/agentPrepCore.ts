@@ -1,3 +1,5 @@
+import { summaryModelRoute, summarySettingsFingerprint, type SummarySettingsSource } from '../shared/summarySettings';
+import { prepareThreadSummary } from './agentPrepSummary';
 import { sortingConfig, sortingCacheKey, sortingCacheMatches, type SortingSettingsSource } from '../shared/sortingConfig';
 import type { DecisionPromptItem, DecisionBatchParseResult } from '../shared/agentPrompts';
 // Agent preparation logic (design-review/SPEC.md §1 model layer, §5), free of
@@ -36,16 +38,13 @@ import {
   buildDecisionBatchPrompt,
   buildDecisionPromptItem,
   buildDraftPrompt,
-  buildSummaryPrompt,
   cleanDraftBody,
   latestMessageOf,
   parseDecisionBatchResponse,
-  parseSummaryBullets,
   prepAttemptKey,
   refineDecisionBatch,
   selectDecisionWorkList,
   selectDraftWorkList,
-  shouldSummarizeThread,
   DECISION_BATCH_SIZE,
   DRAFT_BATCH_SIZE,
   type AgentDraftReadyEvent,
@@ -79,7 +78,7 @@ const ATTEMPT_MEMORY_LIMIT = 20_000;
 
 export interface StoredAgentSettings {
   compose?: { afterSend?: unknown } | null;
-  ai?: SortingSettingsSource & {
+  ai?: SortingSettingsSource & SummarySettingsSource & {
     allowMailBodyContext?: unknown;
     provider?: unknown;
     globalDefaultModel?: unknown;
@@ -114,6 +113,7 @@ export interface ThreadSummaryRecordInput {
   lastMessageId: string;
   bullets: string[];
   model: string;
+  cacheKey: string;
   createdAt: string;
 }
 
@@ -137,7 +137,7 @@ export interface AgentPrepDeps {
   saveAgentDraft(draft: AgentDraftSuggestion): void;
   hasAgentDraftForMessage(accountId: string, messageId: string): boolean;
   userDraftThreadIds(accountId: string): Set<string>;
-  getSummary(accountId: string, threadId: string, lastMessageId: string): { bullets: string[] } | null;
+  getSummary(accountId: string, threadId: string, lastMessageId: string, cacheKey: string): { bullets: string[] } | null;
   saveSummary(record: ThreadSummaryRecordInput): void;
   /** Subjects / senders / dates only, from the main process's own cache. */
   metadataContext(accountId: string, threadId: string | null): Promise<string>;
@@ -152,6 +152,8 @@ export interface AgentPrepDeps {
 }
 
 interface PrepGate {
+  resolvedModel: string;
+  resolvedProvider: AIProviderPreference;
   settings: StoredAgentSettings;
   preference: AIProviderPreference;
   overrideModel: string | undefined;
@@ -201,7 +203,8 @@ function automationProvider(settings: StoredAgentSettings): AIProviderPreference
 }
 
 /** Provider and model for a purpose; background work may run on a provider of its own. */
-function modelRouteFor(settings: StoredAgentSettings, purpose: AIModelPurpose): { preference: AIProviderPreference; overrideModel: string | undefined; dedicated: boolean } {
+function modelRouteFor(settings: StoredAgentSettings, purpose: AIModelPurpose | 'summary'): { preference: AIProviderPreference; overrideModel: string | undefined; dedicated: boolean } {
+  if (purpose === 'summary') return summaryModelRoute(settings.ai);
   if (purpose === 'automation') {
     return resolveBackgroundModelRoute({
       provider: providerPreference(settings),
@@ -243,6 +246,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   let backgroundPausedUntil = 0;
   let backgroundDelayMs = RETRY_BASE_MS;
   let settingsFingerprint = '';
+  let summaryFingerprint = summarySettingsFingerprint(deps.readSettings().ai);
   const accountRuns = new Map<string, AccountRun>();
   const triggerTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const attemptedDecisions = new Set<string>();
@@ -264,6 +268,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       stringSetting(settings.ai?.automationModel),
       automationProvider(settings),
       sortingConfig(settings.ai),
+      summarySettingsFingerprint(settings.ai),
       settings.ai?.proactiveDraftsEnabled === true,
       accounts,
     ]);
@@ -381,7 +386,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     return purpose !== 'automation' || draftsInAdvanceEnabled(settings, accountId);
   }
 
-  async function gateFor(accountId: string, purpose: AIModelPurpose): Promise<PrepGate | null> {
+  async function gateFor(accountId: string, purpose: AIModelPurpose | 'summary'): Promise<PrepGate | null> {
     const settings = deps.readSettings();
     if (!modelMayReadMail(settings, accountId)) return null;
     const { preference, overrideModel, dedicated } = modelRouteFor(settings, purpose);
@@ -392,7 +397,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       return null;
     }
     if (!dedicated && modelStatus === 'none') setModelStatus('ok');
-    return { settings, preference, overrideModel, dedicated };
+    return { settings, preference, overrideModel, dedicated, resolvedModel: descriptor.model, resolvedProvider: descriptor.preference };
   }
 
   function remember(set: Set<string>, key: string) {
@@ -870,6 +875,11 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       const next = fingerprint(settings);
       if (!force && next === settingsFingerprint) return;
       settingsFingerprint = next;
+      const nextSummary = summarySettingsFingerprint(settings.ai);
+      if (nextSummary !== summaryFingerprint) {
+        for (const request of summariesInFlight.values()) request.controller.abort();
+        summaryFingerprint = nextSummary;
+      }
       attemptedDecisions.clear();
       for (const run of accountRuns.values()) run.controller.abort();
       accountRuns.clear();
@@ -963,40 +973,18 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     },
 
     async requestThreadSummary(accountId: string, threadId: string, requestId: string): Promise<ThreadSummaryResult> {
-      const gate = await gateFor(accountId, 'interactive');
-      if (!gate) return { status: 'skipped' };
-      const messages = await deps.listMessagesForThread(accountId, threadId);
-      const latest = latestMessageOf(messages);
-      if (!latest || !shouldSummarizeThread(messages.length)) return { status: 'skipped' };
-      const cached = deps.getSummary(accountId, threadId, latest.id);
-      if (cached) return { status: 'ready', bullets: cached.bullets, lastMessageId: latest.id };
-      const thread = deps.getThread(accountId, threadId);
-      if (!thread) return { status: 'skipped' };
-
-      const key = `${threadKey(accountId, threadId)}\u0000${latest.id}`;
-      return streamedCall<ThreadSummaryResult>(requestId, accountId, 'summary', (signal, onDelta) => joinShared(
-        summariesInFlight, key, accountId, requestId, signal, onDelta,
-        async (sharedSignal, sharedDelta): Promise<ThreadSummaryResult> => {
-          // The reads above are asynchronous: mail access may have been withdrawn meanwhile.
-          if (sharedSignal.aborted || !mayReadMail(accountId)) return { status: 'cancelled' };
-          const result = await deps.completeText(buildSummaryPrompt({ thread, messages }), {
-            preference: gate.preference,
-            overrideModel: gate.overrideModel,
-            stream: true,
-            signal: sharedSignal,
-            onDelta: sharedDelta,
-          });
-          const bullets = parseSummaryBullets(result.text);
-          if (bullets.length === 0) throw new ModelRequestError('invalid', String(result.provider), 'Summary answer had no bullet points.');
-          // Withdrawn while the model was writing: the answer is not kept.
-          if (sharedSignal.aborted || !mayReadMail(accountId)) return { status: 'cancelled' };
-          if (accountExists(accountId)) {
-            deps.saveSummary({ accountId, threadId, lastMessageId: latest.id, bullets, model: result.model, createdAt: deps.now().toISOString() });
-          }
-          reportModelSuccess();
-          return { status: 'ready', bullets, lastMessageId: latest.id };
-        },
-      ));
+      return prepareThreadSummary(accountId, threadId, {
+        gate: () => gateFor(accountId, 'summary'), readSettings: deps.readSettings,
+        mayReadMail: () => mayReadMail(accountId), accountExists: () => accountExists(accountId),
+        messages: () => deps.listMessagesForThread(accountId, threadId), thread: () => deps.getThread(accountId, threadId),
+        cached: (lastId, cacheKey) => deps.getSummary(accountId, threadId, lastId, cacheKey),
+        complete: deps.completeText, save: deps.saveSummary, now: deps.now,
+        success: gate => { if (!gate.dedicated) reportModelSuccess(); },
+        shared: (key, gate, start) => streamedCall<ThreadSummaryResult>(requestId, accountId, 'summary',
+          (signal, onDelta) => joinShared(summariesInFlight, key, accountId, requestId, signal, onDelta, start),
+          gate.dedicated ? (error, task) => deps.logWarning('Agent', 'Summary model request failed.',
+            { task, ...describeModelError(error) }) : reportModelFailure),
+      });
     },
 
     /**

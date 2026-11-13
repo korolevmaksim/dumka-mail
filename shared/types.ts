@@ -1,3 +1,4 @@
+import type { SummarySettings } from './summarySettings';
 import type { AppLanguage } from './i18n';
 import type { SystemLoggingSettings } from './systemLogs';
 
@@ -1324,6 +1325,7 @@ export interface AgentRulesSettings {
 }
 
 export interface AISettings {
+  summary: SummarySettings;
   sortingEngine: 'completion' | 'openAIDecisions';
   decisionsModel: string;
   decisionsMinConfidence: number;

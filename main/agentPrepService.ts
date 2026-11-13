@@ -44,7 +44,7 @@ const service = createAgentPrepService({
   saveAgentDraft: draft => AgentDraftsRepo.save(draft),
   hasAgentDraftForMessage: (accountId, messageId) => AgentPrepLookups.hasAgentDraftForMessage(accountId, messageId),
   userDraftThreadIds: accountId => AgentPrepLookups.userDraftThreadIds(accountId),
-  getSummary: (accountId, threadId, lastMessageId) => ThreadSummariesRepo.get(accountId, threadId, lastMessageId),
+  getSummary: (accountId, threadId, lastMessageId, cacheKey) => ThreadSummariesRepo.get(accountId, threadId, lastMessageId, cacheKey),
   saveSummary: record => ThreadSummariesRepo.save(record),
   metadataContext: async (accountId, threadId) => {
     if (!threadId) return 'No thread open.';

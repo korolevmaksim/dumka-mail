@@ -274,6 +274,7 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
     globalDefaultModel: settings.interactiveModel,
     automationModel: settings.automationModel,
     automationProvider: '',
+    summary: { provider: '', model: '', language: 'auto', instructions: '' },
     sortingEngine: 'completion',
     decisionsModel: '',
     decisionsMinConfidence: 0.8,

@@ -1,3 +1,4 @@
+import { summarySettings } from '../../../shared/summarySettings';
 import { normalizeComposeAfterSend, type SendIntent } from '../../../shared/sendFlow';
 import { DEFAULT_ACCOUNT_DEFAULTS, normalizeAccountDefaults, normalizeAccountOverrides, resolveAccountSetting } from '../../../shared/accountSettings';
 import type { GoogleSignInError } from '../../../shared/googleSignInErrors';
@@ -231,6 +232,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     provider: 'automatic',
     globalDefaultModel: '',
     automationModel: '',
+    summary: { provider: '', model: '', language: 'auto', instructions: '' },
     sortingEngine: 'completion',
     decisionsModel: '',
     decisionsMinConfidence: 0.8,
@@ -360,6 +362,7 @@ export function mergeSettings(parsed: any): AppSettings {
   merged.snippets.templates = normalizeSnippetTemplates(merged.snippets.templates);
   merged.mailRules = normalizeMailRulesSettings(merged.mailRules);
   merged.logging = normalizeSystemLoggingSettings(merged.logging);
+  merged.ai.summary = summarySettings(merged.ai);
   merged.general.language = normalizeAppLanguage(merged.general.language);
   if (!['classic', 'soft'].includes(merged.appearance.interfaceStyle)) {
     merged.appearance.interfaceStyle = 'classic';

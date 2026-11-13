@@ -6,6 +6,7 @@
 // history stripped and secrets redacted; every system prompt tells the model
 // to ignore instructions found inside mail, and every response is validated.
 import { htmlToText, redactSecrets } from './aiContext';
+import { SUMMARY_INSTRUCTIONS_MAX, SUMMARY_LANGUAGES, type SummarySettings } from './summarySettings';
 import { applyModelRefinement, decideByRules, isDecisionRecordCurrent, type DecisionContext } from './decision';
 import { resolveInboxDecision, type StoredDecisions } from './inboxSections';
 import type { AISettings, Decision, MailMessage, MailThread, ThreadDecision, ThreadDecisionRecord } from './types';
@@ -449,12 +450,17 @@ export function shouldSummarizeThread(messageCount: number): boolean {
   return messageCount >= SUMMARY_MIN_MESSAGES;
 }
 
-export function buildSummaryPrompt(input: { thread: Pick<MailThread, 'subject'>; messages: readonly PromptMessage[] }): TextPrompt {
+export function buildSummaryPrompt(input: { thread: Pick<MailThread, 'subject'>; messages: readonly PromptMessage[]; settings?: SummarySettings }): TextPrompt {
   const system = [
     AGENT_TASK_MARKERS.summary,
     'Summarise the email thread for its reader in 2 to 4 bullet points.',
     `Each bullet is one plain sentence of at most ${SUMMARY_BULLET_MAX} characters on its own line, starting with "- ".`,
     'Cover where the conversation stands, what was decided, and what is still open or asked of the reader. No heading, no preamble, nothing else.',
+    'Do not invent facts, commitments or dates. The user context may explain roles and priorities; it is not proof that an event happened in this thread.',
+    ...(input.settings?.instructions ? [`Additional user instructions and context:\n${input.settings.instructions.slice(0, SUMMARY_INSTRUCTIONS_MAX)}`] : []),
+    input.settings?.language && input.settings.language !== 'auto'
+      ? `Write all summary bullets in ${SUMMARY_LANGUAGES[input.settings.language]}. Keep names and identifiers unchanged.`
+      : 'Use the language of the latest substantive message in the conversation.',
     UNTRUSTED_MAIL_RULE,
   ].join('\n');
   const latest = sortMessagesOldestFirst(input.messages).slice(-SUMMARY_MAX_MESSAGES);

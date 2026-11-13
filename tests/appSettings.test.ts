@@ -302,3 +302,13 @@ describe('Decisions sorting settings', () => {
       sortingEngine: 'openAIDecisions', decisionsModel: 'sorting-model', decisionsMinConfidence: 0.9 });
   });
 });
+
+
+it('migrates missing and partial summary settings without changing the main model', () => {
+  const old = mergeSettings({ ai: { provider: 'anthropic', globalDefaultModel: 'main-model' } });
+  expect(old.ai.summary).toEqual({ provider: '', model: '', language: 'auto', instructions: '' });
+  const configured = mergeSettings({ ai: { ...old.ai, summary: { language: 'ru', instructions: ' Focus on next steps. ' } } });
+  expect(configured.ai.summary).toEqual({ provider: '', model: '', language: 'ru', instructions: 'Focus on next steps.' });
+  expect(configured.ai.globalDefaultModel).toBe('main-model');
+  expect(mergeSettings({ ai: { summary: null } }).ai.summary).toEqual(old.ai.summary);
+});
