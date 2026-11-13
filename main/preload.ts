@@ -364,8 +364,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelAI: (requestId: string): Promise<void> => ipcRenderer.invoke('api:cancelAI', requestId),
   requestThreadSummary: (accountId: string, threadId: string, requestId: string): Promise<ThreadSummaryResult> =>
     ipcRenderer.invoke('api:requestThreadSummary', accountId, threadId, requestId),
-  requestAgentDraft: (accountId: string, threadId: string, requestId: string): Promise<AgentDraftResult> =>
-    ipcRenderer.invoke('api:requestAgentDraft', accountId, threadId, requestId),
+  requestAgentDraft: (accountId: string, threadId: string, requestId: string, purpose?: 'interactive' | 'automation'): Promise<AgentDraftResult> =>
+    ipcRenderer.invoke('api:requestAgentDraft', accountId, threadId, requestId, purpose),
   streamAIChat: (requestId: string, request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<{ text: string; cancelled?: boolean }> =>
     ipcRenderer.invoke('api:streamAIChat', requestId, request, preference, overrideModel),
   onAIStream: (callback: (event: AIStreamEvent) => void) => {

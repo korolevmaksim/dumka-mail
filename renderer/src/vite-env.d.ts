@@ -292,7 +292,7 @@ export interface IElectronAPI {
   retryAgentPrep: () => Promise<ModelStatus>;
   cancelAI: (requestId: string) => Promise<void>;
   requestThreadSummary: (accountId: string, threadId: string, requestId: string) => Promise<ThreadSummaryResult>;
-  requestAgentDraft: (accountId: string, threadId: string, requestId: string) => Promise<AgentDraftResult>;
+  requestAgentDraft: (accountId: string, threadId: string, requestId: string, purpose?: 'interactive' | 'automation') => Promise<AgentDraftResult>;
   streamAIChat: (requestId: string, request: AIRequest, preference: AIProviderPreference, overrideModel?: string) => Promise<{ text: string; cancelled?: boolean }>;
   onAIStream: (callback: (event: AIStreamEvent) => void) => () => void;
   onModelStatusChanged: (callback: (status: ModelStatus) => void) => () => void;

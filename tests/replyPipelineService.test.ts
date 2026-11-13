@@ -174,6 +174,34 @@ describe('ReplyPipelineService', () => {
     expect(result.draft.bodyPlain).toContain('Thanks, I will review this today.');
   });
 
+  it('writes the template, not a model draft, when the account does not let mail text reach the model', async () => {
+    harness.settings = {
+      ...harness.settings,
+      ai: { ...(harness.settings.ai as object), proactiveDraftsEnabled: true, automationModel: 'automation-model' },
+      accountOverrides: { 'me@example.com': { modelMayReadMail: false } },
+    };
+    harness.descriptor.mockResolvedValue({ preference: 'openAI', model: 'automation-model' });
+    const result = await ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
+    expect(harness.completeAI).not.toHaveBeenCalled();
+    expect(result.state.draftOrigin).toBe('template');
+  });
+
+  it('sends the automation model to the provider chosen for background work, not to the main one', async () => {
+    harness.settings = {
+      ...harness.settings,
+      ai: {
+        ...(harness.settings.ai as object),
+        proactiveDraftsEnabled: true,
+        automationProvider: 'openAICompatible',
+        automationModel: 'local-small',
+      },
+    };
+    harness.descriptor.mockResolvedValue({ preference: 'openAICompatible', model: 'local-small' });
+    harness.completeAI.mockResolvedValue({ text: 'Thanks, I will review this today.' });
+    await ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
+    expect(harness.completeAI).toHaveBeenCalledWith(expect.any(Object), 'openAICompatible', 'local-small');
+  });
+
   it('falls back deterministically when the automation provider fails', async () => {
     harness.settings = {
       ...harness.settings,

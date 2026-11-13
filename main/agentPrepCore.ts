@@ -528,6 +528,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         now,
       );
       const allowed = new Set(candidates.map(candidate => candidate.thread.id));
+      // The reads above are asynchronous: check again right before mail text is sent.
+      if (!mayReadMail(accountId) || !backgroundSortingEnabled(deps.readSettings(), accountId)) break;
 
       let parsed: ReturnType<typeof parseDecisionBatchResponse> | null = null;
       let model = '';
@@ -786,6 +788,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     accountId: string,
     task: string,
     run: (signal: AbortSignal, onDelta: (delta: string) => void) => Promise<T | typeof CANCELLED>,
+    // Whose failure this is: the main model's, unless the request ran on the background provider.
+    reportFailure: (error: unknown, task: string) => void = reportModelFailure,
   ): Promise<T | { status: 'cancelled' } | { status: 'error' }> {
     const controller = registerRequest(requestId, accountId);
     const onDelta = (delta: string) => {
@@ -804,7 +808,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         streamEvent({ requestId, delta: '', done: true, error: 'cancelled' });
         return { status: 'cancelled' };
       }
-      reportModelFailure(error, task);
+      reportFailure(error, task);
       streamEvent({ requestId, delta: '', done: true, error: 'unreachable' });
       return { status: 'error' };
     } finally {
@@ -849,10 +853,19 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         const key = normalizeAccountId(account.email);
         // Drafts in advance turned off (or mail access withdrawn): cancel the
         // background drafts being written. Only background callers share them.
-        if (!draftsInAdvanceEnabled(settings, account.email) || !modelMayReadMail(settings, account.email)) {
+        const mailAccess = modelMayReadMail(settings, account.email);
+        if (!draftsInAdvanceEnabled(settings, account.email) || !mailAccess) {
           const suffix = `\u0000${'automation' satisfies AIModelPurpose}`;
           for (const [draftRequestKey, request] of draftsInFlight) {
-            if (normalizeAccountId(request.accountId) === key && draftRequestKey.endsWith(suffix)) request.controller.abort();
+            if (normalizeAccountId(request.accountId) !== key) continue;
+            // Without mail access every draft stops; otherwise only the ones nobody asked for.
+            if (!mailAccess || draftRequestKey.endsWith(suffix)) request.controller.abort();
+          }
+        }
+        // Mail access withdrawn: summaries being written carry mail text too.
+        if (!mailAccess) {
+          for (const request of summariesInFlight.values()) {
+            if (normalizeAccountId(request.accountId) === key) request.controller.abort();
           }
         }
         if (backgroundSortingEnabled(settings, account.email) && modelMayReadMail(settings, account.email)) continue;
@@ -936,6 +949,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       return streamedCall<ThreadSummaryResult>(requestId, accountId, 'summary', (signal, onDelta) => joinShared(
         summariesInFlight, key, accountId, requestId, signal, onDelta,
         async (sharedSignal, sharedDelta): Promise<ThreadSummaryResult> => {
+          // The reads above are asynchronous: mail access may have been withdrawn meanwhile.
+          if (sharedSignal.aborted || !mayReadMail(accountId)) return { status: 'cancelled' };
           const result = await deps.completeText(buildSummaryPrompt({ thread, messages }), {
             preference: gate.preference,
             overrideModel: gate.overrideModel,
@@ -945,6 +960,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
           });
           const bullets = parseSummaryBullets(result.text);
           if (bullets.length === 0) throw new ModelRequestError('invalid', String(result.provider), 'Summary answer had no bullet points.');
+          // Withdrawn while the model was writing: the answer is not kept.
+          if (sharedSignal.aborted || !mayReadMail(accountId)) return { status: 'cancelled' };
           if (accountExists(accountId)) {
             deps.saveSummary({ accountId, threadId, lastMessageId: latest.id, bullets, model: result.model, createdAt: deps.now().toISOString() });
           }
@@ -954,7 +971,21 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       ));
     },
 
-    async requestAgentDraft(accountId: string, threadId: string, requestId: string): Promise<AgentDraftResult> {
+    /**
+     * A reply draft for the open conversation. `interactive`: the person pressed
+     * `Draft a reply`. `automation`: the reader asks for the draft prepared in
+     * advance, so it runs on the background route, joins a background request
+     * already in flight for the thread, and needs drafts in advance to be on.
+     */
+    async requestAgentDraft(accountId: string, threadId: string, requestId: string, purpose: AIModelPurpose = 'interactive'): Promise<AgentDraftResult> {
+      if (purpose === 'automation') {
+        const settings = deps.readSettings();
+        if (!draftsInAdvanceEnabled(settings, accountId)) return { status: 'skipped' };
+        const { dedicated } = modelRouteFor(settings, 'automation');
+        return streamedCall<AgentDraftResult>(requestId, accountId, 'draft', (signal, onDelta) =>
+          draftShared(accountId, threadId, requestId, 'automation', signal, onDelta),
+        (error, task) => reportFailureFor({ dedicated }, error, task));
+      }
       return streamedCall<AgentDraftResult>(requestId, accountId, 'draft', (signal, onDelta) =>
         draftShared(accountId, threadId, requestId, 'interactive', signal, onDelta));
     },

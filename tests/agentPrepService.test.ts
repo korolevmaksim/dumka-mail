@@ -657,6 +657,75 @@ describe('agent prep: shared requests', () => {
     expect(h.published.some(event => event.payload === 'unreachable')).toBe(false);
   });
 
+  it('sends no thread text for a summary when mail access is withdrawn while the thread is being read', async () => {
+    const h = harness([personThread(0)]);
+    const read = deferred<void>();
+    h.deps.listMessagesForThread = async () => {
+      await read.promise;
+      return Array.from({ length: 6 }, (_, index) => messageFor(personThread(0), index));
+    };
+    const prep = service(h);
+    const summary = prep.requestThreadSummary(ACCOUNT, 't00', 'req-1');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    h.setMayReadMail(false);
+    prep.onConfigChanged();
+    read.resolve();
+    expect(await summary).toMatchObject({ status: 'cancelled' });
+    expect(h.completions).toHaveLength(0);
+  });
+
+  it('cancels a summary being written when mail access is withdrawn, and stores nothing', async () => {
+    const h = harness([personThread(0)]);
+    h.deps.listMessagesForThread = async () => Array.from({ length: 6 }, (_, index) => messageFor(personThread(0), index));
+    const stored: unknown[] = [];
+    h.deps.saveSummary = summary => { stored.push(summary); };
+    let aborted = false;
+    h.setCompletion((_prompt, options) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => { aborted = true; reject(abortError()); }, { once: true });
+    }));
+    const prep = service(h);
+    const summary = prep.requestThreadSummary(ACCOUNT, 't00', 'req-1');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    h.setMayReadMail(false);
+    prep.onConfigChanged();
+    expect(await summary).toMatchObject({ status: 'cancelled' });
+    expect(aborted).toBe(true);
+    expect(stored).toHaveLength(0);
+    expect(prep.getModelStatus()).not.toBe('unreachable');
+  });
+
+  it('a draft picked up in advance by the reader runs on the background route, not the main model', async () => {
+    const { h, thread } = draftReadyHarness();
+    h.setAI({ ...BACKGROUND_ON, globalDefaultModel: 'main-model', automationProvider: 'openAICompatible', automationModel: 'local-small' });
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'local-small', provider: 'openAICompatible' }));
+    const prep = service(h);
+    expect(await prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1', 'automation')).toMatchObject({ status: 'ready' });
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].options).toMatchObject({ preference: 'openAICompatible', overrideModel: 'local-small' });
+  });
+
+  it('a failed draft in advance on the background provider does not mark the main model unreachable', async () => {
+    const { h, thread } = draftReadyHarness();
+    h.setAI({ ...BACKGROUND_ON, automationProvider: 'openAICompatible', automationModel: 'local-small' });
+    h.setCompletion(async () => { throw new ModelRequestError('network', 'openAICompatible', 'connect ECONNREFUSED'); });
+    const prep = service(h);
+    expect(await prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1', 'automation')).toMatchObject({ status: 'error' });
+    expect(prep.getModelStatus()).not.toBe('unreachable');
+    expect(h.published.some(event => event.payload === 'unreachable')).toBe(false);
+  });
+
+  it('does not prepare a draft in advance for the reader when drafts in advance are off', async () => {
+    const { h, thread } = draftReadyHarness();
+    h.setAI({ backgroundSorting: true, proactiveDraftsEnabled: false });
+    const prep = service(h);
+    expect(await prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1', 'automation')).toMatchObject({ status: 'skipped' });
+    expect(h.completions).toHaveLength(0);
+    // Asked for by the person: still written, on the main model.
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' }));
+    expect(await prep.requestAgentDraft(ACCOUNT, thread.id, 'req-2')).toMatchObject({ status: 'ready' });
+    expect(h.completions[0].options.preference).toBe('openAI');
+  });
+
   it('starts a fresh request when a caller arrives after everyone left an aborted one', async () => {
     const h = harness([personThread(0)]);
     const settle = deferred<void>();

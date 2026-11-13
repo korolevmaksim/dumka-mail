@@ -38,7 +38,8 @@ export interface AgentPrepApi {
   requestThreadSummary: (thread: MailThread) => void;
   getAgentDraft: (thread: MailThread | null | undefined) => AgentDraftState;
   /** Idempotent; asks for a reply draft for this thread if none is cached. */
-  requestAgentDraft: (thread: MailThread) => void;
+  /** `inAdvance`: the reader picking up a draft prepared ahead of time, not the person asking for one. */
+  requestAgentDraft: (thread: MailThread, options?: { inAdvance?: boolean }) => void;
   /** Cancels an in-flight summary/draft request for this thread, if any. */
   cancelFor: (thread: MailThread) => void;
   /** Forgets a failed draft for this thread, so its error stops showing. */
@@ -187,7 +188,7 @@ function requestThreadSummary(thread: MailThread) {
     }));
 }
 
-function requestAgentDraft(thread: MailThread) {
+function requestAgentDraft(thread: MailThread, options: { inAdvance?: boolean } = {}) {
   ensureInitialized();
   const electronAPI = api();
   if (!electronAPI || modelStatus === 'none') return;
@@ -197,7 +198,7 @@ function requestAgentDraft(thread: MailThread) {
   drafts.set(key, { state: { status: 'loading', bodyPlain: '' }, requestId, text: '', skipped: false });
   requestKeys.set(requestId, { kind: 'draft', key });
   emit();
-  electronAPI.requestAgentDraft(thread.accountId, thread.id, requestId)
+  electronAPI.requestAgentDraft(thread.accountId, thread.id, requestId, options.inAdvance ? 'automation' : 'interactive')
     .then(result => settle(drafts, key, requestId, entry => {
       if (result.status === 'ready') entry.state = { status: 'ready', bodyPlain: result.bodyPlain };
       else if (result.status === 'skipped') {

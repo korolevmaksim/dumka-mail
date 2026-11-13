@@ -8,7 +8,8 @@ import {
 } from './database';
 import { completeAI, getAIProviderDescriptor } from './ai';
 import { buildThreadContext } from '../shared/aiContext';
-import { resolveAIModelForPurpose } from '../shared/aiModelPurpose';
+import { resolveBackgroundModelRoute } from '../shared/aiModelPurpose';
+import { resolveAccountSetting } from '../shared/accountSettings';
 import { startReply } from '../shared/compose';
 import { buildInitialDraftBodyWithSignature, plainTextToHtmlFragment } from '../shared/draftHtml';
 import { planReplyPipelineMessageReplay } from './replyPipelineReplay';
@@ -115,7 +116,8 @@ async function generateDraftBody(
   messages: MailMessage[],
   settings: Partial<AppSettings>,
 ): Promise<{ body: string; origin: 'automation' | 'template' }> {
-  if (!shouldUseAutomation(settings)) {
+  // The account's own "Mail text may be sent to the model" switch applies here as everywhere else.
+  if (!shouldUseAutomation(settings) || resolveAccountSetting(settings, state.accountId, 'modelMayReadMail').value !== true) {
     return { body: deterministicBody(state), origin: 'template' };
   }
 
@@ -123,11 +125,15 @@ async function generateDraftBody(
   if (!thread) return { body: deterministicBody(state), origin: 'template' };
 
   try {
-    const overrideModel = resolveAIModelForPurpose('automation', {
+    // The same provider and model as the rest of the automation: a model chosen
+    // for a dedicated background provider is never sent to the main one.
+    const { preference, overrideModel } = resolveBackgroundModelRoute({
+      provider: settings.ai.provider,
+      automationProvider: settings.ai.automationProvider,
       interactiveModel: settings.ai.globalDefaultModel,
       automationModel: settings.ai.automationModel,
     });
-    const descriptor = await getAIProviderDescriptor(settings.ai.provider, overrideModel);
+    const descriptor = await getAIProviderDescriptor(preference, overrideModel);
     if (descriptor.preference === 'disabled') {
       return { body: deterministicBody(state), origin: 'template' };
     }
@@ -140,7 +146,7 @@ async function generateDraftBody(
       context: buildThreadContext(thread, messages, settings.ai),
       conversationHistory: [],
       userInstruction: instruction,
-    }, settings.ai.provider, overrideModel);
+    }, preference, overrideModel);
     const body = response.text
       .replace(/^subject\s*:\s.*$/gim, '')
       .replace(/^draft\s*:\s*/i, '')

@@ -107,8 +107,9 @@ export function ReplyDock({ thread, messages, decision }: ReplyDockProps) {
   // that needs a reply. Otherwise nothing is asked until `Draft a reply`.
   useEffect(() => {
     if (!draftsInAdvance || agent.modelStatus === 'none' || decision !== 'reply') return;
-    // Once per opened thread (the hook is idempotent anyway).
-    agent.requestAgentDraft(thread);
+    // Once per opened thread (the hook is idempotent anyway). Nobody asked for
+    // this one, so it runs as background work, on the background model.
+    agent.requestAgentDraft(thread, { inAdvance: true });
   }, [threadKey, decision, agent.modelStatus, draftsInAdvance]);
 
   const recipient = useMemo(

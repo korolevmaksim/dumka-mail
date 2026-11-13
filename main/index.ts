@@ -2580,8 +2580,14 @@ registerSecureHandler('api:cancelAI', (_, requestId: unknown) => {
 });
 registerSecureHandler('api:requestThreadSummary', (_, accountId: unknown, threadId: unknown, requestId: unknown) =>
   AgentPrepService.requestThreadSummary(requireAgentPrepId(accountId, 'account'), requireAgentPrepId(threadId, 'thread'), requireAIRequestId(requestId)));
-registerSecureHandler('api:requestAgentDraft', (_, accountId: unknown, threadId: unknown, requestId: unknown) =>
-  AgentPrepService.requestAgentDraft(requireAgentPrepId(accountId, 'account'), requireAgentPrepId(threadId, 'thread'), requireAIRequestId(requestId)));
+registerSecureHandler('api:requestAgentDraft', (_, accountId: unknown, threadId: unknown, requestId: unknown, purpose: unknown) =>
+  AgentPrepService.requestAgentDraft(
+    requireAgentPrepId(accountId, 'account'),
+    requireAgentPrepId(threadId, 'thread'),
+    requireAIRequestId(requestId),
+    // Anything but the explicit background marker is a request the person made.
+    purpose === 'automation' ? 'automation' : 'interactive',
+  ));
 registerSecureHandler('api:streamAIChat', (_, requestId: unknown, request: unknown, preference: unknown, overrideModel: unknown) => {
   const id = requireAIRequestId(requestId);
   if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid AI request.');
