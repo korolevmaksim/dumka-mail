@@ -231,6 +231,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     provider: 'automatic',
     globalDefaultModel: '',
     automationModel: '',
+    sortingEngine: 'completion',
+    decisionsModel: '',
+    decisionsMinConfidence: 0.8,
     automationProvider: '',
     backgroundSorting: false,
     fallback: {
@@ -736,7 +739,15 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setSpeedProof: mailState.setSpeedProof
   });
 
+  const sortingAllowedAccounts = useMemo(() => mailState.accounts.filter(account =>
+    resolveAccountSetting(settingsState.settings, account.email, 'modelMayReadMail').value
+    && resolveAccountSetting(settingsState.settings, account.email, 'backgroundSorting').value,
+  ).map(account => account.email), [mailState.accounts, settingsState.settings]);
+
   const inboxSectionsState = useInboxSections({
+    modelAllowedAccountIds: sortingAllowedAccounts,
+    sortingSettings: settingsState.settings.ai,
+    decisionsConfigured: Boolean(settingsState.customEnv.OPENAI_API_KEY),
     accounts: mailState.accounts,
     activeAccount: mailState.activeAccount,
     mailboxView: mailState.mailboxView,

@@ -1324,6 +1324,9 @@ export interface AgentRulesSettings {
 }
 
 export interface AISettings {
+  sortingEngine: 'completion' | 'openAIDecisions';
+  decisionsModel: string;
+  decisionsMinConfidence: number;
   provider: AIProviderPreference;
   /** Interactive model override for chat, triage, compose assist. Empty → provider env default. */
   globalDefaultModel: string;

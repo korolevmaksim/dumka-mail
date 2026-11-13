@@ -7,6 +7,7 @@ import { useId } from 'react';
 import { useAppStore } from '../../stores/AppStore';
 import { useProviderModels } from '../../hooks/useProviderModels';
 import { ModelPicker } from './ModelPicker';
+import { SortingEngineSettings } from './SortingEngineSettings';
 import { SETTINGS_SELECT_CLASS, Toggle } from './SettingsControls';
 import { backgroundProvider, defaultBackgroundProvider, effectiveBackgroundModel, seedBackgroundProvider } from '../../lib/backgroundModel';
 import { resolveAccountSetting } from '../../../../shared/accountSettings';
@@ -97,7 +98,9 @@ export function BackgroundWorkSection() {
         />
       </div>
 
-      {inUse && provider && (
+      <SortingEngineSettings />
+
+      {inUse && provider && (ai.sortingEngine !== 'openAIDecisions' || ai.proactiveDraftsEnabled) && (
         <div className="flex flex-col gap-3 px-4 py-3" data-background-model>
           {providerOptions.length > 1 ? (
             <div className="flex flex-col gap-1">
@@ -114,7 +117,7 @@ export function BackgroundWorkSection() {
           ) : null}
           <div className="flex flex-col gap-1">
             <label htmlFor={ids.model} className={LABEL_CLASS}>
-              Model for background work{providerOptions.length > 1 ? '' : ` (${providerName})`}
+              Model for {ai.sortingEngine === 'openAIDecisions' ? 'background reply drafts' : 'background work'}{providerOptions.length > 1 ? '' : ` (${providerName})`}
             </label>
             <ModelPicker
               id={ids.model}
@@ -144,7 +147,7 @@ export function BackgroundWorkSection() {
             <span id={ids.drafts} className={TITLE_CLASS}>Prepare reply drafts in advance</span>
             <span id={ids.draftsDesc} className={DESC_CLASS}>
               {ai.proactiveDraftsEnabled
-                ? `For mail that needs a reply, up to ${DRAFT_BATCH_SIZE} drafts per pass, with the same model. Nothing is sent.`
+                ? `For mail that needs a reply, up to ${DRAFT_BATCH_SIZE} drafts per pass, with the background text model. Nothing is sent.`
                 : 'Off: a draft is written only when you press Draft a reply in a thread.'}
             </span>
           </div>

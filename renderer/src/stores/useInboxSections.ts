@@ -40,6 +40,7 @@ import {
 import { presentMailActionFeedback } from '../lib/presentMailAction';
 import { emitToast } from '../lib/toastBus';
 import { useModelStatus } from './useAgentPrep';
+import { sortingConfig, sortingCacheMatches, type SortingSettingsSource } from '../../../shared/sortingConfig';
 
 type ExecuteMailAction = (
   kind: MailActionLog['kind'],
@@ -50,6 +51,9 @@ type ExecuteMailAction = (
 ) => Promise<MailActionExecutionResult>;
 
 interface UseInboxSectionsProps {
+  modelAllowedAccountIds?: readonly string[];
+  sortingSettings?: SortingSettingsSource;
+  decisionsConfigured?: boolean;
   accounts: Account[];
   activeAccount: Account | null;
   mailboxView: MailboxView;
@@ -79,8 +83,8 @@ function scopeAccountIds(activeAccount: Account | null, accounts: Account[]): st
   return activeAccount.id === 'unified' ? accounts.map(account => account.email).filter(Boolean) : [activeAccount.email];
 }
 
-function storedForSections(stored: StoredDecisions | undefined, hasModel: boolean): StoredDecisions | undefined {
-  if (!stored || hasModel) return stored;
+function storedForSections(stored: StoredDecisions | undefined, hasModel: boolean, config: ReturnType<typeof sortingConfig>): StoredDecisions | undefined {
+  if (!stored || (hasModel && (!stored.model || sortingCacheMatches(stored.model.model, config)))) return stored;
   return stored.user ? { user: stored.user } : undefined;
 }
 
@@ -89,6 +93,8 @@ function emptyGroupState(): GroupViewState {
 }
 
 export function useInboxSections({
+  modelAllowedAccountIds,
+  sortingSettings, decisionsConfigured = false,
   accounts,
   activeAccount,
   mailboxView,
@@ -191,9 +197,14 @@ export function useInboxSections({
   // background sorting off (the default) uses the no-model section set;
   // stored model rows are then ignored.
   const modelStatus = useModelStatus();
-  const hasModel = hasDecisionModel(aiProviderDesc) && modelStatus !== 'unreachable' && modelAllowedForScope;
+  const sortConfig = useMemo(() => sortingConfig(sortingSettings), [sortingSettings]);
+  const allowedAccounts = useMemo(() => modelAllowedAccountIds
+    ? new Set(modelAllowedAccountIds.map(id => id.toLowerCase())) : null, [modelAllowedAccountIds]);
+  const usesDecisions = sortConfig.engine === 'openAIDecisions';
+  const hasModel = (usesDecisions ? decisionsConfigured && Boolean(sortConfig.model)
+    : hasDecisionModel(aiProviderDesc) && modelStatus !== 'unreachable') && modelAllowedForScope;
   /** Model sorting is on for this scope, but the model is not answering: sections fall back to rules until it does. */
-  const modelSortingPaused = hasDecisionModel(aiProviderDesc) && modelStatus === 'unreachable' && modelAllowedForScope;
+  const modelSortingPaused = !usesDecisions && hasDecisionModel(aiProviderDesc) && modelStatus === 'unreachable' && modelAllowedForScope;
   const sectioned = mailboxView === 'inbox' && !searchQuery.trim();
   const scope = `${accountKey}|${mailboxView}|${sectioned ? 'sections' : 'flat'}`;
   const groups = groupSnapshot.scope === scope ? groupSnapshot.groups : NO_GROUPS;
@@ -202,10 +213,11 @@ export function useInboxSections({
     if (!sectioned) return [];
     const entries: DecisionEntry[] = visibleThreads.map(thread => ({
       thread,
-      decision: resolveInboxDecision(thread, { accountEmail: thread.accountId }, storedForSections(threadDecisions[thread.accountId]?.[thread.id], hasModel)),
+      decision: resolveInboxDecision(thread, { accountEmail: thread.accountId }, storedForSections(threadDecisions[thread.accountId]?.[thread.id],
+        hasModel && (!allowedAccounts || allowedAccounts.has(thread.accountId.toLowerCase())), sortConfig)),
     }));
     return groupThreadsByDecision(entries, hasModel);
-  }, [hasModel, sectioned, threadDecisions, visibleThreads]);
+  }, [hasModel, sectioned, threadDecisions, visibleThreads, sortConfig, allowedAccounts]);
 
   const decisionByThreadKey = useMemo(() => {
     const map = new Map<string, ThreadDecision>();

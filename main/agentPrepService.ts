@@ -1,3 +1,4 @@
+import { completeOpenAIDecisions } from './openAIDecisions';
 // Agent preparation in the main process (design-review/SPEC.md §1 model layer, §5).
 //
 // The logic lives in `main/agentPrepCore.ts` and takes all of its
@@ -55,6 +56,7 @@ const service = createAgentPrepService({
   buildChatPrompt: request => buildPlainChatPrompt(request),
   resolveTextProvider,
   completeText,
+  completeDecisions: completeOpenAIDecisions,
   publish: (channel, payload) => host?.publish(channel, payload),
   logWarning: (scope, message, extra) => SystemLogger.warning(scope, message, extra),
   newId: () => crypto.randomUUID(),

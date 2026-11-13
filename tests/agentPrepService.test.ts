@@ -248,14 +248,14 @@ describe('agent prep: gates', () => {
     expect(h.published.some(event => event.channel === 'api:agentDraftReady')).toBe(true);
   });
 
-  it('stops a pass between batches when background sorting is turned off', async () => {
+  it('discards an in-flight answer and stops the pass when background sorting is turned off', async () => {
     const h = harness();
     h.setCompletion(async (prompt, options) => {
       h.setAI({});
       return answerAll()(prompt, options);
     });
     expect(await service(h).runAccountNow(ACCOUNT, 'sync')).toBe(1);
-    expect(h.upserts).toHaveLength(1);
+    expect(h.upserts).toHaveLength(0);
   });
 
   it('runs background work on its own provider and model, and chat on the main one', async () => {
@@ -765,5 +765,86 @@ describe('agent prep: reconnect', () => {
     h.setCompletion(answerAll());
     expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(3);
     expect(h.upserts.flat()).toHaveLength(30);
+  });
+});
+
+describe('agent prep: OpenAI Decisions sorting', () => {
+  const settings = { backgroundSorting: true, proactiveDraftsEnabled: false,
+    sortingEngine: 'openAIDecisions', decisionsModel: 'selected-decision-model', decisionsMinConfidence: 0.8 };
+
+  it('routes sorting to Decisions while leaving the text model unused', async () => {
+    const h = harness([personThread(0)]);
+    h.setAI({ ...settings, provider: 'anthropic' });
+    h.deps.completeDecisions = vi.fn<NonNullable<AgentPrepDeps['completeDecisions']>>(async (items, _now, options) => ({ valid: true, model: options.model,
+      items: items.map(item => ({ threadId: item.threadId, decision: 'reply', reason: 'Needs a reply', laterAt: null })) }));
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.deps.completeDecisions).toHaveBeenCalledOnce();
+    expect(h.completions).toHaveLength(0);
+    expect(h.resolved).toContainEqual({ preference: 'openAI', overrideModel: settings.decisionsModel });
+    expect(h.upserts[0][0]).toMatchObject({ decision: 'reply', model: `openAIDecisions:0.8:${settings.decisionsModel}` });
+  });
+
+  it('does nothing without an explicitly selected Decisions model', async () => {
+    const h = harness([personThread(0)]);
+    h.setAI({ ...settings, decisionsModel: '' });
+    h.deps.completeDecisions = vi.fn<NonNullable<AgentPrepDeps['completeDecisions']>>();
+    expect(await service(h).runAccountNow(ACCOUNT)).toBe(0);
+    expect(h.deps.completeDecisions).not.toHaveBeenCalled();
+    expect(h.completions).toHaveLength(0);
+  });
+
+  it('caches uncertain results under the local category without charging again after restart', async () => {
+    const h = harness([personThread(0)]);
+    h.setAI(settings);
+    h.deps.completeDecisions = vi.fn<NonNullable<AgentPrepDeps['completeDecisions']>>(async () => ({ valid: true, items: [], model: settings.decisionsModel }));
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.upserts[0][0].decision).toBe('people');
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.deps.completeDecisions).toHaveBeenCalledOnce();
+    // A changed model invalidates the previous model's cache.
+    h.setAI({ ...settings, decisionsModel: 'another-selected-model' });
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.deps.completeDecisions).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps user corrections out of the model work list', async () => {
+    const thread = personThread(0);
+    const h = harness([thread]); h.setAI(settings);
+    h.decisions.push({ accountId: ACCOUNT, threadId: thread.id, lastMessageId: `${thread.id}-m1`,
+      decision: 'read', reason: 'Already handled', source: 'user', model: null, laterAt: null, createdAt: new Date(BASE_TIME).toISOString() });
+    h.deps.completeDecisions = vi.fn<NonNullable<AgentPrepDeps['completeDecisions']>>();
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.deps.completeDecisions).not.toHaveBeenCalled();
+  });
+
+  it('discards answers when permission is withdrawn or the selected model changes mid-request', async () => {
+    for (const withdraw of [true, false]) {
+      const h = harness([personThread(0)]); h.setAI(settings);
+      h.deps.completeDecisions = vi.fn<NonNullable<AgentPrepDeps['completeDecisions']>>(async () => {
+        if (withdraw) h.setMayReadMail(false);
+        else h.setAI({ ...settings, decisionsModel: 'another-selected-model' });
+        return { valid: true, model: settings.decisionsModel,
+          items: [{ threadId: 't00', decision: 'reply', reason: 'Needs a reply', laterAt: null }] };
+      });
+      await service(h).runAccountNow(ACCOUNT);
+      expect(h.upserts).toHaveLength(0);
+    }
+  });
+
+  it('cancels an in-flight Decisions request on a configuration change', async () => {
+    const h = harness([personThread(0)]); h.setAI(settings);
+    const started = deferred<AbortSignal>();
+    h.deps.completeDecisions = vi.fn<NonNullable<AgentPrepDeps['completeDecisions']>>((_items, _now, options) => new Promise<Awaited<ReturnType<NonNullable<AgentPrepDeps['completeDecisions']>>>>((_resolve, reject) => {
+      started.resolve(options.signal);
+      options.signal.addEventListener('abort', () => reject(abortError()));
+    }));
+    const prep = service(h);
+    const pending = prep.runAccountNow(ACCOUNT);
+    const signal = await started.promise;
+    h.setAI({ ...settings, decisionsModel: 'another-selected-model' });
+    prep.onConfigChanged();
+    expect(signal.aborted).toBe(true);
+    await pending;
+    expect(h.upserts).toHaveLength(0);
   });
 });

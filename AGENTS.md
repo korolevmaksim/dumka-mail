@@ -75,6 +75,13 @@ OAuth is a loopback PKCE flow (`startOAuthFlow` spins a temporary `http` server,
 
 ### AI layer (`main/ai.ts`)
 
+OpenAI Decisions sorting is a separate path (`main/openAIDecisions.ts`,
+`shared/openAIDecisions.ts`), selected by `ai.sortingEngine`. Its model comes
+only from `ai.decisionsModel`; never infer it from a model name or hardcode an
+API-specific model. `ai.decisionsMinConfidence` controls when to keep local
+rules. Settings loads the provider catalog through the existing model picker.
+See `docs/DECISIONS.md` for permissions, cache identity and response validation.
+
 `completeAI` dispatches over a `AIProviderPreference` union to per-provider `fetch` calls (OpenAI Responses/Chat, Anthropic Messages, Gemini generateContent, DeepSeek, OpenAI-compatible). `automatic` preference picks the first provider with a configured key. Provider config (API keys, model overrides, base URLs) is read from a dotenv-style file, **not** from the SQLite DB. There is no SDK dependency — all providers are hit via raw `fetch`, so adding a provider means extending the `switch` in both `getAIProviderDescriptor` and `completeAI`.
 
 ### Renderer (`renderer/src/`)

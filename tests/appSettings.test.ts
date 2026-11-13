@@ -289,3 +289,16 @@ describe('AppSettings defaults and migrations', () => {
     expect(merged.mailRules.rules[0].actions[0].type).toBe('archive');
   });
 });
+
+describe('Decisions sorting settings', () => {
+  it('migrates without guessing a model or enabling background requests', () => {
+    const merged = mergeSettings({ ai: { provider: 'anthropic' } });
+    expect(merged.ai).toMatchObject({ sortingEngine: 'completion', decisionsModel: '', decisionsMinConfidence: 0.8, backgroundSorting: false });
+  });
+  it('preserves the independent Decisions model across save/reload', () => {
+    const merged = mergeSettings(JSON.parse(JSON.stringify({ ai: { provider: 'anthropic', globalDefaultModel: 'interactive-model',
+      automationModel: 'draft-model', sortingEngine: 'openAIDecisions', decisionsModel: 'sorting-model', decisionsMinConfidence: 0.9 } })));
+    expect(merged.ai).toMatchObject({ provider: 'anthropic', globalDefaultModel: 'interactive-model', automationModel: 'draft-model',
+      sortingEngine: 'openAIDecisions', decisionsModel: 'sorting-model', decisionsMinConfidence: 0.9 });
+  });
+});

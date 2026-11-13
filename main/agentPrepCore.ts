@@ -1,3 +1,5 @@
+import { sortingConfig, sortingCacheKey, sortingCacheMatches, type SortingSettingsSource } from '../shared/sortingConfig';
+import type { DecisionPromptItem, DecisionBatchParseResult } from '../shared/agentPrompts';
 // Agent preparation logic (design-review/SPEC.md §1 model layer, §5), free of
 // database, Electron and provider imports: every dependency is injected, so the
 // rules below are unit-tested with fakes (tests/agentPrepService.test.ts).
@@ -77,7 +79,7 @@ const ATTEMPT_MEMORY_LIMIT = 20_000;
 
 export interface StoredAgentSettings {
   compose?: { afterSend?: unknown } | null;
-  ai?: {
+  ai?: SortingSettingsSource & {
     allowMailBodyContext?: unknown;
     provider?: unknown;
     globalDefaultModel?: unknown;
@@ -142,6 +144,7 @@ export interface AgentPrepDeps {
   buildChatPrompt(request: AgentChatRequest): TextPrompt;
   resolveTextProvider(preference: AIProviderPreference, overrideModel?: string): Promise<AIProviderDescriptor | null>;
   completeText(prompt: TextPrompt, options: TextCompletionRequest): Promise<TextCompletion>;
+  completeDecisions?(items: readonly DecisionPromptItem[], now: Date, options: { model: string; minConfidence: number; signal: AbortSignal }): Promise<DecisionBatchParseResult & { model: string }>;
   publish(channel: string, payload: unknown): void;
   logWarning(scope: string, message: string, extra?: Record<string, unknown>): void;
   newId(): string;
@@ -260,6 +263,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       stringSetting(settings.ai?.globalDefaultModel),
       stringSetting(settings.ai?.automationModel),
       automationProvider(settings),
+      sortingConfig(settings.ai),
       settings.ai?.proactiveDraftsEnabled === true,
       accounts,
     ]);
@@ -508,13 +512,17 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       if (run.controller.signal.aborted) break;
       // Checked before every batch: turning the setting off stops the pass.
       if (!backgroundSortingEnabled(deps.readSettings(), accountId)) break;
-      const gate = await gateFor(accountId, 'automation');
+      const config = sortingConfig(deps.readSettings().ai);
+      const gate = config.engine === 'openAIDecisions'
+        ? config.model && mayReadMail(accountId) && await deps.resolveTextProvider('openAI', config.model).catch(() => null)
+          ? { settings: deps.readSettings(), preference: 'openAI' as const, overrideModel: config.model, dedicated: true } : null
+        : await gateFor(accountId, 'automation');
       if (!gate) break;
       if (requestsMade === 0 && backgroundPaused(gate, reason)) break;
 
       const snapshot = await deps.inboxSnapshot(accountId, INBOX_SCAN_LIMIT);
       if (run.controller.signal.aborted) break;
-      const candidates = selectDecisionWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions), { accountEmail: accountId }, {
+      const candidates = selectDecisionWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions.filter(record => record.source !== 'model' || sortingCacheMatches(record.model, config))), { accountEmail: accountId }, {
         limit: DECISION_BATCH_SIZE,
         skip: attemptedDecisions,
       });
@@ -523,10 +531,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       const latest = await latestMessagesFor(accountId, candidates.map(candidate => candidate.thread.id), run.controller.signal);
       if (run.controller.signal.aborted) break;
       const now = deps.now();
-      const prompt = buildDecisionBatchPrompt(
-        candidates.map(candidate => buildDecisionPromptItem(candidate, latest.get(candidate.thread.id) || null)),
-        now,
-      );
+      const items = candidates.map(candidate => buildDecisionPromptItem(candidate, latest.get(candidate.thread.id) || null));
+      const prompt = buildDecisionBatchPrompt(items, now);
       const allowed = new Set(candidates.map(candidate => candidate.thread.id));
       // The reads above are asynchronous: check again right before mail text is sent.
       if (!mayReadMail(accountId) || !backgroundSortingEnabled(deps.readSettings(), accountId)) break;
@@ -539,6 +545,12 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         for (let attempt = 1; attempt <= 2 && !parsed?.valid; attempt += 1) {
           requestsMade += 1;
           try {
+            if (config.engine === 'openAIDecisions') {
+              if (!deps.completeDecisions) throw new ModelRequestError('config', 'openAI', 'OpenAI Decisions is unavailable.');
+              parsed = await deps.completeDecisions(items, now, { model: config.model, minConfidence: config.minConfidence, signal: run.controller.signal });
+              model = sortingCacheKey(config);
+              continue;
+            }
             const result = await deps.completeText(prompt, {
               preference: gate.preference,
               overrideModel: gate.overrideModel,
@@ -567,7 +579,20 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         continue;
       }
 
+      if (!mayReadMail(accountId) || !backgroundSortingEnabled(deps.readSettings(), accountId)
+        || JSON.stringify(config) !== JSON.stringify(sortingConfig(deps.readSettings().ai))) break;
       const records = refineDecisionBatch(candidates, parsed.items, model, now);
+      if (config.engine === 'openAIDecisions') {
+        const classified = new Set(records.map(record => record.threadId));
+        // Cache reviewed-but-uncertain threads too, without changing their rule
+        // category. A new message, engine, model or threshold invalidates this.
+        for (const candidate of candidates) {
+          if (classified.has(candidate.thread.id)) continue;
+          records.push({ accountId, threadId: candidate.thread.id, lastMessageId: candidate.lastMessageId,
+            decision: candidate.rule.decision, reason: candidate.rule.reason, source: 'model', laterAt: null,
+            model, createdAt: now.toISOString() });
+        }
+      }
       rememberDecisionCandidates(accountId, candidates);
       if (records.length > 0 && accountExists(accountId) && !run.controller.signal.aborted) {
         deps.upsertDecisions(records);
@@ -845,6 +870,9 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       const next = fingerprint(settings);
       if (!force && next === settingsFingerprint) return;
       settingsFingerprint = next;
+      attemptedDecisions.clear();
+      for (const run of accountRuns.values()) run.controller.abort();
+      accountRuns.clear();
       // A new background setup starts without the old provider's back-off.
       reportBackgroundSuccess();
       // Background sorting turned off: stop the pass in flight, so nothing it
@@ -877,7 +905,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       }
       void refreshModelStatus().then(status => {
         // Background work may have its own provider even when the main one is not set up.
-        if (status === 'none' && !automationProvider(deps.readSettings())) return;
+        if (status === 'none' && !automationProvider(deps.readSettings()) && sortingConfig(deps.readSettings().ai).engine !== 'openAIDecisions') return;
         for (const account of deps.listAccounts()) trigger(account.email, 'config');
       });
     },
