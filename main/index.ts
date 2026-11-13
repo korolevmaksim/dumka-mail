@@ -1357,6 +1357,8 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
   }
   // Provider, models or per-account "Mail text may be sent to the model" may have changed.
   AgentPrepService.onConfigChanged();
+  // The older background pass prepares drafts too: stop the ones no longer allowed.
+  AgenticService.cancelDisallowedBackgroundDrafts();
 
   return result;
 });

@@ -295,12 +295,32 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
   };
 }
 
+/**
+ * Whether a draft may be prepared for this account without being asked for.
+ * Read from the stored settings on every call: the checks around the model
+ * request must see a switch that was turned off a moment ago.
+ */
+function backgroundDraftAllowed(accountId: string): boolean {
+  const settings = readAgentSettings(accountId);
+  if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return false;
+  // Per-account "Mail text may be sent to the model" (SPEC §8) also gates this legacy path.
+  return accountAllowsMailText(accountId) && accountAllowsBackgroundModel(accountId);
+}
+
+/** Background draft requests in flight, by account, so a settings change can cancel them. */
+const backgroundDraftRequests = new Map<string, Set<AbortController>>();
+
+/** Cancels background drafts being written for accounts that no longer allow them. */
+function cancelDisallowedBackgroundDrafts(): void {
+  for (const [accountId, controllers] of backgroundDraftRequests) {
+    if (backgroundDraftAllowed(accountId)) continue;
+    for (const controller of controllers) controller.abort();
+  }
+}
+
 async function generateDraftForThread(thread: MailThread, messages: MailMessage[]): Promise<AgentDraftSuggestion | null> {
   const settings = readAgentSettings(thread.accountId);
-  if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return null;
-  // Per-account "Mail text may be sent to the model" (SPEC §8) also gates this legacy path.
-  if (!accountAllowsMailText(thread.accountId)) return null;
-  if (!accountAllowsBackgroundModel(thread.accountId)) return null;
+  if (!backgroundDraftAllowed(thread.accountId)) return null;
 
   const latest = latestMessage(messages);
   if (!latest) return null;
@@ -311,6 +331,10 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
   const key = `${thread.accountId}:${thread.id}`;
   if (activeDraftThreads.has(key)) return null;
   activeDraftThreads.add(key);
+  const controller = new AbortController();
+  const accountRequests = backgroundDraftRequests.get(thread.accountId) || new Set<AbortController>();
+  accountRequests.add(controller);
+  backgroundDraftRequests.set(thread.accountId, accountRequests);
 
   try {
     // The same provider and model as the rest of the background work.
@@ -322,6 +346,8 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
     });
     const descriptor = await getAIProviderDescriptor(preference, overrideModel);
     if (descriptor.preference === 'disabled') return null;
+    // The lookup above is asynchronous: check again right before mail text leaves the machine.
+    if (controller.signal.aborted || !backgroundDraftAllowed(thread.accountId)) return null;
 
     const tone = settings.replyTone === 'direct'
       ? 'Use a direct, clear tone.'
@@ -346,8 +372,12 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
         'If facts are missing, include a short bracketed placeholder instead of guessing.',
         personalization,
       ].join('\n'),
-    }, preference, overrideModel);
+    }, preference, overrideModel, { signal: controller.signal });
 
+    // Turned off while the model was writing: the answer is not kept.
+    if (controller.signal.aborted || !backgroundDraftAllowed(thread.accountId)) return null;
+    // The newer pipeline may have prepared a draft for this message meanwhile: keep one.
+    if (AgentDraftsRepo.getForMessage(thread.accountId, latest.id)) return null;
     const bodyPlain = cleanDraftText(response.text);
     if (bodyPlain.length < 8) return null;
 
@@ -369,10 +399,13 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
     AgentDraftsRepo.save(draft);
     return draft;
   } catch (err) {
-    SystemLogger.warning('Agentic', 'Proactive draft generation was skipped.', { error: err });
+    // A cancelled request is the expected result of turning the setting off.
+    if (!controller.signal.aborted) SystemLogger.warning('Agentic', 'Proactive draft generation was skipped.', { error: err });
     return null;
   } finally {
     activeDraftThreads.delete(key);
+    accountRequests.delete(controller);
+    if (accountRequests.size === 0 && backgroundDraftRequests.get(thread.accountId) === accountRequests) backgroundDraftRequests.delete(thread.accountId);
   }
 }
 
@@ -776,6 +809,11 @@ export const AgenticService = {
     for (const group of groups.values()) {
       await processThreadInternal(group.accountId, group.threadId);
     }
+  },
+
+  /** Call after settings change: stops background drafts for accounts that no longer allow them. */
+  cancelDisallowedBackgroundDrafts(): void {
+    cancelDisallowedBackgroundDrafts();
   },
 
   async runBackgroundPass(maxThreadsPerAccount = 8): Promise<void> {

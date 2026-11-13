@@ -244,7 +244,16 @@ function finalizeAIResponse({
   };
 }
 
-export async function completeAI(request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<AIResponse> {
+export async function completeAI(
+  request: AIRequest,
+  preference: AIProviderPreference,
+  overrideModel?: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<AIResponse> {
+  // Every provider request below goes through this wrapper, so a caller's signal cancels the one in flight.
+  const fetchWithTimeout = (url: string, init: RequestInit, timeoutMs: number, label: string) =>
+    fetchWithTimeoutBase(url, options.signal ? { ...init, signal: options.signal } : init, timeoutMs, label);
+  if (options.signal?.aborted) throw abortedRequestError();
   const descriptor = await getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
     throw new Error('AI operations are disabled.');
@@ -711,18 +720,34 @@ function buildOllamaEmbedUrl(baseURL: string): string {
   return `${trimmed}/api/embed`;
 }
 
-function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
+function abortedRequestError(): Error {
+  return Object.assign(new Error('The request was cancelled.'), { name: 'AbortError' });
+}
+
+/** `fetch` with a timeout. An `init.signal` from the caller cancels the request as well. */
+function fetchWithTimeoutBase(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
   const controller = new AbortController();
+  const callerSignal = init.signal || null;
   let settled = false;
   let timeout: ReturnType<typeof setTimeout> | null = null;
 
   return new Promise<Response>((resolve, reject) => {
+    const onCallerAbort = () => {
+      controller.abort();
+      finish(() => reject(abortedRequestError()));
+    };
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
       fn();
     };
+    if (callerSignal?.aborted) {
+      onCallerAbort();
+      return;
+    }
+    callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
 
     timeout = setTimeout(() => {
       controller.abort();
@@ -734,6 +759,10 @@ function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, lab
       error => finish(() => reject(error)),
     );
   });
+}
+
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string): Promise<Response> {
+  return fetchWithTimeoutBase(url, init, timeoutMs, label);
 }
 
 function assertEmbeddingCount(embeddings: number[][], inputLength: number): number[][] {

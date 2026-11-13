@@ -574,6 +574,89 @@ describe('agent prep: shared requests', () => {
     expect(h.published.some(event => event.channel === 'api:agentDraftReady')).toBe(true);
   });
 
+  /** One thread that already has a model `reply` decision, so a pass goes straight to drafts. */
+  function draftReadyHarness() {
+    const thread = personThread(0);
+    const h = harness([thread]);
+    h.decisions.push({
+      accountId: ACCOUNT, threadId: thread.id, lastMessageId: thread.signals!.lastMessageId, decision: 'reply',
+      reason: 'Asks a question', source: 'model', laterAt: null, model: 'test-model', createdAt: new Date(BASE_TIME).toISOString(),
+    });
+    return { h, thread };
+  }
+
+  it('sends no mail to the model when drafts in advance are turned off while the thread is being read', async () => {
+    const { h, thread } = draftReadyHarness();
+    const read = deferred<void>();
+    const listMessages = h.deps.listMessagesForThread;
+    h.deps.listMessagesForThread = async (accountId, threadId) => {
+      await read.promise;
+      return listMessages(accountId, threadId);
+    };
+    const prep = service(h);
+    const pass = prep.runAccountNow(ACCOUNT, 'sync');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    // Sorting stays on; only drafts in advance are switched off.
+    h.setAI({ backgroundSorting: true, proactiveDraftsEnabled: false });
+    prep.onConfigChanged();
+    read.resolve();
+    await pass;
+    expect(h.completions).toHaveLength(0);
+
+    // Not remembered as attempted: turning it back on prepares the draft.
+    h.setAI(BACKGROUND_ON);
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' }));
+    await prep.runAccountNow(ACCOUNT, 'sync');
+    expect(h.completions).toHaveLength(1);
+    expect(threadIdsIn(h.completions[0].prompt)).toEqual([]);
+    expect(h.published.some(event => event.channel === 'api:agentDraftReady' && (event.payload as { threadId: string }).threadId === thread.id)).toBe(true);
+  });
+
+  it('cancels a background draft being written when drafts in advance are turned off, and keeps nothing from it', async () => {
+    const { h } = draftReadyHarness();
+    const saved: unknown[] = [];
+    h.deps.saveAgentDraft = draft => { saved.push(draft); };
+    let aborted = false;
+    h.setCompletion((_prompt, options) => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => { aborted = true; reject(abortError()); }, { once: true });
+    }));
+    const prep = service(h);
+    const pass = prep.runAccountNow(ACCOUNT, 'sync');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    h.setAI({ backgroundSorting: true, proactiveDraftsEnabled: false });
+    prep.onConfigChanged();
+    await pass;
+    expect(aborted).toBe(true);
+    expect(saved).toHaveLength(0);
+    expect(prep.getModelStatus()).not.toBe('unreachable');
+  });
+
+  it('a draft the person asks for does not join a background draft on another provider', async () => {
+    const { h, thread } = draftReadyHarness();
+    h.setAI({ ...BACKGROUND_ON, automationProvider: 'openAICompatible', automationModel: 'local-small' });
+    const background = deferred<{ text: string; model: string; provider: string }>();
+    h.setCompletion(async (_prompt, options) => {
+      if (options.preference === 'openAICompatible') return background.promise;
+      return { text: 'Thanks, the 24th works for me.', model: 'main-model', provider: 'openAI' };
+    });
+    const prep = service(h);
+    const pass = prep.runAccountNow(ACCOUNT, 'sync');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    expect(h.completions[0].options.preference).toBe('openAICompatible');
+
+    // The person presses Draft a reply while the background one is still running.
+    const asked = await prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    expect(asked).toMatchObject({ status: 'ready' });
+    expect(h.completions).toHaveLength(2);
+    expect(h.completions[1].options.preference).toBe('openAI');
+
+    // The background provider then fails: that is not the main model failing.
+    background.reject(new ModelRequestError('network', 'openAICompatible', 'connect ECONNREFUSED'));
+    await pass;
+    expect(prep.getModelStatus()).not.toBe('unreachable');
+    expect(h.published.some(event => event.payload === 'unreachable')).toBe(false);
+  });
+
   it('starts a fresh request when a caller arrives after everyone left an aborted one', async () => {
     const h = harness([personThread(0)]);
     const settle = deferred<void>();

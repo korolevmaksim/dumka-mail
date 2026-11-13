@@ -194,3 +194,38 @@ describe('completeAI OpenAI payload', () => {
     expect(body.reasoning_effort).toBe('medium');
   });
 });
+
+describe('completeAI cancellation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const request = { action: 'chat' as const, context: 'No thread open.', conversationHistory: [], userInstruction: 'Reply with ok' };
+
+  it('cancels the provider request in flight when the caller aborts', async () => {
+    let providerSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      providerSignal = init.signal || undefined;
+      init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const controller = new AbortController();
+    const pending = completeAI(request, 'anthropic', undefined, { signal: controller.signal });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(providerSignal?.aborted).toBe(true);
+  });
+
+  it('makes no provider request when the signal is already aborted', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(completeAI(request, 'anthropic', undefined, { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

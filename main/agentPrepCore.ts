@@ -370,6 +370,13 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     return modelMayReadMail(deps.readSettings(), accountId);
   }
 
+  /** Read from the current settings each time: a draft asked for by the person needs mail access; one prepared in advance also needs that setting to be on. */
+  function draftStillAllowed(accountId: string, purpose: AIModelPurpose): boolean {
+    const settings = deps.readSettings();
+    if (!modelMayReadMail(settings, accountId)) return false;
+    return purpose !== 'automation' || draftsInAdvanceEnabled(settings, accountId);
+  }
+
   async function gateFor(accountId: string, purpose: AIModelPurpose): Promise<PrepGate | null> {
     const settings = deps.readSettings();
     if (!modelMayReadMail(settings, accountId)) return null;
@@ -593,6 +600,12 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     const existing = deps.getAgentDraftForMessage(accountId, latest.id);
     if (existing?.status === 'ready') return { status: 'ready', bodyPlain: existing.bodyPlain, lastMessageId: latest.id };
 
+    // The reads above are asynchronous: the person may have turned this off
+    // meanwhile. Checked again right before mail text leaves the machine.
+    if (signal.aborted) return { status: 'cancelled' };
+    // Reported as cancelled, not skipped: the thread is tried again once the setting is back on.
+    if (!draftStillAllowed(accountId, purpose)) return { status: 'cancelled' };
+
     const account = deps.listAccounts().find(item => normalizeAccountId(item.email) === normalizeAccountId(accountId));
     const prompt = buildDraftPrompt({
       thread,
@@ -612,6 +625,17 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     const bodyPlain = cleanDraftBody(result.text);
     if (bodyPlain.length < 8) throw new ModelRequestError('empty', String(result.provider), 'Draft answer was empty.');
     if (signal.aborted || !accountExists(accountId)) return { status: 'cancelled' };
+    // Turned off while the model was writing: the answer is not kept.
+    if (!draftStillAllowed(accountId, purpose)) return { status: 'cancelled' };
+    // A request for the other purpose may have finished first (they are not shared): keep one draft per message.
+    const finishedMeanwhile = deps.getAgentDraftForMessage(accountId, latest.id);
+    if (finishedMeanwhile) {
+      reportSuccessFor(gate);
+      // Ready: hand that one over. Already used by the person: nothing more to prepare.
+      return finishedMeanwhile.status === 'ready'
+        ? { status: 'ready', bodyPlain: finishedMeanwhile.bodyPlain, lastMessageId: latest.id }
+        : { status: 'skipped' };
+    }
 
     const now = deps.now().toISOString();
     deps.saveAgentDraft({
@@ -634,8 +658,17 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     return { status: 'ready', bodyPlain, lastMessageId: latest.id };
   }
 
+  /** Shared-request key for a draft: background and on-request drafts never join each other. */
+  function draftKey(accountId: string, threadId: string, purpose: AIModelPurpose): string {
+    return `${threadKey(accountId, threadId)}\u0000${purpose}`;
+  }
+
   /**
-   * One draft request per thread at a time; a second caller joins the first.
+   * One draft request per thread and purpose at a time; a second caller with
+   * the same purpose joins the first. A draft the person asks for and one
+   * prepared in the background stay separate requests: they may use different
+   * providers, a failure of one must not be reported against the other's
+   * model, and turning background drafts off cancels only those.
    * Resolves `CANCELLED` when this caller's signal aborts, whatever the others do.
    */
   function draftShared(
@@ -646,7 +679,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     signal: AbortSignal,
     onDelta?: (delta: string) => void,
   ): Promise<AgentDraftResult | typeof CANCELLED> {
-    return joinShared(draftsInFlight, threadKey(accountId, threadId), accountId, participantId, signal, onDelta,
+    return joinShared(draftsInFlight, draftKey(accountId, threadId, purpose), accountId, participantId, signal, onDelta,
       (sharedSignal, sharedDelta) => generateDraft(accountId, threadId, purpose, sharedSignal, sharedDelta, Boolean(onDelta)));
   }
 
@@ -813,8 +846,16 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       // Background sorting turned off: stop the pass in flight, so nothing it
       // already asked for is applied. Requests the user made are not touched.
       for (const account of deps.listAccounts()) {
-        if (backgroundSortingEnabled(settings, account.email)) continue;
         const key = normalizeAccountId(account.email);
+        // Drafts in advance turned off (or mail access withdrawn): cancel the
+        // background drafts being written. Only background callers share them.
+        if (!draftsInAdvanceEnabled(settings, account.email) || !modelMayReadMail(settings, account.email)) {
+          const suffix = `\u0000${'automation' satisfies AIModelPurpose}`;
+          for (const [draftRequestKey, request] of draftsInFlight) {
+            if (normalizeAccountId(request.accountId) === key && draftRequestKey.endsWith(suffix)) request.controller.abort();
+          }
+        }
+        if (backgroundSortingEnabled(settings, account.email) && modelMayReadMail(settings, account.email)) continue;
         accountRuns.get(key)?.controller.abort();
         accountRuns.delete(key);
         const timer = triggerTimers.get(key);
