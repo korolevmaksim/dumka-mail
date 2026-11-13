@@ -27,6 +27,33 @@ npm run dist:linux
 
 Windows/Linux packages are not code-signed by default.
 
+## Gmail quota regression checks
+
+Gmail can return a temporary quota failure as HTTP 403 with `rateLimitExceeded`,
+`userRateLimitExceeded`, or `RATE_LIMIT_EXCEEDED`, as well as HTTP 429. These
+failures keep optimistic mail actions in `pending_sync` with a cooldown instead
+of rolling them back. Ordinary permission and daily-limit 403 responses remain
+distinct. Existing actions already marked `failed` are not replayed automatically.
+
+History backfill requests pages of 20 threads with one detail request at a time,
+at least three seconds between requests per account. Full threads currently cost
+120 quota units against the 6,000-unit per-user/minute quota, so this reserves
+most of the budget for current mail and user actions. Mutations run immediately
+and suspend backfill while active and for five seconds afterwards. A quota
+response starts a shared per-account cooldown (at least one minute, increasing
+on repeated failures, with jitter and support for `Retry-After`). Mutations
+during cooldown are queued locally without another remote request. A failed
+backfill detail request leaves the page cursor unchanged; only HTTP 404 threads
+may be skipped.
+
+References: [Gmail quotas](https://developers.google.com/workspace/gmail/api/reference/quota)
+and [Gmail error handling](https://developers.google.com/workspace/gmail/api/guides/handle-errors).
+
+Run `tests/actionReconciler.test.ts`, `tests/gmailBackgroundTraffic.test.ts`, and
+`tests/gmailBackfillQuota.test.ts` before the full test suite and production build.
+They cover quota parking/replay, permanent permission failures, cooldowns,
+foreground priority, and preserving pagination after incomplete backfill pages.
+
 ## Calendar release QA
 
 Calendar changes require an existing-profile migration check plus installed-app verification. Reauthorize Calendar after upgrading so the CalendarList read scope is granted, verify at least one secondary calendar and a read-only calendar, then test cached restart, all six views, create/edit/delete and recurring scopes, `.ics` preview import/export, mail-to-event/source-mail navigation, offline queue replay, and a native reminder. Unsigned macOS development packages may have OS-level notification limitations; release evidence should use the installed application rather than only the Vite renderer.

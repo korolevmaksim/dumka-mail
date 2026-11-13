@@ -1,3 +1,5 @@
+import { isTransientHttpError, scheduledAtForRetry } from './remoteRetry';
+export { isTransientHttpError, parseRetryAfterMs, scheduledAtForRetry } from './remoteRetry';
 import { isSqliteBusyError } from './sqliteWriteGuard';
 import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
 import { createRfcMessageId, resolveActionRfcMessageId } from '../shared/rfcMessageId';
@@ -65,40 +67,6 @@ export function isNetworkError(err: any): boolean {
     code === 'EHOSTUNREACH' ||
     code === 'ENETUNREACH'
   );
-}
-
-export function isTransientHttpError(err: unknown): boolean {
-  if (!err) return false;
-  const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
-  if (name === 'AbortError' || name === 'TimeoutError' || name === 'RequestTimeoutError') return true;
-  const status = err && typeof err === 'object' && 'status' in err
-    ? Number((err as { status?: number }).status)
-    : NaN;
-  if (Number.isFinite(status) && (status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599))) {
-    return true;
-  }
-  const msg = String((err as { message?: string })?.message || err);
-  const match = msg.match(/HTTP\s+(\d{3})/i);
-  if (!match) return false;
-  const code = Number(match[1]);
-  return code === 408 || code === 425 || code === 429 || (code >= 500 && code <= 599);
-}
-
-export function parseRetryAfterMs(retryAfter: string | null | undefined, now = new Date()): number | null {
-  if (!retryAfter) return null;
-  const seconds = Number(retryAfter);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 15 * 60 * 1000);
-  const date = Date.parse(retryAfter);
-  if (!Number.isFinite(date)) return null;
-  return Math.max(0, Math.min(date - now.getTime(), 15 * 60 * 1000));
-}
-
-export function scheduledAtForRetry(error: unknown, now = new Date()): string | null {
-  const retryAfter = error && typeof error === 'object' && 'retryAfter' in error
-    ? (error as { retryAfter?: string | null }).retryAfter
-    : null;
-  const ms = parseRetryAfterMs(retryAfter, now);
-  return ms == null ? null : new Date(now.getTime() + ms).toISOString();
 }
 
 export function isRetryableRemoteError(error: unknown): boolean {
