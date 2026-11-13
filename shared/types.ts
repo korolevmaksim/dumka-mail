@@ -1327,8 +1327,19 @@ export interface AISettings {
   provider: AIProviderPreference;
   /** Interactive model override for chat, triage, compose assist. Empty → provider env default. */
   globalDefaultModel: string;
-  /** Automation model override for proactive drafts and other background LLM jobs. Empty → interactive/default. */
+  /** Model for background work (sorting, drafts prepared in advance). Empty → interactive/default. */
   automationModel: string;
+  /**
+   * Provider for background work. Empty → the provider used for everything else.
+   * Lets background sorting run on a cheaper or local model than chat.
+   */
+  automationProvider: Exclude<AIProviderPreference, 'automatic' | 'disabled'> | '';
+  /**
+   * App default for "sort new mail with the model in the background"
+   * (per account: `accountOverrides[id].backgroundSorting`). Off by default:
+   * the model then works only when the user asks.
+   */
+  backgroundSorting: boolean;
   fallback: AIFallbackSettings;
   providerConfigurations: AIProviderConfiguration[];
   promptShortcuts: AIPromptShortcut[];
@@ -1368,6 +1379,10 @@ export interface AppearanceSettings {
   enablePreviewPane: boolean;
   fontScale: number;
   readerMaxWidth?: 'full' | 'wide' | 'standard' | 'narrow';
+  /** Width of the mailbox list (px) the person chose by dragging the divider; unset → the default. */
+  listWidthHome?: number;
+  /** The same for when a conversation is open beside the list. */
+  listWidthReading?: number;
 }
 
 export interface DataSettings {
@@ -1479,6 +1494,8 @@ export interface AccountSettingsOverride {
   agentAutonomy?: AgentAutonomy;
   /** Overrides `ai.allowMailBodyContext`. */
   modelMayReadMail?: boolean;
+  /** Overrides `ai.backgroundSorting`. */
+  backgroundSorting?: boolean;
   /** Per-account only; there is no app default. */
   senderRules?: SenderRule[];
 }

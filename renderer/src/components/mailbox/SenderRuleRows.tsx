@@ -14,7 +14,7 @@ import { useDialogFocus } from '../../hooks/useDialogFocus';
 import type { SenderRuleConsent } from '../../stores/useSenderRules';
 
 const BUTTON_CLASS = 'inline-flex shrink-0 items-center rounded-[var(--control-radius)] border border-[var(--strong-border)] px-2 py-0.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-60';
-const PRIMARY_BUTTON_CLASS = 'inline-flex shrink-0 items-center rounded-[var(--control-radius)] bg-[var(--accent)] px-2 py-0.5 text-[calc(11px*var(--font-scale))] font-semibold text-white hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-60';
+const PRIMARY_BUTTON_CLASS = 'inline-flex shrink-0 items-center rounded-[var(--control-radius)] bg-[var(--accent-fill)] px-2 py-0.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-60';
 
 function stopKeys(event: React.KeyboardEvent) {
   // Buttons activate themselves; keep Enter / Space from reaching row handlers.
@@ -45,7 +45,7 @@ export function SenderRuleOfferRow({
       className="flex shrink-0 flex-col gap-1.5 border-b border-[var(--border)] bg-[var(--panel-bg)] px-[var(--row-px)] py-2"
     >
       <h3 id={titleId} className="flex items-center gap-1.5 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--ai-accent)]" />
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--ai-solid)]" />
         <span className="truncate">{senderRuleOfferTitle(offer.senderName)}</span>
       </h3>
       <div id={descId} className="flex flex-col gap-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
@@ -112,7 +112,7 @@ export function HandledForYouRow({
         }`}
       >
         <Chevron aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)]" />
-        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--ai-accent)]" />
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--ai-solid)]" />
         <span className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Handled for you</span>
         <span className="tabular-nums text-[calc(12px*var(--font-scale))] text-[var(--text-tertiary)]">{count}</span>
         <span className="min-w-0 flex-1 truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">archived by your sender rules</span>
@@ -127,8 +127,8 @@ export function HandledForYouRow({
                   {item.senderName || item.senderEmail}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)]">{item.subject || '(no subject)'}</span>
-                <span className="hidden shrink-0 truncate text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] sm:inline">{ruleLabel(item)}</span>
-                <time dateTime={item.handledAt} className="shrink-0 tabular-nums text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
+                <span className="hidden shrink-0 truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] sm:inline">{ruleLabel(item)}</span>
+                <time dateTime={item.handledAt} className="shrink-0 tabular-nums text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
                   {listTimestamp(item.handledAt)}
                 </time>
                 <button
@@ -150,7 +150,7 @@ export function HandledForYouRow({
             <button type="button" data-handled-reviewed onClick={onMarkReviewed} onKeyDown={stopKeys} className={BUTTON_CLASS}>
               Mark reviewed
             </button>
-            <span className="min-w-0 flex-1 truncate text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
+            <span className="min-w-0 flex-1 truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
               A sender you bring back twice stops being handled automatically.
             </span>
           </div>
@@ -228,7 +228,7 @@ export function SenderRuleConsentDialog({
             type="button"
             onClick={onConfirm}
             aria-keyshortcuts="Meta+Enter"
-            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white hover:opacity-95"
+            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-95"
           >
             Always archive
             <kbd className="text-[calc(10px*var(--font-scale))] font-normal opacity-80">⌘↩</kbd>

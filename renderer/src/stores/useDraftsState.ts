@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Account, MailThread, MailMessage, Draft, AppSettings, MailActionExecutionResult, MailActionLog } from '../../../shared/types';
+import { formatDateTime } from '../../../shared/dateFormat';
 import { startReply as buildReplySeed, startForward as buildForwardSeed, replySubject, validateDraft } from '../../../shared/compose';
-import { buildInitialDraftBodyWithSignature, compileDraftBodyHtml, htmlFragmentToPlainText, plainTextToHtmlFragment } from '../../../shared/draftHtml';
+import { buildInitialDraftBodyWithSignature, buildWrittenReplyDraftBody, compileDraftBodyHtml, htmlFragmentToPlainText } from '../../../shared/draftHtml';
 import { emitToast } from '../lib/toastBus';
 import { cancelPendingMailAction } from '../lib/cancelPendingMailAction';
 import { presentMailActionFeedback } from '../lib/presentMailAction';
@@ -421,10 +422,8 @@ export function useDraftsState({
       ? (accounts.find(a => a.email === message.accountId)?.email || message.accountId)
       : activeAccount.email;
     const seed = buildReplySeed(message, selfEmail, replyAll || settings.compose.alwaysReplyAll);
-    const responsePlain = bodyPlain.trim();
-    const combinedBodyPlain = responsePlain ? `${responsePlain}${seed.body}` : seed.body;
-    const combinedBodyHtml = `${responsePlain ? plainTextToHtmlFragment(responsePlain) : ''}${seed.bodyHtml || ''}`;
-    const initialBody = buildInitialDraftBodyWithSignature(combinedBodyPlain, settings.compose, settings.profile, message.accountId, combinedBodyHtml);
+    // Reply text first, then the signature, then the quote (never the signature above the reply).
+    const initialBody = buildWrittenReplyDraftBody(bodyPlain, seed.body, seed.bodyHtml, settings.compose, settings.profile, message.accountId);
     const draft: Draft = {
       id: reusable?.id || crypto.randomUUID(),
       accountId: message.accountId,
@@ -966,7 +965,7 @@ export function useDraftsState({
     await window.electronAPI.saveActionLog(log);
     replaceActiveDraft(null);
     loadDrafts();
-    emitToast({ type: 'success', message: `Message scheduled for ${date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.` });
+    emitToast({ type: 'success', message: `Message scheduled for ${formatDateTime(date)}.` });
   };
 
   /** Resolves true when the draft entered the send flow (false: validation kept it in the editor). */

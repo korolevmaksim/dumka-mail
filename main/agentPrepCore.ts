@@ -18,11 +18,17 @@
 //     failures make the model unreachable; an unusable answer does not.
 //
 // Nothing is requested for an account unless a provider is configured and
-// `modelMayReadMail` resolves to true for it. Failures are logged with
-// provider, status code and a truncated message only — never mail text or keys.
+// `modelMayReadMail` resolves to true for it. Background work is opt-in on top
+// of that: decisions run only while `backgroundSorting` resolves to true for
+// the account, and drafts are prepared in advance only when
+// `ai.proactiveDraftsEnabled` is on as well. With both off (the default) the
+// model is used only when the user asks: a summary, a reply draft, the chat.
+// Failures are logged with provider, status code and a truncated message
+// only — never mail text or keys.
 import { resolveAccountSetting, normalizeAccountId, type AccountSettingsSource } from '../shared/accountSettings';
-import { resolveAIModelForPurpose, type AIModelPurpose } from '../shared/aiModelPurpose';
+import { resolveAIModelForPurpose, resolveBackgroundModelRoute, type AIModelPurpose } from '../shared/aiModelPurpose';
 import { isAIProviderPreference } from '../shared/aiProviderPreference';
+import { isConfigurableAIProvider } from '../shared/aiProviders';
 import { indexDecisionRecords } from '../shared/inboxSections';
 import {
   buildDecisionBatchPrompt,
@@ -76,6 +82,9 @@ export interface StoredAgentSettings {
     provider?: unknown;
     globalDefaultModel?: unknown;
     automationModel?: unknown;
+    automationProvider?: unknown;
+    backgroundSorting?: unknown;
+    proactiveDraftsEnabled?: unknown;
     replyTone?: unknown;
     personalizationNotes?: unknown;
   } | null;
@@ -143,6 +152,8 @@ interface PrepGate {
   settings: StoredAgentSettings;
   preference: AIProviderPreference;
   overrideModel: string | undefined;
+  /** Background work on a provider chosen for it: its failures say nothing about the main model. */
+  dedicated: boolean;
 }
 
 interface AccountRun {
@@ -180,8 +191,37 @@ function overrideModelFor(settings: StoredAgentSettings, purpose: AIModelPurpose
   });
 }
 
+/** The provider chosen for background work, or null when it follows the main provider. */
+function automationProvider(settings: StoredAgentSettings): AIProviderPreference | null {
+  const value = settings.ai?.automationProvider;
+  return typeof value === 'string' && isConfigurableAIProvider(value) ? value : null;
+}
+
+/** Provider and model for a purpose; background work may run on a provider of its own. */
+function modelRouteFor(settings: StoredAgentSettings, purpose: AIModelPurpose): { preference: AIProviderPreference; overrideModel: string | undefined; dedicated: boolean } {
+  if (purpose === 'automation') {
+    return resolveBackgroundModelRoute({
+      provider: providerPreference(settings),
+      automationProvider: settings.ai?.automationProvider,
+      interactiveModel: stringSetting(settings.ai?.globalDefaultModel),
+      automationModel: stringSetting(settings.ai?.automationModel),
+    });
+  }
+  return { preference: providerPreference(settings), overrideModel: overrideModelFor(settings, purpose), dedicated: false };
+}
+
 export function modelMayReadMail(settings: AccountSettingsSource, accountId: string): boolean {
   return resolveAccountSetting(settings, accountId, 'modelMayReadMail').value === true;
+}
+
+/** Whether the model may sort this account's new mail without being asked. Off by default. */
+export function backgroundSortingEnabled(settings: AccountSettingsSource, accountId: string): boolean {
+  return resolveAccountSetting(settings, accountId, 'backgroundSorting').value === true;
+}
+
+/** Whether reply drafts are prepared ahead of time; needs background sorting as well. */
+export function draftsInAdvanceEnabled(settings: StoredAgentSettings, accountId: string): boolean {
+  return settings.ai?.proactiveDraftsEnabled === true && backgroundSortingEnabled(settings, accountId);
 }
 
 function threadKey(accountId: string, threadId: string): string {
@@ -192,6 +232,13 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   let modelStatus: ModelStatus = 'none';
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryDelayMs = RETRY_BASE_MS;
+  /** Counts failures of the model itself (not of a dedicated background provider). */
+  let modelFailures = 0;
+  // A provider chosen for background work has its own back-off: when it is
+  // down, the main model (chat, summaries, drafts on request) is not reported
+  // as unreachable and the inbox keeps its sections.
+  let backgroundPausedUntil = 0;
+  let backgroundDelayMs = RETRY_BASE_MS;
   let settingsFingerprint = '';
   const accountRuns = new Map<string, AccountRun>();
   const triggerTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -205,11 +252,15 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   // --- Settings ----------------------------------------------------------------
 
   function fingerprint(settings: StoredAgentSettings): string {
-    const accounts = deps.listAccounts().map(account => `${account.email}:${modelMayReadMail(settings, account.email)}`);
+    const accounts = deps.listAccounts().map(account => (
+      `${account.email}:${modelMayReadMail(settings, account.email)}:${backgroundSortingEnabled(settings, account.email)}`
+    ));
     return JSON.stringify([
       providerPreference(settings),
       stringSetting(settings.ai?.globalDefaultModel),
       stringSetting(settings.ai?.automationModel),
+      automationProvider(settings),
+      settings.ai?.proactiveDraftsEnabled === true,
       accounts,
     ]);
   }
@@ -275,8 +326,42 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       return;
     }
     deps.logWarning('Agent', 'Model request failed.', { task, ...describeModelError(error) });
+    modelFailures += 1;
     setModelStatus('unreachable');
     scheduleRetry();
+  }
+
+  function reportBackgroundSuccess() {
+    backgroundPausedUntil = 0;
+    backgroundDelayMs = RETRY_BASE_MS;
+  }
+
+  /** A failure of the dedicated background provider: logged and backed off, never shown as the model being down. */
+  function reportBackgroundFailure(error: unknown, task: string) {
+    if (isAbortError(error)) return;
+    if (isUnusableAnswerError(error)) {
+      deps.logWarning('Agent', 'Background model answer was not usable.', { task, ...describeModelError(error) });
+      return;
+    }
+    deps.logWarning('Agent', 'Background model request failed.', { task, ...describeModelError(error) });
+    backgroundPausedUntil = deps.now().getTime() + backgroundDelayMs;
+    backgroundDelayMs = Math.min(backgroundDelayMs * 2, RETRY_MAX_MS);
+  }
+
+  function reportSuccessFor(gate: Pick<PrepGate, 'dedicated'>) {
+    if (gate.dedicated) reportBackgroundSuccess();
+    else reportModelSuccess();
+  }
+
+  function reportFailureFor(gate: Pick<PrepGate, 'dedicated'>, error: unknown, task: string) {
+    if (gate.dedicated) reportBackgroundFailure(error, task);
+    else reportModelFailure(error, task);
+  }
+
+  /** Whether background work should wait: its provider failed recently and nobody asked for a retry. */
+  function backgroundPaused(gate: Pick<PrepGate, 'dedicated'>, reason: TriggerReason): boolean {
+    if (reason === 'retry' || reason === 'manual') return false;
+    return gate.dedicated ? deps.now().getTime() < backgroundPausedUntil : modelStatus === 'unreachable';
   }
 
   // --- Gate ------------------------------------------------------------------------
@@ -288,15 +373,15 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   async function gateFor(accountId: string, purpose: AIModelPurpose): Promise<PrepGate | null> {
     const settings = deps.readSettings();
     if (!modelMayReadMail(settings, accountId)) return null;
-    const preference = providerPreference(settings);
-    const overrideModel = overrideModelFor(settings, purpose);
+    const { preference, overrideModel, dedicated } = modelRouteFor(settings, purpose);
     const descriptor = await deps.resolveTextProvider(preference, overrideModel).catch(() => null);
     if (!descriptor) {
-      setModelStatus('none');
+      // A background provider without a key says nothing about the main one.
+      if (!dedicated) setModelStatus('none');
       return null;
     }
-    if (modelStatus === 'none') setModelStatus('ok');
-    return { settings, preference, overrideModel };
+    if (!dedicated && modelStatus === 'none') setModelStatus('ok');
+    return { settings, preference, overrideModel, dedicated };
   }
 
   function remember(set: Set<string>, key: string) {
@@ -414,9 +499,11 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     let requestsMade = 0;
     for (let batch = 0; batch < MAX_DECISION_BATCHES_PER_TRIGGER; batch += 1) {
       if (run.controller.signal.aborted) break;
-      if (modelStatus === 'unreachable' && reason !== 'retry' && reason !== 'manual' && requestsMade === 0) break;
+      // Checked before every batch: turning the setting off stops the pass.
+      if (!backgroundSortingEnabled(deps.readSettings(), accountId)) break;
       const gate = await gateFor(accountId, 'automation');
       if (!gate) break;
+      if (requestsMade === 0 && backgroundPaused(gate, reason)) break;
 
       const snapshot = await deps.inboxSnapshot(accountId, INBOX_SCAN_LIMIT);
       if (run.controller.signal.aborted) break;
@@ -459,7 +546,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         }
       } catch (error) {
         // Transport / HTTP failure or cancel: nothing is remembered, the batch is retried later.
-        reportModelFailure(error, 'decisions');
+        reportFailureFor(gate, error, 'decisions');
         break;
       }
 
@@ -467,7 +554,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         // Twice unusable: skip these threads for this session and move on, so
         // one bad batch neither repeats forever nor starves older threads.
         rememberDecisionCandidates(accountId, candidates);
-        reportModelFailure(lastUnusable || new ModelRequestError('invalid', gate.preference, 'Decision batch answer was not usable twice.'), 'decisions');
+        reportFailureFor(gate, lastUnusable || new ModelRequestError('invalid', gate.preference, 'Decision batch answer was not usable twice.'), 'decisions');
         continue;
       }
 
@@ -477,7 +564,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         deps.upsertDecisions(records);
         publish('api:threadDecisionsChanged', { accountId });
       }
-      reportModelSuccess();
+      reportSuccessFor(gate);
     }
     return requestsMade;
   }
@@ -541,7 +628,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       createdAt: now,
       updatedAt: now,
     });
-    reportModelSuccess();
+    reportSuccessFor(gate);
     const event: AgentDraftReadyEvent = { accountId, threadId, lastMessageId: latest.id, bodyPlain };
     publish('api:agentDraftReady', event);
     return { status: 'ready', bodyPlain, lastMessageId: latest.id };
@@ -564,9 +651,10 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   }
 
   async function runDraftPass(accountId: string, run: AccountRun, reason: TriggerReason): Promise<number> {
-    if (modelStatus === 'unreachable' && reason !== 'retry' && reason !== 'manual') return 0;
+    if (!draftsInAdvanceEnabled(deps.readSettings(), accountId)) return 0;
     const gate = await gateFor(accountId, 'automation');
     if (!gate) return 0;
+    if (backgroundPaused(gate, reason)) return 0;
     const snapshot = await deps.inboxSnapshot(accountId, INBOX_SCAN_LIMIT);
     if (run.controller.signal.aborted) return 0;
     const userDraftThreads = deps.userDraftThreadIds(accountId);
@@ -578,7 +666,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     });
     let requestsMade = 0;
     for (const candidate of work) {
-      if (run.controller.signal.aborted || modelStatus === 'unreachable') break;
+      if (run.controller.signal.aborted || (requestsMade > 0 && backgroundPaused(gate, 'sync'))) break;
+      if (!draftsInAdvanceEnabled(deps.readSettings(), accountId)) break;
       requestsMade += 1;
       const attemptKey = prepAttemptKey(accountId, candidate.thread.id, candidate.lastMessageId);
       try {
@@ -590,10 +679,10 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
         if (isUnusableAnswerError(error)) {
           // The model answered with nothing usable: do not ask again this session.
           remember(attemptedDrafts, attemptKey);
-          reportModelFailure(error, 'draft');
+          reportFailureFor(gate, error, 'draft');
           continue;
         }
-        reportModelFailure(error, 'draft');
+        reportFailureFor(gate, error, 'draft');
         break;
       }
     }
@@ -634,12 +723,15 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   }
 
   async function runAllAccounts(reason: TriggerReason): Promise<void> {
-    let requestsMade = 0;
+    const failuresBefore = modelFailures;
     for (const account of deps.listAccounts()) {
-      requestsMade += await runAccount(account.email, reason);
+      await runAccount(account.email, reason);
     }
-    // A retry with nothing pending cannot prove the model is still down.
-    if ((reason === 'retry' || reason === 'manual') && requestsMade === 0 && modelStatus === 'unreachable') {
+    // A retry during which the model was not seen failing cannot prove it is
+    // still down: nothing was pending, or the work went to a dedicated
+    // background provider, whose answers say nothing about this model. A
+    // successful request to the model itself has already set 'ok'.
+    if ((reason === 'retry' || reason === 'manual') && modelFailures === failuresBefore && modelStatus === 'unreachable') {
       await refreshModelStatus();
       if (modelStatus === 'unreachable') setModelStatus('ok');
     }
@@ -712,11 +804,26 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
 
     /** AI configuration or app settings changed; acts only when relevant fields did. */
     onConfigChanged(force = false) {
-      const next = fingerprint(deps.readSettings());
+      const settings = deps.readSettings();
+      const next = fingerprint(settings);
       if (!force && next === settingsFingerprint) return;
       settingsFingerprint = next;
+      // A new background setup starts without the old provider's back-off.
+      reportBackgroundSuccess();
+      // Background sorting turned off: stop the pass in flight, so nothing it
+      // already asked for is applied. Requests the user made are not touched.
+      for (const account of deps.listAccounts()) {
+        if (backgroundSortingEnabled(settings, account.email)) continue;
+        const key = normalizeAccountId(account.email);
+        accountRuns.get(key)?.controller.abort();
+        accountRuns.delete(key);
+        const timer = triggerTimers.get(key);
+        if (timer) clearTimeout(timer);
+        triggerTimers.delete(key);
+      }
       void refreshModelStatus().then(status => {
-        if (status === 'none') return;
+        // Background work may have its own provider even when the main one is not set up.
+        if (status === 'none' && !automationProvider(deps.readSettings())) return;
         for (const account of deps.listAccounts()) trigger(account.email, 'config');
       });
     },
@@ -725,6 +832,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     async retry(): Promise<ModelStatus> {
       clearRetry();
       retryDelayMs = RETRY_BASE_MS;
+      reportBackgroundSuccess();
       attemptedDecisions.clear();
       attemptedDrafts.clear();
       await refreshModelStatus();

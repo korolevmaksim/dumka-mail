@@ -38,12 +38,12 @@ function MetricCell({ value, label, emphasize = false }: { value: number; label:
     <div className="flex min-w-0 flex-col items-center gap-0.5 px-1 py-1.5">
       <span
         className={`tabular-nums text-[calc(13px*var(--font-scale))] font-semibold leading-none ${
-          emphasize ? 'text-[var(--warning)]' : 'text-[var(--text-primary)]'
+          emphasize ? 'text-[var(--warning-solid)]' : 'text-[var(--text-primary)]'
         }`}
       >
         {formatCount(value)}
       </span>
-      <span className="truncate text-[calc(9px*var(--font-scale))] leading-none text-[var(--text-tertiary)]">
+      <span className="truncate text-[calc(11px*var(--font-scale))] leading-none text-[var(--text-tertiary)]">
         {label}
       </span>
     </div>
@@ -95,7 +95,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
       {/* Header: title + time only — never compete with stats for width */}
       <header className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
-          <FlaskConical className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
+          <FlaskConical className="h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]" aria-hidden="true" />
           <h3 className="truncate font-semibold text-[var(--text-primary)]">
             Automation monitor
           </h3>
@@ -103,7 +103,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
         {generatedAt ? (
           <time
             dateTime={simulation.generatedAt}
-            className="shrink-0 text-[calc(10px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]"
+            className="shrink-0 text-[calc(11px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]"
             title={`Simulated at ${generatedAt}`}
           >
             {generatedAt}
@@ -112,7 +112,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
       </header>
 
       {/* Quiet meta — one line, no run-on sentence */}
-      <p className="text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+      <p className="text-[calc(11px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
         {hasRules
           ? `${formatCount(simulation.ruleCount)} rule${simulation.ruleCount === 1 ? '' : 's'} · ${formatCount(store.threads.length)} threads`
           : `${formatCount(store.threads.length)} threads cached`}
@@ -136,14 +136,14 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
       )}
 
       {simulation.warnings.length > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-2.5 py-2 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">
+        <div className="flex items-start gap-2 rounded-md border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-2.5 py-2 text-[calc(11px*var(--font-scale))] text-[var(--warning-solid)]">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 leading-snug">{simulation.warnings[0]}</span>
         </div>
       )}
 
       {visibleSimulations.length === 0 ? (
-        <div className="px-0.5 py-1 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-tertiary)]">
+        <div className="px-0.5 py-1 text-[calc(11px*var(--font-scale))] leading-snug text-[var(--text-tertiary)]">
           {hasRules
             ? 'No matches against the local cache.'
             : 'No rules yet. Add one in Settings → Mail Rules to preview impact.'}
@@ -163,7 +163,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                     <div className="truncate font-medium text-[var(--text-primary)]">
                       {result.ruleTitle}
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
                       <span className="tabular-nums">{formatCount(result.matchedThreadCount)} match{result.matchedThreadCount === 1 ? '' : 'es'}</span>
                       <span aria-hidden="true">·</span>
                       <span className="tabular-nums">{formatCount(result.effectCount)} apply</span>
@@ -175,25 +175,25 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                       )}
                     </div>
                   </div>
-                  <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium ${
+                  <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] font-medium ${
                     mode === 'active'
-                      ? 'border-[var(--success)]/30 bg-[var(--success)]/10 text-[var(--success)]'
+                      ? 'border-[var(--success)]/30 bg-[var(--success)]/10 text-[var(--success-solid)]'
                       : mode === 'shadow'
-                        ? 'border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 text-[var(--ai-accent)]'
+                        ? 'border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 text-[var(--ai-solid)]'
                         : 'border-[var(--border)] bg-[var(--rail-bg)] text-[var(--text-secondary)]'
                   }`}>
                     {mode}
                   </span>
                   {result.previewOnlyCount > 0 ? (
-                    <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] font-medium text-[var(--warning)]">
+                    <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--warning-solid)]">
                       review
                     </span>
                   ) : (
-                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--success)]" aria-label="Safe to apply" />
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--success-solid)]" aria-label="Safe to apply" />
                   )}
                 </div>
                 {result.samples[0]?.effects[0] && (
-                  <p className="mt-1.5 line-clamp-2 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+                  <p className="mt-1.5 line-clamp-2 text-[calc(11px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
                     {result.samples[0].effects[0].summary}
                     <span className="text-[var(--text-tertiary)]">
                       {' · '}
@@ -202,7 +202,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                   </p>
                 )}
                 {monitoring && (
-                  <p className="mt-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                  <p className="mt-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
                     {monitoring.shadowMatchCount} shadow · {monitoring.appliedCount} applied · {monitoring.failedCount} failed
                     {monitoring.pendingCount > 0 ? ` · ${monitoring.pendingCount} pending` : ''}
                     {' · '}{formatLastObserved(monitoring.lastObservedAt)}
@@ -216,8 +216,8 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
 
       {candidates.length > 0 && (
         <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
-          <div className="flex items-center gap-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]">
-            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" aria-hidden="true" />
+          <div className="flex items-center gap-1.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]">
+            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success-solid)]" aria-hidden="true" />
             From approved work
           </div>
           {candidates.slice(0, compact ? 2 : 4).map(candidate => {
@@ -229,7 +229,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
               >
                 <div className="min-w-0">
                   <div className="truncate text-[var(--text-primary)]">{candidate.title}</div>
-                  <div className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                  <div className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
                     {candidate.reason}
                   </div>
                 </div>
@@ -238,7 +238,7 @@ export function RuleSimulatorPanel({ compact = false }: { compact?: boolean }) {
                   onClick={() => void addCandidate(candidate)}
                   disabled={isAdded}
                   title={isAdded ? 'Already added in shadow mode' : 'Add in shadow mode without changing mail'}
-                  className="flex shrink-0 items-center gap-1 rounded-md bg-[var(--accent)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex shrink-0 items-center gap-1 rounded-md bg-[var(--accent-fill)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--on-accent)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Plus className="h-3 w-3" aria-hidden="true" />
                   {isAdded ? 'Shadow added' : 'Add shadow'}

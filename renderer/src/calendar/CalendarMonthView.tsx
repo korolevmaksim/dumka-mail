@@ -1,9 +1,13 @@
-import { useMemo } from 'react';
-import { Users } from 'lucide-react';
+import { useMemo, useRef, type DragEvent as ReactDragEvent } from 'react';
 import type { CalendarEvent, CalendarListEntry } from '../../../shared/types';
 import { calendarDateKey, calendarEventsForDate, calendarMonthDays, layoutCalendarAllDayLanes, moveCalendarEventToDate } from '../../../shared/calendarWorkspace';
-import { CalendarEventChip } from './CalendarEventChip';
-import { calendarParticipantPreview, calendarParticipantsAccessibleLabel } from './calendarParticipants';
+import { CALENDAR_EVENT_DRAG_TYPE, CalendarEventChip } from './CalendarEventChip';
+import { calendarEventKey, isAllDayRowEvent } from './calendarTimeLayout';
+import { calendarEventEndsIn, calendarEventStartsIn } from './CalendarTimeGrid';
+import { monthCellLines, monthCellOverflow, monthWeekLanesShown } from './calendarMonthLayout';
+import { shortDayLabel, spokenDayLabel, weekdayOrder, weekdayShortNames } from './calendarDateLabels';
+import { CAL_FOCUS } from './calendarUi';
+import { useElementSize } from './useElementSize';
 
 interface CalendarMonthViewProps {
   anchor: Date;
@@ -12,13 +16,18 @@ interface CalendarMonthViewProps {
   calendars: CalendarListEntry[];
   weekStartsOn: 0 | 1;
   showWeekends: boolean;
+  selectedEventKey: string | null;
   onSelectDate: (date: Date) => void;
+  onOpenDay: (date: Date) => void;
   onCreate: (date: Date) => void;
   onSelectEvent: (event: CalendarEvent) => void;
   onMoveEvent: (event: CalendarEvent, update: ReturnType<typeof moveCalendarEventToDate>) => void;
 }
 
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const HEADER_HEIGHT = 32;
+const LABEL_HEIGHT = 28;
+const LINE_HEIGHT = 26;
+const MIN_ROW_HEIGHT = 92;
 
 export function CalendarMonthView({
   anchor,
@@ -27,174 +36,203 @@ export function CalendarMonthView({
   calendars,
   weekStartsOn,
   showWeekends,
+  selectedEventKey,
   onSelectDate,
+  onOpenDay,
   onCreate,
   onSelectEvent,
   onMoveEvent,
 }: CalendarMonthViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { height } = useElementSize(containerRef);
   const days = useMemo(() => calendarMonthDays(anchor, weekStartsOn), [anchor, weekStartsOn]);
-  const visibleDays = useMemo(() => showWeekends ? days : days.filter(day => day.date.getDay() !== 0 && day.date.getDay() !== 6), [days, showWeekends]);
-  const calendarById = useMemo(() => new Map(calendars.map(calendar => [`${calendar.accountId}:${calendar.id}`, calendar])), [calendars]);
   const columns = showWeekends ? 7 : 5;
-  const weekdayOrder = Array.from({ length: 7 }, (_, index) => (index + weekStartsOn) % 7)
-    .filter(day => showWeekends || (day !== 0 && day !== 6));
-  const weekSpans = useMemo(() => Array.from({ length: 6 }, (_, weekIndex) => (
-    layoutCalendarAllDayLanes(events, visibleDays.slice(weekIndex * columns, (weekIndex + 1) * columns).map(day => day.date))
-  )), [columns, events, visibleDays]);
+  const visibleDays = useMemo(() => showWeekends ? days : days.filter(day => day.date.getDay() !== 0 && day.date.getDay() !== 6), [days, showWeekends]);
+  const weeks = useMemo(() => Array.from({ length: 6 }, (_, index) => visibleDays.slice(index * columns, (index + 1) * columns)), [columns, visibleDays]);
+  const calendarById = useMemo(() => new Map(calendars.map(calendar => [`${calendar.accountId}:${calendar.id}`, calendar])), [calendars]);
+  const barEvents = useMemo(() => events.filter(event => isAllDayRowEvent(event) || !sameLocalDay(event.startAt, event.endAt)), [events]);
+  const weekSpans = useMemo(() => weeks.map(week => layoutCalendarAllDayLanes(barEvents, week.map(day => day.date))), [barEvents, weeks]);
+  const weekdayNames = weekdayShortNames(weekStartsOn);
+  const headerNames = weekdayOrder(weekStartsOn)
+    .map((day, index) => ({ day, name: weekdayNames[index] }))
+    .filter(item => showWeekends || (item.day !== 0 && item.day !== 6));
+  const rowHeight = Math.max(MIN_ROW_HEIGHT, (height - HEADER_HEIGHT) / 6);
+  const lines = monthCellLines(rowHeight, LABEL_HEIGHT, LINE_HEIGHT);
   const anchorKey = calendarDateKey(anchor);
   const selectedKey = calendarDateKey(selectedDate);
-  const rovingKey = visibleDays.some(day => day.key === anchorKey) ? anchorKey : visibleDays[0]?.key;
+  const rovingKey = visibleDays.some(day => day.key === selectedKey) ? selectedKey : visibleDays.some(day => day.key === anchorKey) ? anchorKey : visibleDays[0]?.key;
+  const now = new Date();
 
   function focusDayAt(index: number) {
     const target = visibleDays[Math.max(0, Math.min(visibleDays.length - 1, index))];
     if (!target) return;
     onSelectDate(target.date);
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-calendar-date="${target.key}"]`)?.focus();
+      containerRef.current?.querySelector<HTMLElement>(`[data-calendar-date="${target.key}"]`)?.focus();
     });
   }
 
+  function dropOnWeek(dropEvent: ReactDragEvent<HTMLDivElement>, weekIndex: number) {
+    dropEvent.preventDefault();
+    const rect = dropEvent.currentTarget.getBoundingClientRect();
+    const column = Math.max(0, Math.min(columns - 1, Math.floor(((dropEvent.clientX - rect.left) / rect.width) * columns)));
+    const day = weeks[weekIndex]?.[column];
+    if (!day) return;
+    try {
+      const payload = JSON.parse(dropEvent.dataTransfer.getData(CALENDAR_EVENT_DRAG_TYPE)) as { accountId: string; calendarId: string; eventId: string };
+      const calendarEvent = events.find(item => item.accountId === payload.accountId && item.calendarId === payload.calendarId && item.id === payload.eventId);
+      if (calendarEvent) onMoveEvent(calendarEvent, moveCalendarEventToDate(calendarEvent, day.date));
+    } catch {
+      // Drags from outside the calendar carry no event.
+    }
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col" role="grid" aria-label="Month calendar">
-      <div className="grid shrink-0 border-b border-[var(--strong-border)] bg-[var(--panel-bg)]" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} role="row">
-        {weekdayOrder.map(day => (
-          <div key={day} role="columnheader" className="px-2 py-2.5 text-center text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-[0.06em] text-[var(--text-tertiary)]">
-            {WEEKDAY_LABELS[day]}
+    <div ref={containerRef} className="flex h-full min-h-0 flex-col overflow-y-auto [scrollbar-gutter:stable]" role="grid" aria-label="Month calendar">
+      <div className="sticky top-0 z-20 grid shrink-0 border-b border-[var(--border)] bg-[var(--panel-bg)]" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, height: HEADER_HEIGHT }} role="row">
+        {headerNames.map(item => (
+          <div key={item.day} role="columnheader" className="flex min-w-0 items-center border-r border-[var(--border)] px-2 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)] last:border-r-0">
+            {item.name}
           </div>
         ))}
       </div>
-      <div className="grid min-h-0 flex-1" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridTemplateRows: 'repeat(6, minmax(84px, 1fr))' }}>
-        {visibleDays.map((day, dayIndex) => {
-          const dayEvents = calendarEventsForDate(events, day.date);
-          const columnIndex = dayIndex % columns;
-          const spansForDay = weekSpans[Math.floor(dayIndex / columns)]
-            .filter(span => span.startColumn <= columnIndex && span.endColumn >= columnIndex);
-          const spanEventKeys = new Set(spansForDay.map(span => `${span.event.accountId}:${span.event.calendarId}:${span.event.id}`));
-          const timedEvents = dayEvents.filter(event => !spanEventKeys.has(`${event.accountId}:${event.calendarId}:${event.id}`));
-          const laneCount = spansForDay.length > 0 ? Math.min(3, Math.max(...spansForDay.map(span => span.lane)) + 1) : 0;
-          const visibleLanes = Array.from({ length: laneCount }, (_, lane) => spansForDay.find(span => span.lane === lane) || null);
-          const visibleTimed = timedEvents.slice(0, Math.max(0, 4 - laneCount));
-          const isSelected = day.key === selectedKey;
-          const showMonthInDate = day.isToday || isSelected || day.date.getDate() === 1;
-          const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
-          const displayedCount = new Set([
-            ...visibleLanes.filter(Boolean).map(span => `${span!.event.accountId}:${span!.event.calendarId}:${span!.event.id}`),
-            ...visibleTimed.map(event => `${event.accountId}:${event.calendarId}:${event.id}`),
-          ]).size;
+      <div className="grid flex-1" style={{ gridTemplateRows: `repeat(6, minmax(${MIN_ROW_HEIGHT}px, 1fr))` }}>
+        {weeks.map((week, weekIndex) => {
+          const spans = weekSpans[weekIndex] || [];
+          const weekLaneCount = spans.reduce((max, span) => Math.max(max, span.lane + 1), 0);
+          const lanesShown = monthWeekLanesShown(lines, weekLaneCount);
+          const spanKeys = new Set(spans.map(span => calendarEventKey(span.event)));
           return (
             <div
-              key={day.key}
-              role="gridcell"
-              tabIndex={day.key === rovingKey ? 0 : -1}
-              data-calendar-date={day.key}
-              aria-label={`${day.date.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}, ${dayEvents.length} events`}
-              onClick={() => onSelectDate(day.date)}
-              onDoubleClick={() => onCreate(day.date)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  onCreate(day.date);
-                  return;
-                }
-                const rowStart = dayIndex - columnIndex;
-                const targetIndex = event.key === 'ArrowLeft' ? dayIndex - 1
-                  : event.key === 'ArrowRight' ? dayIndex + 1
-                    : event.key === 'ArrowUp' ? dayIndex - columns
-                      : event.key === 'ArrowDown' ? dayIndex + columns
-                        : event.key === 'Home' ? rowStart
-                          : event.key === 'End' ? rowStart + columns - 1
-                            : null;
-                if (targetIndex !== null) {
-                  event.preventDefault();
-                  focusDayAt(targetIndex);
-                }
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = 'move';
-              }}
-              onDrop={(dropEvent) => {
-                dropEvent.preventDefault();
-                try {
-                  const payload = JSON.parse(dropEvent.dataTransfer.getData('application/x-dumka-calendar-event')) as { accountId: string; calendarId: string; eventId: string };
-                  const calendarEvent = events.find(item => item.accountId === payload.accountId && item.calendarId === payload.calendarId && item.id === payload.eventId);
-                  if (calendarEvent) onMoveEvent(calendarEvent, moveCalendarEventToDate(calendarEvent, day.date));
-                } catch {
-                  // Ignore drags from outside the calendar workspace.
-                }
-              }}
-              className={`group min-h-0 overflow-hidden border-b border-r border-[var(--border)] p-1.5 outline-none transition-colors duration-150 focus-visible:relative focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${day.inMonth ? (isWeekend ? 'bg-[var(--rail-bg)]' : 'bg-[var(--app-bg)]') : 'bg-[var(--raised-surface)] text-[var(--text-tertiary)] opacity-45'} ${isSelected ? 'bg-[var(--selected-row)] ring-1 ring-inset ring-[var(--accent)]/35' : 'hover:bg-[var(--hover-row)]'}`}
+              key={week[0]?.key || weekIndex}
+              role="row"
+              className="relative grid min-h-0"
+              style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+              onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }}
+              onDrop={event => dropOnWeek(event, weekIndex)}
             >
-              <div className="mb-1 flex items-center justify-between">
-                <span className={`flex h-6 min-w-6 items-center justify-center rounded-full text-[calc(11px*var(--font-scale))] font-semibold ${showMonthInDate ? 'px-2' : 'px-1'} ${day.isToday ? 'bg-[var(--accent)] text-white' : isSelected ? 'text-[var(--accent)]' : day.inMonth ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'}`}>
-                  {showMonthInDate ? day.date.toLocaleDateString([], { month: 'short', day: 'numeric' }) : day.date.getDate()}
-                </span>
-                <button
-                  type="button"
-                  onClick={(event) => { event.stopPropagation(); onCreate(day.date); }}
-                  aria-label={`Create event on ${day.date.toLocaleDateString()}`}
-                  className="rounded px-1.5 py-0.5 text-[var(--text-tertiary)] opacity-0 hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] group-hover:opacity-100 focus:opacity-100"
-                >+</button>
-              </div>
-              <div className="flex min-h-0 flex-col gap-0.5 overflow-hidden">
-                {visibleLanes.map((span, lane) => span ? (() => {
-                  const calendar = calendarById.get(`${span.event.accountId}:${span.event.calendarId}`);
-                  const writable = calendar?.accessRole === 'writer' || calendar?.accessRole === 'owner';
-                  const startsHere = span.startColumn === columnIndex;
-                  const endsHere = span.endColumn === columnIndex;
-                  const participantPreview = calendarParticipantPreview(span.event);
-                  const participantLabel = calendarParticipantsAccessibleLabel(span.event);
-                  return (
-                    <button
-                      key={`lane-${lane}:${span.event.accountId}:${span.event.calendarId}:${span.event.id}`}
-                      type="button"
-                      draggable={writable}
-                      onDragStart={dragEvent => {
-                        dragEvent.dataTransfer.effectAllowed = 'move';
-                        dragEvent.dataTransfer.setData('application/x-dumka-calendar-event', JSON.stringify({ accountId: span.event.accountId, calendarId: span.event.calendarId, eventId: span.event.id }));
-                      }}
-                      onClick={clickEvent => { clickEvent.stopPropagation(); onSelectEvent(span.event); }}
-                      aria-label={[`${span.event.summary}, ${span.event.startDate || new Date(span.event.startAt).toLocaleDateString()} through ${span.event.endDate || new Date(span.event.endAt).toLocaleDateString()}`, participantLabel].filter(Boolean).join(', ')}
-                      title={[span.event.summary, participantLabel].filter(Boolean).join(' · ')}
-                      className="dm-calendar-event h-[18px] min-w-0 truncate px-1.5 text-left text-[calc(9px*var(--font-scale))] font-medium shadow-sm focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-                      style={{
-                        backgroundColor: calendar?.backgroundColor || '#3b82f6',
-                        color: calendar?.foregroundColor || '#ffffff',
-                        borderTopLeftRadius: startsHere ? 4 : 0,
-                        borderBottomLeftRadius: startsHere ? 4 : 0,
-                        borderTopRightRadius: endsHere ? 4 : 0,
-                        borderBottomRightRadius: endsHere ? 4 : 0,
-                        marginLeft: startsHere ? 0 : -6,
-                        marginRight: endsHere ? 0 : -6,
-                      }}
-                    >
-                      {startsHere ? (
-                        <span className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 flex-1 truncate">{span.event.summary}</span>
-                          {participantPreview && (
-                            <span className="dm-calendar-participant-preview ml-auto flex min-w-0 max-w-[40%] shrink items-center gap-0.5 opacity-80">
-                              <Users className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
-                              <span className="dm-calendar-participant-preview-name truncate">{participantPreview}</span>
-                            </span>
-                          )}
-                        </span>
-                      ) : '\u00a0'}
-                    </button>
-                  );
-                })() : <div key={`empty-lane-${lane}`} className="h-[18px]" />)}
-                {visibleTimed.map(event => (
-                  <CalendarEventChip key={`${event.accountId}:${event.calendarId}:${event.id}`} event={event} calendar={calendarById.get(`${event.accountId}:${event.calendarId}`)} compact onSelect={onSelectEvent} />
-                ))}
-                {dayEvents.length > displayedCount && (
-                  <button type="button" onClick={(event) => { event.stopPropagation(); onSelectDate(day.date); }} className="px-1 text-left text-[calc(9px*var(--font-scale))] font-medium text-[var(--text-tertiary)] hover:text-[var(--accent)]">
-                    +{dayEvents.length - displayedCount} more
-                  </button>
-                )}
-              </div>
+              {week.map((day, columnIndex) => {
+                const dayIndex = weekIndex * columns + columnIndex;
+                const dayEvents = calendarEventsForDate(events, day.date);
+                const timed = dayEvents.filter(event => !spanKeys.has(calendarEventKey(event)));
+                const spanLanes = spans.filter(span => span.startColumn <= columnIndex && span.endColumn >= columnIndex).map(span => span.lane);
+                const { timedShown, more } = monthCellOverflow(lines, lanesShown, spanLanes, timed.length);
+                const isSelected = day.key === selectedKey;
+                const showMonth = day.date.getDate() === 1;
+                return (
+                  <div
+                    key={day.key}
+                    role="gridcell"
+                    tabIndex={day.key === rovingKey ? 0 : -1}
+                    aria-selected={isSelected}
+                    data-calendar-date={day.key}
+                    aria-label={`${spokenDayLabel(day.date)}${day.isToday ? ', today' : ''}, ${dayEvents.length === 0 ? 'no events' : `${dayEvents.length} ${dayEvents.length === 1 ? 'event' : 'events'}`}`}
+                    onClick={() => onSelectDate(day.date)}
+                    onDoubleClick={() => onCreate(day.date)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        onOpenDay(day.date);
+                        return;
+                      }
+                      const rowStart = dayIndex - columnIndex;
+                      const targetIndex = event.key === 'ArrowLeft' ? dayIndex - 1
+                        : event.key === 'ArrowRight' ? dayIndex + 1
+                          : event.key === 'ArrowUp' ? dayIndex - columns
+                            : event.key === 'ArrowDown' ? dayIndex + columns
+                              : event.key === 'Home' ? rowStart
+                                : event.key === 'End' ? rowStart + columns - 1
+                                  : null;
+                      if (targetIndex !== null) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        focusDayAt(targetIndex);
+                      }
+                    }}
+                    className={`group relative min-w-0 overflow-hidden border-b border-r border-[var(--border)] outline-none focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)] ${
+                      isSelected ? 'bg-[var(--selected-row)]' : day.inMonth ? 'bg-[var(--app-bg)] hover:bg-[var(--hover-row)]' : 'bg-[var(--rail-bg)] hover:bg-[var(--hover-row)]'
+                    }`}
+                    style={{ gridColumn: columnIndex + 1, gridRow: 1 }}
+                  >
+                    <div className="flex items-center justify-between px-1.5" style={{ height: LABEL_HEIGHT }}>
+                      <span
+                        className={`inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[calc(12px*var(--font-scale))] font-semibold tabular-nums ${
+                          day.isToday ? 'bg-[var(--accent-fill)] text-[var(--on-accent)]' : day.inMonth ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
+                        }`}
+                      >
+                        {showMonth ? shortDayLabel(day.date, now) : day.date.getDate()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(event) => { event.stopPropagation(); onCreate(day.date); }}
+                        aria-label={`New event on ${spokenDayLabel(day.date)}`}
+                        title="New event"
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded text-[calc(14px*var(--font-scale))] text-[var(--text-secondary)] opacity-0 hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] group-hover:opacity-100 focus-visible:opacity-100 ${CAL_FOCUS}`}
+                      >+</button>
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-0.5 px-1" style={{ paddingTop: lanesShown * LINE_HEIGHT }}>
+                      {timed.slice(0, timedShown).map(event => (
+                        <CalendarEventChip
+                          key={calendarEventKey(event)}
+                          event={event}
+                          calendar={calendarById.get(`${event.accountId}:${event.calendarId}`)}
+                          selected={calendarEventKey(event) === selectedEventKey}
+                          onSelect={onSelectEvent}
+                        />
+                      ))}
+                      {more > 0 && (
+                        <button
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); onOpenDay(day.date); }}
+                          aria-label={`${more} more ${more === 1 ? 'event' : 'events'} on ${spokenDayLabel(day.date)}. Open day`}
+                          className={`h-6 shrink-0 rounded px-1 text-left text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] ${CAL_FOCUS}`}
+                        >
+                          +{more} more
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Bars lie over the week; each week segment carries the title. */}
+              {spans.filter(span => span.lane < lanesShown).map(span => {
+                const startDay = week[span.startColumn]?.date;
+                const endDay = week[span.endColumn]?.date;
+                return (
+                  <div
+                    key={`${calendarEventKey(span.event)}:${weekIndex}`}
+                    className="pointer-events-none absolute z-10 px-1"
+                    style={{
+                      top: LABEL_HEIGHT + span.lane * LINE_HEIGHT,
+                      left: `${(span.startColumn / columns) * 100}%`,
+                      width: `${((span.endColumn - span.startColumn + 1) / columns) * 100}%`,
+                    }}
+                  >
+                    <div className="pointer-events-auto">
+                      <CalendarEventChip
+                        event={span.event}
+                        calendar={calendarById.get(`${span.event.accountId}:${span.event.calendarId}`)}
+                        selected={calendarEventKey(span.event) === selectedEventKey}
+                        continuesBefore={!calendarEventStartsIn(span.event, startDay)}
+                        continuesAfter={!calendarEventEndsIn(span.event, endDay)}
+                        onSelect={onSelectEvent}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           );
         })}
       </div>
     </div>
   );
+}
+
+function sameLocalDay(startIso: string, endIso: string): boolean {
+  const start = new Date(startIso);
+  // An event ending exactly at midnight belongs to its start day.
+  const end = new Date(Date.parse(endIso) - 1);
+  return start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth() && start.getDate() === end.getDate();
 }

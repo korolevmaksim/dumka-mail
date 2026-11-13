@@ -50,7 +50,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'open-calendar',
       group: 'navigation',
-      title: 'Open Calendar',
+      title: 'Open calendar',
       shortcut: shortcut('openCalendar'),
       keywords: ['calendar', 'schedule', 'agenda', 'events'],
       action: () => {
@@ -62,15 +62,15 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'mark-done',
       group: 'mail',
-      title: 'Mark Done (Archive)',
+      title: 'Archive',
       shortcut: shortcut('markDone'),
-      keywords: ['archive', 'done'],
+      keywords: ['archive', 'done', 'mark done'],
       action: () => store.executeMailAction('markDone'),
     },
     {
       id: 'mark-read',
       group: 'mail',
-      title: 'Mark Read',
+      title: 'Mark as read',
       shortcut: shortcut('markRead'),
       keywords: ['read'],
       action: () => store.executeMailAction('markRead'),
@@ -78,14 +78,14 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'mark-unread',
       group: 'mail',
-      title: 'Mark Unread',
+      title: 'Mark as unread',
       keywords: ['unread'],
       action: () => store.executeMailAction('markUnread'),
     },
     {
       id: 'move-trash',
       group: 'mail',
-      title: 'Move to Trash',
+      title: 'Move to trash',
       shortcut: shortcut('moveToTrash'),
       keywords: ['delete', 'remove'],
       action: () => store.executeMailAction('moveToTrash'),
@@ -93,7 +93,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'move-spam',
       group: 'mail',
-      title: 'Move to Spam',
+      title: 'Move to spam',
       shortcut: shortcut('reportSpam'),
       keywords: ['spam', 'junk'],
       action: () => store.executeMailAction('reportSpam'),
@@ -101,23 +101,23 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'ignore-thread',
       group: 'mail',
-      title: 'Ignore Thread',
+      title: 'Ignore',
       shortcut: shortcut('muteThread'),
-      keywords: ['mute'],
+      keywords: ['mute', 'ignore thread', 'ignore conversation'],
       action: () => store.muteThread(),
     },
     {
       id: 'set-reminder',
       group: 'mail',
-      title: 'Set Reminder',
+      title: 'Later…',
       shortcut: shortcut('remind'),
-      keywords: ['remind', 'snooze'],
+      keywords: ['later', 'remind', 'reminder', 'set reminder', 'snooze'],
       action: onOpenReminder,
     },
     {
       id: 'archive-clear-section',
       group: 'mail',
-      title: 'Open / Archive the Clear Section',
+      title: 'Archive the Clear section',
       shortcut: shortcut('archiveClearSection'),
       keywords: ['clear', 'archive', 'group', 'batch', 'newsletters'],
       action: () => void store.runClearGroupAction(),
@@ -125,15 +125,15 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'remind-later-section',
       group: 'mail',
-      title: 'Move the Later Section to Its Time',
+      title: 'Later for the whole Later section',
       shortcut: shortcut('remindLaterSection'),
-      keywords: ['later', 'remind', 'snooze', 'group'],
+      keywords: ['later', 'remind', 'snooze', 'group', 'section'],
       action: () => void store.remindLaterGroup(),
     },
     {
       id: 'move-to-section',
       group: 'mail',
-      title: 'Move to Another Section',
+      title: 'Move to another section',
       shortcut: shortcut('moveToSection'),
       keywords: ['section', 'move', 'correct', 'sort'],
       action: onOpenMoveToSection,
@@ -141,7 +141,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'accept-invitation',
       group: 'mail',
-      title: 'Accept Invitation',
+      title: 'Accept invitation',
       shortcut: shortcut('acceptInvite'),
       keywords: ['yes', 'rsvp', 'calendar', 'meeting', 'event'],
       action: () => onAnswerInvite('accepted'),
@@ -149,7 +149,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'decline-invitation',
       group: 'mail',
-      title: 'Decline Invitation',
+      title: 'Decline invitation',
       shortcut: shortcut('declineInvite'),
       keywords: ['no', 'rsvp', 'calendar', 'meeting', 'event'],
       action: () => onAnswerInvite('declined'),
@@ -165,9 +165,9 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'compose-message',
       group: 'compose',
-      title: 'Compose Message',
+      title: 'Compose',
       shortcut: shortcut('compose'),
-      keywords: ['new mail', 'draft'],
+      keywords: ['new mail', 'new message', 'compose message', 'draft', 'write'],
       action: () => {
         composeOrConnectAccount(store);
       },
@@ -175,16 +175,16 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'create-calendar-event-from-thread',
       group: 'compose',
-      title: 'Create Calendar Event from Thread',
+      title: 'Create an event from this conversation',
       keywords: ['calendar', 'meeting', 'schedule', 'thread'],
       action: () => store.startCalendarEventFromThread(),
     },
     {
       id: 'toggle-unified-inbox',
       group: 'navigation',
-      title: 'Toggle Unified Inbox',
+      title: 'All accounts or one account',
       shortcut: shortcut('toggleUnifiedInbox'),
-      keywords: ['unified', 'all accounts'],
+      keywords: ['unified', 'unified inbox', 'all accounts', 'toggle'],
       action: () => {
         store.setWorkspaceView('mail');
         store.setActiveAccount(store.activeAccount?.id === 'unified' ? (store.accounts[0] || null) : UNIFIED_ACCOUNT);
@@ -195,9 +195,9 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'switch-mailbox',
       group: 'navigation',
-      title: 'Switch Mailbox',
+      title: 'Next mailbox',
       shortcut: shortcut('switchMailbox'),
-      keywords: ['inbox', 'sent', 'trash', 'spam'],
+      keywords: ['switch mailbox', 'inbox', 'sent', 'trash', 'spam'],
       action: () => {
         store.setWorkspaceView('mail');
         store.setMailboxView(nextMailboxView(store.mailboxView));
@@ -208,17 +208,17 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'undo-last-action',
       group: 'mail',
-      title: 'Undo Last Action',
+      title: 'Undo',
       shortcut: shortcut('undo'),
-      keywords: ['undo'],
+      keywords: ['undo', 'undo last action'],
       action: () => store.undoLastAction(),
     },
     {
       id: 'toggle-theme',
       group: 'settings',
-      title: 'Toggle Theme',
+      title: 'Change theme',
       shortcut: shortcut('toggleTheme'),
-      keywords: ['theme', 'dark', 'light'],
+      keywords: ['theme', 'toggle theme', 'dark', 'light'],
       action: () => {
         const nextTheme = store.theme === 'system' ? 'light' : (store.theme === 'light' ? 'dark' : 'system');
         store.setTheme(nextTheme);
@@ -227,15 +227,15 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
     {
       id: 'cache-visible-bodies',
       group: 'sync',
-      title: 'Cache Visible Bodies',
-      keywords: ['body', 'cache'],
+      title: 'Download the messages on screen',
+      keywords: ['body', 'cache', 'cache visible bodies', 'offline'],
       action: () => store.triggerVisibleBodyRepair(),
     },
     {
       id: 'resume-older-mail-indexing',
       group: 'sync',
-      title: 'Resume Older Mail Indexing',
-      keywords: ['backfill', 'index'],
+      title: 'Keep loading older mail',
+      keywords: ['backfill', 'index', 'older mail', 'resume'],
       action: () => store.triggerBackfillManual(),
     },
   ];
@@ -327,7 +327,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
         {/* Header */}
         <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/12 text-[var(--accent)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/12 text-[var(--accent-ink)]">
               <Command className="h-4 w-4" />
             </span>
             <div className="min-w-0">
@@ -335,9 +335,9 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
                 id="command-palette-title"
                 className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]"
               >
-                Command Palette
+                Command palette
               </h2>
-              <p className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 Search actions and jump anywhere
               </p>
             </div>
@@ -407,7 +407,7 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
           ) : (
             sections.map((section) => (
               <section key={section.group} className="mb-1 last:mb-0">
-                <h3 className="px-4 pb-1 pt-2 text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                <h3 className="px-4 pb-1 pt-2 text-[calc(11px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
                   {section.label}
                 </h3>
                 <div className="px-1.5">
@@ -457,22 +457,22 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-3 py-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <span className="inline-flex items-center gap-1">
-              <kbd className="rounded bg-[var(--border)] px-1 py-0.5 font-mono text-[calc(9px*var(--font-scale))]">↑</kbd>
-              <kbd className="rounded bg-[var(--border)] px-1 py-0.5 font-mono text-[calc(9px*var(--font-scale))]">↓</kbd>
+              <kbd className="rounded bg-[var(--border)] px-1 py-0.5 font-mono text-[calc(10px*var(--font-scale))]">↑</kbd>
+              <kbd className="rounded bg-[var(--border)] px-1 py-0.5 font-mono text-[calc(10px*var(--font-scale))]">↓</kbd>
               <span>navigate</span>
             </span>
             <span className="inline-flex items-center gap-1">
-              <kbd className="rounded bg-[var(--border)] px-1.5 py-0.5 font-mono text-[calc(9px*var(--font-scale))]">↵</kbd>
+              <kbd className="rounded bg-[var(--border)] px-1.5 py-0.5 font-mono text-[calc(10px*var(--font-scale))]">↵</kbd>
               <span>run</span>
             </span>
             <span className="inline-flex items-center gap-1">
-              <kbd className="rounded bg-[var(--border)] px-1.5 py-0.5 font-mono text-[calc(9px*var(--font-scale))]">esc</kbd>
+              <kbd className="rounded bg-[var(--border)] px-1.5 py-0.5 font-mono text-[calc(10px*var(--font-scale))]">esc</kbd>
               <span>close</span>
             </span>
           </div>
-          <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
+          <span className="shrink-0 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
             {orderedCommands.length > 0
               ? `${effectiveActiveIndex + 1} / ${orderedCommands.length}`
               : '0 results'}

@@ -6,6 +6,7 @@ import {
   indexDecisionRecords,
   isCollapsibleSection,
   planClearBatch,
+  frozenBatchIsGone,
   planLaterBatch,
   resolveInboxDecision,
   selectUnsubscribeBatch,
@@ -61,7 +62,7 @@ interface UseInboxSectionsProps {
   openedThread: MailThread | null;
   inboxCount: number;
   aiProviderDesc: AIProviderDescriptor | null;
-  /** False when an account in scope does not allow mail text to reach the model (rules only). */
+  /** False when no account in scope has the model sort its mail (mail text kept local, or background sorting off): rules only. */
   modelAllowedForScope?: boolean;
   navigationOrderRef: MutableRefObject<MailThread[] | null>;
   executeMailAction: ExecuteMailAction;
@@ -186,10 +187,13 @@ export function useInboxSections({
   }, [activeAccount, inboxCount, inboxCountsByAccount]);
 
   // --- Sections -----------------------------------------------------------------
-  // An unreachable model or an account that keeps mail text local falls back
-  // to the no-model section set; stored model rows are then ignored.
+  // An unreachable model, an account that keeps mail text local or one with
+  // background sorting off (the default) uses the no-model section set;
+  // stored model rows are then ignored.
   const modelStatus = useModelStatus();
   const hasModel = hasDecisionModel(aiProviderDesc) && modelStatus !== 'unreachable' && modelAllowedForScope;
+  /** Model sorting is on for this scope, but the model is not answering: sections fall back to rules until it does. */
+  const modelSortingPaused = hasDecisionModel(aiProviderDesc) && modelStatus === 'unreachable' && modelAllowedForScope;
   const sectioned = mailboxView === 'inbox' && !searchQuery.trim();
   const scope = `${accountKey}|${mailboxView}|${sectioned ? 'sections' : 'flat'}`;
   const groups = groupSnapshot.scope === scope ? groupSnapshot.groups : NO_GROUPS;
@@ -285,6 +289,19 @@ export function useInboxSections({
       };
     });
   }, [sectionFor, updateGroups]);
+
+  // An open group whose reviewed rows have all left (archived elsewhere, re-sorted)
+  // holds only later arrivals. Close it: its action would archive nothing.
+  useEffect(() => {
+    const stale = (Object.keys(groups) as Decision[]).filter(decision =>
+      groups[decision]?.expanded && frozenBatchIsGone(sectionFor(decision)?.entries || [], groups[decision]?.frozenKeys));
+    if (stale.length === 0) return;
+    updateGroups(current => {
+      const next = { ...current };
+      for (const decision of stale) delete next[decision];
+      return next;
+    });
+  }, [groups, sectionFor, updateGroups]);
 
   const setGroupRowChecked = useCallback((decision: Decision, thread: MailThread, checked: boolean) => {
     updateGroups(current => {
@@ -450,6 +467,7 @@ export function useInboxSections({
   return {
     threadDecisions,
     hasModel,
+    modelSortingPaused,
     sectioned,
     decisionSections,
     mailboxListItems,

@@ -29,7 +29,7 @@ export function GoogleAuthBanner() {
         <div className="truncate text-[calc(11px*var(--font-scale))] font-semibold">
           Reconnect Gmail for {accountLabel}
         </div>
-        <div className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+        <div className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           {explanation} Cached mail is still available, but sync and sending are paused.
           {extraIssueCount > 0 ? ` ${extraIssueCount} more ${extraIssueCount === 1 ? 'account also needs' : 'accounts also need'} attention.` : ''}
         </div>
@@ -38,7 +38,7 @@ export function GoogleAuthBanner() {
         type="button"
         onClick={() => void store.reauthorizeAccount(issue.accountId)}
         disabled={store.reauthorizingAccountId !== null}
-        className="flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--warning-solid)] px-3 py-1.5 text-[calc(10px*var(--font-scale))] font-semibold text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--warning)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-60"
+        className="flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--warning-solid)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--warning)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-60"
       >
         {isReauthorizing && <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
         {isReauthorizing ? 'Opening Google…' : 'Reconnect account'}

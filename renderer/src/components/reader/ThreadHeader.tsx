@@ -13,7 +13,7 @@ import { hintLabel, type ActionKeyHint } from '../../lib/actionKeyHints';
 
 const BUTTON_BASE = 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--control-radius)] border px-2.5 text-[calc(12px*var(--font-scale))] font-semibold transition-colors hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)] disabled:cursor-default disabled:opacity-45 motion-reduce:transition-none';
 const BUTTON_CLASS = `${BUTTON_BASE} border-[var(--strong-border)] bg-[var(--raised-surface)] text-[var(--text-primary)]`;
-const BUTTON_PRESSED_CLASS = `${BUTTON_BASE} border-[var(--accent)] bg-[var(--raised-surface)] text-[var(--accent)]`;
+const BUTTON_PRESSED_CLASS = `${BUTTON_BASE} border-[var(--accent)] bg-[var(--raised-surface)] text-[var(--accent-ink)]`;
 const MORE_BUTTON_CLASS = `${BUTTON_BASE} border-transparent text-[var(--text-primary)]`;
 
 function KeyCap({ children }: { children: ReactNode }) {
@@ -122,7 +122,7 @@ export function ThreadHeader({
         <button
           type="button"
           onClick={onBack}
-          className="print-hidden mb-3 flex items-center gap-1 rounded bg-[var(--hover-row)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--accent)] select-none hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+          className="print-hidden mb-3 flex items-center gap-1 rounded bg-[var(--hover-row)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--accent-ink)] select-none hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
         >
           <ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" />
           {backLabel}

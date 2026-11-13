@@ -122,13 +122,13 @@ function StreamingAssistantBubble({
   if (!visible) {
     return loading ? (
       <div role="status" className="flex items-center gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] self-start animate-pulse p-2">
-        <Sparkles aria-hidden="true" className="w-3.5 h-3.5 text-[var(--ai-accent)]" /> Assistant is thinking…
+        <Sparkles aria-hidden="true" className="w-3.5 h-3.5 text-[var(--ai-solid)]" /> Assistant is thinking…
       </div>
     ) : null;
   }
   return (
     <div aria-busy="true" className="flex flex-col gap-1 rounded-lg p-3 max-w-[90%] bg-[var(--border)]/30 self-start border border-[var(--border)]">
-      <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Assistant</span>
+      <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Assistant</span>
       <AIMessageContent role="assistant" text={stream.text} />
     </div>
   );
@@ -137,7 +137,7 @@ function StreamingAssistantBubble({
 function AIMessageContent({ role, text }: { role: string; text: string }) {
   if (role !== 'assistant') {
     return (
-      <p className={`text-[calc(11px*var(--font-scale))] whitespace-pre-wrap select-text ${role === 'system' ? 'text-[var(--warning)]' : 'text-[var(--text-primary)]'}`}>
+      <p className={`text-[calc(11px*var(--font-scale))] whitespace-pre-wrap select-text ${role === 'system' ? 'text-[var(--warning-solid)]' : 'text-[var(--text-primary)]'}`}>
         {text}
       </p>
     );
@@ -196,7 +196,7 @@ function MailboxSourceCards({
 
   return (
     <div className="mt-2 flex flex-col gap-1.5">
-      <div className="flex items-center gap-1 text-[calc(9px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
+      <div className="flex items-center gap-1 text-[calc(11px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">
         <MailSearch className="h-3 w-3" />
         Mailbox Sources
       </div>
@@ -212,12 +212,12 @@ function MailboxSourceCards({
             <span className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[calc(8px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">
               {sourceKindLabel(source)}
             </span>
-            <span className="min-w-0 flex-1 truncate text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
+            <span className="min-w-0 flex-1 truncate text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
               {source.subject || '(No subject)'}
             </span>
-            <ExternalLink className="h-3 w-3 shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--ai-accent)]" />
+            <ExternalLink className="h-3 w-3 shrink-0 text-[var(--text-tertiary)] group-hover:text-[var(--ai-solid)]" />
           </div>
-          <div className="flex min-w-0 items-center gap-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="flex min-w-0 items-center gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <span className="truncate">{source.sender}</span>
             {formatSourceDate(source.receivedAt || source.lastMessageAt) && (
               <>
@@ -227,7 +227,7 @@ function MailboxSourceCards({
             )}
           </div>
           {source.snippet && (
-            <p className="line-clamp-2 text-[calc(10px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+            <p className="line-clamp-2 text-[calc(11px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
               {source.snippet}
             </p>
           )}
@@ -255,8 +255,12 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
   const store = useAppStore();
   const [aiInput, setAiInput] = useState('');
   const [isAiUndocked, setIsAiUndocked] = useState(floatingOnly);
-  const [aiPosition, setAiPosition] = useState({ x: 96, y: 60 });
   const [aiPanelSize, setAiPanelSize] = useState(DEFAULT_AI_PANEL_SIZE);
+  // Opens at the right edge, over the reading area: the list it talks about stays visible.
+  const [aiPosition, setAiPosition] = useState(() => ({
+    x: Math.max(96, window.innerWidth - DEFAULT_AI_PANEL_SIZE.width - 24),
+    y: 60,
+  }));
   const [isAiDragging, setIsAiDragging] = useState(false);
   const [resizeMode, setResizeMode] = useState<ResizeMode>(null);
   const [aiControlsOpen, setAiControlsOpen] = useState(false);
@@ -542,13 +546,13 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
       if (fetched && fetched.length > 0) {
         setModelList(fetched);
       } else {
-        setModelList([configuredModel || getAIProviderConfig(modelProvider).defaultModel]);
+        setModelList(configuredModel ? [configuredModel] : []);
       }
     }).catch(err => {
       if (!active) return;
       console.error(`Failed to load models for ${modelProvider}:`, err);
       setLoadingModels(false);
-      setModelList([configuredModel || getAIProviderConfig(modelProvider).defaultModel]);
+      setModelList(configuredModel ? [configuredModel] : []);
     });
 
     return () => { active = false; };
@@ -603,8 +607,8 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
         }}
       >
         <div className="flex items-center gap-1.5 font-semibold text-[calc(13px*var(--font-scale))] text-[var(--text-primary)]">
-          <Sparkles className="w-4 h-4 text-[var(--ai-accent)]" /> Ask Dumka
-          <kbd title="Ask Dumka" className="ml-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1 py-0.5 font-mono text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">⌘J</kbd>
+          <Sparkles className="w-4 h-4 text-[var(--ai-solid)]" /> Ask Dumka
+          <kbd title="Ask Dumka" className="ml-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1 py-0.5 font-mono text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">⌘J</kbd>
         </div>
         
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
@@ -647,23 +651,23 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
         <button
           type="button"
           onClick={() => setAiControlsOpen(open => !open)}
-          className="flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5 text-left text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
+          className="flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--strong-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
           aria-expanded={aiControlsOpen}
           aria-haspopup="dialog"
         >
-          <SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-[var(--ai-accent)]" />
+          <SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-[var(--ai-solid)]" />
           <span className="min-w-0 flex-1 truncate">{controlsSummary || 'AI disabled'}</span>
           <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
         </button>
         {aiControlsOpen && (
           <div className="dm-overlay absolute left-3 right-3 top-[42px] z-50 rounded-lg border border-[var(--strong-border)] bg-[var(--raised-surface)] p-3 shadow-2xl">
-            <div className="flex flex-col gap-2 text-[calc(10px*var(--font-scale))]">
+            <div className="flex flex-col gap-2 text-[calc(11px*var(--font-scale))]">
               <label className="flex items-center justify-between gap-3">
                 <span className="shrink-0 text-[var(--text-secondary)]">Provider</span>
                 <select
                   value={store.aiProvider}
                   onChange={(e) => void updateProvider(e.target.value)}
-                  className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+                  className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
                 >
                   <option value="automatic">Automatic</option>
                   <option value="openAI">OpenAI</option>
@@ -679,7 +683,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
                 <div className="flex items-center justify-between gap-3">
                   <span className="shrink-0 text-[var(--text-secondary)]">Model</span>
                   {loadingModels ? (
-                    <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] animate-pulse">Loading…</span>
+                    <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] animate-pulse">Loading…</span>
                   ) : (
                     <SearchableSelect
                       value={configuredModel || store.aiModel}
@@ -698,7 +702,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
                   <select
                     value={thinkingValue}
                     onChange={(e) => void updateThinkingLevel(e.target.value)}
-                    className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)]"
+                    className="min-w-0 flex-1 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)]"
                   >
                     {thinkingControl.options.map(option => (
                       <option key={option.value} value={option.value}>{option.label}</option>
@@ -719,7 +723,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
             onClick={openAIConfiguration}
             className="flex w-full items-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--ai-accent)]/50 hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ai-accent)]"
           >
-            <Sparkles className="h-3.5 w-3.5 shrink-0 text-[var(--ai-accent)]" />
+            <Sparkles className="h-3.5 w-3.5 shrink-0 text-[var(--ai-solid)]" />
             <span className="truncate">{AI_NO_PROVIDER_PROMPT}</span>
           </button>
         </div>
@@ -729,7 +733,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
       <div ref={aiMessagesRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-[var(--app-bg)]">
         {store.activeAIMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center flex-1 text-center py-20 text-[var(--text-secondary)] opacity-50 select-none">
-            <Sparkles className="w-8 h-8 mb-2 text-[var(--ai-accent)]" />
+            <Sparkles className="w-8 h-8 mb-2 text-[var(--ai-solid)]" />
             <p>{store.openedThread ? 'Ask about this conversation.' : 'Ask about your mail.'}</p>
           </div>
         ) : (
@@ -744,7 +748,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
                     : 'bg-[var(--border)]/30 self-start border border-[var(--border)]'
               }`}
             >
-              <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
+              <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
                 {m.role === 'user' ? 'You' : m.role === 'system' ? 'System' : 'Assistant'}
               </span>
               <AIMessageContent role={m.role} text={m.text} />
@@ -753,7 +757,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
                   type="button"
                   onClick={() => store.retryLastAIRequest()}
                   disabled={store.aiPanelLoading}
-                  className="self-start rounded border border-[var(--warning)]/40 px-2 py-0.5 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:bg-[var(--warning)]/15 disabled:opacity-40"
+                  className="self-start rounded border border-[var(--warning)]/40 px-2 py-0.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:bg-[var(--warning)]/15 disabled:opacity-40"
                 >
                   Retry
                 </button>
@@ -775,6 +779,18 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
 
       {/* AI input Form */}
       <div className="p-3 border-t border-[var(--border)] bg-[var(--rail-bg)]">
+        {/* What the answer is based on: never left to be guessed. */}
+        <p
+          data-ask-context={store.openedThread ? 'conversation' : 'mailbox'}
+          className="mb-2 flex min-w-0 items-baseline gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]"
+        >
+          <span className="shrink-0 font-semibold text-[var(--text-primary)]">{store.openedThread ? 'About this conversation' : 'About your mailbox'}</span>
+          <span className="min-w-0 truncate" title={store.openedThread ? store.openedThread.subject : undefined}>
+            {store.openedThread
+              ? (store.openedThread.subject.trim() || '(no subject)')
+              : 'Searches the mail stored on this Mac.'}
+          </span>
+        </p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -788,7 +804,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
             disabled={store.aiPanelLoading}
             rows={1}
             placeholder="Ask Dumka…"
-            className="min-h-[34px] flex-1 resize-none bg-[var(--panel-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 outline-none focus:outline focus:outline-2 focus:outline-[var(--ai-accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] leading-[1.35] text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-[34px] flex-1 resize-none bg-[var(--panel-bg)] border border-[var(--control-border)] rounded px-2.5 py-1.5 outline-none focus:outline focus:outline-2 focus:outline-[var(--ai-accent)] focus:outline-offset-1 text-[calc(12px*var(--font-scale))] leading-[1.35] text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
             value={aiInput}
             onChange={(e) => setAiInput(e.target.value)}
             onKeyDown={(e) => {
@@ -802,7 +818,7 @@ export function AICopilotPanel({ floatingOnly = false }: AICopilotPanelProps = {
             aria-label="Send message"
             title="Send message"
             disabled={store.aiPanelLoading || !aiInput.trim()}
-            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center bg-[var(--ai-accent)] text-white rounded cursor-pointer hover:bg-[var(--ai-accent)]/95 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-[34px] w-[34px] shrink-0 items-center justify-center bg-[var(--ai-fill)] text-[var(--on-accent)] rounded cursor-pointer hover:bg-[var(--ai-accent)]/95 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Send className="w-4 h-4" />
           </button>

@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { AIProviderDescriptor, AIProviderPreference, AI_SECRET_KEYS, AI_SECRET_STORED_PLACEHOLDER } from '../shared/types';
-import { getAIProviderConfig } from '../shared/aiProviders';
+import { CONFIGURABLE_AI_PROVIDERS, getAIProviderConfig, isConfigurableAIProvider, type ConfigurableAIProvider } from '../shared/aiProviders';
+import { isTextModelId } from '../shared/aiModelCatalog';
 import { SettingsRepo } from './database';
 import { getRefreshToken, saveRefreshToken, deleteRefreshToken } from './keychain';
 import { ensurePrimaryConfigDir, resolveConfigFile } from './appPaths';
@@ -222,79 +223,39 @@ export async function getAIProviderDescriptor(preference: AIProviderPreference, 
     };
   }
 
+  // The model is whatever the caller asks for or the user saved for the
+  // provider. There is no built-in model: a provider with a key but no model
+  // is reported as `Missing model` and nothing is sent to it.
+  const describeProvider = (provider: ConfigurableAIProvider): AIProviderDescriptor => {
+    const config = getAIProviderConfig(provider);
+    const model = (overrideModel || env[config.modelEnv] || '').trim();
+    const local = provider === 'openAICompatible';
+    return {
+      preference: provider,
+      displayName: local ? env['OPENAI_COMPATIBLE_NAME'] || config.displayName : config.displayName,
+      model,
+      transport: config.transport,
+      status: !env[config.apiKeyEnv]
+        ? (local ? 'Missing API Key/Base URL' : 'Missing API Key')
+        : model ? 'Configured' : 'Missing model',
+      capabilities: { canTriage: true, canSummarize: true, canDraft: true }
+    };
+  };
+
   const selectDesc = (pref: AIProviderPreference): AIProviderDescriptor => {
-    switch (pref) {
-      case 'openAI':
-        return {
-          preference: 'openAI',
-          displayName: 'OpenAI',
-          model: overrideModel || env['OPENAI_MODEL'] || 'gpt-5.4-mini',
-          transport: 'responses',
-          status: env['OPENAI_API_KEY'] ? 'Configured' : 'Missing API Key',
-          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
-        };
-      case 'anthropic':
-        return {
-          preference: 'anthropic',
-          displayName: 'Anthropic',
-          model: overrideModel || env['ANTHROPIC_MODEL'] || 'claude-sonnet-4.6',
-          transport: 'messages',
-          status: env['ANTHROPIC_API_KEY'] ? 'Configured' : 'Missing API Key',
-          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
-        };
-      case 'gemini':
-        return {
-          preference: 'gemini',
-          displayName: 'Gemini',
-          model: overrideModel || env['GEMINI_MODEL'] || 'gemini-3.5-flash',
-          transport: 'generateContent',
-          status: env['GEMINI_API_KEY'] ? 'Configured' : 'Missing API Key',
-          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
-        };
-      case 'openRouter':
-        return {
-          preference: 'openRouter',
-          displayName: 'OpenRouter',
-          model: overrideModel || env['OPENROUTER_MODEL'] || getAIProviderConfig('openRouter').defaultModel,
-          transport: 'chat.completions',
-          status: env['OPENROUTER_API_KEY'] ? 'Configured' : 'Missing API Key',
-          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
-        };
-      case 'deepSeek':
-        return {
-          preference: 'deepSeek',
-          displayName: 'DeepSeek',
-          model: overrideModel || env['DEEPSEEK_MODEL'] || 'deepseek-v4-flash',
-          transport: 'chat.completions',
-          status: env['DEEPSEEK_API_KEY'] ? 'Configured' : 'Missing API Key',
-          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
-        };
-      case 'openAICompatible':
-        return {
-          preference: 'openAICompatible',
-          displayName: env['OPENAI_COMPATIBLE_NAME'] || 'Local Model',
-          model: overrideModel || env['OPENAI_COMPATIBLE_MODEL'] || 'local-mail-model',
-          transport: 'chat.completions',
-          status: env['OPENAI_COMPATIBLE_API_KEY'] ? 'Configured' : 'Missing API Key/Base URL',
-          capabilities: { canTriage: true, canSummarize: true, canDraft: true }
-        };
-      default:
-        // Try automatic fallback chain
-        if (env['OPENAI_API_KEY']) return selectDesc('openAI');
-        if (env['ANTHROPIC_API_KEY']) return selectDesc('anthropic');
-        if (env['GEMINI_API_KEY']) return selectDesc('gemini');
-        if (env['OPENROUTER_API_KEY']) return selectDesc('openRouter');
-        if (env['DEEPSEEK_API_KEY']) return selectDesc('deepSeek');
-        if (env['OPENAI_COMPATIBLE_API_KEY']) return selectDesc('openAICompatible');
-        return {
-          preference: 'disabled',
-          displayName: 'None',
-          model: 'None',
-          transport: 'None',
-          status: 'No AI keys found',
-          capabilities: { canTriage: false, canSummarize: false, canDraft: false }
-        };
-    }
+    if (isConfigurableAIProvider(pref)) return describeProvider(pref);
+    // Automatic: the first provider with a key and a chosen model, else the first with a key.
+    const withKey = CONFIGURABLE_AI_PROVIDERS.filter(provider => env[getAIProviderConfig(provider).apiKeyEnv]);
+    const ready = withKey.find(provider => describeProvider(provider).status === 'Configured') || withKey[0];
+    if (ready) return describeProvider(ready);
+    return {
+      preference: 'disabled',
+      displayName: 'None',
+      model: 'None',
+      transport: 'None',
+      status: 'No AI keys found',
+      capabilities: { canTriage: false, canSummarize: false, canDraft: false }
+    };
   };
 
   const defaultDesc = selectDesc(activePref);
@@ -307,6 +268,11 @@ export async function getAIProviderDescriptor(preference: AIProviderPreference, 
   }
 
   return defaultDesc;
+}
+
+/** Keeps what can answer in text; the lists also carry embedding, audio and image models. No family names are assumed. */
+function isListedTextModel(id: unknown): id is string {
+  return typeof id === 'string' && isTextModelId(id);
 }
 
 export async function listProviderModels(provider: string, apiKey: string, baseUrl?: string): Promise<string[]> {
@@ -356,7 +322,7 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
         const data = await res.json() as any;
         return (data.data || [])
           .map((m: any) => m.id)
-          .filter((id: string) => id.startsWith('gpt') || id.startsWith('o1') || id.startsWith('o3'))
+          .filter(isListedTextModel)
           .sort();
       }
       case 'gemini': {
@@ -371,7 +337,7 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
         return (data.models || [])
           .filter(supportsGenerateContent)
           .map((m: any) => m.name.replace('models/', ''))
-          .filter((name: string) => name.includes('gemini'))
+          .filter(isListedTextModel)
           .sort();
       }
       case 'openRouter': {
@@ -395,7 +361,7 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
           throw new Error(`HTTP ${res.status}${errText ? ': ' + errText : ''}`);
         }
         const data = await res.json() as any;
-        return (data.data || []).map((m: any) => m.id).sort();
+        return (data.data || []).map((m: any) => m.id).filter(isListedTextModel).sort();
       }
       case 'deepSeek': {
         const urlEnd = baseUrl || 'https://api.deepseek.com/models';
@@ -408,7 +374,7 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
           throw new Error(`HTTP ${res.status}${errText ? ': ' + errText : ''}`);
         }
         const data = await res.json() as any;
-        return (data.data || []).map((m: any) => m.id).sort();
+        return (data.data || []).map((m: any) => m.id).filter(isListedTextModel).sort();
       }
       case 'anthropic': {
         const urlEnd = 'https://api.anthropic.com/v1/models';
@@ -424,7 +390,7 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
           throw new Error(`HTTP ${res.status}${errText ? ': ' + errText : ''}`);
         }
         const data = await res.json() as any;
-        return (data.data || []).map((m: any) => m.id).sort();
+        return (data.data || []).map((m: any) => m.id).filter(isListedTextModel).sort();
       }
       case 'openAICompatible': {
         const urlEnd = baseUrl ? (baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`) : '';
@@ -440,7 +406,7 @@ export async function listProviderModels(provider: string, apiKey: string, baseU
           throw new Error(`HTTP ${res.status}${errText ? ': ' + errText : ''}`);
         }
         const data = await res.json() as any;
-        return (data.data || []).map((m: any) => m.id).sort();
+        return (data.data || []).map((m: any) => m.id).filter(isListedTextModel).sort();
       }
       default:
         return [];

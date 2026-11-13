@@ -315,6 +315,11 @@ export function useKeyboard(options: KeyboardOptions) {
       const sectionAction = resolveSectionKey(e.key, e.code, e, sc);
       if (sectionAction !== 'none') {
         e.preventDefault();
+        if (sectionAction === 'draftReply') {
+          // Only with a thread open: the dock asks the model and shows the draft; nothing is sent.
+          if (currentStore.openedThread) activeReplyDock()?.draft();
+          return;
+        }
         const section = focusedGroup || currentStore.focusedSection;
         if (sectionAction === 'archiveClearSection') {
           if (!currentStore.sectioned) return;

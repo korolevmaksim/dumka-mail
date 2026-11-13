@@ -1,6 +1,7 @@
 import React from 'react';
+import type { AccountTag } from '../../../../shared/accountTags';
 import { Check, ChevronDown, ChevronRight, Paperclip, Sparkles } from 'lucide-react';
-import { listTimestamp } from '../../../../shared/dateFormat';
+import { listTimestamp, listTimestampCompact } from '../../../../shared/dateFormat';
 import { formatLaterChip, laterTimeFor } from '../../../../shared/inboxSections';
 import { threadRowSender } from '../../../../shared/threadCounterparty';
 import { threadNeedsInviteAnswer } from '../../../../shared/inviteRsvp';
@@ -39,7 +40,7 @@ function stopRowKeys(event: React.KeyboardEvent) {
   if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
 }
 
-const CHIP_CLASS = 'inline-flex shrink-0 items-center gap-1 rounded-[var(--control-radius)] border px-1.5 text-[calc(10px*var(--font-scale))] font-semibold leading-[18px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-60';
+const CHIP_CLASS = 'inline-flex shrink-0 items-center gap-1 rounded-[var(--control-radius)] border px-1.5 text-[calc(11px*var(--font-scale))] font-semibold leading-[18px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-60';
 
 function RsvpChips({ rsvp, subject }: { rsvp: RowRsvp; subject: string }) {
   if (rsvp.calendarConnected === false) {
@@ -66,7 +67,7 @@ function RsvpChips({ rsvp, subject }: { rsvp: RowRsvp; subject: string }) {
         title="Accept and archive (Y)"
         onClick={(event) => { event.stopPropagation(); rsvp.onAnswer('accepted'); }}
         onKeyDown={stopRowKeys}
-        className={`${CHIP_CLASS} border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)]/10`}
+        className={`${CHIP_CLASS} border-[var(--accent)] text-[var(--accent-ink)] hover:bg-[var(--accent)]/10`}
       >
         Yes <Kbd>Y</Kbd>
       </button>
@@ -82,6 +83,22 @@ function RsvpChips({ rsvp, subject }: { rsvp: RowRsvp; subject: string }) {
       >
         No <Kbd>N</Kbd>
       </button>
+    </span>
+  );
+}
+
+/** Which account a row belongs to, shown only in lists that mix accounts. Text first; the dot is a visual aid. */
+export function AccountTagChip({ tag }: { tag: AccountTag }) {
+  return (
+    <span
+      data-account-tag
+      title={tag.email}
+      className="inline-flex max-w-[112px] shrink-0 items-center gap-1 rounded-[var(--control-radius)] border border-[var(--border)] px-1 text-[calc(11px*var(--font-scale))] leading-[16px] text-[var(--text-secondary)]"
+    >
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+      {/* A narrow row (a conversation is open beside the list) keeps the subject readable: a short code instead of the label. */}
+      <span className="truncate @max-[560px]/row:hidden">{tag.label}</span>
+      <span aria-hidden="true" className="hidden font-medium @max-[560px]/row:inline">{tag.short}</span>
     </span>
   );
 }
@@ -120,6 +137,7 @@ export function SectionHeaderRow({
   action,
   collapsible,
   onCollapse,
+  includedCount,
 }: {
   decision: Decision;
   label: string;
@@ -128,8 +146,11 @@ export function SectionHeaderRow({
   action?: SectionAction;
   collapsible?: boolean;
   onCollapse?: () => void;
+  /** How many of `count` the group action covers, when that is fewer (mail that arrived after the group was opened stays out). */
+  includedCount?: number;
 }) {
   const headingId = `section-heading-${decision}`;
+  const partial = includedCount !== undefined && includedCount < count;
   return (
     <div
       role="listitem"
@@ -151,7 +172,15 @@ export function SectionHeaderRow({
       ) : null}
       <h3 id={headingId} className="flex min-w-0 items-baseline gap-2 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
         <span className="truncate">{label}</span>
-        <span className="shrink-0 font-normal tabular-nums text-[var(--text-tertiary)]" aria-label={`${count} ${count === 1 ? 'conversation' : 'conversations'}`}>{count}</span>
+        <span
+          className="shrink-0 font-normal tabular-nums text-[var(--text-tertiary)]"
+          aria-label={partial
+            ? `${includedCount} of ${count} conversations are in this group action; ${count - includedCount!} joined later`
+            : `${count} ${count === 1 ? 'conversation' : 'conversations'}`}
+          title={partial ? `${count - includedCount!} joined after you opened this group and ${count - includedCount! === 1 ? 'is' : 'are'} not included` : undefined}
+        >
+          {partial ? `${includedCount} of ${count}` : count}
+        </span>
       </h3>
       <span className="flex-1" />
       {action ? <ActionButton action={action} /> : null}
@@ -220,7 +249,7 @@ export function LateDividerRow({ count, height }: { count: number; height: numbe
     <div
       role="listitem"
       style={{ height }}
-      className="flex shrink-0 items-center border-b border-[var(--border)] bg-[var(--inset-surface)] px-[var(--row-px)] text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]"
+      className="flex shrink-0 items-center border-b border-[var(--border)] bg-[var(--inset-surface)] px-[var(--row-px)] text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]"
     >
       Arrived after you opened this group ({count}) — not included
     </div>
@@ -232,7 +261,7 @@ export function SearchHeaderRow({ label, height }: { label: string; height: numb
     <div
       role="presentation"
       style={{ height }}
-      className="flex shrink-0 items-end px-3 pb-1.5 text-[calc(10px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]"
+      className="flex shrink-0 items-end px-3 pb-1.5 text-[calc(11px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]"
     >
       {label}
     </div>
@@ -259,8 +288,12 @@ interface SectionThreadRowProps {
   onContextMenu: (event: React.MouseEvent) => void;
   /** Display name of the thread's account, so the row names the other party. */
   accountName?: string;
+  /** Set in lists that mix accounts (unified inbox): which account this conversation is in. */
+  accountTag?: AccountTag;
   /** Present on rows whose invitation still needs an answer. */
   rsvp?: RowRsvp;
+  /** The section header already names one time for every Later row, so a narrow row need not repeat it. */
+  laterTimeInHeader?: boolean;
 }
 
 // Not memoised: the list re-renders on every store change and passes fresh
@@ -283,11 +316,14 @@ export function SectionThreadRow({
   onToggleChecked,
   onContextMenu,
   accountName,
+  accountTag,
   rsvp,
+  laterTimeInHeader = false,
 }: SectionThreadRowProps) {
   const sender = threadRowSender(thread, { email: thread.accountId, displayName: accountName });
   const subject = thread.subject.trim() || '(no subject)';
   const timestamp = listTimestamp(thread.lastMessageAt);
+  const timestampCompact = listTimestampCompact(thread.lastMessageAt);
   const reason = decision.reason;
   const laterChip = section === 'later' ? formatLaterChip(laterTimeFor(decision)) : null;
   const hasRsvpChips = Boolean(rsvp && threadNeedsInviteAnswer(thread));
@@ -297,6 +333,7 @@ export function SectionThreadRow({
     isSelected ? 'selected' : null,
     group && group.inBatch ? (group.checked ? 'included in the group action' : 'excluded from the group action') : null,
     group && !group.inBatch ? 'not part of the group action' : null,
+    accountTag ? `account ${accountTag.email}` : null,
     `from ${sender}`,
     `subject ${subject}`,
     reason ? `reason ${reason}` : null,
@@ -335,16 +372,28 @@ export function SectionThreadRow({
         onToggleSelect(event);
       }}
       className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
-        isSelected ? 'border-[var(--accent)] bg-[var(--accent)] text-white' : 'border-[var(--strong-border)] bg-[var(--panel-bg)]'
+        isSelected ? 'border-[var(--accent)] bg-[var(--accent-fill)] text-[var(--on-accent)]' : 'border-[var(--strong-border)] bg-[var(--panel-bg)]'
       }`}
     >
       {isSelected && <Check aria-hidden="true" className="h-2.5 w-2.5 stroke-[3.5px]" />}
     </button>
   ) : unreadDot;
 
-  const eventChips = rsvp && hasRsvpChips ? <RsvpChips rsvp={rsvp} subject={subject} /> : null;
+  // In a narrow list (a conversation is open beside it) the chips would cut the
+  // subject down to a few letters. There they show on the hovered row and on
+  // the focused row that is not the open conversation: the open one answers
+  // from its invitation card. `Y` / `N` work on the focused row either way.
+  const eventChips = rsvp && hasRsvpChips ? (
+    <span className={isOpened
+      ? 'contents @max-[560px]/row:hidden'
+      : isFocused ? 'contents' : 'contents @max-[560px]/row:hidden @max-[560px]/row:group-hover/row:contents'}
+    >
+      <RsvpChips rsvp={rsvp} subject={subject} />
+    </span>
+  ) : null;
+  const accountChip = accountTag ? <AccountTagChip tag={accountTag} /> : null;
   const laterBadge = laterChip ? (
-    <span className="shrink-0 rounded-[var(--control-radius)] border border-[var(--ai-accent)] px-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)]">
+    <span className={`shrink-0 rounded-[var(--control-radius)] border border-[var(--ai-accent)] px-1.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] ${laterTimeInHeader ? '@max-[560px]/row:hidden' : ''}`}>
       {laterChip}
     </span>
   ) : null;
@@ -381,7 +430,7 @@ export function SectionThreadRow({
         }
       }}
       style={{ height }}
-      className={`dm-mail-row relative flex shrink-0 cursor-pointer select-none flex-col justify-center gap-0.5 overflow-hidden border-b border-[var(--border)] px-[var(--row-px)] outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)] ${
+      className={`dm-mail-row group/row @container/row relative flex shrink-0 cursor-pointer select-none flex-col justify-center gap-0.5 overflow-hidden border-b border-[var(--border)] px-[var(--row-px)] outline-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)] ${
         isSelected || isOpened ? 'bg-[var(--selected-row)]' : isFocused ? 'bg-[var(--focus-row)]' : 'hover:bg-[var(--hover-row)]'
       }`}
     >
@@ -399,10 +448,14 @@ export function SectionThreadRow({
             {thread.hasAttachments && <Paperclip aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />}
             {eventChips}
             {laterBadge}
-            <span className="shrink-0 whitespace-nowrap text-[calc(10px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]">{timestamp}</span>
+            {accountChip}
+            <span title={timestamp} className="shrink-0 whitespace-nowrap text-[calc(11px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]">
+              <span className="@max-[560px]/row:hidden">{timestamp}</span>
+              <span aria-hidden="true" className="hidden @max-[560px]/row:inline">{timestampCompact}</span>
+            </span>
           </div>
           <div className="flex min-w-0 items-center gap-1.5 pl-[14px]">
-            <Sparkles aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--ai-accent)]" />
+            <Sparkles aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--ai-solid)]" />
             <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{reason}</span>
           </div>
         </>
@@ -419,7 +472,11 @@ export function SectionThreadRow({
           {thread.hasAttachments && <Paperclip aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />}
           {eventChips}
           {laterBadge}
-          <span className="shrink-0 whitespace-nowrap text-[calc(10px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]">{timestamp}</span>
+          {accountChip}
+          <span title={timestamp} className="shrink-0 whitespace-nowrap text-[calc(11px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]">
+              <span className="@max-[560px]/row:hidden">{timestamp}</span>
+              <span aria-hidden="true" className="hidden @max-[560px]/row:inline">{timestampCompact}</span>
+            </span>
         </div>
       )}
     </div>

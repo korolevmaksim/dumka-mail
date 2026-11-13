@@ -231,17 +231,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
     provider: 'automatic',
     globalDefaultModel: '',
     automationModel: '',
+    automationProvider: '',
+    backgroundSorting: false,
     fallback: {
       isEnabled: true,
       orderText: 'openai, anthropic, gemini, openrouter, deepseek'
     },
     providerConfigurations: [
-      { id: 'openAI', provider: 'openAI', displayName: 'OpenAI', defaultModel: getAIProviderConfig('openAI').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('openAI').defaultBaseUrl, isEnabled: true, canRemove: false },
-      { id: 'anthropic', provider: 'anthropic', displayName: 'Anthropic', defaultModel: getAIProviderConfig('anthropic').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('anthropic').defaultBaseUrl, isEnabled: false, canRemove: false },
-      { id: 'gemini', provider: 'gemini', displayName: 'Gemini', defaultModel: 'gemini-3.5-flash', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
-      { id: 'openRouter', provider: 'openRouter', displayName: 'OpenRouter', defaultModel: '~openai/gpt-latest', modelSelectionMode: 'catalog', baseURL: 'https://openrouter.ai/api/v1', isEnabled: false, canRemove: false },
-      { id: 'deepSeek', provider: 'deepSeek', displayName: 'DeepSeek', defaultModel: getAIProviderConfig('deepSeek').defaultModel, modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('deepSeek').defaultBaseUrl, isEnabled: false, canRemove: false },
-      { id: 'openAICompatible', provider: 'openAICompatible', displayName: 'Local Model', defaultModel: getAIProviderConfig('openAICompatible').defaultModel, modelSelectionMode: 'custom', baseURL: 'http://localhost:11434/v1', isEnabled: false, canRemove: false }
+      { id: 'openAI', provider: 'openAI', displayName: 'OpenAI', defaultModel: '', modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('openAI').defaultBaseUrl, isEnabled: true, canRemove: false },
+      { id: 'anthropic', provider: 'anthropic', displayName: 'Anthropic', defaultModel: '', modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('anthropic').defaultBaseUrl, isEnabled: false, canRemove: false },
+      { id: 'gemini', provider: 'gemini', displayName: 'Gemini', defaultModel: '', modelSelectionMode: 'catalog', baseURL: '', isEnabled: false, canRemove: false },
+      { id: 'openRouter', provider: 'openRouter', displayName: 'OpenRouter', defaultModel: '', modelSelectionMode: 'catalog', baseURL: 'https://openrouter.ai/api/v1', isEnabled: false, canRemove: false },
+      { id: 'deepSeek', provider: 'deepSeek', displayName: 'DeepSeek', defaultModel: '', modelSelectionMode: 'catalog', baseURL: getAIProviderConfig('deepSeek').defaultBaseUrl, isEnabled: false, canRemove: false },
+      { id: 'openAICompatible', provider: 'openAICompatible', displayName: 'Local Model', defaultModel: '', modelSelectionMode: 'custom', baseURL: 'http://localhost:11434/v1', isEnabled: false, canRemove: false }
     ],
     promptShortcuts: [
       {
@@ -747,9 +749,11 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     openedThread: mailState.openedThread,
     inboxCount: mailState.mailboxCounts.inbox,
     aiProviderDesc: aiState.aiProviderDesc,
-    // Model sections only when mail text may reach the model for an account in scope (SPEC §5, §8).
+    // Model sections only when an account in scope has the model sort its mail:
+    // mail text may reach the model and background sorting is on (SPEC §5, §8).
     modelAllowedForScope: (mailState.activeAccount?.id === 'unified' ? mailState.accounts : mailState.activeAccount ? [mailState.activeAccount] : [])
-      .some(account => resolveAccountSetting(settingsState.settings, account.email, 'modelMayReadMail').value),
+      .some(account => resolveAccountSetting(settingsState.settings, account.email, 'modelMayReadMail').value
+        && resolveAccountSetting(settingsState.settings, account.email, 'backgroundSorting').value),
     navigationOrderRef: mailState.navigationOrderRef,
     executeMailAction: mailState.executeMailAction,
     executeBatchMailAction: mailState.executeBatchMailAction,

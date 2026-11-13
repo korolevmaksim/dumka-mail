@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appKeymapBindings, barShortcutKeys, keymapShortcut } from '../shared/appKeymap';
+import { APP_KEY_BINDING_IDS, KEYMAP_GROUP_LABELS, SHORTCUT_PRESET_LABELS, appKeymapBindings, barShortcutKeys, keymapShortcut, shortcutPresetLabel } from '../shared/appKeymap';
 import type { ShortcutSettings } from '../shared/types';
 
 function settings(overrides: Partial<ShortcutSettings> = {}): ShortcutSettings {
@@ -17,11 +17,11 @@ function settings(overrides: Partial<ShortcutSettings> = {}): ShortcutSettings {
 describe('appKeymapBindings', () => {
   it('lists only bindings that exist in the app', () => {
     const labels = appKeymapBindings(settings()).map(binding => binding.label);
-    expect(labels).toContain('Search mailbox');
+    expect(labels).toContain('Search mail');
     expect(labels).toContain('Find in message');
-    expect(labels).toContain('Move to Trash');
-    expect(labels).toContain('Move to Spam');
-    expect(labels).toContain('Ignore Thread');
+    expect(labels).toContain('Move to trash');
+    expect(labels).toContain('Move to spam');
+    expect(labels).toContain('Ignore');
     expect(labels).not.toContain('Focus Queue');
     expect(labels).not.toContain('Refresh Gmail');
     expect(labels).not.toContain('Continue Older Mail');
@@ -63,5 +63,46 @@ describe('appKeymapBindings', () => {
     expect(barShortcutKeys('⌘⇧E / E', true)).toBe('E');
     expect(barShortcutKeys('↩ / O', true)).toBe('↩/O');
     expect(barShortcutKeys('⌘N / C', false)).toBe('⌘N/C');
+  });
+});
+
+describe('one vocabulary for actions', () => {
+  const labels = appKeymapBindings(settings({ vimNavigation: true })).map(binding => binding.label);
+
+  it('calls archiving Archive and snoozing Later, never Mark Done, Remind or Snooze', () => {
+    expect(labels).toContain('Archive');
+    expect(labels).toContain('Later…');
+    expect(labels).toContain('Archive the Clear section');
+    expect(labels).toContain('Ask Dumka');
+    expect(labels).toContain('Ignore');
+    for (const label of labels) {
+      expect(label).not.toMatch(/mark done|remind|snooze/i);
+      expect(label).not.toMatch(/thread/i);
+    }
+  });
+
+  it('uses sentence case: no capital after the first word except names', () => {
+    const allowed = new Set(['Dumka', 'Clear', 'Later', 'After']);
+    for (const label of labels) {
+      const words = label.replace(/[“”…,]/g, '').split(/\s+/).slice(1);
+      for (const word of words) {
+        if (/^[A-Z][a-z]/.test(word)) expect(allowed.has(word), `${label}: ${word}`).toBe(true);
+      }
+    }
+  });
+
+  it('keeps every binding id', () => {
+    const ids = appKeymapBindings(settings({ vimNavigation: true })).map(binding => binding.id);
+    expect(new Set(ids)).toEqual(new Set(APP_KEY_BINDING_IDS));
+  });
+
+  it('names the presets without another product’s name and keeps the stored values', () => {
+    expect(Object.keys(SHORTCUT_PRESET_LABELS).sort()).toEqual(['appleMail', 'gmail', 'superhuman']);
+    for (const label of Object.values(SHORTCUT_PRESET_LABELS)) {
+      expect(label).not.toMatch(/superhuman|gmail|apple/i);
+    }
+    expect(shortcutPresetLabel('superhuman')).toBe('Single-key shortcuts');
+    expect(shortcutPresetLabel('appleMail')).toBe('Only ⌘ shortcuts');
+    expect(Object.values(KEYMAP_GROUP_LABELS)).toEqual(['Everywhere', 'Mail', 'Writing', 'Moving around']);
   });
 });

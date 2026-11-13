@@ -14,7 +14,6 @@ import { ContactsTab } from './tabs/ContactsSettingsTab';
 import { CalendarSettingsTab, LabelsTab } from './tabs/WorkspaceSettingsTabs';
 import { DataBackupTab } from './tabs/DataBackupTab';
 import { LoggingSettingsTab } from './LoggingSettingsTab';
-import { createTranslator } from '../../../../shared/i18n';
 import { normalizeAccountId } from '../../../../shared/accountSettings';
 import {
   accountMatchesSettingsQuery,
@@ -68,7 +67,6 @@ function fallbackTarget(accounts: Account[], activeAccount: Account | null): Set
 
 export function SettingsPanel() {
   const store = useAppStore();
-  const t = createTranslator(store.settings.general.language);
   const [requested, setRequested] = useState<SettingsTarget | null>(() => consumeRequestedSettingsTarget());
   const [settingsQuery, setSettingsQuery] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(() => requested?.kind === 'tab' && settingsSectionForTab(requested.tab) === 'Advanced');
@@ -200,7 +198,7 @@ export function SettingsPanel() {
             onClick={() => store.setSettingsOpen(false)}
             className="w-full text-center py-1.5 border border-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--strong-border)] text-[calc(11px*var(--font-scale))] font-medium cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           >
-            {t('settings.panel.close')}
+            Close settings
           </button>
         </div>
       </nav>

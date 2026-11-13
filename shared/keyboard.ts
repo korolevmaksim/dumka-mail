@@ -168,8 +168,8 @@ export function resolveSingleKey(key: string, r: ResolvedShortcuts): MailKeyActi
   }
 }
 
-/** Decision-section keys (SPEC §2, §9): `⇧E`, `⇧H`, `V`. */
-export type SectionKeyAction = 'archiveClearSection' | 'remindLaterSection' | 'moveToSection' | 'none';
+/** Decision-section keys (SPEC §2, §9): `⇧E`, `⇧H`, `V`; and `⇧R`, which asks the model for a reply draft. */
+export type SectionKeyAction = 'archiveClearSection' | 'remindLaterSection' | 'moveToSection' | 'draftReply' | 'none';
 
 /**
  * Resolves the section keys. Checked before `resolveSingleKey`, which
@@ -187,6 +187,7 @@ export function resolveSectionKey(
   const letter = physicalKeyChar(key, code).toLowerCase();
   if (modifiers.shiftKey && letter === 'e') return 'archiveClearSection';
   if (modifiers.shiftKey && letter === 'h') return 'remindLaterSection';
+  if (modifiers.shiftKey && letter === 'r') return 'draftReply';
   if (!modifiers.shiftKey && letter === 'v') return 'moveToSection';
   return 'none';
 }

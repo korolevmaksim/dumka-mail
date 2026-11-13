@@ -8,7 +8,7 @@ import type { MailboxExportProgress, MailboxExportScope } from '../../../../../s
 const RETENTION_OPTIONS = [2, 3, 5, 10, 20];
 
 const SCOPE_OPTIONS: Array<{ value: MailboxExportScope; label: string }> = [
-  { value: 'all', label: 'All locally cached mail' },
+  { value: 'all', label: 'All mail on this Mac' },
   { value: 'inbox', label: 'Inbox only' },
   { value: 'sent', label: 'Sent only' },
 ];
@@ -117,8 +117,8 @@ export function DataBackupTab() {
   };
 
   const selectClassName = 'bg-[var(--panel-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer';
-  const primaryButtonClassName = 'px-3 py-1.5 bg-[var(--accent)] text-white rounded font-medium text-[calc(10px*var(--font-scale))] disabled:opacity-50 cursor-pointer transition-opacity';
-  const secondaryButtonClassName = 'px-3 py-1.5 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--panel-bg)] disabled:opacity-50 cursor-pointer transition-colors';
+  const primaryButtonClassName = 'px-3 py-1.5 bg-[var(--accent-fill)] text-[var(--on-accent)] rounded font-medium text-[calc(11px*var(--font-scale))] disabled:opacity-50 cursor-pointer transition-opacity';
+  const secondaryButtonClassName = 'px-3 py-1.5 border border-[var(--border)] rounded text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--panel-bg)] disabled:opacity-50 cursor-pointer transition-colors';
 
   return (
     <div className="flex flex-col gap-4 max-w-[600px]">
@@ -130,31 +130,31 @@ export function DataBackupTab() {
       {/* Backup */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
-          <Database className="w-3.5 h-3.5 text-[var(--accent)]" /> Backup
+          <Database className="w-3.5 h-3.5 text-[var(--accent-ink)]" /> Backup
         </span>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Last backup</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{formatBackupTime(data.lastBackupAt)}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{formatBackupTime(data.lastBackupAt)}</span>
           </div>
           <button type="button" onClick={runBackup} disabled={backupBusy} className={primaryButtonClassName}>
             {backupBusy ? 'Backing up…' : 'Back Up Now'}
           </button>
         </div>
-        <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
-          Saves a consistent copy of the local database (accounts, mail cache, settings) to a location you choose, with a small JSON manifest alongside it.
+        <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
+          Saves a copy of everything Dumka Mail keeps on this Mac (accounts, mail and settings) to a place you choose, with a small file describing the copy.
         </span>
       </div>
 
       {/* Automatic backups */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
-          <HardDriveDownload className="w-3.5 h-3.5 text-[var(--accent)]" /> Automatic Backups
+          <HardDriveDownload className="w-3.5 h-3.5 text-[var(--accent-ink)]" /> Automatic Backups
         </span>
         <div className="flex items-center justify-between py-0.5">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Daily automatic backup</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Stored in the app's support folder, checked on launch and once a day</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Stored in the app's support folder, checked on launch and once a day</span>
           </div>
           <Toggle
             checked={data.autoBackupEnabled}
@@ -165,7 +165,7 @@ export function DataBackupTab() {
           <div className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Backups to keep</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Older backups are pruned automatically</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Older backups are pruned automatically</span>
             </div>
             <select
               value={data.autoBackupRetention}
@@ -183,12 +183,12 @@ export function DataBackupTab() {
       {/* Restore */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
-          <RotateCcw className="w-3.5 h-3.5 text-[var(--accent)]" /> Restore
+          <RotateCcw className="w-3.5 h-3.5 text-[var(--accent-ink)]" /> Restore
         </span>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Restore from a backup file</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
               The app restarts to apply the backup. Your current database is preserved as a pre-restore copy.
             </span>
           </div>
@@ -201,7 +201,7 @@ export function DataBackupTab() {
       {/* Export */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
-          <FileDown className="w-3.5 h-3.5 text-[var(--accent)]" /> Export as .mbox
+          <FileDown className="w-3.5 h-3.5 text-[var(--accent-ink)]" /> Export as .mbox
         </span>
         <div className="flex items-center gap-2">
           <select
@@ -241,10 +241,10 @@ export function DataBackupTab() {
               <div className="h-full bg-[var(--accent)] transition-all" style={{ width: `${exportPercent}%` }} />
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 {exportProgress.processedMessages.toLocaleString()} messages · {exportProgress.processedThreads.toLocaleString()} / {exportProgress.totalThreads.toLocaleString()} threads
               </span>
-              <button type="button" onClick={cancelExport} className="text-[calc(10px*var(--font-scale))] text-[var(--danger)] hover:underline cursor-pointer">
+              <button type="button" onClick={cancelExport} className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] hover:underline cursor-pointer">
                 Cancel
               </button>
             </div>
@@ -254,22 +254,22 @@ export function DataBackupTab() {
         {exportResult && (
           <div className="flex items-center justify-between gap-3 bg-[var(--panel-bg)] border border-[var(--border)] rounded-md px-3 py-2">
             <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)]">
+              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">
                 Exported {exportResult.exportedMessages.toLocaleString()} messages
               </span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)] truncate">{exportResult.filePath}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] truncate">{exportResult.filePath}</span>
             </div>
             <button
               type="button"
               onClick={() => window.electronAPI.revealInFolder(exportResult.filePath)}
-              className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer flex items-center gap-1"
+              className="shrink-0 text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline cursor-pointer flex items-center gap-1"
             >
               <FolderOpen className="w-3 h-3" /> Reveal
             </button>
           </div>
         )}
 
-        <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
+        <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
           Exports contain message text and headers only. Attachments are not stored locally, so they are not part of the export.
         </span>
       </div>

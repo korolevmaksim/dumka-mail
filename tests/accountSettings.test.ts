@@ -50,6 +50,7 @@ describe('account settings inheritance', () => {
       notifications: { value: 'people', source: 'app' },
       agentAutonomy: { value: 'prepare', source: 'app' },
       modelMayReadMail: { value: true, source: 'app' },
+      backgroundSorting: { value: false, source: 'app' },
     });
   });
 
@@ -65,7 +66,19 @@ describe('account settings inheritance', () => {
       notifications: { value: 'people', source: 'app' },
       agentAutonomy: { value: 'prepare', source: 'app' },
       modelMayReadMail: { value: true, source: 'app' },
+      backgroundSorting: { value: false, source: 'app' },
     });
+  });
+
+  it('keeps background sorting off until the app or the account turns it on', () => {
+    expect(resolveAccountSetting({}, WORK, 'backgroundSorting')).toEqual({ value: false, source: 'app' });
+    const appOn = { ...base(), ai: { backgroundSorting: true } };
+    expect(resolveAccountSetting(appOn, WORK, 'backgroundSorting')).toEqual({ value: true, source: 'app' });
+    const homeOff = setAccountOverride(appOn, HOME, 'backgroundSorting', false);
+    expect(resolveAccountSetting(homeOff, HOME, 'backgroundSorting')).toEqual({ value: false, source: 'account' });
+    expect(resolveAccountSetting(homeOff, WORK, 'backgroundSorting')).toEqual({ value: true, source: 'app' });
+    // Stored junk is not a decision to switch it on.
+    expect(resolveAccountSetting({ ai: { backgroundSorting: 'yes' } }, WORK, 'backgroundSorting').value).toBe(false);
   });
 
   it('an override wins for its account only', () => {

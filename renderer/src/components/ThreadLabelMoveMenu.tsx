@@ -160,7 +160,7 @@ export function ThreadLabelMoveMenu({
               <FolderInput className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)]" />
               <span className="min-w-0 truncate">{node.segment}</span>
               {isApplied && (
-                <Check className="h-3.5 w-3.5 shrink-0 text-[var(--success)]" aria-label="Applied" />
+                <Check className="h-3.5 w-3.5 shrink-0 text-[var(--success-solid)]" aria-label="Applied" />
               )}
               {isPartiallyApplied && (
                 <span className="shrink-0 rounded bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
@@ -194,7 +194,7 @@ export function ThreadLabelMoveMenu({
                   type="button"
                   title="Remove label"
                   onClick={() => onRemove(labelId)}
-                  className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--border)] hover:text-[var(--danger)]"
+                  className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--border)] hover:text-[var(--danger-solid)]"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>

@@ -57,23 +57,23 @@ describe('shortcutGuideSections', () => {
 
     it('lists the keys that are actually bound', () => {
       expect(keysFor(sections, 'Compose')).toBe('⌘N / C');
-      expect(keysFor(sections, 'Search mailbox')).toBe('/');
+      expect(keysFor(sections, 'Search mail')).toBe('/');
       expect(keysFor(sections, 'Find in message')).toBe('⌘F');
       expect(keysFor(sections, 'Reply')).toBe('R');
-      expect(keysFor(sections, 'Reply All')).toBe('A');
+      expect(keysFor(sections, 'Reply all')).toBe('A');
       expect(keysFor(sections, 'Forward')).toBe('F');
-      expect(keysFor(sections, 'Summarize Thread')).toBe('S');
-      expect(keysFor(sections, 'Undo Last Action')).toBe('Z');
-      expect(keysFor(sections, 'Open Thread')).toBe('↩ / O');
-      expect(keysFor(sections, 'Mark Done')).toBe('⌘⇧E / E');
-      expect(keysFor(sections, 'Move to Trash')).toBe('Backspace');
-      expect(keysFor(sections, 'Move to Spam')).toBe('!');
-      expect(keysFor(sections, 'Ignore Thread')).toBe('M');
-      expect(keysFor(sections, 'Remind...')).toBe('⌘⇧H / H');
-      expect(keysFor(sections, 'Command Palette')).toBe('⌘K');
-      expect(keysFor(sections, 'Keyboard Shortcuts')).toBe('?');
-      expect(keysFor(sections, 'Send Draft')).toBe('⌘↩');
-      expect(keysFor(sections, 'Send, Opposite of After-Send Setting')).toBe('⌘⇧↩');
+      expect(keysFor(sections, 'Summarize conversation')).toBe('S');
+      expect(keysFor(sections, 'Undo')).toBe('Z');
+      expect(keysFor(sections, 'Open conversation')).toBe('↩ / O');
+      expect(keysFor(sections, 'Archive')).toBe('⌘⇧E / E');
+      expect(keysFor(sections, 'Move to trash')).toBe('Backspace');
+      expect(keysFor(sections, 'Move to spam')).toBe('!');
+      expect(keysFor(sections, 'Ignore')).toBe('M');
+      expect(keysFor(sections, 'Later…')).toBe('⌘⇧H / H');
+      expect(keysFor(sections, 'Command palette')).toBe('⌘K');
+      expect(keysFor(sections, 'Keyboard shortcuts')).toBe('?');
+      expect(keysFor(sections, 'Send')).toBe('⌘↩');
+      expect(keysFor(sections, 'Send, then the opposite of “After sending a reply”')).toBe('⌘⇧↩');
     });
 
     it('does not advertise unbound command-key combos', () => {
@@ -85,10 +85,10 @@ describe('shortcutGuideSections', () => {
     });
 
     it('includes vim navigation and the decision-section keys, not the removed split keys', () => {
-      expect(keysFor(sections, 'Vim Navigation')).toBe('J/K');
-      expect(keysFor(sections, 'Open / Archive the Clear Section')).toBe('⇧E');
-      expect(keysFor(sections, 'Move the Later Section to Its Time')).toBe('⇧H');
-      expect(keysFor(sections, 'Move to Another Section')).toBe('V');
+      expect(keysFor(sections, 'Next or previous conversation')).toBe('J/K');
+      expect(keysFor(sections, 'Archive the Clear section')).toBe('⇧E');
+      expect(keysFor(sections, 'Later for the whole Later section')).toBe('⇧H');
+      expect(keysFor(sections, 'Move to another section')).toBe('V');
       expect(findItem(sections, 'Open Important')).toBeUndefined();
       expect(findItem(sections, 'Open Other')).toBeUndefined();
     });
@@ -99,21 +99,21 @@ describe('shortcutGuideSections', () => {
 
     it('keeps menu accelerators and drops single-key mail actions', () => {
       expect(keysFor(sections, 'Compose')).toBe('⌘N');
-      expect(keysFor(sections, 'Search mailbox')).toBe('/');
+      expect(keysFor(sections, 'Search mail')).toBe('/');
       expect(findItem(sections, 'Reply')).toBeUndefined();
-      expect(keysFor(sections, 'Mark Done')).toBe('⌘⇧E');
-      expect(keysFor(sections, 'Remind...')).toBe('⌘⇧H');
-      expect(keysFor(sections, 'Command Palette')).toBe('⌘K');
-      expect(findItem(sections, 'Keyboard Shortcuts')).toBeUndefined();
-      expect(keysFor(sections, 'Open Thread')).toBe('↩');
+      expect(keysFor(sections, 'Archive')).toBe('⌘⇧E');
+      expect(keysFor(sections, 'Later…')).toBe('⌘⇧H');
+      expect(keysFor(sections, 'Command palette')).toBe('⌘K');
+      expect(findItem(sections, 'Keyboard shortcuts')).toBeUndefined();
+      expect(keysFor(sections, 'Open conversation')).toBe('↩');
     });
 
     it('keeps arrow navigation, omits vim navigation and the single-key section keys', () => {
-      expect(findItem(sections, 'Vim Navigation')).toBeUndefined();
-      expect(findItem(sections, 'Move to Another Section')).toBeUndefined();
-      expect(findItem(sections, 'Open / Archive the Clear Section')).toBeUndefined();
+      expect(findItem(sections, 'Next or previous conversation')).toBeUndefined();
+      expect(findItem(sections, 'Move to another section')).toBeUndefined();
+      expect(findItem(sections, 'Archive the Clear section')).toBeUndefined();
       const nav = section(sections, 'Navigation');
-      expect(nav!.items.map((i) => i.label)).toEqual(['Move / Scroll']);
+      expect(nav!.items.map((i) => i.label)).toEqual(['Move or scroll']);
     });
   });
 });

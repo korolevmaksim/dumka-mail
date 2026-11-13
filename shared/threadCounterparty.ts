@@ -83,3 +83,16 @@ export function threadRowSender(
   if (recipient) return recipient.name.trim() || recipient.email.trim();
   return names[0];
 }
+
+/**
+ * Avatar initials: first letters of the first and last word of a name
+ * ("Daniel Okafor" → "DO", "The Pragmatic Dispatch" → "TD"); one word gives
+ * its first two letters; an address falls back to its local part.
+ */
+export function nameInitials(name: string | null | undefined, email?: string | null): string {
+  const source = (name || '').trim() || (email || '').split('@')[0] || '';
+  const words = source.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
+}

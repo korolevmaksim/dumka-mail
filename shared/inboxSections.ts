@@ -167,7 +167,7 @@ export function laterTimeFor(decision: Pick<ThreadDecision, 'laterAt'>, now: Dat
   return defaultLaterTime(now);
 }
 
-/** "Tomorrow 09:00" / "Wed 17:00" / "12 Dec 09:00" for chips and section actions. */
+/** "Tomorrow 09:00" / "Wed 17:00" / "Dec 12, 09:00" for chips and section actions (month before day, 24-hour, as everywhere). */
 export function formatLaterChip(at: Date, now: Date = new Date()): string {
   const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
   const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
@@ -175,7 +175,7 @@ export function formatLaterChip(at: Date, now: Date = new Date()): string {
   if (days === 0) return `Today ${time}`;
   if (days === 1) return `Tomorrow ${time}`;
   if (days > 1 && days < 7) return `${at.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
-  return `${at.getDate()} ${at.toLocaleDateString('en-US', { month: 'short' })} ${time}`;
+  return `${at.toLocaleDateString('en-US', { month: 'short' })} ${at.getDate()}, ${time}`;
 }
 
 // --- Group batches -------------------------------------------------------------
@@ -204,6 +204,20 @@ export function selectGroupBatch<T extends { lastMessageAt: string; accountId: s
     if (input.excludedKeys?.has(key)) return false;
     return true;
   });
+}
+
+/**
+ * True when an open group no longer shows any row the person reviewed: every
+ * frozen row has left the section and only later arrivals remain. The group
+ * then has nothing to act on ("Archive 0") and should close, so the next
+ * group action opens it for review again.
+ */
+export function frozenBatchIsGone<T extends { accountId: string; id: string }>(
+  entries: readonly { thread: T }[],
+  frozenKeys: ReadonlySet<string> | null | undefined,
+): boolean {
+  if (!frozenKeys || entries.length === 0) return false;
+  return !entries.some(entry => frozenKeys.has(threadEntryKey(entry.thread)));
 }
 
 /** Unsubscribe review: checked, frozen, never protected, and actually decided `unsubscribe`. */
@@ -241,6 +255,60 @@ export function planClearBatch<T extends { lastMessageAt: string; accountId: str
   return selectGroupBatch(input)
     .filter(entry => entry.decision.decision === 'clear')
     .map(entry => entry.thread);
+}
+
+export interface ClearBatchReason {
+  key: string;
+  sender: string;
+  reason: string;
+}
+
+export interface ClearBatchExplanation {
+  /** The sentence after "Why these." */
+  summary: string;
+  /** One line per conversation when the model or the person, not a fixed rule, put it here. */
+  reasons: ClearBatchReason[];
+  /** Conversations in the batch beyond the listed ones. */
+  more: number;
+}
+
+const CLEAR_REASONS_SHOWN = 6;
+
+/**
+ * Why the checked Clear rows are offered for one archive. Rules on this Mac
+ * only ever put bulk mail here, so one sentence covers them. The model may
+ * also file a receipt or a ticket as routine: then the sentence must not claim
+ * "mailing lists", and each conversation is listed with the model's own reason.
+ */
+export function explainClearBatch<T extends { lastMessageAt: string; accountId: string; id: string; senderNames: string[]; senderEmail: string }>(
+  entries: readonly DecisionEntry<T>[],
+): ClearBatchExplanation {
+  const judged = entries.filter(entry => entry.decision.source !== 'rule');
+  if (judged.length === 0) {
+    return { summary: 'Mailing lists and bulk senders that ask nothing of you.', reasons: [], more: 0 };
+  }
+  const byModel = judged.some(entry => entry.decision.source === 'model');
+  const mixed = judged.length < entries.length;
+  // Rows a rule did not decide come first: those are the ones worth a second look.
+  const ordered = [...judged, ...entries.filter(entry => entry.decision.source === 'rule')];
+  const reasons = ordered.slice(0, CLEAR_REASONS_SHOWN).map(entry => ({
+    key: threadEntryKey(entry.thread),
+    sender: senderLabel(entry.thread),
+    reason: entry.decision.reason
+      || (entry.decision.source === 'user' ? 'You moved it here' : entry.decision.source === 'model' ? 'Nothing to answer' : 'Bulk sender'),
+  }));
+  const summary = byModel
+    ? mixed
+      ? 'Bulk mail, and conversations the model read as routine: nothing in them asks you for an answer. The reason for each one is below.'
+      : 'The model read these as routine: nothing in them asks you for an answer. Its reason for each one is below.'
+    : mixed
+      ? 'Bulk mail, and conversations you moved here yourself.'
+      : 'You moved these here yourself.';
+  return {
+    summary,
+    reasons,
+    more: Math.max(0, entries.length - reasons.length),
+  };
 }
 
 /** One section action label for the Later header, e.g. "All to tomorrow 09:00". */

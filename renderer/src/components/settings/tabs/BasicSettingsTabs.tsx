@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Keyboard, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { SettingsAccountAvatar } from '../../AccountAvatar';
-import { Toggle } from '../SettingsControls';
+import { SETTINGS_BUTTON_CLASS, SETTINGS_SELECT_CLASS, Toggle } from '../SettingsControls';
+import { ShortcutGuideOverlay } from '../../layout/ShortcutGuideOverlay';
+import { useEscapeLayer } from '../../../hooks/useEscapeLayer';
+import { KeyCaps, SettingRow, SettingToggleRow, SettingsCard, SettingsGroup, SettingsPage } from './SettingsPageParts';
+import { PRIVACY_KEYS, privacyCopy, shortcutPresetSummary, shortcutSwitches } from './settingsCopy';
+import { shortcutGuideSections } from '../../../../../shared/shortcutGuide';
+import { KEYMAP_GROUP_LABELS, shortcutPresetLabel, type KeymapGroup } from '../../../../../shared/appKeymap';
 import { useConfirmDisconnectAccount } from '../accountActions';
 import { emitToast } from '../../../lib/toastBus';
 import { sanitizeGmailSignatureHtml } from '../../../../../shared/textNormalizer';
 import { createSnippetTemplateId } from '../../../../../shared/snippets';
 import { APP_LANGUAGES, createTranslator } from '../../../../../shared/i18n';
 import type { AppLanguage, TranslationKey } from '../../../../../shared/i18n';
-import type { ComposeSignatureSettings, PrivacySettings, SnippetTemplate } from '../../../../../shared/types';
-import type { AutoUpdateStatus } from '../../../../../shared/autoUpdate';
+import type { ComposeSignatureSettings, ShortcutSettings, SnippetTemplate } from '../../../../../shared/types';
 
 export function AccountsTab() {
   const store = useAppStore();
@@ -35,7 +40,7 @@ export function AccountsTab() {
                   <SettingsAccountAvatar acc={acc} />
                   <div className="flex flex-col">
                     <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{acc.displayName || acc.email}</span>
-                    <span className="flex items-center gap-1.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+                    <span className="flex items-center gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                       {acc.email}
                       {store.googleAuthIssues.some(issue => issue.accountId === acc.email) && (
                         <span className="rounded bg-[var(--warning)]/15 px-1 py-0.5 font-semibold text-[var(--warning-solid)]">
@@ -49,14 +54,14 @@ export function AccountsTab() {
                   <button
                     type="button"
                     onClick={() => void store.authorizeGoogleIntegration('calendar', acc.email)}
-                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer"
+                    className="text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline cursor-pointer"
                   >
                     Enable Calendar
                   </button>
                   <button
                     type="button"
                     onClick={() => void store.authorizeGoogleIntegration('contacts', acc.email)}
-                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer"
+                    className="text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline cursor-pointer"
                   >
                     Enable Contacts
                   </button>
@@ -64,14 +69,14 @@ export function AccountsTab() {
                     type="button"
                     onClick={() => void store.reauthorizeAccount(acc.email)}
                     disabled={store.reauthorizingAccountId !== null}
-                    className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline cursor-pointer disabled:cursor-wait disabled:opacity-50"
+                    className="text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline cursor-pointer disabled:cursor-wait disabled:opacity-50"
                   >
                     {store.reauthorizingAccountId === acc.email ? 'Reconnecting…' : 'Reconnect'}
                   </button>
                   <button
                     type="button"
                     onClick={() => confirmDisconnect(acc)}
-                    className="text-[calc(10px*var(--font-scale))] text-[var(--danger)] hover:underline cursor-pointer"
+                    className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] hover:underline cursor-pointer"
                   >
                     Disconnect
                   </button>
@@ -83,7 +88,7 @@ export function AccountsTab() {
         <button
           type="button"
           onClick={() => store.onboardAccount('')}
-          className="w-full py-1.5 border border-dashed border-[var(--border)] rounded-lg text-[calc(11px*var(--font-scale))] font-medium hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all cursor-pointer bg-[var(--panel-bg)] flex items-center justify-center gap-1"
+          className="w-full py-1.5 border border-dashed border-[var(--border)] rounded-lg text-[calc(11px*var(--font-scale))] font-medium hover:border-[var(--accent)] hover:text-[var(--accent-ink)] transition-all cursor-pointer bg-[var(--panel-bg)] flex items-center justify-center gap-1"
         >
           <Plus className="w-3.5 h-3.5" /> Onboard Gmail Account
         </button>
@@ -104,10 +109,10 @@ export function ProfileTab() {
       
       <div className="flex flex-col gap-3.5 bg-[var(--rail-bg)] border border-[var(--border)] rounded-lg p-4">
         <div className="flex flex-col gap-1">
-          <label className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Full Name:</label>
+          <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Full Name:</label>
           <input
             type="text"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.profile.fullName}
             onChange={(e) => {
               const val = e.target.value;
@@ -117,11 +122,11 @@ export function ProfileTab() {
         </div>
         
         <div className="flex flex-col gap-1">
-          <label className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Professional Role:</label>
+          <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Professional Role:</label>
           <input
             type="text"
             placeholder="e.g. Lead Software Architect"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.profile.role}
             onChange={(e) => {
               const val = e.target.value;
@@ -131,11 +136,11 @@ export function ProfileTab() {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Company / Organization:</label>
+          <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Company / Organization:</label>
           <input
             type="text"
             placeholder="e.g. Google DeepMind"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.profile.company}
             onChange={(e) => {
               const val = e.target.value;
@@ -145,10 +150,10 @@ export function ProfileTab() {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Timezone Context:</label>
+          <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Timezone Context:</label>
           <input
             type="text"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none font-mono"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none font-mono"
             value={store.settings.profile.timezone}
             onChange={(e) => {
               const val = e.target.value;
@@ -202,7 +207,7 @@ export function GeneralTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.language.title')}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.language.description')}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.language.description')}</span>
           </div>
           <select
             value={store.settings.general.language}
@@ -210,7 +215,7 @@ export function GeneralTab() {
               const val = e.target.value as AppLanguage;
               store.updateSettings(s => { s.general.language = val; });
             }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             {APP_LANGUAGES.map(language => (
               <option key={language} value={language}>{t(languageLabels[language])}</option>
@@ -223,7 +228,7 @@ export function GeneralTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.startup.title')}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.startup.description')}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.startup.description')}</span>
           </div>
           <select
             value={store.settings.general.startupBehavior}
@@ -231,7 +236,7 @@ export function GeneralTab() {
               const val = e.target.value as any;
               store.updateSettings(s => { s.general.startupBehavior = val; });
             }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             <option value="today">{t('settings.general.startup.today')}</option>
             <option value="inbox">{t('settings.general.startup.inbox')}</option>
@@ -245,7 +250,7 @@ export function GeneralTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.defaultSplit.title')}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.defaultSplit.description')}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.defaultSplit.description')}</span>
           </div>
           <select
             value={store.settings.general.defaultSplitInbox}
@@ -253,7 +258,7 @@ export function GeneralTab() {
               const val = e.target.value;
               store.updateSettings(s => { s.general.defaultSplitInbox = val; });
             }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer uppercase"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer uppercase"
           >
             {store.tabCategories.map(c => (
               <option key={c.id} value={c.id}>{c.displayName}</option>
@@ -266,7 +271,7 @@ export function GeneralTab() {
         <div className="flex flex-col gap-2">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.attachmentDownloadFolder.title')}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.attachmentDownloadFolder.description')}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.attachmentDownloadFolder.description')}</span>
           </div>
           <div className="flex items-center gap-2">
             <div
@@ -288,7 +293,7 @@ export function GeneralTab() {
                   store.updateSettings(s => { s.general.attachmentDownloadFolder = selected; });
                 });
               }}
-              className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent)] cursor-pointer bg-[var(--panel-bg)]"
+              className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] rounded text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--accent)] hover:text-[var(--accent-ink)] cursor-pointer bg-[var(--panel-bg)]"
             >
               {t('settings.general.attachmentDownloadFolder.choose')}
             </button>
@@ -298,7 +303,7 @@ export function GeneralTab() {
                 onClick={() => {
                   store.updateSettings(s => { s.general.attachmentDownloadFolder = ''; });
                 }}
-                className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-[var(--panel-bg)]"
+                className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] rounded text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer bg-[var(--panel-bg)]"
               >
                 {t('settings.general.attachmentDownloadFolder.reset')}
               </button>
@@ -312,7 +317,7 @@ export function GeneralTab() {
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t(item.title)}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t(item.desc)}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t(item.desc)}</span>
             </div>
             <Toggle
               checked={Boolean(store.settings.general[item.key])}
@@ -340,9 +345,9 @@ export function InboxTab() {
           { key: 'enableSplitInbox', title: 'Enable Split Inbox Layout', desc: 'Enable multiple system & custom tab categories' },
           { key: 'showUnreadFirst', title: 'Show Unread First', desc: 'Force unread threads to display at top of list' },
           { key: 'autoMarkReadOnOpen', title: 'Auto Mark Read on Open', desc: 'Mark threads read automatically' },
-          { key: 'openNextThreadAfterDone', title: 'Open Next Thread After Done', desc: 'Navigate to next available thread on archive' },
-          { key: 'archiveOnDoneShortcut', title: 'Archive on E Shortcut', desc: 'Removes Inbox label when pressing E' },
-          { key: 'enableReminders', title: 'Enable Reminders', desc: 'Support local snooze and reminder alerts' },
+          { key: 'openNextThreadAfterDone', title: 'Open the next conversation after archiving', desc: 'Move on to the next conversation when you archive one' },
+          { key: 'archiveOnDoneShortcut', title: 'E archives', desc: 'E takes the conversation out of the inbox' },
+          { key: 'enableReminders', title: 'Later and reminders', desc: 'Conversations can be set aside for Later and come back at their time' },
           { key: 'enableFollowUps', title: 'Enable Follow-ups Detection', desc: 'Query sent messages lacking replies' },
           { key: 'showPurchasesSplit', title: 'Include Purchases Split Tab', desc: 'Parse receipt and bill signals' },
           { key: 'showLinkedInSplit', title: 'Include LinkedIn Split Tab', desc: 'Route professional connections separately' },
@@ -353,7 +358,7 @@ export function InboxTab() {
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
             </div>
             <Toggle
               checked={(store.settings.inbox as any)[item.key]}
@@ -363,8 +368,8 @@ export function InboxTab() {
         ))}
 
         <div className="border-t border-[var(--border)] pt-3 flex flex-col gap-2">
-          <div className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)]">Follow-up Radar window</div>
-          <p className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] leading-snug">
+          <div className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Follow-up Radar window</div>
+          <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] leading-snug">
             Only unanswered sent mail older than the min wait and younger than the lookback is shown. Old archaeology stays out of the radar.
           </p>
           <div className="grid grid-cols-2 gap-2">
@@ -372,9 +377,9 @@ export function InboxTab() {
               { key: 'followUpThresholdHours', title: 'Min wait', suffix: 'hours', min: 1, max: 720, hint: 'How long to wait before a sent mail becomes a follow-up' },
               { key: 'followUpMaxAgeDays', title: 'Lookback', suffix: 'days', min: 1, max: 365, hint: 'Ignore sent mail older than this (default 30 days)' },
               { key: 'followUpMaxItems', title: 'Radar limit', suffix: 'items', min: 1, max: 50, hint: 'Max candidates listed at once' },
-              { key: 'followUpSnoozeHours', title: 'Snooze', suffix: 'hours', min: 1, max: 720, hint: 'How long Snooze hides an item' },
+              { key: 'followUpSnoozeHours', title: 'Later for', suffix: 'hours', min: 1, max: 720, hint: 'How long Later hides a follow-up' },
             ].map(item => (
-              <label key={item.key} className="flex min-w-0 flex-col gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]" title={item.hint}>
+              <label key={item.key} className="flex min-w-0 flex-col gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]" title={item.hint}>
                 <span>{item.title}</span>
                 <span className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1">
                   <input
@@ -389,7 +394,7 @@ export function InboxTab() {
                     }}
                     className="min-w-0 flex-1 bg-transparent text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                   />
-                  <span className="shrink-0 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{item.suffix}</span>
+                  <span className="shrink-0 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{item.suffix}</span>
                 </span>
               </label>
             ))}
@@ -475,7 +480,7 @@ export function ComposeTab() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Gmail Signature</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
               {selectedSignatureAccount
                 ? (hasHtmlSignature ? `HTML signature for ${selectedSignatureAccount.email}` : `No imported signature for ${selectedSignatureAccount.email}`)
                 : 'Connect a Gmail account first'}
@@ -486,7 +491,7 @@ export function ComposeTab() {
               value={selectedSignatureEmail}
               onChange={(e) => setSelectedSignatureEmail(e.target.value)}
               disabled={accountOptions.length === 0 || signatureSyncing}
-              className="max-w-[220px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer disabled:opacity-50"
+              className="max-w-[220px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer disabled:opacity-50"
             >
               {accountOptions.length === 0 ? (
                 <option value="">No accounts</option>
@@ -498,7 +503,7 @@ export function ComposeTab() {
               type="button"
               onClick={handleSyncGmailSignature}
               disabled={signatureSyncing || !selectedSignatureAccount}
-              className="flex items-center gap-1.5 px-2.5 py-1 border border-[var(--border)] text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
             >
               <RefreshCw className={`w-3 h-3 ${signatureSyncing ? 'animate-spin' : ''}`} />
               {signatureSyncing ? 'Syncing' : 'Sync from Gmail'}
@@ -508,12 +513,12 @@ export function ComposeTab() {
 
         {hasHtmlSignature && (
           <div className="flex flex-col gap-2">
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">HTML Preview:</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">HTML Preview:</span>
             <div className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] min-h-[52px] overflow-auto">
               <div dangerouslySetInnerHTML={{ __html: sanitizeGmailSignatureHtml(signatureHtml) }} />
             </div>
             <textarea
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[84px] font-mono leading-normal resize-y"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[84px] font-mono leading-normal resize-y"
               value={signatureHtml}
               onChange={(e) => {
                 const val = e.target.value;
@@ -530,11 +535,11 @@ export function ComposeTab() {
         )}
 
         <div className="flex flex-col gap-1">
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">
             {hasHtmlSignature ? 'Plain-text Fallback:' : 'Default Email Signature:'}
           </span>
           <textarea
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[60px] font-mono leading-normal resize-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[60px] font-mono leading-normal resize-none"
             value={signaturePlain}
             onChange={(e) => {
               const val = e.target.value;
@@ -552,7 +557,7 @@ export function ComposeTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Composer Font Size</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Default reading/writing size</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Default reading/writing size</span>
           </div>
           <select
             value={store.settings.compose.defaultFontSize}
@@ -560,7 +565,7 @@ export function ComposeTab() {
               const val = e.target.value as any;
               store.updateSettings(s => { s.compose.defaultFontSize = val; });
             }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             <option value="compact">Compact (11px)</option>
             <option value="normal">Normal (12px)</option>
@@ -573,13 +578,13 @@ export function ComposeTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Send Undo Window (Seconds)</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Grace delay duration to cancel send action</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Grace delay duration to cancel send action</span>
           </div>
           <input
             type="number"
             min="0"
             max="30"
-            className="w-16 bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="w-16 bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.compose.sendUndoDelay}
             onChange={(e) => {
               const val = Math.max(0, Math.min(30, parseInt(e.target.value) || 0));
@@ -593,11 +598,11 @@ export function ComposeTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <label htmlFor="compose-after-send" className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">After sending a reply</label>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">What ⌘↩ does with the conversation. ⌘⇧↩ does the opposite.</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">What ⌘↩ does with the conversation. ⌘⇧↩ does the opposite.</span>
           </div>
           <select
             id="compose-after-send"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.compose.afterSend}
             onChange={(e) => {
               const value = e.target.value === 'keep' ? 'keep' : 'archive';
@@ -612,7 +617,7 @@ export function ComposeTab() {
         <div className="w-full h-[1px] bg-[var(--border)]" />
 
         {[
-          { key: 'autoSaveDrafts', title: 'Auto Save Drafts', desc: 'Sync draft changes to SQLite cache asynchronously' },
+          { key: 'autoSaveDrafts', title: 'Save drafts as you type', desc: 'Drafts are kept on this Mac while you write' },
           { key: 'spellCheck', title: 'Enable Spell Check', desc: 'Perform system native spelling diagnostics' },
           { key: 'smartCompose', title: 'Enable Smart Compose', desc: 'Query AI autocomplete suggestions inline' },
           { key: 'alwaysReplyAll', title: 'Default to Reply All', desc: 'Preserves CC recipients in thread reply views' },
@@ -620,7 +625,7 @@ export function ComposeTab() {
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
             </div>
             <Toggle
               checked={(store.settings.compose as any)[item.key]}
@@ -635,56 +640,82 @@ export function ComposeTab() {
 
 export function ShortcutsTab() {
   const store = useAppStore();
+  const shortcuts = store.settings.shortcuts;
+  const [guideOpen, setGuideOpen] = useState(false);
+  const sections = shortcutGuideSections(shortcuts);
+  const switches = shortcutSwitches(shortcuts);
+  // `gmail` binds the same keys as `superhuman`; it is offered only to a
+  // person who already has it, so the stored value never has to migrate.
+  const presets: Array<ShortcutSettings['mode']> = shortcuts.mode === 'gmail'
+    ? ['superhuman', 'gmail', 'appleMail']
+    : ['superhuman', 'appleMail'];
+  useEscapeLayer(guideOpen, () => setGuideOpen(false));
 
   return (
-    <div className="flex flex-col gap-4 max-w-[600px]">
-      <div>
-        <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">Keyboard Shortcuts</h2>
-        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Optimize keystrokes and navigation schemes.</p>
-      </div>
-
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Preset Mode</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Choose preset keyboard mapping</span>
-          </div>
-          <select
-            value={store.settings.shortcuts.mode}
-            onChange={(e) => {
-              const val = e.target.value as any;
-              store.updateSettings(s => { s.shortcuts.mode = val; });
-            }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-          >
-            <option value="superhuman">Superhuman</option>
-            <option value="gmail">Gmail</option>
-            <option value="appleMail">Apple Mail</option>
-          </select>
-        </div>
-
-        <div className="w-full h-[1px] bg-[var(--border)]" />
-
-        {[
-          { key: 'singleKeyShortcuts', title: 'Enable Single-key Navigation Shortcuts', desc: 'Press C to compose, E to archive, R to reply, Z to undo' },
-          { key: 'commandPaletteEnabled', title: 'Enable Command Palette (Cmd+K)', desc: 'Access global commands from search modal' },
-          { key: 'vimNavigation', title: 'Enable Vim Navigation keys', desc: 'Use J/K to move down/up in mail thread list' },
-          { key: 'composeShortcutEnabled', title: 'Enable Compose shortcut', desc: 'C key binding opens composer' },
-          { key: 'reminderShortcutEnabled', title: 'Enable Snooze/Reminder shortcut', desc: 'H key binding triggers snooze planner' },
-        ].map(item => (
-          <div key={item.key} className="flex items-center justify-between py-0.5">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
-            </div>
-            <Toggle
-              checked={(store.settings.shortcuts as any)[item.key]}
-              onChange={(val) => store.updateSettings(s => { (s.shortcuts as any)[item.key] = val; })}
-            />
-          </div>
+    <SettingsPage
+      pageKey="shortcuts"
+      title="Shortcuts"
+      description="Find the key for an action, or choose which keys work. Only keys that work with these settings are listed."
+      actions={(
+        <button type="button" onClick={() => setGuideOpen(true)} className={SETTINGS_BUTTON_CLASS}>
+          <Keyboard aria-hidden="true" className="h-3.5 w-3.5" />
+          Open the shortcut guide
+        </button>
+      )}
+    >
+      <SettingsCard>
+        <SettingRow
+          rowKey="shortcutPreset"
+          title="Keys"
+          description={shortcutPresetSummary(shortcuts)}
+          labelForControl
+          control={({ descriptionId, controlId }) => (
+            <select
+              id={controlId}
+              aria-describedby={descriptionId}
+              value={shortcuts.mode}
+              onChange={event => {
+                const value = event.target.value as ShortcutSettings['mode'];
+                store.updateSettings(settings => { settings.shortcuts.mode = value; });
+              }}
+              className={SETTINGS_SELECT_CLASS}
+            >
+              {presets.map(mode => <option key={mode} value={mode}>{shortcutPresetLabel(mode)}</option>)}
+            </select>
+          )}
+        />
+        {switches.map(item => (
+          <SettingToggleRow
+            key={item.key}
+            rowKey={item.key}
+            title={item.title}
+            description={item.description}
+            checked={item.checked}
+            disabled={item.disabled}
+            onChange={value => store.updateSettings(settings => { settings.shortcuts[item.key] = value; })}
+          />
         ))}
-      </div>
-    </div>
+      </SettingsCard>
+
+      {sections.map(section => (
+        <SettingsGroup key={section.title} title={KEYMAP_GROUP_LABELS[section.title as KeymapGroup] ?? section.title}>
+          <SettingsCard>
+            {section.items.map(item => (
+              <div
+                key={`${section.title}:${item.label}`}
+                data-shortcut-row={item.label}
+                className="flex items-center justify-between gap-4 px-4 py-2"
+              >
+                <span className="min-w-0 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]">{item.label}</span>
+                <KeyCaps keys={item.keys} />
+              </div>
+            ))}
+          </SettingsCard>
+        </SettingsGroup>
+      ))}
+
+      <ShortcutGuideOverlay isOpen={guideOpen} settings={shortcuts} onClose={() => setGuideOpen(false)} />
+    </SettingsPage>
   );
 }
 
@@ -734,7 +765,7 @@ export function SnippetsTab() {
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
             </div>
             <Toggle
               checked={(store.settings.snippets as any)[item.key]}
@@ -746,11 +777,11 @@ export function SnippetsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]" />
 
         <div className="flex flex-col gap-1">
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Snippet Keyword Trigger:</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Snippet Keyword Trigger:</span>
           <input
             type="text"
             placeholder="e.g. ;thanks"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={store.settings.snippets.defaultSnippetTrigger}
             onChange={(e) => {
               const val = e.target.value;
@@ -760,9 +791,9 @@ export function SnippetsTab() {
         </div>
 
         <div className="flex flex-col gap-1">
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Expansion Content:</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Expansion Content:</span>
           <textarea
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[60px] font-mono resize-none leading-normal"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[60px] font-mono resize-none leading-normal"
             value={store.settings.snippets.defaultSnippet}
             onChange={(e) => {
               const val = e.target.value;
@@ -776,12 +807,12 @@ export function SnippetsTab() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Template Library</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Named snippets available from the composer menu.</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Named snippets available from the composer menu.</span>
           </div>
           <button
             type="button"
             onClick={addTemplate}
-            className="flex h-7 items-center gap-1.5 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+            className="flex h-7 items-center gap-1.5 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
           >
             <Plus className="h-3.5 w-3.5" />
             Add
@@ -789,7 +820,7 @@ export function SnippetsTab() {
         </div>
 
         {store.settings.snippets.templates.length === 0 ? (
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] italic">No saved snippet templates.</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] italic">No saved snippet templates.</span>
         ) : (
           <div className="flex flex-col gap-2">
             {store.settings.snippets.templates.map(template => (
@@ -807,7 +838,7 @@ export function SnippetsTab() {
                     title="Delete template"
                     aria-label={`Delete snippet template ${template.title || template.id}`}
                     onClick={() => deleteTemplate(template.id)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--border)] hover:text-[var(--danger)]"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--border)] hover:text-[var(--danger-solid)]"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -827,7 +858,7 @@ export function SnippetsTab() {
                   className="min-h-[72px] resize-y rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 font-mono text-[calc(11px*var(--font-scale))] leading-normal text-[var(--text-primary)] outline-none"
                 />
                 <div className="flex items-center justify-between">
-                  <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">Include signature</span>
+                  <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Include signature</span>
                   <Toggle
                     checked={template.includeSignature}
                     onChange={(value) => updateTemplate(template.id, current => ({ ...current, includeSignature: value }))}
@@ -857,13 +888,13 @@ export function NotificationsTab() {
           { key: 'desktopNotifications', title: 'Enable Desktop Notifications', desc: 'Display OS system alert cards' },
           { key: 'sound', title: 'Play notification sound', desc: 'Audible chime upon receiving incoming messages' },
           { key: 'notifyImportantOnly', title: 'Notify Important Only', desc: 'Filter alerts for Primary inbox category only' },
-          { key: 'reminderNotifications', title: 'Snooze/Reminder notifications', desc: 'Alert when reminder timer triggers' },
+          { key: 'reminderNotifications', title: 'Later and reminder notifications', desc: 'A notification when a conversation comes back from Later or a reminder is due' },
           { key: 'quietHoursEnabled', title: 'Enable Quiet Hours', desc: 'Suppress notifications during specified timeframe' },
         ].map(item => (
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
             </div>
             <Toggle
               checked={(store.settings.notifications as any)[item.key]}
@@ -877,11 +908,11 @@ export function NotificationsTab() {
             <div className="w-full h-[1px] bg-[var(--border)]" />
             <div className="grid grid-cols-2 gap-3.5">
               <div className="flex flex-col gap-1">
-                <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Quiet Hours Start:</span>
+                <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Quiet Hours Start:</span>
                 <input
                   type="text"
                   placeholder="22:00"
-                  className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                  className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                   value={store.settings.notifications.quietHoursStart}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -890,11 +921,11 @@ export function NotificationsTab() {
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Quiet Hours End:</span>
+                <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Quiet Hours End:</span>
                 <input
                   type="text"
                   placeholder="08:00"
-                  className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                  className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                   value={store.settings.notifications.quietHoursEnd}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -910,145 +941,31 @@ export function NotificationsTab() {
   );
 }
 
-function autoUpdateStatusText(status: AutoUpdateStatus | null, t: (key: TranslationKey) => string): string {
-  if (!status) return t('settings.updates.loadingStatus');
-  if (status.errorMessage) return `${status.message} ${status.errorMessage}`;
-  return status.message;
-}
-
-function canCheckForUpdates(status: AutoUpdateStatus | null): boolean {
-  return Boolean(status?.isSupported && status.isPackaged && status.isConfigured && status.state !== 'checking' && status.state !== 'downloaded');
-}
-
 export function PrivacyTab() {
   const store = useAppStore();
-  const t = createTranslator(store.settings.general.language);
-  const [autoUpdateStatus, setAutoUpdateStatus] = useState<AutoUpdateStatus | null>(null);
-  const [autoUpdateBusy, setAutoUpdateBusy] = useState(false);
-  const privacyItems: Array<{
-    key: keyof PrivacySettings;
-    titleKey: TranslationKey;
-    descriptionKey: TranslationKey;
-  }> = [
-    {
-      key: 'loadRemoteImages',
-      titleKey: 'settings.privacy.loadRemoteImages.title',
-      descriptionKey: 'settings.privacy.loadRemoteImages.description',
-    },
-    {
-      key: 'includeBodiesInSearchIndex',
-      titleKey: 'settings.privacy.includeBodiesInSearchIndex.title',
-      descriptionKey: 'settings.privacy.includeBodiesInSearchIndex.description',
-    },
-    {
-      key: 'redactLogs',
-      titleKey: 'settings.privacy.redactLogs.title',
-      descriptionKey: 'settings.privacy.redactLogs.description',
-    },
-    {
-      key: 'useKeychainForSecrets',
-      titleKey: 'settings.privacy.useKeychainForSecrets.title',
-      descriptionKey: 'settings.privacy.useKeychainForSecrets.description',
-    },
-    {
-      key: 'clearCacheOnDisconnect',
-      titleKey: 'settings.privacy.clearCacheOnDisconnect.title',
-      descriptionKey: 'settings.privacy.clearCacheOnDisconnect.description',
-    },
-  ];
-
-  useEffect(() => {
-    let mounted = true;
-    window.electronAPI.getAutoUpdateStatus()
-      .then(status => {
-        if (mounted) setAutoUpdateStatus(status);
-      })
-      .catch(err => {
-        console.error('Failed to load auto-update status:', err);
-      });
-    const unsubscribe = window.electronAPI.onAutoUpdateStatus(status => {
-      if (mounted) setAutoUpdateStatus(status);
-    });
-    return () => {
-      mounted = false;
-      unsubscribe();
-    };
-  }, []);
-
-  const checkForUpdates = async () => {
-    setAutoUpdateBusy(true);
-    try {
-      setAutoUpdateStatus(await window.electronAPI.checkForAppUpdates());
-    } catch (err) {
-      console.error('Failed to check for app updates:', err);
-    } finally {
-      setAutoUpdateBusy(false);
-    }
-  };
-
-  const installUpdate = async () => {
-    setAutoUpdateBusy(true);
-    try {
-      setAutoUpdateStatus(await window.electronAPI.installDownloadedAppUpdate());
-    } catch (err) {
-      console.error('Failed to install downloaded update:', err);
-      setAutoUpdateBusy(false);
-    }
-  };
 
   return (
-    <div className="flex flex-col gap-4 max-w-[600px]">
-      <div>
-        <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1">{t('settings.privacy.title')}</h2>
-        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{t('settings.privacy.description')}</p>
-      </div>
-
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
-        {privacyItems.map(item => (
-          <div key={item.key} className="flex items-center justify-between py-0.5">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t(item.titleKey)}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t(item.descriptionKey)}</span>
-            </div>
-            <Toggle
-              checked={store.settings.privacy[item.key]}
-              onChange={(val) => store.updateSettings(s => { s.privacy[item.key] = val; })}
+    <SettingsPage
+      pageKey="privacy"
+      title="Privacy and data"
+      description="What Dumka Mail keeps on this Mac and what it lets out. Your mail is stored on this Mac so it opens fast and works offline."
+    >
+      <SettingsCard>
+        {PRIVACY_KEYS.map(key => {
+          const on = store.settings.privacy[key];
+          const copy = privacyCopy(key, on);
+          return (
+            <SettingToggleRow
+              key={key}
+              rowKey={key}
+              title={copy.title}
+              description={copy.description}
+              checked={on}
+              onChange={value => store.updateSettings(settings => { settings.privacy[key] = value; })}
             />
-          </div>
-        ))}
-      </div>
-
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.updates.title')}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{autoUpdateStatusText(autoUpdateStatus, t)}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {autoUpdateStatus?.state === 'downloaded' && (
-              <button
-                type="button"
-                onClick={installUpdate}
-                disabled={autoUpdateBusy}
-                className="px-3 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(10px*var(--font-scale))] disabled:opacity-50"
-              >
-                {t('settings.updates.restart')}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={checkForUpdates}
-              disabled={autoUpdateBusy || !canCheckForUpdates(autoUpdateStatus)}
-              className="px-3 py-1 border border-[var(--border)] rounded text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--panel-bg)] disabled:opacity-50"
-            >
-              {autoUpdateStatus?.state === 'checking' || autoUpdateBusy ? t('settings.updates.checking') : t('settings.updates.check')}
-            </button>
-          </div>
-        </div>
-        {autoUpdateStatus?.feedURL && (
-          <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{autoUpdateStatus.feedURL}</span>
-        )}
-      </div>
-    </div>
+          );
+        })}
+      </SettingsCard>
+    </SettingsPage>
   );
 }

@@ -7,6 +7,7 @@
 //   notifications    ← accountDefaults.notifications   (default 'people')
 //   agentAutonomy    ← accountDefaults.agentAutonomy   (default 'prepare')
 //   modelMayReadMail ← ai.allowMailBodyContext
+//   backgroundSorting ← ai.backgroundSorting          (default false)
 // `senderRules` is per-account only.
 //
 // Pure and dependency-free so the renderer and the main process (which reads
@@ -33,6 +34,8 @@ export const DEFAULT_ACCOUNT_DEFAULTS: Readonly<AccountDefaultsSettings> = Objec
 /** Fallbacks when the inherited global values are absent from stored settings. */
 const DEFAULT_AFTER_SEND: ComposeAfterSend = 'archive';
 const DEFAULT_MODEL_MAY_READ_MAIL = true;
+/** Background model work is opt-in: nothing is sent unattended until the user turns it on. */
+const DEFAULT_BACKGROUND_SORTING = false;
 
 /** The settings that have an app default and can be overridden per account. */
 export interface AccountSettingValues {
@@ -40,11 +43,13 @@ export interface AccountSettingValues {
   notifications: AccountNotificationMode;
   agentAutonomy: AgentAutonomy;
   modelMayReadMail: boolean;
+  /** The model sorts new inbox mail in the background (and may prepare drafts). */
+  backgroundSorting: boolean;
 }
 
 export type AccountSettingKey = keyof AccountSettingValues;
 
-export const ACCOUNT_SETTING_KEYS: readonly AccountSettingKey[] = ['afterSend', 'notifications', 'agentAutonomy', 'modelMayReadMail'];
+export const ACCOUNT_SETTING_KEYS: readonly AccountSettingKey[] = ['afterSend', 'notifications', 'agentAutonomy', 'modelMayReadMail', 'backgroundSorting'];
 
 export type AccountSettingSource = 'account' | 'app';
 
@@ -59,7 +64,7 @@ export interface ResolvedAccountSetting<K extends AccountSettingKey> {
  */
 export interface AccountSettingsSource {
   compose?: { afterSend?: unknown } | null;
-  ai?: { allowMailBodyContext?: unknown } | null;
+  ai?: { allowMailBodyContext?: unknown; backgroundSorting?: unknown } | null;
   accountDefaults?: Partial<Record<keyof AccountDefaultsSettings, unknown>> | null;
   accountOverrides?: Record<string, AccountSettingsOverride | undefined> | null;
 }
@@ -88,6 +93,7 @@ const VALIDATORS: { [K in AccountSettingKey]: (value: unknown) => value is Accou
   notifications: isNotificationMode,
   agentAutonomy: isAgentAutonomy,
   modelMayReadMail: (value: unknown): value is boolean => typeof value === 'boolean',
+  backgroundSorting: (value: unknown): value is boolean => typeof value === 'boolean',
 };
 
 export function isValidAccountSettingValue<K extends AccountSettingKey>(key: K, value: unknown): value is AccountSettingValues[K] {
@@ -198,12 +204,14 @@ export function getAccountOverride(settings: AccountSettingsSource, accountId: s
 export function getAppDefaultAccountSetting<K extends AccountSettingKey>(settings: AccountSettingsSource, key: K): AccountSettingValues[K] {
   const afterSend = settings.compose?.afterSend;
   const allowMailBodyContext = settings.ai?.allowMailBodyContext;
+  const backgroundSorting = settings.ai?.backgroundSorting;
   const defaults = normalizeAccountDefaults(settings.accountDefaults);
   const values: AccountSettingValues = {
     afterSend: isAfterSend(afterSend) ? afterSend : DEFAULT_AFTER_SEND,
     notifications: defaults.notifications,
     agentAutonomy: defaults.agentAutonomy,
     modelMayReadMail: typeof allowMailBodyContext === 'boolean' ? allowMailBodyContext : DEFAULT_MODEL_MAY_READ_MAIL,
+    backgroundSorting: typeof backgroundSorting === 'boolean' ? backgroundSorting : DEFAULT_BACKGROUND_SORTING,
   };
   return values[key];
 }
@@ -221,13 +229,14 @@ export function resolveAccountSetting<K extends AccountSettingKey>(
   return { value: getAppDefaultAccountSetting(settings, key), source: 'app' };
 }
 
-/** All four inheritable settings for an account at once. */
+/** All inheritable settings for an account at once. */
 export function resolveAccountSettings(settings: AccountSettingsSource, accountId: string): { [K in AccountSettingKey]: ResolvedAccountSetting<K> } {
   return {
     afterSend: resolveAccountSetting(settings, accountId, 'afterSend'),
     notifications: resolveAccountSetting(settings, accountId, 'notifications'),
     agentAutonomy: resolveAccountSetting(settings, accountId, 'agentAutonomy'),
     modelMayReadMail: resolveAccountSetting(settings, accountId, 'modelMayReadMail'),
+    backgroundSorting: resolveAccountSetting(settings, accountId, 'backgroundSorting'),
   };
 }
 

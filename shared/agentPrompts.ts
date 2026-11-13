@@ -414,6 +414,7 @@ export function buildDraftPrompt(input: DraftPromptInput): TextPrompt {
     'Write only the reply body: no subject line, no quoted original, no code fences, no preamble, no explanation, no signature block.',
     tone,
     'Do not invent facts. Never state dates, times, numbers, prices, names or commitments that the user has not already given in the thread. Where such a fact is needed, leave a short bracketed placeholder such as [confirm date].',
+    'Do not decide for the user: do not accept or decline a request, agree to a date, or promise an action they have not already said they will take. Where the reply depends on their decision, put the choice in brackets, such as [yes, the 24th works / no, propose another date].',
     ...(notes ? [`The user's writing preferences: ${notes}`] : []),
     UNTRUSTED_MAIL_RULE,
   ].join('\n');

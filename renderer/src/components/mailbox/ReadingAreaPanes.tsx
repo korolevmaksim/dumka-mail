@@ -4,7 +4,9 @@ import { useAppStore } from '../../stores/AppStore';
 import {
   PREPARED_UNDO_SENTENCE,
   PREPARED_UNTOUCHED_SENTENCE,
+  explainClearBatch,
   preparedLines,
+  threadEntryKey,
 } from '../../../../shared/inboxSections';
 import { buildDoneSummary, doneSummaryLines, hasDoneSummaryActivity } from '../../../../shared/doneSummary';
 import { Kbd, KeyHint } from './SectionRows';
@@ -59,7 +61,7 @@ export function PreparedPane() {
     <section data-prepared-pane aria-labelledby="prepared-title" className={paneClass}>
       <div className="flex max-w-[600px] flex-col gap-4">
         <h2 id="prepared-title" className="flex items-center gap-2 text-[calc(18px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-          <Sparkles aria-hidden="true" className="h-4 w-4 text-[var(--ai-accent)]" />
+          <Sparkles aria-hidden="true" className="h-4 w-4 text-[var(--ai-solid)]" />
           Prepared for you
         </h2>
         <ul className={cardClass} aria-label="Sections">
@@ -99,7 +101,13 @@ export function PreparedPane() {
 export function ClearGroupPane() {
   const store = useAppStore();
   const count = store.clearBatchThreads.length;
-  const first = store.decisionSections.find(section => section.decision === 'clear')?.entries[0]?.thread;
+  const clearEntries = store.decisionSections.find(section => section.decision === 'clear')?.entries;
+  const first = clearEntries?.[0]?.thread;
+  // Explains exactly the rows the button will archive, in list order.
+  const explanation = useMemo(() => {
+    const inBatch = new Set(store.clearBatchThreads.map(thread => threadEntryKey(thread)));
+    return explainClearBatch((clearEntries || []).filter(entry => inBatch.has(threadEntryKey(entry.thread))));
+  }, [clearEntries, store.clearBatchThreads]);
   const conversations = `${count} conversation${count === 1 ? '' : 's'}`;
   const hints = useActionKeyHints();
 
@@ -113,9 +121,26 @@ export function ClearGroupPane() {
         <ul className={cardClass}>
           <li className={cardRowClass}>
             <span className="min-w-0 flex-1 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]">
-              <b className="font-semibold">Why these.</b> Mailing lists and bulk senders that ask nothing of you.
+              <b className="font-semibold">Why these.</b> {explanation.summary}
             </span>
           </li>
+          {explanation.reasons.length > 0 && (
+            <li className={cardRowClass} data-clear-reasons>
+              <ul className="flex min-w-0 flex-1 flex-col gap-1">
+                {explanation.reasons.map(item => (
+                  <li key={item.key} className="flex min-w-0 items-baseline gap-2 text-[calc(12px*var(--font-scale))]">
+                    <span className="w-[132px] shrink-0 truncate font-semibold text-[var(--text-primary)]">{item.sender}</span>
+                    <span className="min-w-0 flex-1 text-[var(--text-secondary)]">{item.reason}</span>
+                  </li>
+                ))}
+                {explanation.more > 0 && (
+                  <li className="text-[calc(12px*var(--font-scale))] text-[var(--text-tertiary)]">
+                    and {explanation.more} more, each checked in the list
+                  </li>
+                )}
+              </ul>
+            </li>
+          )}
           <li className={cardRowClass}>
             <span className={bodyText}>Kept out of this group: anything from a person, security notices, invitations.</span>
           </li>
@@ -123,7 +148,7 @@ export function ClearGroupPane() {
             <span className={bodyText}>
               Uncheck a row to keep it.{' '}
               {hints.moveToSection.keys.length > 0
-                ? <><Kbd>V</Kbd> moves it to another section and remembers the correction.</>
+                ? <><Kbd>V</Kbd> moves it to another section. The move is remembered for that conversation only.</>
                 : 'Move to another section (row menu) to remember the correction.'}
             </span>
           </li>

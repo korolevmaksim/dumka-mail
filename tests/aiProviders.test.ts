@@ -3,6 +3,8 @@ import {
   CONFIGURABLE_AI_PROVIDERS,
   getAIProviderConfig,
   getAIProviderConfigFields,
+  geminiEmbeddingUsesInlineInstruction,
+  geminiSupportsThinkingLevel,
   resolveConfiguredProviderModel,
 } from '../shared/aiProviders';
 
@@ -30,20 +32,36 @@ describe('AI provider registry', () => {
     expect(getAIProviderConfig('openRouter')).toMatchObject({
       displayName: 'OpenRouter',
       defaultBaseUrl: 'https://openrouter.ai/api/v1',
-      defaultModel: '~openai/gpt-latest',
       transport: 'chat.completions'
     });
   });
 
-  it('resolves provider-specific default models from AI config', () => {
+  it('reads the model for a provider from AI config and has no built-in fallback', () => {
     const env = {
-      OPENAI_MODEL: 'gpt-5',
-      GEMINI_MODEL: 'gemini-3.5-flash',
-      ANTHROPIC_MODEL: 'claude-sonnet-4-6',
+      OPENAI_MODEL: 'model-a',
+      GEMINI_MODEL: ' model-b ',
     };
 
-    expect(resolveConfiguredProviderModel('gemini', env)).toBe('gemini-3.5-flash');
-    expect(resolveConfiguredProviderModel('anthropic', env)).toBe('claude-sonnet-4-6');
-    expect(resolveConfiguredProviderModel('openRouter', {})).toBe('~openai/gpt-latest');
+    expect(resolveConfiguredProviderModel('openAI', env)).toBe('model-a');
+    expect(resolveConfiguredProviderModel('gemini', env)).toBe('model-b');
+    expect(resolveConfiguredProviderModel('anthropic', env)).toBe('');
+    expect(resolveConfiguredProviderModel('openRouter', {})).toBe('');
+    for (const provider of CONFIGURABLE_AI_PROVIDERS) {
+      expect(getAIProviderConfig(provider)).not.toHaveProperty('defaultModel');
+    }
+  });
+
+  it('picks the request format from the generation of the chosen model, not from a list of names', () => {
+    expect(geminiSupportsThinkingLevel('gemini-3-x')).toBe(true);
+    expect(geminiSupportsThinkingLevel('models/gemini-3.8-x')).toBe(true);
+    expect(geminiSupportsThinkingLevel('gemini-4-x')).toBe(true);
+    expect(geminiSupportsThinkingLevel('gemini-12-x')).toBe(true);
+    expect(geminiSupportsThinkingLevel('gemini-2.5-x')).toBe(false);
+    expect(geminiSupportsThinkingLevel('other-4')).toBe(false);
+
+    expect(geminiEmbeddingUsesInlineInstruction('gemini-embedding-2')).toBe(true);
+    expect(geminiEmbeddingUsesInlineInstruction('models/gemini-embedding-3-large')).toBe(true);
+    expect(geminiEmbeddingUsesInlineInstruction('gemini-embedding-001')).toBe(false);
+    expect(geminiEmbeddingUsesInlineInstruction('my-embedding-model')).toBe(false);
   });
 });

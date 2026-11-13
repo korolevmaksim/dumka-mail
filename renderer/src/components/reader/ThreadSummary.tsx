@@ -43,7 +43,7 @@ export function ThreadSummary({ thread }: ThreadSummaryProps) {
         role="status"
         aria-live="polite"
       >
-        <Sparkles aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--ai-accent)]" />
+        <Sparkles aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--ai-solid)]" />
         Summarising…
       </p>
     );
@@ -55,12 +55,19 @@ export function ThreadSummary({ thread }: ThreadSummaryProps) {
       aria-busy={summary.status === 'loading'}
       className="flex gap-2 rounded-[var(--control-radius)] border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2"
     >
-      <Sparkles aria-hidden="true" className="mt-[3px] h-3.5 w-3.5 shrink-0 text-[var(--ai-accent)]" />
-      <ul className="flex min-w-0 flex-1 list-disc flex-col gap-0.5 pl-4 text-[calc(12px*var(--font-scale))] leading-snug text-[var(--text-primary)] marker:text-[var(--text-tertiary)]">
-        {summary.bullets.map((bullet, index) => (
-          <li key={index} className="select-text">{bullet}</li>
-        ))}
-      </ul>
+      <Sparkles aria-hidden="true" className="mt-[3px] h-3.5 w-3.5 shrink-0 text-[var(--ai-solid)]" />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        {/* Said in words, like the draft label: a summary is the model's reading, not a fact. */}
+        <p className="flex flex-wrap items-baseline gap-x-2 text-[calc(11px*var(--font-scale))]" data-thread-summary-label>
+          <span className="font-semibold text-[var(--ai-solid)]">Summary by the model</span>
+          <span className="text-[var(--text-secondary)]">Check the messages below before you act on it.</span>
+        </p>
+        <ul className="flex list-disc flex-col gap-0.5 pl-4 text-[calc(12px*var(--font-scale))] leading-snug text-[var(--text-primary)] marker:text-[var(--text-tertiary)]">
+          {summary.bullets.map((bullet, index) => (
+            <li key={index} className="select-text">{bullet}</li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }

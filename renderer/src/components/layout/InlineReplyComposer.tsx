@@ -55,7 +55,7 @@ function ToolbarButton({ title, onClick, children, active = false }: ToolbarButt
       onMouseDown={(event) => event.preventDefault()}
       className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${
         active
-          ? 'bg-[var(--hover-row)] text-[var(--accent)]'
+          ? 'bg-[var(--hover-row)] text-[var(--accent-ink)]'
           : 'text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]'
       }`}
     >
@@ -83,7 +83,7 @@ function KeyHint({ keys }: { keys: string[] }) {
 export interface InlineReplyComposerProps {
   /** Routes Send through the reply dock (reminder, prepared-draft bookkeeping). */
   onSend?: (intent: SendIntent) => void;
-  /** Agent notice shown above the editor (`Draft prepared by the agent`, `Use prepared draft`). */
+  /** Agent notice shown above the editor (`Draft written by the model`, `Use the draft`). */
   banner?: ReactNode;
   /** Extra controls in the footer, after the send buttons (`Remind me if no reply`). */
   footerExtra?: ReactNode;
@@ -299,10 +299,11 @@ export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal =
         <button
           type="button"
           onClick={() => store.setComposeLayout('floating')}
-          title="Pop out reply"
-          aria-label="Pop out reply"
-          className="shrink-0 rounded-md p-1 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+          title="Open the reply in its own window to change To, Cc and Bcc"
+          data-reply-edit-recipients
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-semibold text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
         >
+          Edit recipients
           <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -354,7 +355,7 @@ export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal =
             onClick={() => setQuotedTextExpanded(value => !value)}
             className={`inline-flex h-6 items-center justify-center rounded-md px-2 transition-colors ${
               quotedTextExpanded
-                ? 'bg-[var(--hover-row)] text-[var(--accent)]'
+                ? 'bg-[var(--hover-row)] text-[var(--accent-ink)]'
                 : 'bg-[var(--hover-row)]/50 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -372,7 +373,7 @@ export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal =
                 <button
                   type="button"
                   onClick={() => store.removeAttachmentFromDraft(att.id)}
-                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger-solid)]"
                   title={`Remove ${att.filename}`}
                   aria-label={`Remove ${att.filename}`}
                 >
@@ -429,7 +430,7 @@ export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal =
         </div>
         {reminderThread && (
           <div className="relative">
-            <ToolbarButton title="Remind me about this conversation" active={Boolean(reminderThread.reminderAt)} onClick={() => setReminderOpen(value => !value)}><CalendarClockIcon /></ToolbarButton>
+            <ToolbarButton title="Later: bring this conversation back" active={Boolean(reminderThread.reminderAt)} onClick={() => setReminderOpen(value => !value)}><CalendarClockIcon /></ToolbarButton>
             {reminderOpen && (
               <SnoozeMenu
                 floating
@@ -441,11 +442,11 @@ export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal =
           </div>
         )}
         <ToolbarButton title="AI assistant" onClick={() => store.setAiPanelOpen(!store.aiPanelOpen)}>
-          <Sparkles className="h-3.5 w-3.5 text-[var(--ai-accent)]" />
+          <Sparkles className="h-3.5 w-3.5 text-[var(--ai-solid)]" />
         </ToolbarButton>
         <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-3.5 w-3.5" /></ToolbarButton>
         {store.draftSaveStatusLabel && (
-          <span className={`pl-2 text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text-tertiary)]'}`} role="status">
+          <span className={`pl-2 text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger-solid)]' : 'text-[var(--text-tertiary)]'}`} role="status">
             {store.draftSaveStatusLabel}
           </span>
         )}
@@ -458,7 +459,7 @@ export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal =
           aria-keyshortcuts="Meta+Enter"
           data-reply-send="primary"
           title={sendAndArchive ? 'Send and archive (⌘↩)' : 'Send (⌘↩)'}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--control-radius)] bg-[var(--accent)] px-3 text-[calc(12px*var(--font-scale))] font-semibold text-white hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--control-radius)] bg-[var(--accent-fill)] px-3 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         >
           <Send aria-hidden="true" className="h-3.5 w-3.5" />
           {primaryLabel}

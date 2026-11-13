@@ -98,13 +98,13 @@ export function MoveToSectionPopover({ thread, hasModel, currentSection, onChoos
                   <Kbd>{index + 1}</Kbd>
                   <span className="truncate">{SECTION_LABELS[decision]}</span>
                 </span>
-                {isCurrent && <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">current</span>}
+                {isCurrent && <span className="shrink-0 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">current</span>}
               </li>
             );
           })}
         </ul>
-        <p className="border-t border-[var(--border)] px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-          Applies to this conversation only.
+        <p className="border-t border-[var(--border)] px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
+          Remembered for this conversation only.
         </p>
       </div>
     </div>

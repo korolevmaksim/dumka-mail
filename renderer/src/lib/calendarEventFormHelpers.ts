@@ -1,5 +1,6 @@
 import type { CalendarEvent, CalendarEventRecurrence, CalendarListEntry, Recipient } from '../../../shared/types';
 import type { CalendarConflict } from '../../../shared/calendarAvailability';
+import { formatDateTime, formatDuration, formatTimeRange, formatWeekdayDay } from '../../../shared/dateFormat';
 import {
   localDateInputValue,
   localTimeInputValue,
@@ -30,29 +31,50 @@ function recurrenceLabel(recurrence: CalendarEventRecurrence): string | null {
   return RECURRENCE_OPTIONS.find(option => option.value === recurrence)?.label || null;
 }
 
-function timeRangeLabel(startAt: string, endAt: string): string {
-  const start = new Date(startAt);
-  const end = new Date(endAt);
-  return `${start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} - ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
-}
-
-export function conflictTimeLabel(conflict: CalendarConflict): string {
+export function conflictTimeLabel(conflict: CalendarConflict, now: Date = new Date()): string {
   const anchor = new Date(conflict.occurrenceStartAt || conflict.overlapStartAt);
-  const day = anchor.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  return `${day} · ${timeRangeLabel(conflict.overlapStartAt, conflict.overlapEndAt)}`;
+  return `${formatWeekdayDay(anchor, now)} · ${formatTimeRange(conflict.overlapStartAt, conflict.overlapEndAt, now)}`;
 }
 
-export function quickDraftLabel(draft: NaturalLanguageCalendarEventDraft): string {
+export function quickDraftLabel(draft: NaturalLanguageCalendarEventDraft, now: Date = new Date()): string {
   const date = new Date(`${draft.date}T${draft.startTime}:00`);
-  const when = `${date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
   return [
     draft.title,
-    when,
-    `${draft.durationMinutes}m`,
+    formatDateTime(date, now),
+    formatDuration(draft.durationMinutes),
     draft.recurrence !== 'none' ? recurrenceLabel(draft.recurrence) : null,
     draft.location,
     draft.attendees.length > 0 ? `${draft.attendees.length} guest${draft.attendees.length === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' · ');
+}
+
+/**
+ * Reads a typed clock time: "14:30", "1430", "930", "9", "9.30" → "HH:MM"
+ * (24-hour). Returns null when it is not a valid time.
+ */
+export function parseClockInput(value: string): string | null {
+  const text = value.trim();
+  const match = /^(\d{1,2})[:.h](\d{2})$/.exec(text)
+    || /^(\d{1,2})(\d{2})$/.exec(text)
+    || /^(\d{1,2})$/.exec(text);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = match[2] === undefined ? 0 : Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+/** Quarter-hour times of a day ("00:00" … "23:45") for the time field's suggestions. */
+export function quarterHourTimes(): string[] {
+  return Array.from({ length: 96 }, (_, index) => `${String(Math.floor(index / 4)).padStart(2, '0')}:${String((index % 4) * 15).padStart(2, '0')}`);
+}
+
+/** End time of a timed event, "14:45", from a date input, a start time and minutes. */
+export function eventEndClock(date: string, startTime: string, durationMinutes: number, now: Date = new Date()): string | null {
+  const start = new Date(`${date}T${startTime}:00`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(durationMinutes)) return null;
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  return formatTimeRange(start, end, now).split(/\u2013| \u2013 /).pop()?.trim() || null;
 }
 
 export function formDefaultsFromEvent(event: CalendarEvent, fallbackDurationMinutes: number) {

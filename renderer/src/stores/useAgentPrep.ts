@@ -41,6 +41,8 @@ export interface AgentPrepApi {
   requestAgentDraft: (thread: MailThread) => void;
   /** Cancels an in-flight summary/draft request for this thread, if any. */
   cancelFor: (thread: MailThread) => void;
+  /** Forgets a failed draft for this thread, so its error stops showing. */
+  dismissDraftError: (thread: Pick<MailThread, 'accountId' | 'id'>) => void;
 }
 
 const IDLE_SUMMARY: ThreadSummaryState = { status: 'idle', bullets: [] };
@@ -227,7 +229,19 @@ function cancelFor(thread: MailThread) {
   if (changed) emit();
 }
 
-function retryModel() {
+function dismissDraftError(thread: Pick<MailThread, 'accountId' | 'id'>) {
+  const prefix = threadPrefix(thread.accountId, thread.id);
+  let changed = false;
+  for (const [key, entry] of drafts) {
+    if (!key.startsWith(prefix) || entry.state.status !== 'error') continue;
+    drafts.delete(key);
+    changed = true;
+  }
+  if (changed) emit();
+}
+
+/** Also exported on its own: a caller that only retries need not subscribe to every draft and summary change. */
+export function retryModel() {
   for (const map of [summaries, drafts] as Map<string, Entry<{ status: string }>>[]) {
     for (const [key, entry] of map) if (entry.state.status === 'error') map.delete(key);
   }
@@ -260,6 +274,7 @@ export function useAgentPrep(): AgentPrepApi {
     getAgentDraft,
     requestAgentDraft,
     cancelFor,
+    dismissDraftError,
   // `snapshot` changes whenever any state does; the getters read the store.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [snapshot]);

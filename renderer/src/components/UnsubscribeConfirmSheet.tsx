@@ -21,7 +21,8 @@ interface UnsubscribeConfirmSheetProps {
  */
 export function UnsubscribeConfirmSheet({ targets, busy = false, onConfirm, onCancel }: UnsubscribeConfirmSheetProps) {
   const dialogRef = useRef<HTMLElement>(null);
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  // Focus starts on Cancel: unsubscribing cannot be undone, so a stray Enter must not do it. `⌘↩` confirms.
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const [archive, setArchive] = useState(true);
   const titleId = useId();
   const noticeId = useId();
@@ -30,7 +31,7 @@ export function UnsubscribeConfirmSheet({ targets, busy = false, onConfirm, onCa
   const cancel = useCallback(() => {
     if (!busy) onCancel();
   }, [busy, onCancel]);
-  useDialogFocus(dialogRef, confirmRef, cancel);
+  useDialogFocus(dialogRef, cancelRef, cancel);
 
   const confirm = () => {
     if (busy || targets.length === 0) return;
@@ -61,7 +62,7 @@ export function UnsubscribeConfirmSheet({ targets, busy = false, onConfirm, onCa
       >
         <header className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
           <h2 id={titleId} className="flex min-w-0 items-center gap-2 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-            <MailMinus aria-hidden="true" className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+            <MailMinus aria-hidden="true" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
             <span className="truncate">{unsubscribeSheetTitle(targets)}</span>
           </h2>
           <button
@@ -81,9 +82,9 @@ export function UnsubscribeConfirmSheet({ targets, busy = false, onConfirm, onCa
                 <div className="truncate text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
                   {target.senderName || target.senderEmail}
                 </div>
-                <div className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{target.senderEmail}</div>
+                <div className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{target.senderEmail}</div>
               </div>
-              <span className="shrink-0 rounded border border-[var(--border)] px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <span className="shrink-0 rounded border border-[var(--border)] px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 {describeUnsubscribeMethod(target.method)}
               </span>
             </li>
@@ -106,19 +107,19 @@ export function UnsubscribeConfirmSheet({ targets, busy = false, onConfirm, onCa
           </label>
           <div className="flex items-center justify-end gap-2">
             <button
+              ref={cancelRef}
               type="button"
               onClick={cancel}
-              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)]"
+              className="rounded-md border border-[var(--control-border)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
             >
               Cancel
             </button>
             <button
-              ref={confirmRef}
               type="button"
               onClick={confirm}
               disabled={busy || targets.length === 0}
               aria-keyshortcuts="Meta+Enter"
-              className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy ? 'Unsubscribing…' : 'Unsubscribe'}
               <kbd className="text-[calc(10px*var(--font-scale))] font-normal opacity-80">⌘↩</kbd>

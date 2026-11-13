@@ -96,7 +96,7 @@ export function RecipientField({
       ? 'rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(12px*var(--font-scale))] focus-within:border-[var(--accent)]'
       : 'flex items-start gap-3 border-b border-[var(--border)] px-4 py-2.5 text-[calc(12px*var(--font-scale))]'}>
       <span className={isFormField
-        ? 'mb-1 block text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-tertiary)]'
+        ? 'mb-1 block text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-tertiary)]'
         : 'w-12 shrink-0 pt-1 text-[var(--text-secondary)] font-medium select-none'}>{label}</span>
       <div className="flex flex-1 flex-wrap items-center gap-1.5 min-h-[28px]">
         {recipients.map((recipient) => {
@@ -108,7 +108,7 @@ export function RecipientField({
               className={`inline-flex max-w-[220px] items-center gap-1 rounded-md border px-2 py-1 text-[calc(11px*var(--font-scale))] ${
                 valid
                   ? 'border-[var(--border)] bg-[var(--raised-surface)] text-[var(--text-primary)]'
-                  : 'border-[var(--danger)]/50 bg-[var(--danger)]/10 text-[var(--danger)]'
+                  : 'border-[var(--danger)]/50 bg-[var(--danger)]/10 text-[var(--danger-solid)]'
               }`}
             >
               <span className="truncate">{isFormField && recipient.name ? recipient.name : recipient.email}</span>
@@ -213,8 +213,12 @@ export function RecipientField({
                         <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{subtitle}</span>
                       )}
                     </span>
-                    <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-                      {isGroup ? 'Group' : suggestion.kind === 'contact' ? 'Contact' : isFormField ? 'Mail' : suggestion.sourceCount}
+                    {/* Where the suggestion comes from, in words (a bare message count read as noise). */}
+                    <span
+                      className="shrink-0 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]"
+                      title={!isGroup && suggestion.kind !== 'contact' && suggestion.sourceCount ? `Seen in ${suggestion.sourceCount} ${suggestion.sourceCount === 1 ? 'message' : 'messages'}` : undefined}
+                    >
+                      {isGroup ? 'Group' : suggestion.kind === 'contact' ? 'Contact' : 'From mail'}
                     </span>
                   </button>
                 );

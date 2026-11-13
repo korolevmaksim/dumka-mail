@@ -47,11 +47,17 @@ export interface AIProviderDescriptorLike {
 
 /**
  * True when no usable model is configured: AI disabled, the automatic chain
- * found no key, or the selected provider is missing its key / base URL.
+ * found no key, or the selected provider is missing its key / base URL or has
+ * no model chosen (`Missing model`: there is no built-in model to fall back to).
  * Unknown (descriptor not loaded yet) counts as available so buttons do not flicker.
  */
 export function isAIProviderUnavailable(descriptor: AIProviderDescriptorLike | null | undefined): boolean {
   if (!descriptor) return false;
   if (descriptor.preference === 'disabled') return true;
   return /^missing\b/i.test(descriptor.status.trim()) || /no ai keys/i.test(descriptor.status);
+}
+
+/** True when the provider has a key but no model was chosen for it yet. */
+export function isAIModelMissing(descriptor: AIProviderDescriptorLike | null | undefined): boolean {
+  return Boolean(descriptor) && /^missing model\b/i.test(descriptor!.status.trim());
 }

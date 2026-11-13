@@ -8,8 +8,8 @@ import type { MailSecurityWarning } from '../../../shared/types';
 import { selectThreadSecurityWarnings } from './threadSecurityWarnings';
 
 function severityClass(severity: MailSecurityWarning['severity']): string {
-  if (severity === 'danger') return 'border-[var(--danger)]/35 bg-[var(--danger)]/10 text-[var(--danger)]';
-  if (severity === 'warning') return 'border-[var(--warning)]/35 bg-[var(--warning)]/10 text-[var(--warning)]';
+  if (severity === 'danger') return 'border-[var(--danger)]/35 bg-[var(--danger)]/10 text-[var(--danger-solid)]';
+  if (severity === 'warning') return 'border-[var(--warning)]/35 bg-[var(--warning)]/10 text-[var(--warning-solid)]';
   return 'border-[var(--border)] bg-[var(--raised-surface)] text-[var(--text-secondary)]';
 }
 
@@ -56,9 +56,9 @@ export function AgenticThreadPanel() {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
               {hasThreatWarning ? (
-                <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />
+                <ShieldAlert className="h-4 w-4 text-[var(--warning-solid)]" />
               ) : (
-                <ShieldCheck className="h-4 w-4 text-[var(--accent)]" />
+                <ShieldCheck className="h-4 w-4 text-[var(--accent-ink)]" />
               )}
               {hasThreatWarning ? 'Mail safety' : 'Mail privacy'}
             </div>
@@ -69,7 +69,7 @@ export function AgenticThreadPanel() {
                 title="Unsubscribe (asks for confirmation)"
                 className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)]"
               >
-                <MailMinus className="h-3.5 w-3.5 text-[var(--accent)]" />
+                <MailMinus className="h-3.5 w-3.5 text-[var(--accent-ink)]" />
                 Unsubscribe
               </button>
             )}
@@ -79,7 +79,7 @@ export function AgenticThreadPanel() {
               {warnings.map((warning, index) => (
                 <div
                   key={`${warning.messageId}:${warning.kind}:${index}`}
-                  className={`rounded border px-2 py-1.5 text-[calc(10px*var(--font-scale))] ${severityClass(warning.severity)}`}
+                  className={`rounded border px-2 py-1.5 text-[calc(11px*var(--font-scale))] ${severityClass(warning.severity)}`}
                 >
                   <span className="font-semibold">{warning.title}</span>
                   <span className="text-[var(--text-secondary)]"> · {warning.detail}</span>

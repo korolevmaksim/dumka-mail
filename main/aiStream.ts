@@ -10,7 +10,7 @@
 // Every request is abortable, and no delta is delivered after a cancel. The tool-calling loop in
 // `main/ai.ts` (`completeAI`) is unchanged and stays non-streaming.
 import type { AIProviderDescriptor, AIProviderPreference } from '../shared/types';
-import { getAIProviderConfig } from '../shared/aiProviders';
+import { geminiSupportsThinkingLevel, getAIProviderConfig } from '../shared/aiProviders';
 import { isAIProviderUnavailable, truncateProviderText } from '../shared/aiErrors';
 import { AI_CHAT_REQUEST_TIMEOUT_MS } from '../shared/aiRequest';
 import { StreamTextParser, type StreamWireFormat } from '../shared/aiStream';
@@ -81,10 +81,6 @@ function responsesText(data: unknown): string {
     return json.output.flatMap((item: any) => item?.content || []).map((part: any) => part?.text || '').join('\n');
   }
   return '';
-}
-
-function supportsGeminiThinkingLevel(model: string): boolean {
-  return /^gemini-3(?:[.-]|$)/.test(model.replace(/^models\//, ''));
 }
 
 function buildWireRequest(
@@ -159,7 +155,7 @@ function buildWireRequest(
         contents: [{ role: 'user', parts: [{ text: prompt.user }] }],
       };
       const level = env['GEMINI_THINKING_LEVEL'];
-      if (level && level !== 'disabled' && supportsGeminiThinkingLevel(model)) {
+      if (level && level !== 'disabled' && geminiSupportsThinkingLevel(model)) {
         body.generationConfig = { thinkingConfig: { thinkingLevel: level } };
       }
       return {

@@ -317,6 +317,66 @@ export function buildInitialDraftBodyWithSignature(
   };
 }
 
+/**
+ * Drops the name a written reply ends with when the signature that follows
+ * starts with the same name, so the letter is not signed twice
+ * ("Best,\nAlex" + "Alex Morgan\nHead of Rollouts" → "Best," + signature).
+ * Only a last line that is just the sender's name is removed; nothing else.
+ */
+export function stripSignOffName(replyPlain: string, signaturePlain: string, senderName = ''): string {
+  const lines = replyPlain.replace(/\r\n?/g, '\n').replace(/\s+$/, '').split('\n');
+  const last = (lines[lines.length - 1] || '').trim().replace(/[,.!]+$/, '').toLowerCase();
+  if (!last || lines.length < 2) return lines.join('\n');
+  const signatureName = (signaturePlain.split('\n').find(line => line.trim()) || '').trim().toLowerCase();
+  const names = [signatureName, senderName.trim().toLowerCase()].filter(Boolean);
+  const matches = names.some(name => name === last || name.split(/\s+/)[0] === last);
+  if (!matches) return lines.join('\n');
+  return lines.slice(0, -1).join('\n').replace(/\s+$/, '');
+}
+
+/**
+ * The body of a reply that starts from text written for the user (a draft by
+ * the model): the reply, then the signature, then the quoted message. The
+ * plain reply flow puts the signature above the quote for the same reason;
+ * here the written text simply goes first.
+ */
+export function buildWrittenReplyDraftBody(
+  replyPlain: string,
+  quotePlain: string,
+  quoteHtml: string | null | undefined,
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): { bodyPlain: string; bodyHtml: string | null } {
+  const signaturePlain = renderComposeSignaturePlain(compose, profile, accountId);
+  const reply = signaturePlain
+    ? stripSignOffName(replyPlain.trim(), signaturePlain, profile.fullName)
+    : replyPlain.replace(/\r\n?/g, '\n').trim();
+  // Signature and quote, laid out exactly as for a reply the user starts themselves.
+  const rest = buildInitialDraftBodyWithSignature(quotePlain, compose, profile, accountId, quoteHtml);
+  if (!reply) return rest;
+  const restHtml = (rest.bodyHtml || '').replace(/^<p><br><\/p>/, '');
+  const restPlain = rest.bodyPlain.replace(/^\n+/, '');
+  return {
+    bodyPlain: restPlain ? `${reply}\n\n${restPlain}` : reply,
+    bodyHtml: `${plainTextToHtmlFragment(reply)}${restHtml ? `<p><br></p>${restHtml}` : ''}`,
+  };
+}
+
+/**
+ * What a reply written for the user will read like once sent, without the
+ * quoted message: the reply, then the account's signature. The dock shows this
+ * before Send, so the text approved is the text that goes out.
+ */
+export function writtenReplyPreviewPlain(
+  replyPlain: string,
+  compose: ComposeSettings,
+  profile: ProfileSettings,
+  accountId?: string | null,
+): string {
+  return buildWrittenReplyDraftBody(replyPlain, '', null, compose, profile, accountId).bodyPlain.trim();
+}
+
 export function compileDraftBodyHtml(
   bodyPlain: string,
   compose: ComposeSettings,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentPlanItem, AIChatMessage, AIEmbeddingSettings, AIProviderPreference, MailboxSearchSource } from '../shared/types';
-import { getAIProviderConfig } from '../shared/aiProviders';
+import { geminiEmbeddingUsesInlineInstruction, geminiSupportsThinkingLevel, getAIProviderConfig } from '../shared/aiProviders';
 import { buildEmbeddingIndexKey, getEmbeddingProviderConfig, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { MCPManager, MCPToolSchema } from './mcpManager';
 import { loadAIConfig, saveAIConfig, getAIProviderDescriptor, listProviderModels, loadAIConfigAsync, saveAIConfigAsync, loadAIConfigForRenderer } from './aiConfig';
@@ -105,11 +105,6 @@ function addOpenRouterHeaders(headers: Record<string, string>, env: Record<strin
     headers['HTTP-Referer'] = env['OPENROUTER_REFERER'];
   }
   headers['X-OpenRouter-Title'] = env['OPENROUTER_APP_TITLE'] || 'Dumka Mail';
-}
-
-function supportsGeminiThinkingLevel(model: string): boolean {
-  const normalized = model.replace(/^models\//, '');
-  return /^gemini-3(?:[.-]|$)/.test(normalized);
 }
 
 function resolveRequestTools(request: AIRequest): MCPToolSchema[] {
@@ -253,6 +248,10 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
   const descriptor = await getAIProviderDescriptor(preference, overrideModel);
   if (descriptor.preference === 'disabled') {
     throw new Error('AI operations are disabled.');
+  }
+  // There is no built-in model to fall back to.
+  if (!descriptor.model.trim()) {
+    throw new Error(`No model is chosen for ${descriptor.displayName}. Choose one in Settings → AI model.`);
   }
 
   const env = await loadAIConfigAsync();
@@ -513,7 +512,7 @@ export async function completeAI(request: AIRequest, preference: AIProviderPrefe
         }
 
         const geminiThinkingLevel = env['GEMINI_THINKING_LEVEL'];
-        if (geminiThinkingLevel && geminiThinkingLevel !== 'disabled' && supportsGeminiThinkingLevel(resolvedModel)) {
+        if (geminiThinkingLevel && geminiThinkingLevel !== 'disabled' && geminiSupportsThinkingLevel(resolvedModel)) {
           body.generationConfig = {
             thinkingConfig: {
               thinkingLevel: geminiThinkingLevel
@@ -768,7 +767,7 @@ function parseGeminiEmbeddings(data: any, inputLength: number): number[][] {
 }
 
 function formatGeminiEmbeddingText(text: string, purpose: EmbeddingPurpose, model: string): string {
-  if (!model.includes('gemini-embedding-2')) return text;
+  if (!geminiEmbeddingUsesInlineInstruction(model)) return text;
   if (purpose === 'query') return `Represent this question for retrieving relevant email messages:\n${text}`;
   if (purpose === 'document') return `Represent this email message for retrieval:\n${text}`;
   return text;
@@ -798,6 +797,9 @@ export async function createEmbeddings(
 ): Promise<EmbeddingResponse> {
   const settings = normalizeEmbeddingSettings(options.settings);
   const providerConfig = getEmbeddingProviderConfig(settings.provider);
+  if (!settings.model) {
+    throw new Error(`No embedding model is chosen for ${providerConfig.displayName}. Enter one in the semantic search settings.`);
+  }
   const env = await loadAIConfigAsync();
   const apiKey = embeddingAuthKey(env, settings);
   const purpose = options.purpose || 'document';
@@ -807,7 +809,7 @@ export async function createEmbeddings(
     const modelPath = settings.model.startsWith('models/') ? settings.model : `models/${settings.model}`;
     const endpoint = `${settings.baseURL.replace(/\/+$/, '')}/${modelPath}:batchEmbedContents?key=${encodeURIComponent(apiKey)}`;
     const taskType = purpose === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT';
-    const isGeminiEmbedding2 = settings.model.includes('gemini-embedding-2');
+    const isGeminiEmbedding2 = geminiEmbeddingUsesInlineInstruction(settings.model);
     const res = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

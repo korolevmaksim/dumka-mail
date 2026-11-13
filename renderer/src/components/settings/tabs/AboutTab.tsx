@@ -1,70 +1,147 @@
+import { useEffect, useState } from 'react';
 import { useAppStore } from '../../../stores/AppStore';
-import { Activity } from 'lucide-react';
+import { SETTINGS_BUTTON_CLASS, SETTINGS_PRIMARY_BUTTON_CLASS } from '../SettingsControls';
+import { SettingRow, SettingsCard, SettingsGroup, SettingsPage, SETTING_DESC_CLASS } from './SettingsPageParts';
+import { appUpdateStatusText, canCheckForAppUpdates, formatMeasuredMs, offlineCoverageText } from './settingsCopy';
+import type { AutoUpdateStatus } from '../../../../../shared/autoUpdate';
 
 export function AboutTab() {
   const store = useAppStore();
+  const [updateStatus, setUpdateStatus] = useState<AutoUpdateStatus | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    window.electronAPI.getAutoUpdateStatus()
+      .then(status => {
+        if (mounted) setUpdateStatus(status);
+      })
+      .catch(err => {
+        console.error('Failed to load auto-update status:', err);
+      });
+    const unsubscribe = window.electronAPI.onAutoUpdateStatus(status => {
+      if (mounted) setUpdateStatus(status);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const checkForUpdates = async () => {
+    setUpdateBusy(true);
+    try {
+      setUpdateStatus(await window.electronAPI.checkForAppUpdates());
+    } catch (err) {
+      console.error('Failed to check for app updates:', err);
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    setUpdateBusy(true);
+    try {
+      setUpdateStatus(await window.electronAPI.installDownloadedAppUpdate());
+    } catch (err) {
+      console.error('Failed to install downloaded update:', err);
+      setUpdateBusy(false);
+    }
+  };
+
+  const repairOffline = async () => {
+    setRepairing(true);
+    try {
+      await store.triggerVisibleBodyRepair();
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const checking = updateStatus?.state === 'checking' || updateBusy;
+  const speed = store.speedProof;
+  const speedRows: Array<{ key: string; title: string; description: string; ms: number | undefined }> = [
+    { key: 'cacheReadyMs', title: 'Opening your mailbox', description: 'The last time mail was loaded from this Mac', ms: speed.cacheReadyMs },
+    { key: 'syncReadyMs', title: 'Getting new mail', description: 'The last check of Gmail for new mail', ms: speed.syncReadyMs },
+    { key: 'searchMs', title: 'Searching', description: 'The last search on this Mac', ms: speed.searchMs },
+    { key: 'aiMs', title: 'Model answer', description: 'The last answer from the model', ms: speed.aiMs },
+  ];
 
   return (
-    <div className="flex flex-col gap-5 max-w-[600px] select-text text-[calc(11px*var(--font-scale))]">
-      <div className="flex flex-col gap-1 items-center justify-center p-6 border border-[var(--border)] rounded-lg bg-[var(--rail-bg)] text-center">
-        <span className="w-12 h-12 rounded-2xl bg-[var(--accent)] flex items-center justify-center text-white text-[calc(24px*var(--font-scale))] font-black shadow-lg">
-          Д
-        </span>
-        <h2 className="text-[calc(15px*var(--font-scale))] font-bold text-[var(--text-primary)] mt-3">Dumka Mail</h2>
-        <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-mono">Version 1.0.0 (Build 2026.06.26)</span>
-        <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] mt-2 max-w-[400px] leading-relaxed">
-          Super-fast, agentic email client built using Electron, React 19, SQLite FTS, and AI local triage planners.
-        </p>
-      </div>
+    <SettingsPage
+      pageKey="about"
+      title="About"
+      description="Dumka Mail sorts your Gmail inbox into what needs a decision and prepares replies with the model you choose. Your mail is kept on this Mac."
+    >
+      <SettingsCard>
+        <SettingRow
+          rowKey="version"
+          title="Dumka Mail"
+          description={updateStatus?.version ? `Version ${updateStatus.version}` : 'Reading the version…'}
+        />
+        <SettingRow
+          rowKey="appUpdates"
+          title="App updates"
+          description={appUpdateStatusText(updateStatus)}
+          control={({ descriptionId }) => (
+            <>
+              {updateStatus?.state === 'downloaded' && (
+                <button
+                  type="button"
+                  onClick={() => void installUpdate()}
+                  disabled={updateBusy}
+                  aria-describedby={descriptionId}
+                  className={SETTINGS_PRIMARY_BUTTON_CLASS}
+                >
+                  Restart to update
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void checkForUpdates()}
+                disabled={updateBusy || !canCheckForAppUpdates(updateStatus)}
+                aria-describedby={descriptionId}
+                className={SETTINGS_BUTTON_CLASS}
+              >
+                {checking ? 'Checking…' : 'Check now'}
+              </button>
+            </>
+          )}
+        />
+      </SettingsCard>
 
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3.5">
-        <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] flex items-center gap-1">
-          <Activity className="w-3.5 h-3.5 text-[var(--accent)]" /> Performance & Telemetry Proofs
-        </span>
-
-        <div className="grid grid-cols-2 gap-3.5 font-mono text-[calc(10px*var(--font-scale))]">
-          <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
-            <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">SQL Cache Latency</span>
-            <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.cacheReadyMs ? `${store.speedProof.cacheReadyMs}ms` : 'Measuring…'}
-            </span>
-          </div>
-          <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
-            <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">Gmail Sync Latency</span>
-            <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.syncReadyMs ? `${store.speedProof.syncReadyMs}ms` : 'Measuring…'}
-            </span>
-          </div>
-          <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
-            <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">Local Search Latency</span>
-            <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.searchMs ? `${store.speedProof.searchMs}ms` : 'Measuring…'}
-            </span>
-          </div>
-          <div className="flex flex-col bg-[var(--panel-bg)] border border-[var(--border)] p-2 rounded">
-            <span className="text-[var(--text-secondary)] text-[calc(9px*var(--font-scale))] uppercase font-bold">AI Chat Latency</span>
-            <span className="text-[var(--text-primary)] text-[calc(12px*var(--font-scale))] font-bold mt-1">
-              {store.speedProof.aiMs ? `${store.speedProof.aiMs}ms` : 'N/A'}
-            </span>
-          </div>
-        </div>
-
-        <div className="w-full h-[1px] bg-[var(--border)]" />
-        
-        <div className="flex justify-between items-center text-[calc(10px*var(--font-scale))]">
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold text-[var(--text-primary)]">Body Cache Coverage</span>
-            <span className="text-[var(--text-secondary)]">{store.speedProof.detailCacheCoverage}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => store.triggerVisibleBodyRepair()}
-            className="px-3 py-1 bg-[var(--panel-bg)] border border-[var(--border)] hover:border-[var(--strong-border)] rounded text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)] transition-all cursor-pointer"
-          >
-            Repair Cache
-          </button>
-        </div>
-      </div>
-    </div>
+      <SettingsGroup title="Speed on this Mac">
+        <SettingsCard>
+          {speedRows.map(row => (
+            <SettingRow
+              key={row.key}
+              rowKey={row.key}
+              title={row.title}
+              description={row.description}
+              control={() => (
+                <span className={`${SETTING_DESC_CLASS} font-medium tabular-nums text-[var(--text-primary)]`}>{formatMeasuredMs(row.ms)}</span>
+              )}
+            />
+          ))}
+          <SettingRow
+            rowKey="offlineCoverage"
+            title="Messages ready offline"
+            description={offlineCoverageText(speed.detailCacheCoverage)}
+            control={({ descriptionId }) => (
+              <button
+                type="button"
+                onClick={() => void repairOffline()}
+                disabled={repairing}
+                aria-describedby={descriptionId}
+                className={SETTINGS_BUTTON_CLASS}
+              >
+                {repairing ? 'Downloading…' : 'Download messages on screen'}
+              </button>
+            )}
+          />
+        </SettingsCard>
+      </SettingsGroup>
+    </SettingsPage>
   );
 }

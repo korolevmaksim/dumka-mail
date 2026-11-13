@@ -21,7 +21,7 @@ import {
   shouldGenerateAgentDraft,
 } from '../shared/mailSecurity';
 import { buildThreadContext } from '../shared/aiContext';
-import { resolveAIModelForPurpose } from '../shared/aiModelPurpose';
+import { resolveBackgroundModelRoute } from '../shared/aiModelPurpose';
 import { normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
 import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
@@ -54,6 +54,8 @@ interface RuntimeAgentSettings {
   provider: AIProviderPreference;
   interactiveModel: string;
   automationModel: string;
+  /** `ai.automationProvider`: '' follows `provider`. */
+  automationProvider: string;
   allowMailBodyContext: boolean;
   proactiveDraftsEnabled: boolean;
   semanticSearchEnabled: boolean;
@@ -119,9 +121,11 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       provider: parsed?.ai?.provider || 'automatic',
       interactiveModel: typeof parsed?.ai?.globalDefaultModel === 'string' ? parsed.ai.globalDefaultModel : '',
       automationModel: typeof parsed?.ai?.automationModel === 'string' ? parsed.ai.automationModel : '',
+      automationProvider: typeof parsed?.ai?.automationProvider === 'string' ? parsed.ai.automationProvider : '',
       allowMailBodyContext: parsed?.ai?.allowMailBodyContext === true,
       proactiveDraftsEnabled: parsed?.ai?.proactiveDraftsEnabled === true,
-      semanticSearchEnabled,
+      // Without an embedding model there is nothing to index or search with.
+      semanticSearchEnabled: semanticSearchEnabled && Boolean(embeddings.model),
       embeddings,
       agentRules: normalizeAgentRules(parsed?.ai?.agentRules),
       dailyBriefing: normalizeDailyBriefingSettings(parsed?.ai?.dailyBriefing),
@@ -136,6 +140,7 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       provider: 'automatic',
       interactiveModel: '',
       automationModel: '',
+      automationProvider: '',
       allowMailBodyContext: true,
       proactiveDraftsEnabled: false,
       semanticSearchEnabled: false,
@@ -154,6 +159,15 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
 function accountAllowsMailText(accountId: string): boolean {
   try {
     return resolveAccountSetting(JSON.parse(SettingsRepo.get('appSettings') || '{}'), accountId, 'modelMayReadMail').value === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Unattended model work is opt-in per account (`backgroundSorting`, off by default). */
+function accountAllowsBackgroundModel(accountId: string): boolean {
+  try {
+    return resolveAccountSetting(JSON.parse(SettingsRepo.get('appSettings') || '{}'), accountId, 'backgroundSorting').value === true;
   } catch {
     return false;
   }
@@ -259,6 +273,8 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
     provider: settings.provider,
     globalDefaultModel: settings.interactiveModel,
     automationModel: settings.automationModel,
+    automationProvider: '',
+    backgroundSorting: false,
     fallback: { isEnabled: true, orderText: '' },
     providerConfigurations: [],
     promptShortcuts: [],
@@ -279,18 +295,12 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
   };
 }
 
-function automationModelOverride(settings: RuntimeAgentSettings): string | undefined {
-  return resolveAIModelForPurpose('automation', {
-    interactiveModel: settings.interactiveModel,
-    automationModel: settings.automationModel,
-  });
-}
-
 async function generateDraftForThread(thread: MailThread, messages: MailMessage[]): Promise<AgentDraftSuggestion | null> {
   const settings = readAgentSettings(thread.accountId);
   if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return null;
   // Per-account "Mail text may be sent to the model" (SPEC §8) also gates this legacy path.
   if (!accountAllowsMailText(thread.accountId)) return null;
+  if (!accountAllowsBackgroundModel(thread.accountId)) return null;
 
   const latest = latestMessage(messages);
   if (!latest) return null;
@@ -303,8 +313,14 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
   activeDraftThreads.add(key);
 
   try {
-    const overrideModel = automationModelOverride(settings);
-    const descriptor = await getAIProviderDescriptor(settings.provider, overrideModel);
+    // The same provider and model as the rest of the background work.
+    const { preference, overrideModel } = resolveBackgroundModelRoute({
+      provider: settings.provider,
+      automationProvider: settings.automationProvider,
+      interactiveModel: settings.interactiveModel,
+      automationModel: settings.automationModel,
+    });
+    const descriptor = await getAIProviderDescriptor(preference, overrideModel);
     if (descriptor.preference === 'disabled') return null;
 
     const tone = settings.replyTone === 'direct'
@@ -330,7 +346,7 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
         'If facts are missing, include a short bracketed placeholder instead of guessing.',
         personalization,
       ].join('\n'),
-    }, settings.provider, overrideModel);
+    }, preference, overrideModel);
 
     const bodyPlain = cleanDraftText(response.text);
     if (bodyPlain.length < 8) return null;
@@ -538,7 +554,7 @@ async function startEmbeddingReindexForAccount(
 
   const settings = readAgentSettings(accountId);
   if (!settings.semanticSearchEnabled) {
-    throw new Error('Semantic search is disabled. Enable it before indexing mail.');
+    throw new Error('Semantic search is off or has no embedding model. Turn it on and enter a model before indexing mail.');
   }
 
   const embeddingSettings = settings.embeddings;

@@ -170,19 +170,19 @@ export function SnoozeMenu({
       onClick={(e) => e.stopPropagation()}
       onKeyDown={handleKeyDown}
       role="dialog"
-      aria-label="Remind me"
+      aria-label="Later"
       aria-busy={isSubmitting}
       aria-describedby={isSubmitting || submitError ? statusId : undefined}
     >
       <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-3 py-2.5">
         <div className="flex min-w-0 gap-2">
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/12 text-[var(--accent)]">
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)]/12 text-[var(--accent-ink)]">
             <CalendarClock className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Remind me</div>
+            <div className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Later</div>
             {targetSubject && (
-              <div className="mt-0.5 truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{targetSubject}</div>
+              <div className="mt-0.5 truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{targetSubject}</div>
             )}
           </div>
         </div>
@@ -211,7 +211,7 @@ export function SnoozeMenu({
             className="min-w-0 flex-1 bg-transparent text-[calc(12px*var(--font-scale))] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
           />
           {parsedQueryDate && (
-            <span className="flex min-w-0 max-w-[160px] items-center gap-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--accent)]">
+            <span className="flex min-w-0 max-w-[160px] items-center gap-1.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--accent-ink)]">
               <span className="truncate">{describeReminder(parsedQueryDate, now)}</span>
               <kbd className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)]">↵</kbd>
             </span>
@@ -222,7 +222,7 @@ export function SnoozeMenu({
             id={statusId}
             role="status"
             aria-live="polite"
-            className={`px-1 pt-1.5 text-[calc(10px*var(--font-scale))] ${submitError ? 'text-[var(--danger)]' : 'text-[var(--text-secondary)]'}`}
+            className={`px-1 pt-1.5 text-[calc(11px*var(--font-scale))] ${submitError ? 'text-[var(--danger-solid)]' : 'text-[var(--text-secondary)]'}`}
           >
             {submitError || 'Setting reminder…'}
           </div>
@@ -245,7 +245,7 @@ export function SnoozeMenu({
               <Clock className="h-3.5 w-3.5 shrink-0 text-[var(--text-tertiary)]" />
               <span className="truncate text-[calc(12px*var(--font-scale))] font-medium text-[var(--text-primary)]">{preset.title}</span>
             </span>
-            <span className="shrink-0 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{describeReminder(date, now)}</span>
+            <span className="shrink-0 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{describeReminder(date, now)}</span>
           </button>
         ))}
       </div>
@@ -253,7 +253,7 @@ export function SnoozeMenu({
         <div className="mb-2 flex items-center justify-between gap-3">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Custom</span>
           {customDateTime && (
-            <span className={`truncate text-[calc(10px*var(--font-scale))] ${customIsFuture ? 'text-[var(--text-secondary)]' : 'text-[var(--danger)]'}`}>
+            <span className={`truncate text-[calc(11px*var(--font-scale))] ${customIsFuture ? 'text-[var(--text-secondary)]' : 'text-[var(--danger-solid)]'}`}>
               {customIsFuture ? describeReminder(customDateTime, now) : 'Past time'}
             </span>
           )}
@@ -289,7 +289,7 @@ export function SnoozeMenu({
             onClick={pickCustomDateTime}
             title="Set custom reminder"
             aria-label="Set custom reminder"
-            className="flex h-[31px] w-8 items-center justify-center rounded-lg bg-[var(--accent)] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-[31px] w-8 items-center justify-center rounded-lg bg-[var(--accent-fill)] text-[var(--on-accent)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isSubmitting
               ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />

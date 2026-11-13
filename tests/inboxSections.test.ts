@@ -10,6 +10,8 @@ import {
   laterTimeFor,
   normalizeUserDecisionRecord,
   planClearBatch,
+  explainClearBatch,
+  frozenBatchIsGone,
   planLaterBatch,
   preparedLines,
   resolveInboxDecision,
@@ -169,6 +171,17 @@ describe('group batches', () => {
       .toEqual(['dispatch-212']);
   });
 
+  it('reports an open group as spent once none of its reviewed rows is left', () => {
+    const reviewed = new Set(keys);
+    expect(frozenBatchIsGone(clearSection.entries, reviewed)).toBe(false);
+    expect(frozenBatchIsGone(clearSection.entries, new Set([keys[0]]))).toBe(false);
+    // Every reviewed row was archived or re-sorted; only later arrivals remain.
+    expect(frozenBatchIsGone(clearSection.entries, new Set(['work:gone-1', 'work:gone-2']))).toBe(true);
+    // A closed group (nothing frozen) and an emptied section are not "spent".
+    expect(frozenBatchIsGone(clearSection.entries, null)).toBe(false);
+    expect(frozenBatchIsGone([], reviewed)).toBe(false);
+  });
+
   it('never includes protected or non-batchable decisions, whatever the input', () => {
     const mixed = [
       entry(byId.get('pilot-date')!, { decision: 'clear', protected: true }),
@@ -258,5 +271,44 @@ describe('user corrections over IPC', () => {
     expect(normalizeUserDecisionRecord('row')).toBeNull();
     expect(normalizeUserDecisionRecord({ ...row, reason: 'x'.repeat(400) })!.reason.length).toBeLessThanOrEqual(120);
     expect(normalizeUserDecisionRecord({ ...row, model: 'gpt' })!.model).toBeNull();
+  });
+});
+
+describe('why the Clear rows are offered together', () => {
+  const dispatch = byId.get('dispatch-212')!;
+  const receipt = byId.get('receipt')!;
+
+  it('describes bulk mail in one sentence when rules on this Mac sorted every row', () => {
+    const explanation = explainClearBatch([entry(dispatch, { decision: 'clear', source: 'rule', reason: 'Newsletter' })]);
+    expect(explanation.summary).toBe('Mailing lists and bulk senders that ask nothing of you.');
+    expect(explanation.reasons).toEqual([]);
+  });
+
+  it('does not call the rows mailing lists when the model put them here, and lists its reason for each', () => {
+    const explanation = explainClearBatch([
+      entry(receipt, { decision: 'clear', source: 'model', reason: 'Receipt, already paid' }),
+      entry(dispatch, { decision: 'clear', source: 'rule', reason: 'Newsletter' }),
+    ]);
+    expect(explanation.summary).not.toMatch(/mailing lists/i);
+    expect(explanation.summary).toMatch(/^Bulk mail, and conversations the model read as routine/);
+    // The row the model judged comes first, whatever its place in the list.
+    expect(explainClearBatch([
+      entry(dispatch, { decision: 'clear', source: 'rule', reason: 'Newsletter' }),
+      entry(receipt, { decision: 'clear', source: 'model', reason: 'Receipt, already paid' }),
+    ]).reasons.map(item => item.reason)).toEqual(['Receipt, already paid', 'Newsletter']);
+    expect(explainClearBatch([entry(receipt, { decision: 'clear', source: 'model', reason: 'Receipt, already paid' })]).summary)
+      .toMatch(/^The model read these as routine/);
+    expect(explanation.reasons.map(item => item.reason)).toEqual(['Receipt, already paid', 'Newsletter']);
+    expect(explanation.reasons.every(item => item.sender.length > 0)).toBe(true);
+    expect(explanation.more).toBe(0);
+  });
+
+  it('names a row the person moved here, and counts rows beyond the listed ones', () => {
+    const many = Array.from({ length: 8 }, () => entry(receipt, { decision: 'clear', source: 'user', reason: '' }));
+    const explanation = explainClearBatch(many);
+    expect(explanation.summary).toBe('You moved these here yourself.');
+    expect(explanation.reasons).toHaveLength(6);
+    expect(explanation.reasons[0].reason).toBe('You moved it here');
+    expect(explanation.more).toBe(2);
   });
 });

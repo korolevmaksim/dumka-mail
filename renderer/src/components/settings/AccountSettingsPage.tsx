@@ -20,6 +20,7 @@ import {
   type AccountSettingKey,
   type AccountSettingValues,
 } from '../../../../shared/accountSettings';
+import { backgroundProvider, defaultBackgroundProvider, effectiveBackgroundModel, seedBackgroundProvider } from '../../lib/backgroundModel';
 import { sanitizeGmailSignatureHtml } from '../../../../shared/textNormalizer';
 import { senderRuleStatus, type SenderRuleStatus } from '../../../../shared/senderRules';
 import type { Account, AgentAutonomy, ComposeSignatureSettings, SenderRule, SenderRuleStats } from '../../../../shared/types';
@@ -164,6 +165,7 @@ export function AccountSettingsPage({ account }: { account: Account }) {
     notifications: useId(), notificationsDesc: useId(), notificationsControl: useId(),
     autonomy: useId(), autonomyDesc: useId(), autonomyControl: useId(),
     model: useId(), modelDesc: useId(), modelControl: useId(),
+    background: useId(), backgroundDesc: useId(), backgroundControl: useId(),
     rules: useId(), rulesDesc: useId(), rulesList: useId(),
     calendar: useId(), calendarDesc: useId(),
     heading: useId(),
@@ -199,6 +201,12 @@ export function AccountSettingsPage({ account }: { account: Account }) {
       unsubscribe?.();
     };
   }, [accountId]);
+
+  const backgroundModelInUse = effectiveBackgroundModel(
+    store.settings,
+    backgroundProvider(store.settings, store.aiProviderDesc, store.customEnv),
+    store.customEnv,
+  );
 
   const setOverride = <K extends AccountSettingKey>(key: K, value: AccountSettingValues[K]) => {
     void store.updateSettings(settings => {
@@ -295,7 +303,7 @@ export function AccountSettingsPage({ account }: { account: Account }) {
             </h2>
             <span
               data-account-status={needsReconnect ? 'reconnect' : 'connected'}
-              className="inline-flex items-center gap-1.5 rounded-[5px] border border-[var(--border)] px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)]"
+              className="inline-flex items-center gap-1.5 rounded-[5px] border border-[var(--border)] px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]"
             >
               <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${needsReconnect ? 'bg-[var(--warning)]' : 'bg-[var(--success)]'}`} />
               {needsReconnect ? 'Reconnect needed' : 'Connected'}
@@ -442,7 +450,7 @@ export function AccountSettingsPage({ account }: { account: Account }) {
           title="What the agent may do on its own"
           titleId={ids.autonomy}
           controlId={ids.autonomyControl}
-          description={`Sort, summarise and draft. ${AGENT_NEVER_LINE}`}
+          description={`Sender rules you approved can archive mail on arrival. ${AGENT_NEVER_LINE}`}
           descriptionId={ids.autonomyDesc}
           source={resolved.agentAutonomy.source}
           onReset={() => resetOverride('agentAutonomy')}
@@ -460,10 +468,43 @@ export function AccountSettingsPage({ account }: { account: Account }) {
         />
 
         <AccountRow
+          rowKey="backgroundSorting"
+          title="Sort new mail with the model in the background"
+          titleId={ids.background}
+          description={!resolved.modelMayReadMail.value
+            ? 'Has no effect while mail text may not be sent to the model'
+            : resolved.backgroundSorting.value
+              ? (backgroundModelInUse
+                ? `Uses ${backgroundModelInUse}, chosen in Settings → AI model`
+                : 'No model is chosen for background work yet: choose one in Settings → AI model')
+              : 'Off: the model works only when you ask; mail is sorted by rules on this Mac'}
+          descriptionId={ids.backgroundDesc}
+          source={resolved.backgroundSorting.source}
+          onReset={() => resetOverride('backgroundSorting')}
+          controls={(
+            <Toggle
+              id={ids.backgroundControl}
+              checked={resolved.backgroundSorting.value}
+              onChange={value => {
+                void store.updateSettings(settings => {
+                  settings.accountOverrides = setAccountOverride(settings, accountId, 'backgroundSorting', value).accountOverrides;
+                  // The background provider is always explicit once anything runs unattended.
+                  if (value) seedBackgroundProvider(settings, defaultBackgroundProvider(store.aiProviderDesc, store.customEnv));
+                });
+              }}
+              ariaLabelledBy={ids.background}
+              ariaDescribedBy={ids.backgroundDesc}
+            />
+          )}
+        />
+
+        <AccountRow
           rowKey="modelMayReadMail"
           title="Mail text may be sent to the model"
           titleId={ids.model}
-          description="Off keeps sorting on this Mac by rules only"
+          description={resolved.modelMayReadMail.value
+            ? 'On: summaries, reply drafts and Ask Dumka may send this account’s mail text to the model you chose'
+            : 'Off: nothing from this account is sent to a model; no summaries, drafts or model sorting'}
           descriptionId={ids.modelDesc}
           source={resolved.modelMayReadMail.source}
           onReset={() => resetOverride('modelMayReadMail')}

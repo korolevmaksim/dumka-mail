@@ -42,7 +42,7 @@ export function ComposeTemplatesMenu({
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate font-medium">{template.title}</span>
                 {template.trigger && (
-                  <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{template.trigger}</span>
+                  <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{template.trigger}</span>
                 )}
               </span>
             </button>

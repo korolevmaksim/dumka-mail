@@ -122,7 +122,7 @@ export function ClassificationRuleEditor({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+        <label className="flex flex-col gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           Match Field:
           <select
             value={field}
@@ -143,7 +143,7 @@ export function ClassificationRuleEditor({
             <option value="subject">Subject Line</option>
           </select>
         </label>
-        <label className="flex flex-col gap-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+        <label className="flex flex-col gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           Condition:
           <select
             value={condition}
@@ -168,7 +168,7 @@ export function ClassificationRuleEditor({
           onInputChange={setPendingValue}
         />
       ) : (
-        <label className="flex flex-col gap-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+        <label className="flex flex-col gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           Match Value:
           <input
             value={values[0] || ''}
@@ -179,7 +179,7 @@ export function ClassificationRuleEditor({
         </label>
       )}
 
-      <label className="flex flex-col gap-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+      <label className="flex flex-col gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
         Target Split:
         <select
           value={targetCategory}
@@ -199,7 +199,7 @@ export function ClassificationRuleEditor({
           type="button"
           disabled={!canSave}
           onClick={save}
-          className="h-[26px] rounded bg-[var(--accent)] px-4 text-[calc(11px*var(--font-scale))] font-medium text-white hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-45"
+          className="h-[26px] rounded bg-[var(--accent-fill)] px-4 text-[calc(11px*var(--font-scale))] font-medium text-[var(--on-accent)] hover:bg-[var(--accent)]/90 disabled:cursor-not-allowed disabled:opacity-45"
         >
           {editingRule ? 'Save Changes' : 'Add Rule'}
         </button>
@@ -207,7 +207,7 @@ export function ClassificationRuleEditor({
           <button
             type="button"
             onClick={onCancelEdit}
-            className="h-[26px] rounded border border-[var(--border)] px-3 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+            className="h-[26px] rounded border border-[var(--border)] px-3 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
           >
             Cancel
           </button>

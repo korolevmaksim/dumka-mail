@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { listTimestamp, messageHeaderDate, relativeTime } from '../shared/dateFormat';
+import {
+  formatDateTime,
+  formatDay,
+  formatDuration,
+  formatEventWhen,
+  formatFullDateTime,
+  formatTime,
+  formatTimeRange,
+  formatWeekdayDay,
+  listTimestamp,
+  listTimestampCompact,
+  messageHeaderDate,
+  relativeTime,
+} from '../shared/dateFormat';
 
 // NOTE: ISO strings here intentionally omit a time-zone designator so they are
 // parsed as *local* time and formatted back in the *local* time zone, making
@@ -35,23 +48,17 @@ describe('listTimestamp', () => {
 });
 
 describe('messageHeaderDate', () => {
-  it('formats medium date + short time joined by " at "', () => {
-    expect(messageHeaderDate('2026-06-26T15:42:00')).toBe('Jun 26, 2026 at 3:42 PM');
+  it('renders the date and a 24-hour time', () => {
+    expect(messageHeaderDate('2026-06-26T15:42:00')).toBe('Jun 26, 2026, 15:42');
+    expect(messageHeaderDate('2026-06-26T09:05:00')).toBe('Jun 26, 2026, 09:05');
   });
 
-  it('renders AM times', () => {
-    expect(messageHeaderDate('2026-06-26T09:05:00')).toBe('Jun 26, 2026 at 9:05 AM');
+  it('renders midnight as 00:00 and noon as 12:00', () => {
+    expect(messageHeaderDate('2026-06-26T00:00:00')).toBe('Jun 26, 2026, 00:00');
+    expect(messageHeaderDate('2026-06-26T12:00:00')).toBe('Jun 26, 2026, 12:00');
   });
 
-  it('renders midnight as 12:00 AM', () => {
-    expect(messageHeaderDate('2026-06-26T00:00:00')).toBe('Jun 26, 2026 at 12:00 AM');
-  });
-
-  it('renders noon as 12:00 PM', () => {
-    expect(messageHeaderDate('2026-06-26T12:00:00')).toBe('Jun 26, 2026 at 12:00 PM');
-  });
-
-  it('returns empty string for an unparseable input', () => {
+  it('returns empty string for an invalid date', () => {
     expect(messageHeaderDate('garbage')).toBe('');
   });
 });
@@ -99,5 +106,58 @@ describe('relativeTime', () => {
 
   it('returns empty string for an unparseable input', () => {
     expect(relativeTime('nope', now)).toBe('');
+  });
+});
+
+describe('the app-wide date and time vocabulary', () => {
+  const now = new Date('2026-11-12T10:00:00');
+
+  it('is always 24-hour', () => {
+    expect(formatTime('2026-11-12T14:05:00')).toBe('14:05');
+    expect(formatTime('2026-11-12T00:00:00')).toBe('00:00');
+    expect(formatTime(new Date('2026-11-12T03:14:00'))).toBe('03:14');
+  });
+
+  it('adds the year only when it is not the current one', () => {
+    expect(formatDay('2026-11-12T14:05:00', now)).toBe('Nov 12');
+    expect(formatDay('2025-11-12T14:05:00', now)).toBe('Nov 12, 2025');
+    expect(formatDateTime('2026-11-12T14:05:00', now)).toBe('Nov 12, 14:05');
+    expect(formatWeekdayDay('2026-11-12T14:05:00', now)).toBe('Thu, Nov 12');
+    expect(formatFullDateTime('2026-11-12T14:05:00')).toBe('Thu, Nov 12, 2026, 14:05');
+  });
+
+  it('writes a range once per day and in full across midnight', () => {
+    expect(formatTimeRange('2026-11-12T14:00:00', '2026-11-12T14:45:00', now)).toBe('14:00–14:45');
+    expect(formatTimeRange('2026-11-12T22:00:00', '2026-11-13T01:00:00', now)).toBe('Nov 12, 22:00 – Nov 13, 01:00');
+    expect(formatEventWhen('2026-11-12T14:00:00', '2026-11-12T14:45:00', now)).toBe('Thu, Nov 12, 14:00–14:45');
+  });
+
+  it('names durations', () => {
+    expect(formatDuration(15)).toBe('15 min');
+    expect(formatDuration(60)).toBe('1 h');
+    expect(formatDuration(90)).toBe('1 h 30 min');
+  });
+
+  it('returns an empty string for an invalid date', () => {
+    expect(formatTime('garbage')).toBe('');
+    expect(formatDateTime('garbage')).toBe('');
+    expect(formatTimeRange('garbage', 'garbage')).toBe('');
+  });
+});
+
+describe('listTimestampCompact', () => {
+  const now = new Date('2026-11-13T10:00:00');
+
+  it('is the time alone for today', () => {
+    expect(listTimestampCompact('2026-11-13T09:07:00', now)).toBe('09:07');
+  });
+
+  it('is the day alone for another day this year, and adds the year otherwise', () => {
+    expect(listTimestampCompact('2026-11-12T23:40:00', now)).toBe('Nov 12');
+    expect(listTimestampCompact('2025-11-12T23:40:00', now)).toBe('Nov 12, 2025');
+  });
+
+  it('returns an empty string for an invalid input', () => {
+    expect(listTimestampCompact('not-a-date', now)).toBe('');
   });
 });

@@ -42,7 +42,7 @@ export function SettingsAccountAvatar({ acc }: { acc: Account }) {
 
   return (
     <div
-      className="w-6 h-6 rounded-full flex items-center justify-center text-[calc(10px*var(--font-scale))] font-bold text-white shrink-0"
+      className="w-6 h-6 rounded-full flex items-center justify-center text-[calc(11px*var(--font-scale))] font-bold text-white shrink-0"
       style={{ backgroundColor: acc.colorHex }}
     >
       {acc.email.substring(0, 2).toUpperCase()}

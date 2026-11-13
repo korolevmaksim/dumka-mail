@@ -21,7 +21,7 @@ export function LeftRail() {
           aria-current={store.workspaceView === 'calendar' ? 'page' : undefined}
           className={`dm-rail-button flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 ${
             store.workspaceView === 'calendar'
-              ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm'
+              ? 'border-[var(--accent)] bg-[var(--accent-fill)] text-[var(--on-accent)] shadow-sm'
               : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] opacity-60 hover:text-[var(--text-primary)] hover:opacity-100'
           }`}
         >
@@ -41,12 +41,12 @@ export function LeftRail() {
               aria-current={store.activeAccount?.id === 'unified' ? 'page' : undefined}
               className={`dm-rail-button relative flex items-center justify-center w-10 h-10 rounded-xl border transition-[border-color,background-color,color,opacity] duration-150 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 active:translate-y-px ${
                 store.activeAccount?.id === 'unified' 
-                  ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-sm' 
+                  ? 'border-[var(--accent)] bg-[var(--accent-fill)] text-[var(--on-accent)] shadow-sm' 
                   : 'border-[var(--border)] bg-[var(--panel-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] opacity-60 hover:opacity-100'
               }`}
             >
               <Inbox className="w-5 h-5" />
-              <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/70 text-white rounded-full px-1">
+              <span className="absolute bottom-0 right-0 text-[calc(10px*var(--font-scale))] leading-[13px] bg-black/75 text-white rounded-full px-1">
                 ⌘0
               </span>
             </button>
@@ -78,12 +78,12 @@ export function LeftRail() {
               <span
                 data-rail-inbox-count={acc.email}
                 aria-hidden="true"
-                className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full border border-[var(--rail-bg)] bg-[var(--panel-bg)] px-1 text-center text-[calc(9px*var(--font-scale))] font-semibold leading-[15px] tabular-nums text-[var(--text-primary)] shadow-sm"
+                className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full border border-[var(--rail-bg)] bg-[var(--panel-bg)] px-1 text-center text-[calc(11px*var(--font-scale))] font-semibold leading-[15px] tabular-nums text-[var(--text-primary)] shadow-sm"
               >
                 {store.inboxCountsByAccount[acc.email]}
               </span>
             )}
-            <span className="absolute bottom-0 right-0 text-[calc(8px*var(--font-scale))] bg-black/70 text-white rounded-full px-1">
+            <span className="absolute bottom-0 right-0 text-[calc(10px*var(--font-scale))] leading-[13px] bg-black/75 text-white rounded-full px-1">
               ⌘{index + 1}
             </span>
           </button>
@@ -122,7 +122,7 @@ export function LeftRail() {
             store.setCleanupOpen(false);
           }}
           title="Settings"
-          className={`cursor-pointer ${store.settingsOpen ? 'text-[var(--accent)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+          className={`cursor-pointer ${store.settingsOpen ? 'text-[var(--accent-ink)] scale-110' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
         >
           <Settings className="w-4.5 h-4.5" />
         </button>

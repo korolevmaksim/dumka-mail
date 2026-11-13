@@ -77,14 +77,14 @@ export function RuleValuesCombobox({
 
   return (
     <div>
-      <label htmlFor={inputId} className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+      <label htmlFor={inputId} className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
         Match Values:
       </label>
       <div className="mt-1 flex min-h-[34px] flex-wrap items-center gap-1.5 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 focus-within:border-[var(--accent)]">
         {values.map(value => (
           <span
             key={value.toLowerCase()}
-            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]"
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]"
           >
             <span className="truncate">{value}</span>
             <button
@@ -188,7 +188,7 @@ export function RuleValuesCombobox({
                     {suggestion.name || suggestion.email}
                   </span>
                   {suggestion.name && (
-                    <span className="block truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+                    <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
                       {suggestion.email}
                     </span>
                   )}

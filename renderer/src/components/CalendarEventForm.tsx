@@ -305,7 +305,7 @@ export function CalendarEventForm({
   return (
     <form onSubmit={submitForm} className="dm-panel rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-2.5">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">
+        <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">
           {mode === 'edit' ? 'Edit event' : 'New event'}
         </span>
         <button
@@ -332,7 +332,7 @@ export function CalendarEventForm({
                   setRecurrence(template.recurrence || 'none');
                   inputEvent.target.value = '';
                 }}
-                className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]"
+                className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]"
               >
                 <option value="">Use an event template…</option>
                 {eventTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}
@@ -355,7 +355,7 @@ export function CalendarEventForm({
                 type="button"
                 onClick={applyQuickEventDraft}
                 disabled={!quickEventDraft}
-                className="rounded-md border border-[var(--border)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                className="rounded-md border border-[var(--border)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] disabled:opacity-50"
               >
                 Use
               </button>
@@ -364,9 +364,9 @@ export function CalendarEventForm({
               <button
                 type="button"
                 onClick={applyQuickEventDraft}
-                className="flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--accent)]/25 bg-[var(--accent)]/8 px-2 py-1.5 text-left text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--accent)]/45"
+                className="flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--accent)]/25 bg-[var(--accent)]/8 px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] hover:border-[var(--accent)]/45"
               >
-                <CalendarPlus className="h-3 w-3 shrink-0 text-[var(--accent)]" />
+                <CalendarPlus className="h-3 w-3 shrink-0 text-[var(--accent-ink)]" />
                 <span className="truncate">{quickDraftLabel(quickEventDraft)}</span>
               </button>
             )}
@@ -374,14 +374,14 @@ export function CalendarEventForm({
         )}
         {mode === 'edit' && event?.recurringEventId && (
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">
               {deletePending ? calendarDeleteScopeChooserLabel() : 'Apply changes to'}
             </span>
             <select
               value={mutationScope}
               onChange={inputEvent => setMutationScope(inputEvent.target.value as CalendarMutationScope)}
               aria-label={deletePending ? calendarDeleteScopeChooserLabel() : 'Apply changes to'}
-              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]"
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]"
             >
               {CALENDAR_DELETE_SCOPE_OPTIONS.map(option => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -400,7 +400,7 @@ export function CalendarEventForm({
             value={calendarSelection}
             onChange={(inputEvent) => setCalendarSelection(inputEvent.target.value)}
             aria-label="Calendar and account"
-            className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           >
             {[...new Set(writableCalendars.map(calendar => calendar.accountId))].map(accountId => (
               <optgroup key={accountId} label={accountId}>
@@ -411,7 +411,7 @@ export function CalendarEventForm({
             ))}
           </select>
         )}
-        <label className="flex items-center gap-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+        <label className="flex items-center gap-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           <input type="checkbox" checked={isAllDay} onChange={inputEvent => setIsAllDay(inputEvent.target.checked)} className="accent-[var(--accent)]" />
           All-day event
         </label>
@@ -425,7 +425,7 @@ export function CalendarEventForm({
               setDate(value);
               if (allDayEndDate <= value) setAllDayEndDate(nextCalendarDateInput(value));
             }}
-            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />
           {isAllDay && <input
             type="date"
@@ -434,13 +434,13 @@ export function CalendarEventForm({
             aria-label="Event end date (exclusive)"
             onChange={(inputEvent) => setAllDayEndDate(inputEvent.target.value)}
             title="End date is exclusive"
-            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />}
           {!isAllDay && <input
             type="time"
             value={startTime}
             onChange={(inputEvent) => setStartTime(inputEvent.target.value)}
-            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />}
           {!isAllDay && <input
             type="number"
@@ -449,14 +449,14 @@ export function CalendarEventForm({
             step={15}
             value={duration}
             onChange={(inputEvent) => setDuration(Math.max(15, Math.min(480, Number(inputEvent.target.value) || 30)))}
-            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="min-w-0 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />}
         </div>
         {mode === 'create' && (
           <select
             value={recurrence}
             onChange={(inputEvent) => setRecurrence(inputEvent.target.value as CalendarEventRecurrence | 'custom')}
-            className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           >
             {RECURRENCE_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -466,9 +466,9 @@ export function CalendarEventForm({
         )}
         {mode === 'create' && recurrence === 'custom' && (
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">Custom recurrence</span>
-            <input value={customRecurrenceInput} onChange={event => setCustomRecurrenceInput(event.target.value)} placeholder="FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE" aria-invalid={customRecurrenceInput.length > 0 && !normalizedCustomRecurrence} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
-            {customRecurrenceInput && !normalizedCustomRecurrence && <span className="text-[calc(9px*var(--font-scale))] text-[var(--danger)]">Enter an RFC 5545 rule beginning with FREQ=.</span>}
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">Custom recurrence</span>
+            <input value={customRecurrenceInput} onChange={event => setCustomRecurrenceInput(event.target.value)} placeholder="FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE" aria-invalid={customRecurrenceInput.length > 0 && !normalizedCustomRecurrence} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]" />
+            {customRecurrenceInput && !normalizedCustomRecurrence && <span className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)]">Enter an RFC 5545 rule beginning with FREQ=.</span>}
           </label>
         )}
         <input
@@ -486,7 +486,7 @@ export function CalendarEventForm({
         />
         <CalendarParticipantPicker accountId={selectedAccountId} recipients={participants} onChange={setParticipants} />
         {invalidParticipants.length > 0 && (
-          <div className="rounded-md border border-[var(--danger)]/35 bg-[var(--danger)]/10 px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--danger)]">
+          <div className="rounded-md border border-[var(--danger)]/35 bg-[var(--danger)]/10 px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)]">
             Invalid guest: {invalidParticipants[0]}
           </div>
         )}
@@ -500,7 +500,7 @@ export function CalendarEventForm({
           onApplySlot={applySuggestedSlot}
         />}
         <div className="grid grid-cols-2 gap-1.5">
-          <select value={reminderMinutes} onChange={event => setReminderMinutes(Number(event.target.value))} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <select value={reminderMinutes} onChange={event => setReminderMinutes(Number(event.target.value))} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <option value={-1}>Default reminder</option>
             <option value={0}>At start time</option>
             <option value={5}>5 minutes before</option>
@@ -510,28 +510,28 @@ export function CalendarEventForm({
             <option value={60}>1 hour before</option>
             <option value={1440}>1 day before</option>
           </select>
-          <select value={visibility} onChange={event => setVisibility(event.target.value as typeof visibility)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <select value={visibility} onChange={event => setVisibility(event.target.value as typeof visibility)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <option value="default">Default visibility</option>
             <option value="public">Public</option>
             <option value="private">Private</option>
             <option value="confidential">Confidential</option>
           </select>
-          <select value={transparency} onChange={event => setTransparency(event.target.value as typeof transparency)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <select value={transparency} onChange={event => setTransparency(event.target.value as typeof transparency)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <option value="opaque">Busy</option>
             <option value="transparent">Free</option>
           </select>
-          <select value={sendUpdates} onChange={event => setSendUpdates(event.target.value as typeof sendUpdates)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <select value={sendUpdates} onChange={event => setSendUpdates(event.target.value as typeof sendUpdates)} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <option value="all">Email guests</option>
             <option value="externalOnly">Email external guests only</option>
             <option value="none">Do not email guests</option>
           </select>
-          <select value={colorId} onChange={event => setColorId(event.target.value)} aria-label="Event color" className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <select value={colorId} onChange={event => setColorId(event.target.value)} aria-label="Event color" className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             <option value="">Default event color</option>
             {EVENT_COLOR_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </div>
         {proposedConflicts.length > 0 && (
-          <div className="rounded-md border border-[var(--warning)]/35 bg-[var(--warning)]/10 px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">
+          <div className="rounded-md border border-[var(--warning)]/35 bg-[var(--warning)]/10 px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--warning-solid)]">
             <div className="mb-1 flex items-center gap-1.5 font-semibold">
               <AlertTriangle className="h-3.5 w-3.5" />
               {proposedConflicts.length === 1 ? 'Schedule conflict' : `${proposedConflicts.length} schedule conflicts`}
@@ -563,7 +563,7 @@ export function CalendarEventForm({
                   ? calendarDeleteButtonLabel(true, mutationScope, deletePending || isDeleting ? (isDeleting ? 'deleting' : 'confirm') : 'idle')
                   : undefined
               }
-              className="flex items-center gap-1.5 rounded-md border border-[var(--danger)]/40 px-2 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-[var(--danger)]/40 px-2 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
             >
               <Trash2 className="h-3.5 w-3.5" />
               {calendarDeleteButtonLabel(
@@ -577,9 +577,9 @@ export function CalendarEventForm({
               type="button"
               disabled={hasExistingMeet}
               onClick={() => setAddMeet(value => !value)}
-              className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[calc(10px*var(--font-scale))] ${
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[calc(11px*var(--font-scale))] ${
                 addMeet || hasExistingMeet
-                  ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                  ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent-ink)]'
                   : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               } disabled:opacity-70`}
             >
@@ -590,21 +590,21 @@ export function CalendarEventForm({
           <button
             type="submit"
             disabled={!canSubmit || isSaving || isDeleting}
-            className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(10px*var(--font-scale))] font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] disabled:opacity-50"
           >
             {isSaving ? 'Saving...' : mode === 'edit' ? 'Save' : 'Create'}
           </button>
         </div>
         {mode === 'create' && onSaveTemplate && title.trim() && (
-          <button type="button" onClick={() => onSaveTemplate({ name: title.trim(), summary: title.trim(), durationMinutes: duration, location: location.trim() || null, recurrence: recurrence === 'custom' ? 'none' : recurrence })} className="w-fit text-[calc(9px*var(--font-scale))] font-medium text-[var(--text-tertiary)] hover:text-[var(--accent)]">Save current fields as template</button>
+          <button type="button" onClick={() => onSaveTemplate({ name: title.trim(), summary: title.trim(), durationMinutes: duration, location: location.trim() || null, recurrence: recurrence === 'custom' ? 'none' : recurrence })} className="w-fit text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-tertiary)] hover:text-[var(--accent-ink)]">Save current fields as template</button>
         )}
         {mode === 'edit' && !hasExistingMeet && (
           <button
             type="button"
             onClick={() => setAddMeet(value => !value)}
-            className={`w-fit rounded-md border px-2 py-1 text-[calc(10px*var(--font-scale))] ${
+            className={`w-fit rounded-md border px-2 py-1 text-[calc(11px*var(--font-scale))] ${
               addMeet
-                ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent-ink)]'
                 : 'border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >

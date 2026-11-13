@@ -20,7 +20,32 @@ describe('search reader behavior', () => {
     })).toBe(false);
   });
 
-  it('does not close the reader in preview pane mode', () => {
+  it('closes a conversation opened before the search, also with the reading pane beside the list', () => {
+    // Otherwise it would sit next to a highlighted result it has nothing to do with.
+    expect(shouldCloseReaderForSearchChange({
+      previousSearchQuery: '',
+      nextSearchQuery: 'invoice',
+      hasOpenedThread: true,
+      enablePreviewPane: true,
+    })).toBe(true);
+    expect(shouldCloseReaderForSearchChange({
+      previousSearchQuery: '  ',
+      nextSearchQuery: 'i',
+      hasOpenedThread: true,
+      enablePreviewPane: true,
+    })).toBe(true);
+  });
+
+  it('has nothing to close without an open conversation', () => {
+    expect(shouldCloseReaderForSearchChange({
+      previousSearchQuery: '',
+      nextSearchQuery: 'invoice',
+      hasOpenedThread: false,
+      enablePreviewPane: true,
+    })).toBe(false);
+  });
+
+  it('keeps a result open while the search is refined in preview pane mode', () => {
     expect(shouldCloseReaderForSearchChange({
       previousSearchQuery: 'jira',
       nextSearchQuery: 'jira status',

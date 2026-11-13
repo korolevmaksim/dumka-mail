@@ -8,8 +8,8 @@ function makeEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
     accountId: 'me@example.com',
     calendarId: 'primary',
     summary: 'Planning call',
-    startAt: '2026-07-02T14:00:00.000Z',
-    endAt: '2026-07-02T14:30:00.000Z',
+    startAt: new Date(2026, 6, 2, 14, 0).toISOString(),
+    endAt: new Date(2026, 6, 2, 14, 30).toISOString(),
     isAllDay: false,
     attendees: [],
     updatedAt: '2026-07-01T10:00:00.000Z',
@@ -17,18 +17,20 @@ function makeEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
   };
 }
 
-describe('calendar agenda labels', () => {
-  it('includes the clock time for timed events', () => {
-    const label = upcomingAgendaDateTimeLabel(makeEvent(), 'en-US');
+const NOW = new Date(2026, 6, 1, 9, 0);
 
-    expect(label).toContain('Thu, Jul 2');
-    expect(label).toMatch(/\d{1,2}:00\s?[AP]M - \d{1,2}:30\s?[AP]M/);
+describe('calendar agenda labels', () => {
+  it('uses the shared 24-hour vocabulary for timed events', () => {
+    const label = upcomingAgendaDateTimeLabel(makeEvent(), NOW);
+
+    expect(label).toBe('Thu, Jul 2 · 14:00–14:30');
+    expect(label).not.toMatch(/[AP]M/);
   });
 
   it('labels all-day events without a time range', () => {
-    const event = makeEvent({ isAllDay: true });
+    const event = makeEvent({ isAllDay: true, startDate: '2026-07-02', endDate: '2026-07-03' });
 
-    expect(agendaEventTime(event, 'en-US')).toBe('All day');
-    expect(upcomingAgendaDateTimeLabel(event, 'en-US')).toContain('All day');
+    expect(agendaEventTime(event, NOW)).toBe('All day');
+    expect(upcomingAgendaDateTimeLabel(event, NOW)).toBe('Thu, Jul 2 · All day');
   });
 });

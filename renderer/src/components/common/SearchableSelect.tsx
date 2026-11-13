@@ -61,7 +61,7 @@ export function SearchableSelect({
       <button
         type="button"
         onClick={() => setOpen(prev => !prev)}
-        className="dm-control w-full min-w-0 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)] flex items-center gap-1"
+        className="dm-control w-full min-w-0 bg-[var(--panel-bg)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer focus:outline focus:outline-2 focus:outline-[var(--accent)] flex items-center gap-1"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -88,12 +88,12 @@ export function SearchableSelect({
                 }
               }}
               placeholder={placeholder}
-              className="min-w-0 flex-1 bg-transparent border-0 outline-none text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
+              className="min-w-0 flex-1 bg-transparent border-0 outline-none text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
             />
           </div>
           <div role="listbox" className="max-h-[220px] overflow-y-auto py-1">
             {filteredOptions.length === 0 ? (
-              <div className="px-2 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <div className="px-2 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 {emptyLabel}
               </div>
             ) : (
@@ -105,9 +105,9 @@ export function SearchableSelect({
                   aria-selected={option === value}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => pick(option)}
-                  className="w-full min-w-0 flex items-center gap-1.5 px-2 py-1.5 text-left text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)] cursor-pointer"
+                  className="w-full min-w-0 flex items-center gap-1.5 px-2 py-1.5 text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--hover-row)] cursor-pointer"
                 >
-                  <Check className={`w-3 h-3 shrink-0 ${option === value ? 'opacity-100 text-[var(--accent)]' : 'opacity-0'}`} />
+                  <Check className={`w-3 h-3 shrink-0 ${option === value ? 'opacity-100 text-[var(--accent-ink)]' : 'opacity-0'}`} />
                   <span className="truncate">{option}</span>
                 </button>
               ))

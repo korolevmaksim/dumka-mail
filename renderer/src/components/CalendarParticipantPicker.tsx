@@ -37,7 +37,7 @@ export function CalendarParticipantPicker({ accountId, recipients, onChange }: C
         placeholder="Search contacts or enter an email"
         onChange={onChange}
       />
-      <p className="mt-1 px-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
+      <p className="mt-1 px-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
         Search contacts, groups, and people from your mail history.
       </p>
     </div>

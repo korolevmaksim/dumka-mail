@@ -21,6 +21,8 @@ import { CommandPalette } from './components/layout/CommandPalette';
 import { FloatingComposeDrawer } from './components/layout/FloatingComposeDrawer';
 import { ShortcutGuideOverlay } from './components/layout/ShortcutGuideOverlay';
 import { MailboxList } from './components/mailbox/MailboxList';
+import { ListResizeHandle } from './components/mailbox/ListResizeHandle';
+import { resolveListWidth, type ListWidthMode } from '../../shared/listLayout';
 import { MailboxListHeader } from './components/mailbox/MailboxListHeader';
 import { ClearGroupPane, DoneSummaryPane, FetchingInboxPane, PreparedPane } from './components/mailbox/ReadingAreaPanes';
 import { MoveToSectionPopover } from './components/mailbox/MoveToSectionPopover';
@@ -59,6 +61,15 @@ function AppContent() {
     thread: MailThread;
   } | null>(null);
   const narrowLayout = useMediaQuery(NARROW_MAIL_LAYOUT_QUERY);
+  // The mailbox list's width: remembered per layout, previewed live while its divider is dragged.
+  const listColumnRef = useRef<HTMLDivElement>(null);
+  const [listWidthPreview, setListWidthPreview] = useState<number | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const previousSearchQueryRef = useRef(store.searchQuery);
   const startupBehaviorAppliedRef = useRef(false);
   const selectedThreads = useMemo(
@@ -489,9 +500,13 @@ function AppContent() {
   // Esc goes back.
   const readerReplacesList = hasOpenThread && (narrowLayout || !store.enablePreviewPane);
   const showReadingArea = hasOpenThread || (store.enablePreviewPane && !narrowLayout);
+  const listWidthMode: ListWidthMode = hasOpenThread ? 'reading' : 'home';
+  const storedListWidth = listWidthMode === 'reading' ? store.settings.appearance.listWidthReading : store.settings.appearance.listWidthHome;
+  // The list and the reading area share what the window leaves after the rail.
+  const sharedWidth = Math.max(0, viewportWidth - (listColumnRef.current?.getBoundingClientRect().left ?? 0));
   const listWidth = !showReadingArea
     ? '100%'
-    : hasOpenThread ? 'clamp(320px, 30.5vw, 480px)' : 'clamp(380px, 43vw, 680px)';
+    : listWidthPreview !== null ? `${listWidthPreview}px` : resolveListWidth(storedListWidth, listWidthMode, sharedWidth);
   const inboxHome = store.mailboxView === 'inbox' && !store.searchQuery.trim() && store.accounts.length > 0;
   const idleReadingPane = !inboxHome ? null
     : store.groupViewStates.clear?.expanded ? <ClearGroupPane />
@@ -533,6 +548,7 @@ function AppContent() {
                 <>
                   {/* MAILBOX LIST */}
                   <div
+                    ref={listColumnRef}
                     className="dm-thread-list relative flex h-full shrink-0 flex-col overflow-hidden border-r border-[var(--border)]"
                     data-list-width={hasOpenThread ? 'reading' : 'home'}
                     style={{
@@ -540,6 +556,9 @@ function AppContent() {
                       display: readerReplacesList ? 'none' : 'flex',
                     }}
                   >
+                    {showReadingArea && !readerReplacesList && (
+                      <ListResizeHandle mode={listWidthMode} listRef={listColumnRef} onPreview={setListWidthPreview} />
+                    )}
                     <MailboxListHeader onOpenCommandPalette={() => setCommandPaletteOpen(true)} />
                     <MailboxList
                       onThreadContextMenu={(event, thread) => setContextMenu({ x: event.clientX, y: event.clientY, thread })}
@@ -615,7 +634,7 @@ function AppContent() {
                               type="button"
                               onClick={() => store.executeBatchMailAction('restoreFromSpam', Array.from(store.selectedThreadIds))}
                               title="Not Spam"
-                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success)] cursor-pointer transition-colors"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success-solid)] cursor-pointer transition-colors"
                             >
                               <Inbox className="w-3.5 h-3.5" />
                             </button>
@@ -624,7 +643,7 @@ function AppContent() {
                               type="button"
                               onClick={() => store.executeBatchMailAction('reportSpam', Array.from(store.selectedThreadIds))}
                               title="Move to Spam"
-                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--warning)] cursor-pointer transition-colors"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--warning-solid)] cursor-pointer transition-colors"
                             >
                               <OctagonAlert className="w-3.5 h-3.5" />
                             </button>
@@ -634,7 +653,7 @@ function AppContent() {
                               type="button"
                               onClick={() => store.executeBatchMailAction('restoreFromTrash', Array.from(store.selectedThreadIds))}
                               title="Restore from Trash"
-                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success)] cursor-pointer transition-colors"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success-solid)] cursor-pointer transition-colors"
                             >
                               <ArchiveRestore className="w-3.5 h-3.5" />
                             </button>
@@ -643,7 +662,7 @@ function AppContent() {
                               type="button"
                               onClick={() => store.executeBatchMailAction('moveToTrash', Array.from(store.selectedThreadIds))}
                               title="Move to Trash"
-                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer transition-colors"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--danger-solid)] cursor-pointer transition-colors"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -653,7 +672,7 @@ function AppContent() {
                               type="button"
                               onClick={unmuteSelectedThreads}
                               title="Unmute selected"
-                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success)] cursor-pointer transition-colors"
+                              className="p-1.5 hover:bg-[var(--border)] rounded text-[var(--text-secondary)] hover:text-[var(--success-solid)] cursor-pointer transition-colors"
                             >
                               <Bell className="w-3.5 h-3.5" />
                             </button>
@@ -702,18 +721,18 @@ function AppContent() {
       {/* 4. UNDO SEND TRANSITIONAL BANNER */}
       {store.pendingSend && (
         <div className="dm-overlay absolute bottom-8 left-1/2 -translate-x-1/2 panel-surface bg-[var(--panel-bg)] border border-[var(--warning)]/40 rounded-xl shadow-2xl px-4 py-2.5 flex items-center gap-3.5 z-50 select-none fade-in-up">
-          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[var(--warning)]/15 text-[var(--warning)]">
+          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[var(--warning)]/15 text-[var(--warning-solid)]">
             <Inbox className="w-3.5 h-3.5" />
           </span>
           <div className="flex flex-col leading-tight">
             <span className="text-[calc(12px*var(--font-scale))] font-medium text-[var(--text-primary)]">
               Sending in {store.pendingSendSeconds}s…
             </span>
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">Undo window active</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">Undo window active</span>
           </div>
           <button
             onClick={() => void store.cancelPendingSend()}
-            className="px-3 py-1.5 text-[calc(11px*var(--font-scale))] bg-[var(--warning)] text-white rounded-lg cursor-pointer font-semibold hover:opacity-90 transition-opacity"
+            className="px-3 py-1.5 text-[calc(11px*var(--font-scale))] bg-[var(--warning-fill)] text-[var(--on-accent)] rounded-lg cursor-pointer font-semibold hover:opacity-90 transition-opacity"
           >
             Cancel Send
           </button>
@@ -792,7 +811,7 @@ function AppContent() {
               store.openThread(contextMenu.thread);
               setContextMenu(null);
             }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
           >
             <MailOpenIcon className="w-3.5 h-3.5 opacity-80" />
             <span>Open Email</span>
@@ -803,7 +822,7 @@ function AppContent() {
               store.executeMailAction(contextMenu.thread.isUnread ? 'markRead' : 'markUnread', contextMenu.thread.id);
               setContextMenu(null);
             }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
           >
             <Mail className="w-3.5 h-3.5 opacity-80" />
             <span>Mark {contextMenu.thread.isUnread ? 'Read' : 'Unread'}</span>
@@ -815,7 +834,7 @@ function AppContent() {
                 store.executeMailAction('markDone', contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <CheckCircle className="w-3.5 h-3.5 opacity-80" />
               <span>Archive / Done</span>
@@ -828,7 +847,7 @@ function AppContent() {
                 store.unmuteThread(contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <Bell className="w-3.5 h-3.5 opacity-80" />
               <span>Unmute Thread</span>
@@ -839,10 +858,10 @@ function AppContent() {
                 store.muteThread(contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <BellOff className="w-3.5 h-3.5 opacity-80" />
-              <span>Ignore Thread</span>
+              <span>Ignore</span>
             </button>
           )}
 
@@ -852,7 +871,7 @@ function AppContent() {
                 store.executeMailAction('restoreFromSpam', contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <Inbox className="w-3.5 h-3.5 opacity-80" />
               <span>Not Spam</span>
@@ -863,7 +882,7 @@ function AppContent() {
                 store.executeMailAction('reportSpam', contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <OctagonAlert className="w-3.5 h-3.5 opacity-80" />
               <span>Move to Spam</span>
@@ -876,7 +895,7 @@ function AppContent() {
                 store.executeMailAction('restoreFromTrash', contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <ArchiveRestore className="w-3.5 h-3.5 opacity-80" />
               <span>Restore from Trash</span>
@@ -887,7 +906,7 @@ function AppContent() {
                 store.executeMailAction('moveToTrash', contextMenu.thread.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5 opacity-80" />
               <span>Move to Trash</span>
@@ -902,10 +921,10 @@ function AppContent() {
               store.snoozeThread(contextMenu.thread, tomorrow);
               setContextMenu(null);
             }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
           >
             <Clock className="w-3.5 h-3.5 opacity-80" />
-            <span>Remind Tomorrow</span>
+            <span>Later: tomorrow</span>
           </button>
 
           {store.mailboxView === 'inbox' && (
@@ -914,7 +933,7 @@ function AppContent() {
                 setMoveToSectionThread(contextMenu.thread);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
               <Tags className="w-3.5 h-3.5 opacity-80" />
               <span>Move to Section…</span>
@@ -931,7 +950,7 @@ function AppContent() {
               });
               setContextMenu(null);
             }}
-            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
           >
             <CornerUpLeftIcon className="w-3.5 h-3.5 opacity-80" />
             <span>Reply</span>
@@ -944,9 +963,9 @@ function AppContent() {
                 store.requestSenderRule(contextMenu.thread);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent)] hover:text-white transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 py-1.5 mx-1.5 rounded-md text-left text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:bg-[var(--accent-fill)] hover:text-[var(--on-accent)] transition-colors cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 opacity-80 text-[var(--ai-accent)] hover:text-white" />
+              <Sparkles className="w-3.5 h-3.5 opacity-80 text-[var(--ai-solid)] hover:text-white" />
               <span>Always archive from this sender…</span>
             </button>
           )}

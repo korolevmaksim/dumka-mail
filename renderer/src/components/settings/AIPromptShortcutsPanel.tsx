@@ -75,13 +75,13 @@ export function AIPromptShortcutsPanel() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5 min-w-0">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">AI Prompt Shortcuts</span>
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Reusable assistant prompts shown in the AI panel</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Reusable assistant prompts shown in the AI panel</span>
         </div>
         <button
           type="button"
           onClick={() => setDraft(emptyDraft())}
           title="New prompt shortcut"
-          className="flex h-7 items-center gap-1.5 rounded border border-[var(--border)] px-2 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+          className="flex h-7 items-center gap-1.5 rounded border border-[var(--border)] px-2 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
         >
           <Plus className="h-3.5 w-3.5" />
           New
@@ -90,7 +90,7 @@ export function AIPromptShortcutsPanel() {
 
       <div className="flex flex-col divide-y divide-[var(--border)]/50">
         {shortcuts.length === 0 ? (
-          <span className="py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">No prompt shortcuts configured.</span>
+          <span className="py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">No prompt shortcuts configured.</span>
         ) : (
           shortcuts.map(shortcut => (
             <div key={shortcut.id} className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0">
@@ -101,7 +101,7 @@ export function AIPromptShortcutsPanel() {
                     {shortcut.requiresThread ? 'Thread' : 'General'}
                   </span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-[calc(9px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
+                <p className="mt-1 line-clamp-2 text-[calc(11px*var(--font-scale))] leading-snug text-[var(--text-secondary)]">
                   {shortcut.instruction}
                 </p>
               </div>
@@ -118,7 +118,7 @@ export function AIPromptShortcutsPanel() {
                   type="button"
                   onClick={() => deleteShortcut(shortcut)}
                   title="Delete prompt shortcut"
-                  className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--danger)]"
+                  className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--danger)]/10 hover:text-[var(--danger-solid)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--danger)]"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -131,7 +131,7 @@ export function AIPromptShortcutsPanel() {
       {draft && (
         <div className="flex flex-col gap-2 border-t border-[var(--border)] pt-3">
           <div className="grid grid-cols-[120px_1fr] items-center gap-2">
-            <label className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]">Title</label>
+            <label className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]">Title</label>
             <input
               type="text"
               value={draft.title}
@@ -141,7 +141,7 @@ export function AIPromptShortcutsPanel() {
             />
           </div>
           <div className="grid grid-cols-[120px_1fr] items-start gap-2">
-            <label className="pt-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]">Prompt</label>
+            <label className="pt-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]">Prompt</label>
             <textarea
               value={draft.instruction}
               onChange={event => setDraft(current => current ? { ...current, instruction: event.target.value } : current)}
@@ -150,13 +150,13 @@ export function AIPromptShortcutsPanel() {
             />
           </div>
           <div className="grid grid-cols-[120px_1fr] items-center gap-2">
-            <span className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)]">Open thread</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]">Open thread</span>
             <div className="flex items-center gap-2">
               <Toggle
                 checked={draft.requiresThread}
                 onChange={value => setDraft(current => current ? { ...current, requiresThread: value } : current)}
               />
-              <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 {draft.requiresThread ? 'Required' : 'Not required'}
               </span>
             </div>
@@ -165,7 +165,7 @@ export function AIPromptShortcutsPanel() {
             <button
               type="button"
               onClick={() => setDraft(null)}
-              className="flex items-center gap-1.5 rounded border border-[var(--border)] px-2.5 py-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              className="flex items-center gap-1.5 rounded border border-[var(--border)] px-2.5 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)] hover:border-[var(--strong-border)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
             >
               <X className="h-3.5 w-3.5" />
               Cancel
@@ -173,7 +173,7 @@ export function AIPromptShortcutsPanel() {
             <button
               type="button"
               onClick={saveDraft}
-              className="flex items-center gap-1.5 rounded bg-[var(--accent)] px-2.5 py-1 text-[calc(10px*var(--font-scale))] font-medium text-white hover:bg-[var(--accent)]/95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              className="flex items-center gap-1.5 rounded bg-[var(--accent-fill)] px-2.5 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--on-accent)] hover:bg-[var(--accent)]/95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
             >
               <Save className="h-3.5 w-3.5" />
               Save

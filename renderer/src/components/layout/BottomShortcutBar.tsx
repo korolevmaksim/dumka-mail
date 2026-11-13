@@ -8,7 +8,7 @@ export function BottomShortcutBar() {
 
   if (store.workspaceView === 'calendar') {
     return (
-      <div className="dm-bottom-bar h-[var(--bottom-bar-h)] min-h-[24px] shrink-0 border-t border-[var(--border)] bg-[var(--rail-bg)] px-4 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+      <div className="dm-bottom-bar h-[var(--bottom-bar-h)] min-h-[24px] shrink-0 border-t border-[var(--border)] bg-[var(--rail-bg)] px-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
         <div className="flex h-full items-center gap-3.5 overflow-hidden">
           <span><kbd className="rounded bg-[var(--border)] px-1 font-mono">N</kbd> New event</span>
           <span><kbd className="rounded bg-[var(--border)] px-1 font-mono">T</kbd> Today</span>
@@ -26,7 +26,7 @@ export function BottomShortcutBar() {
   const hints = hintsForContext(ctx, store.settings.shortcuts);
 
   return (
-    <div className="dm-bottom-bar h-[var(--bottom-bar-h)] min-h-[24px] bg-[var(--rail-bg)] border-t border-[var(--border)] flex items-center justify-between px-4 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] select-none gap-4 shrink-0">
+    <div className="dm-bottom-bar h-[var(--bottom-bar-h)] min-h-[24px] bg-[var(--rail-bg)] border-t border-[var(--border)] flex items-center justify-between px-4 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] select-none gap-4 shrink-0">
       <div className="flex items-center gap-3.5 overflow-hidden">
         {hints.map((h: any, i: number) => (
           <span key={i} className="flex items-center gap-1 whitespace-nowrap shrink-0">

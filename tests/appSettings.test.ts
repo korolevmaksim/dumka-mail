@@ -173,6 +173,19 @@ describe('AppSettings defaults and migrations', () => {
     expect(merged.ai.automationModel).toBe('');
   });
 
+  it('keeps background model work off for new and upgraded installs until the user turns it on', () => {
+    expect(DEFAULT_SETTINGS.ai.backgroundSorting).toBe(false);
+    expect(DEFAULT_SETTINGS.ai.proactiveDraftsEnabled).toBe(false);
+    expect(DEFAULT_SETTINGS.ai.automationProvider).toBe('');
+    // A settings blob from a release that predates the switch.
+    const upgraded = mergeSettings({ settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1, ai: { provider: 'openAI', allowMailBodyContext: true } });
+    expect(upgraded.ai.backgroundSorting).toBe(false);
+    expect(upgraded.ai.automationProvider).toBe('');
+    // A deliberate choice survives a reload.
+    const chosen = mergeSettings({ settingsSchemaVersion: SETTINGS_SCHEMA_VERSION, ai: { backgroundSorting: true, automationProvider: 'gemini', automationModel: 'gemini-3.5-flash-lite' } });
+    expect(chosen.ai).toMatchObject({ backgroundSorting: true, automationProvider: 'gemini', automationModel: 'gemini-3.5-flash-lite' });
+  });
+
   it('preserves a user-configured automation model independently of interactive model', () => {
     const merged = mergeSettings({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,

@@ -54,13 +54,13 @@ function mailListHints(s: ShortcutSettings, isThreadOpen: boolean): ShortcutHint
   add('replyAll', 'reply all')
   add('forward', 'forward')
   add('summarize', 'summarize')
-  add('markDone', 'done')
+  add('markDone', 'archive')
   if (singleKey) add('toggleRead', 'read/unread')
   else add('markRead', 'read')
   add('compose', 'compose')
   add('searchMailbox', 'search')
   add('switchMailbox', 'mailbox')
-  add('openAiAssistant', 'ask AI')
+  add('openAiAssistant', 'Ask Dumka')
 
   const vimKeys = keymapShortcut('vimNavigation', s)
   if (vimKeys) hints.push({ keys: vimKeys, label: isThreadOpen ? 'next/prev' : 'move' })
@@ -84,7 +84,7 @@ function composeHints(s: ShortcutSettings): ShortcutHint[] {
   const sendKeys = keymapShortcut('sendDraft', s)
   if (sendKeys) hints.push({ keys: sendKeys, label: 'send' })
   const aiKeys = keymapShortcut('openAiAssistant', s)
-  if (aiKeys) hints.push({ keys: aiKeys, label: 'ask AI' })
+  if (aiKeys) hints.push({ keys: aiKeys, label: 'Ask Dumka' })
   const paletteKeys = keymapShortcut('commandPalette', s)
   if (paletteKeys) hints.push({ keys: paletteKeys, label: 'commands' })
   const dismissKeys = keymapShortcut('dismiss', s)
@@ -104,7 +104,7 @@ function searchHints(s: ShortcutSettings): ShortcutHint[] {
   const openKeys = keymapShortcut('openThread', s)
   if (openKeys) hints.push({ keys: barShortcutKeys(openKeys, singleKey), label: 'open' })
   const aiKeys = keymapShortcut('openAiAssistant', s)
-  if (aiKeys) hints.push({ keys: aiKeys, label: 'ask AI' })
+  if (aiKeys) hints.push({ keys: aiKeys, label: 'Ask Dumka' })
   const vimKeys = keymapShortcut('vimNavigation', s)
   if (vimKeys) hints.push({ keys: vimKeys, label: 'move' })
   const paletteKeys = keymapShortcut('commandPalette', s)
@@ -187,7 +187,7 @@ function removalPriority(hint: ShortcutHint): number {
   ) {
     return 0
   }
-  if (k === 'E' && l === 'mark done') return 100
+  if (k === 'E' && l === 'archive') return 100
   if (k === 'J/K' && (l === 'move' || l === 'next/prev')) return 90
   if ((k === '⌘⇧F' || k === '⌘⇧F/F' || k === 'F') && l === 'forward') return 45
   if ((k === '⌘⇧R' || k === '⌘⇧R/A' || k === 'A') && l === 'reply all') return 40

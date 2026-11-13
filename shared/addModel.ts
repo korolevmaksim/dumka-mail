@@ -26,6 +26,14 @@ export function hasStoredKey(env: Record<string, string>, provider: Configurable
   return Boolean(value && value.trim());
 }
 
+/** True when the provider can be called: a key is stored, or (local endpoints) a server address is. */
+export function providerIsSetUp(env: Record<string, string>, provider: ConfigurableAIProvider): boolean {
+  const config = AI_PROVIDER_CONFIGS[provider];
+  if (config.requiresApiKeyForModels && !hasStoredKey(env, provider)) return false;
+  if (config.requiresBaseUrlForModels && !(env[config.baseUrlEnv] || '').trim()) return false;
+  return true;
+}
+
 /** Returns a sentence for the first missing field, or null when the input can be tested or saved. */
 export function validateAddModelInput(input: AddModelInput, keyAlreadyStored: boolean): string | null {
   const config = AI_PROVIDER_CONFIGS[input.provider];
@@ -38,6 +46,14 @@ export function validateAddModelInput(input: AddModelInput, keyAlreadyStored: bo
     if (!/^https?:\/\/\S+$/i.test(url)) return 'The server address must start with http:// or https://.';
   }
   return null;
+}
+
+/** Shown when Save is pressed without a model: nothing is built in, so one has to be chosen. */
+export const CHOOSE_MODEL_MESSAGE = 'Choose a model from the list, then press Save.';
+
+/** True when the form names a model to save (or one is already saved for the provider). */
+export function hasModelChoice(input: AddModelInput, env: Record<string, string>): boolean {
+  return Boolean(input.model.trim() || (env[AI_PROVIDER_CONFIGS[input.provider].modelEnv] || '').trim());
 }
 
 /** The key to send to the provider check: a typed key, else the stored-key placeholder main resolves itself. */

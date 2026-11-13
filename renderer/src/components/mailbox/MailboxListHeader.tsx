@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronDown, Command, SquarePen } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
+import { retryModel } from '../../stores/useAgentPrep';
 import { composeOrConnectAccount } from '../../lib/composeOrConnect';
 import { keymapShortcut } from '../../../../shared/appKeymap';
 import { MAILBOX_VIEW_LABELS, MAILBOX_VIEW_ORDER } from '../../../../shared/mailboxNavigation';
@@ -12,14 +13,16 @@ interface MailboxListHeaderProps {
   onOpenCommandPalette: () => void;
 }
 
-/** "Inbox  28 left · Basic sorting" plus the mailbox switcher (replaces the split tab bar). */
+/** "Inbox  28 left · Sorted by rules" plus the mailbox switcher (replaces the split tab bar). */
 export function MailboxListHeader({ onOpenCommandPalette }: MailboxListHeaderProps) {
   const store = useAppStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const view = store.mailboxView;
-  const label = MAILBOX_VIEW_LABELS[view];
+  // In the unified view the title says so: the rows then carry an account marker each.
+  const unified = store.activeAccount?.id === 'unified' && store.accounts.length > 1;
+  const label = unified && view === 'inbox' ? 'All inboxes' : unified ? `${MAILBOX_VIEW_LABELS[view]} · all accounts` : MAILBOX_VIEW_LABELS[view];
   const composeShortcut = keymapShortcut('compose', store.settings.shortcuts) || '⌘N';
   const countFor = (id: MailboxView) => (id === 'drafts' ? store.draftsList.length : store.mailboxCounts[id] || 0);
 
@@ -102,7 +105,7 @@ export function MailboxListHeader({ onOpenCommandPalette }: MailboxListHeaderPro
               title="Switch mailbox (G / ⇧G)"
               className="dm-mailbox-switcher -ml-1.5 flex items-center gap-1.5 rounded-[var(--control-radius)] px-1.5 py-1 font-semibold hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
             >
-              <ActiveIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+              <ActiveIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]" />
               <span>{label}</span>
               <ChevronDown aria-hidden="true" className="h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />
             </button>
@@ -139,7 +142,7 @@ export function MailboxListHeader({ onOpenCommandPalette }: MailboxListHeaderPro
                       <span className="truncate">{MAILBOX_VIEW_LABELS[id]}</span>
                     </span>
                     {count > 0 && (
-                      <span className="shrink-0 tabular-nums text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{count}</span>
+                      <span className="shrink-0 tabular-nums text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{count}</span>
                     )}
                   </button>
                 );
@@ -151,9 +154,23 @@ export function MailboxListHeader({ onOpenCommandPalette }: MailboxListHeaderPro
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {store.sectioned && !store.hasModel && (
-          <span data-basic-sorting className="mr-1 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]" title="No model is configured: sections come from local rules only.">
-            Basic sorting
+        {store.sectioned && store.modelSortingPaused && (
+          <span data-model-sorting-paused role="status" className="mr-1 inline-flex min-w-0 items-center gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+            <span className="truncate" title="The model did not answer, so sections come from rules on this Mac for now. Nothing in your mail changed.">
+              Model not answering · sorted by rules
+            </span>
+            <button
+              type="button"
+              onClick={() => retryModel()}
+              className="shrink-0 cursor-pointer rounded-[var(--control-radius)] border border-[var(--control-border)] px-1.5 py-0.5 font-semibold text-[var(--text-primary)] hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+            >
+              Retry
+            </button>
+          </span>
+        )}
+        {store.sectioned && !store.hasModel && !store.modelSortingPaused && (
+          <span data-basic-sorting className="mr-1 truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]" title="Sections come from rules on this Mac. Background sorting with a model is off or not set up (Settings → AI model).">
+            Sorted by rules
           </span>
         )}
         <button

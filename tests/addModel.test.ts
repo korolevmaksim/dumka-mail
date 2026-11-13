@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   addModelConfigEntries,
   describeModelConnectionError,
+  hasModelChoice,
   hasStoredKey,
   keyForConnectionTest,
+  providerIsSetUp,
   validateAddModelInput,
   type AddModelInput,
 } from '../shared/addModel';
@@ -43,6 +45,23 @@ describe('add a model', () => {
   it('detects a stored key from the masked renderer config', () => {
     expect(hasStoredKey({ OPENAI_API_KEY: AI_SECRET_STORED_PLACEHOLDER }, 'openAI')).toBe(true);
     expect(hasStoredKey({}, 'openAI')).toBe(false);
+  });
+
+  it('needs a model chosen in the form or already saved for the provider: none is built in', () => {
+    expect(hasModelChoice(input(), {})).toBe(false);
+    expect(hasModelChoice(input({ model: '  ' }), {})).toBe(false);
+    expect(hasModelChoice(input({ model: 'chosen-model' }), {})).toBe(true);
+    expect(hasModelChoice(input(), { ANTHROPIC_MODEL: 'saved-model' })).toBe(true);
+    // A model saved for another provider does not count.
+    expect(hasModelChoice(input(), { OPENAI_MODEL: 'saved-model' })).toBe(false);
+  });
+
+  it('knows which providers can be called', () => {
+    expect(providerIsSetUp({ OPENAI_API_KEY: AI_SECRET_STORED_PLACEHOLDER }, 'openAI')).toBe(true);
+    expect(providerIsSetUp({}, 'openAI')).toBe(false);
+    // A local server needs its address, not a key.
+    expect(providerIsSetUp({}, 'openAICompatible')).toBe(false);
+    expect(providerIsSetUp({ OPENAI_COMPATIBLE_BASE_URL: 'http://localhost:11434/v1' }, 'openAICompatible')).toBe(true);
   });
 
   it('turns provider failures into sentences without echoing the raw error', () => {

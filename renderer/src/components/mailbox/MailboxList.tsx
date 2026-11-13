@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { buildAccountTags, type AccountTag } from '../../../../shared/accountTags';
 import { BellOff, FileText, Inbox, OctagonAlert, Send, Clock, Hourglass, Archive, Trash2 } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
 import { useInviteRsvp } from '../../hooks/useInviteRsvp';
@@ -60,6 +61,11 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
   const accountNames = useMemo(
     () => new Map(store.accounts.map(account => [account.email, account.displayName] as const)),
     [store.accounts],
+  );
+  // Rows carry an account marker only where accounts are mixed.
+  const accountTags = useMemo(
+    () => (store.activeAccount?.id === 'unified' ? buildAccountTags(store.accounts.map(account => account.email)) : new Map<string, AccountTag>()),
+    [store.accounts, store.activeAccount?.id],
   );
   const listRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ scrollTop: 0, height: 0 });
@@ -144,6 +150,25 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
     // arrive; once it has scrolled, list updates are no-ops here.
   }, [targetThreadId, store.mailboxView, layoutReady, items]);
 
+  // Opening a group for review brings its header to the top of the list, so
+  // the conversations the action covers are on screen next to the explanation.
+  const expandedGroups = (['clear', 'unsubscribe'] as const).filter(decision => store.groupViewStates[decision]?.expanded).join(',');
+  const previousExpandedGroups = useRef(expandedGroups);
+  useEffect(() => {
+    const before = new Set(previousExpandedGroups.current.split(',').filter(Boolean));
+    previousExpandedGroups.current = expandedGroups;
+    const opened = expandedGroups.split(',').filter(Boolean).find(decision => !before.has(decision));
+    const element = listRef.current;
+    if (!opened || !element) return;
+    const layout = layoutRef.current;
+    const headerIndex = layout.items.findIndex(item => item.kind === 'sectionHeader' && item.decision === opened);
+    if (headerIndex === -1) return;
+    const next = Math.max(0, Math.min(layout.offsets.offsets[headerIndex] ?? 0, element.scrollHeight - element.clientHeight));
+    element.scrollTop = next;
+    setViewport(prev => ({ ...prev, scrollTop: next }));
+    // `items` so the scroll runs once the expanded rows are laid out.
+  }, [expandedGroups, items]);
+
   const virtualWindow = useMemo(() => calculateVariableVirtualWindow({
     index: offsets,
     viewportHeight: viewport.height || 600,
@@ -180,6 +205,11 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
   };
 
   const hints = useMemo(() => actionKeyHints(store.settings.shortcuts), [store.settings.shortcuts]);
+  // "All to tomorrow 09:00" in the Later header already says what each row's chip would repeat.
+  const laterTimeInHeader = useMemo(() => {
+    const later = store.decisionSections.find(section => section.decision === 'later');
+    return Boolean(later && later.entries.length > 0 && laterSectionActionLabel(later.entries) !== 'All to their suggested times');
+  }, [store.decisionSections]);
   const sectionAction = (decision: Decision, entries: DecisionEntry[], collapsed: boolean): SectionAction | undefined => {
     const first = entries[0]?.thread;
     switch (decision) {
@@ -227,6 +257,7 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
             count={item.count}
             height={height}
             action={sectionAction(item.decision, item.entries, false)}
+            includedCount={item.decision === 'clear' ? store.clearBatchThreads.length : undefined}
             collapsible={isCollapsibleSection(item.decision)}
             onCollapse={() => store.toggleSectionGroup(item.decision, false)}
           />
@@ -264,6 +295,7 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
                 isSelectionModeActive={store.selectedThreadIds.size > 0}
                 isSemanticMatch={store.semanticMatchThreadIds.has(thread.id)}
                 accountName={accountNames.get(thread.accountId)}
+            accountTag={accountTags.get(thread.accountId)}
                 positionInSet={item.position}
                 setSize={threadRowCount}
                 onClick={() => openThread(thread)}
@@ -302,6 +334,8 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
               onThreadContextMenu(event, thread);
             }}
             accountName={accountNames.get(thread.accountId)}
+            accountTag={accountTags.get(thread.accountId)}
+            laterTimeInHeader={laterTimeInHeader}
             rsvp={threadNeedsInviteAnswer(thread) ? {
               calendarConnected: inviteRsvp.calendarConnected(thread.accountId),
               busy: inviteRsvp.isBusy(thread),

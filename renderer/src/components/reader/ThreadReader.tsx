@@ -202,7 +202,7 @@ export function ThreadReader({ thread, readerReplacesList, find, onOpenReminder,
             className="w-48 border-0 bg-transparent text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none placeholder-[var(--text-tertiary)]"
           />
           {find.query && (
-            <span className="shrink-0 border-r border-[var(--border)] px-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-tertiary)]" role="status">
+            <span className="shrink-0 border-r border-[var(--border)] px-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-tertiary)]" role="status">
               {find.matchesCount > 0 ? `${find.activeIndex + 1} of ${find.matchesCount}` : '0 of 0'}
             </span>
           )}

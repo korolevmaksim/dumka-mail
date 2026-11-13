@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { agentDraftApplies, createBoundedIdSet, resolveReplyDockMode, shouldOfferPreparedDraft, type ReplyDockInput } from '../renderer/src/lib/replyDockState';
+import {
+  canDraftOnRequest,
+  createBoundedIdSet,
+  draftPreparedInAdvance,
+  resolveReplyDockMode,
+  shouldOfferPreparedDraft,
+  type ReplyDockInput,
+} from '../renderer/src/lib/replyDockState';
 
 const idleDraft = { status: 'idle' as const, bodyPlain: '' };
 const readyDraft = { status: 'ready' as const, bodyPlain: 'Hi Priya,\n\nThursday the 24th works.' };
+/** The default setup: a model is connected, nothing is prepared in advance. */
 const base: ReplyDockInput = {
   hasMessages: true,
   inlineDraftActive: false,
@@ -11,27 +19,46 @@ const base: ReplyDockInput = {
   modelStatus: 'ok',
   decision: 'reply',
   agentDraft: idleDraft,
+  draftsInAdvance: false,
 };
 
 describe('resolveReplyDockMode', () => {
-  it('shows nothing agent-related without a model', () => {
+  it('shows nothing from the model without a model', () => {
     expect(resolveReplyDockMode({ ...base, modelStatus: 'none', agentDraft: readyDraft })).toBe('idle');
-    expect(agentDraftApplies('none', 'reply')).toBe(false);
+    expect(resolveReplyDockMode({ ...base, modelStatus: 'none', draftsInAdvance: true, agentDraft: readyDraft })).toBe('idle');
   });
 
-  it('walks through preparing, prepared and unavailable', () => {
+  it('stays a plain reply strip until a draft is asked for', () => {
+    expect(resolveReplyDockMode(base)).toBe('idle');
+    expect(resolveReplyDockMode({ ...base, decision: 'people' })).toBe('idle');
+    // A model that failed elsewhere (chat) does not turn every thread into "Draft unavailable".
+    expect(resolveReplyDockMode({ ...base, modelStatus: 'unreachable' })).toBe('idle');
+    expect(resolveReplyDockMode({ ...base, modelStatus: 'unreachable', decision: 'people' })).toBe('idle');
+  });
+
+  it('walks through writing, written and unavailable once a draft was asked for', () => {
     expect(resolveReplyDockMode({ ...base, agentDraft: { status: 'loading', bodyPlain: '' } })).toBe('preparing');
     expect(resolveReplyDockMode({ ...base, agentDraft: readyDraft })).toBe('prepared');
     expect(resolveReplyDockMode({ ...base, agentDraft: { status: 'error', bodyPlain: '' } })).toBe('unavailable');
-    expect(resolveReplyDockMode({ ...base, modelStatus: 'unreachable', decision: 'people' })).toBe('unavailable');
     expect(resolveReplyDockMode({ ...base, agentDraft: { status: 'ready', bodyPlain: '  ' } })).toBe('idle');
   });
 
-  it('only prepares drafts for threads that need a reply', () => {
-    expect(resolveReplyDockMode({ ...base, decision: 'read', agentDraft: readyDraft })).toBe('idle');
+  it('a draft asked for on any thread is shown, whatever its section', () => {
+    expect(resolveReplyDockMode({ ...base, decision: 'read', agentDraft: readyDraft })).toBe('prepared');
+    expect(resolveReplyDockMode({ ...base, decision: null, agentDraft: { status: 'loading', bodyPlain: '' } })).toBe('preparing');
+    // Asked for while the model status still says unreachable: the new request is what shows.
+    expect(resolveReplyDockMode({ ...base, modelStatus: 'unreachable', agentDraft: { status: 'loading', bodyPlain: '' } })).toBe('preparing');
   });
 
-  it('the user’s own draft wins over the prepared one', () => {
+  it('with drafts in advance, an unreachable model is reported on threads that need a reply', () => {
+    const advance = { ...base, draftsInAdvance: true };
+    expect(resolveReplyDockMode({ ...advance, modelStatus: 'unreachable' })).toBe('unavailable');
+    expect(resolveReplyDockMode({ ...advance, modelStatus: 'unreachable', decision: 'people' })).toBe('unavailable');
+    expect(resolveReplyDockMode({ ...advance, modelStatus: 'unreachable', decision: 'read' })).toBe('idle');
+    expect(resolveReplyDockMode(advance)).toBe('idle');
+  });
+
+  it('the user’s own draft wins over the model’s', () => {
     expect(resolveReplyDockMode({ ...base, inlineDraftActive: true, agentDraft: readyDraft })).toBe('editing');
     expect(resolveReplyDockMode({ ...base, savedDraft: true, agentDraft: readyDraft })).toBe('saved');
     expect(resolveReplyDockMode({ ...base, floatingDraftActive: true })).toBe('floating');
@@ -39,13 +66,33 @@ describe('resolveReplyDockMode', () => {
   });
 });
 
+describe('draftPreparedInAdvance', () => {
+  it('is off unless the account turned drafts in advance on', () => {
+    expect(draftPreparedInAdvance('ok', 'reply', false)).toBe(false);
+    expect(draftPreparedInAdvance('ok', 'reply', true)).toBe(true);
+    expect(draftPreparedInAdvance('none', 'reply', true)).toBe(false);
+    expect(draftPreparedInAdvance('ok', 'read', true)).toBe(false);
+    expect(draftPreparedInAdvance('unreachable', 'people', true)).toBe(true);
+  });
+});
+
+describe('canDraftOnRequest', () => {
+  it('needs a model and an account that lets mail text reach it', () => {
+    expect(canDraftOnRequest('ok', true)).toBe(true);
+    expect(canDraftOnRequest('unreachable', true)).toBe(true);
+    expect(canDraftOnRequest('none', true)).toBe(false);
+    expect(canDraftOnRequest('ok', false)).toBe(false);
+  });
+});
+
 describe('shouldOfferPreparedDraft', () => {
   it('offers a late draft instead of overwriting the editor', () => {
-    const input = { mode: 'editing' as const, modelStatus: 'ok' as const, decision: 'reply' as const, agentDraft: readyDraft, draftCameFromAgent: false };
+    const input = { mode: 'editing' as const, modelStatus: 'ok' as const, agentDraft: readyDraft, draftCameFromAgent: false };
     expect(shouldOfferPreparedDraft(input)).toBe(true);
     expect(shouldOfferPreparedDraft({ ...input, draftCameFromAgent: true })).toBe(false);
     expect(shouldOfferPreparedDraft({ ...input, mode: 'prepared' })).toBe(false);
     expect(shouldOfferPreparedDraft({ ...input, agentDraft: { status: 'loading', bodyPlain: '' } })).toBe(false);
+    expect(shouldOfferPreparedDraft({ ...input, modelStatus: 'none' })).toBe(false);
   });
 });
 

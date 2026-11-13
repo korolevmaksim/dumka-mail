@@ -2,12 +2,14 @@ import { useId, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useAppStore } from '../../../stores/AppStore';
 import { AddModelForm } from '../AddModelSheet';
+import { BackgroundWorkSection } from '../BackgroundWorkSection';
 import { AISettingsTab } from './AISettingsTab';
-import { isAIProviderUnavailable } from '../../../../../shared/aiErrors';
+import { isAIModelMissing, isAIProviderUnavailable } from '../../../../../shared/aiErrors';
 
 /**
- * Settings → AI model: the short "Add a model" form first; the existing long
- * AI configuration stays intact below a `More options` disclosure.
+ * Settings → AI model: the short "Add a model" form first, then the opt-in
+ * background work with its own model; the existing long AI configuration
+ * stays intact below a `More options` disclosure.
  */
 export function AIModelTab() {
   const store = useAppStore();
@@ -24,15 +26,19 @@ export function AIModelTab() {
         <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           {!descriptor
             ? 'Connect a provider with your own API key.'
-            : connected
+            : isAIModelMissing(descriptor)
+              ? `A key for ${descriptor.displayName} is saved, but no model is chosen. Choose one below: Dumka has no built-in model.`
+              : connected
               ? `Using ${descriptor.displayName}${descriptor.model ? ` · ${descriptor.model}` : ''}. Add a different provider or key below.`
-              : 'No model yet. Without one, Dumka sorts mail on this Mac by rules only.'}
+              : 'No model yet. Dumka sorts mail on this Mac by rules; summaries, drafts and Ask Dumka need a model.'}
         </p>
       </div>
 
       <section aria-labelledby={headingId} className="rounded-lg border border-[var(--border)] bg-[var(--rail-bg)] p-4">
         <AddModelForm />
       </section>
+
+      <BackgroundWorkSection />
 
       <div className="flex flex-col gap-3">
         <button

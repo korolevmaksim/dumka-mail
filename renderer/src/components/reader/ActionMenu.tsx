@@ -191,7 +191,7 @@ export function ActionMenu({ label, items, children, triggerClassName, triggerTi
                     item.disabled
                       ? 'cursor-default text-[var(--text-tertiary)]'
                       : item.tone === 'danger'
-                        ? 'text-[var(--danger)] hover:bg-[var(--hover-row)]'
+                        ? 'text-[var(--danger-solid)] hover:bg-[var(--hover-row)]'
                         : 'text-[var(--text-primary)] hover:bg-[var(--hover-row)]'
                   }`}
                 >

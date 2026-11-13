@@ -34,11 +34,11 @@ export interface SettingsNavItem {
 }
 
 export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
-  { id: 'appearance', section: 'App', name: 'Appearance', keywords: 'theme density dark light font scale accent style' },
-  { id: 'shortcuts', section: 'App', name: 'Shortcuts', keywords: 'keyboard keymap keys superhuman gmail vim' },
+  { id: 'appearance', section: 'App', name: 'Appearance', keywords: 'theme density spacing dark light font text size scale accent color style reading pane message width pictures avatars translucent' },
+  { id: 'shortcuts', section: 'App', name: 'Shortcuts', keywords: 'keyboard keymap keys single-key command palette archive later superhuman gmail apple mail vim j k' },
   { id: 'ai', section: 'App', name: 'AI model', keywords: 'ai openai anthropic gemini model provider api key add a model embeddings' },
-  { id: 'privacy', section: 'App', name: 'Privacy and data', keywords: 'privacy images keychain remote cache disconnect updates' },
-  { id: 'about', section: 'App', name: 'About', keywords: 'version' },
+  { id: 'privacy', section: 'App', name: 'Privacy and data', keywords: 'privacy pictures images keychain remote search logs cache disconnect' },
+  { id: 'about', section: 'App', name: 'About', keywords: 'version app updates update speed offline' },
   { id: 'accounts', section: 'Advanced', name: 'Connected accounts', keywords: 'gmail connect onboard contacts credentials' },
   { id: 'profile', section: 'Advanced', name: 'Profile', keywords: 'name role company timezone' },
   { id: 'inbox', section: 'Advanced', name: 'Inbox', keywords: 'split purchases linkedin automation follow-up reminders' },

@@ -8,6 +8,9 @@
  * when both are empty — callers pass undefined as the completeAI override).
  */
 
+import { isConfigurableAIProvider } from './aiProviders';
+import type { AIProviderPreference } from './types';
+
 export type AIModelPurpose = 'interactive' | 'automation';
 
 export interface AIModelPurposeSettings {
@@ -49,4 +52,32 @@ export function resolveAIModelForPurpose(
  */
 export function hasDedicatedAutomationModel(settings: AIModelPurposeSettings): boolean {
   return Boolean(trimModel(settings.automationModel));
+}
+
+export interface BackgroundModelRouteInput extends AIModelPurposeSettings {
+  /** The provider preference used for everything else (`ai.provider`). */
+  provider: AIProviderPreference;
+  /** `ai.automationProvider`; anything that is not a configurable provider means "follow `provider`". */
+  automationProvider?: unknown;
+}
+
+export interface BackgroundModelRoute {
+  preference: AIProviderPreference;
+  /** Undefined → the provider's own configured / default model. */
+  overrideModel: string | undefined;
+  /** True when background work runs on a provider chosen for it. */
+  dedicated: boolean;
+}
+
+/**
+ * Provider and model for unattended work (sorting, drafts in advance).
+ * With a provider chosen for background work, only `automationModel` applies:
+ * the interactive model id belongs to another provider and is never borrowed.
+ */
+export function resolveBackgroundModelRoute(input: BackgroundModelRouteInput): BackgroundModelRoute {
+  const chosen = input.automationProvider;
+  if (typeof chosen === 'string' && isConfigurableAIProvider(chosen)) {
+    return { preference: chosen, overrideModel: trimModel(input.automationModel) || undefined, dedicated: true };
+  }
+  return { preference: input.provider, overrideModel: resolveAIModelForPurpose('automation', input), dedicated: false };
 }

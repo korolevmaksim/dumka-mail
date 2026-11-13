@@ -90,11 +90,19 @@ interface Harness {
   published: { channel: string; payload: unknown }[];
   setCompletion(next: Completion): void;
   setMayReadMail(value: boolean): void;
+  /** Replaces the stored `ai` settings on top of `{ provider: 'openAI' }`. */
+  setAI(next: Record<string, unknown>): void;
+  resolved: { preference: string; overrideModel?: string }[];
   decisions: ThreadDecisionRecord[];
 }
 
+/** Background sorting and drafts in advance switched on: what most tests below exercise. */
+const BACKGROUND_ON = { backgroundSorting: true, proactiveDraftsEnabled: true };
+
 function harness(threads: MailThread[] = Array.from({ length: 30 }, (_, index) => personThread(index))): Harness {
   let mayRead = true;
+  let ai: Record<string, unknown> = BACKGROUND_ON;
+  const resolved: Harness['resolved'] = [];
   let completion: Completion = async () => ({ text: '{"items":[]}', model: 'test-model', provider: 'openAI' });
   const completions: Harness['completions'] = [];
   const upserts: ThreadDecisionRecord[][] = [];
@@ -103,7 +111,7 @@ function harness(threads: MailThread[] = Array.from({ length: 30 }, (_, index) =
   let idCounter = 0;
   const byId = new Map(threads.map(thread => [thread.id, thread]));
   const deps: AgentPrepDeps = {
-    readSettings: () => ({ ai: { provider: 'openAI' }, accountOverrides: { [ACCOUNT]: { modelMayReadMail: mayRead } } }),
+    readSettings: () => ({ ai: { provider: 'openAI', ...ai }, accountOverrides: { [ACCOUNT]: { modelMayReadMail: mayRead } } }),
     listAccounts: () => [{ email: ACCOUNT, displayName: 'Alex Morgan' }],
     inboxSnapshot: async (_accountId, limit) => ({ threads: threads.slice(0, limit), decisions: [...decisions] }),
     listMessagesForThread: async (_accountId, threadId) => {
@@ -123,7 +131,10 @@ function harness(threads: MailThread[] = Array.from({ length: 30 }, (_, index) =
     saveSummary: () => undefined,
     metadataContext: async (_accountId, threadId) => `METADATA ONLY for ${threadId}`,
     buildChatPrompt: request => ({ system: 'chat', user: `${request.context}\n${request.userInstruction}` }),
-    resolveTextProvider: async () => ({ preference: 'openAI', model: 'test-model', status: 'Configured' } as unknown as AIProviderDescriptor),
+    resolveTextProvider: async (preference, overrideModel) => {
+      resolved.push({ preference, overrideModel });
+      return { preference, model: overrideModel || 'test-model', status: 'Configured' } as unknown as AIProviderDescriptor;
+    },
     completeText: (prompt, options) => {
       completions.push({ prompt, options });
       return completion(prompt, options);
@@ -141,6 +152,8 @@ function harness(threads: MailThread[] = Array.from({ length: 30 }, (_, index) =
     decisions,
     setCompletion: next => { completion = next; },
     setMayReadMail: value => { mayRead = value; },
+    setAI: next => { ai = next; },
+    resolved,
   };
 }
 
@@ -180,6 +193,154 @@ describe('agent prep: gates', () => {
     expect(await prep.requestThreadSummary(ACCOUNT, 't00', 'req-1')).toEqual({ status: 'skipped' });
     expect(await prep.requestAgentDraft(ACCOUNT, 't00', 'req-2')).toEqual({ status: 'skipped' });
     expect(h.completions).toHaveLength(0);
+  });
+
+  it('does no background work until background sorting is turned on', async () => {
+    const h = harness();
+    h.setAI({});
+    h.setCompletion(answerAll());
+    const prep = service(h);
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(0);
+    expect(await prep.runAccountNow(ACCOUNT, 'manual')).toBe(0);
+    expect(h.completions).toHaveLength(0);
+    expect(h.upserts).toHaveLength(0);
+
+    // What the user asks for still works.
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' }));
+    expect(await prep.requestAgentDraft(ACCOUNT, 't00', 'req-1')).toMatchObject({ status: 'ready' });
+    expect(h.completions).toHaveLength(1);
+
+    h.setAI({ backgroundSorting: true });
+    h.setCompletion(answerAll());
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBeGreaterThan(0);
+  });
+
+  it('an account can keep background sorting off while the app default is on', async () => {
+    const h = harness();
+    h.deps.readSettings = () => ({
+      ai: { provider: 'openAI', backgroundSorting: true },
+      accountOverrides: { [ACCOUNT]: { modelMayReadMail: true, backgroundSorting: false } },
+    });
+    h.setCompletion(answerAll());
+    expect(await service(h).runAccountNow(ACCOUNT, 'sync')).toBe(0);
+    expect(h.completions).toHaveLength(0);
+  });
+
+  it('sorts in the background without preparing drafts unless drafts in advance are on', async () => {
+    const thread = personThread(0);
+    const h = harness([thread]);
+    h.decisions.push({
+      accountId: ACCOUNT, threadId: thread.id, lastMessageId: thread.signals!.lastMessageId, decision: 'reply',
+      reason: 'Asks a question', source: 'model', laterAt: null, model: 'test-model', createdAt: new Date(BASE_TIME).toISOString(),
+    });
+    h.setAI({ backgroundSorting: true });
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' }));
+    const prep = service(h);
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(0);
+    expect(h.published.some(event => event.channel === 'api:agentDraftReady')).toBe(false);
+
+    // Drafts in advance alone are not enough either: they need background sorting.
+    h.setAI({ proactiveDraftsEnabled: true });
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(0);
+
+    h.setAI(BACKGROUND_ON);
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(1);
+    expect(h.published.some(event => event.channel === 'api:agentDraftReady')).toBe(true);
+  });
+
+  it('stops a pass between batches when background sorting is turned off', async () => {
+    const h = harness();
+    h.setCompletion(async (prompt, options) => {
+      h.setAI({});
+      return answerAll()(prompt, options);
+    });
+    expect(await service(h).runAccountNow(ACCOUNT, 'sync')).toBe(1);
+    expect(h.upserts).toHaveLength(1);
+  });
+
+  it('runs background work on its own provider and model, and chat on the main one', async () => {
+    const h = harness();
+    h.setAI({ ...BACKGROUND_ON, globalDefaultModel: 'main-model', automationProvider: 'gemini', automationModel: 'small-model' });
+    h.setCompletion(answerAll());
+    const prep = service(h);
+    await prep.runAccountNow(ACCOUNT, 'sync');
+    expect(h.completions[0].options).toMatchObject({ preference: 'gemini', overrideModel: 'small-model' });
+
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'main-model', provider: 'openAI' }));
+    await prep.requestAgentDraft(ACCOUNT, 't29', 'req-1');
+    expect(h.completions[h.completions.length - 1].options).toMatchObject({ preference: 'openAI', overrideModel: 'main-model' });
+  });
+
+  it('never borrows the main model id for a different background provider', async () => {
+    const h = harness();
+    h.setAI({ ...BACKGROUND_ON, globalDefaultModel: 'main-model', automationProvider: 'deepSeek', automationModel: '  ' });
+    h.setCompletion(answerAll());
+    await service(h).runAccountNow(ACCOUNT, 'sync');
+    expect(h.completions[0].options.preference).toBe('deepSeek');
+    expect(h.completions[0].options.overrideModel).toBeUndefined();
+  });
+
+  it('a background provider that is not set up leaves the main model status alone', async () => {
+    const h = harness();
+    h.setAI({ ...BACKGROUND_ON, automationProvider: 'gemini' });
+    const resolve = h.deps.resolveTextProvider;
+    h.deps.resolveTextProvider = async (preference, overrideModel) => (preference === 'gemini' ? null : resolve(preference, overrideModel));
+    const prep = service(h);
+    await prep.requestThreadSummary(ACCOUNT, 't00', 'req-1');
+    expect(prep.getModelStatus()).toBe('ok');
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(0);
+    expect(prep.getModelStatus()).toBe('ok');
+  });
+
+  it('a failing background provider backs off without reporting the main model as unreachable', async () => {
+    const h = harness();
+    h.setAI({ ...BACKGROUND_ON, automationProvider: 'openAICompatible', automationModel: 'local-small' });
+    h.setCompletion(async (_prompt, options) => {
+      if (options.preference === 'openAICompatible') throw new ModelRequestError('network', 'openAICompatible', 'connect ECONNREFUSED');
+      return { text: 'Thanks, the 24th works for me.', model: 'main-model', provider: 'openAI' };
+    });
+    const prep = service(h);
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(1);
+    expect(prep.getModelStatus()).not.toBe('unreachable');
+    expect(h.published.some(event => event.payload === 'unreachable')).toBe(false);
+    // Backed off: the next sync does not hammer the dead server…
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBe(0);
+    // …a manual retry does try again, and what the user asks for still works.
+    expect(await prep.runAccountNow(ACCOUNT, 'manual')).toBe(1);
+    expect(await prep.requestAgentDraft(ACCOUNT, 't00', 'req-1')).toMatchObject({ status: 'ready' });
+  });
+
+  it('a working background provider does not make a missing main model look set up', async () => {
+    const h = harness();
+    h.setAI({ ...BACKGROUND_ON, automationProvider: 'gemini', automationModel: 'small-model' });
+    const resolve = h.deps.resolveTextProvider;
+    h.deps.resolveTextProvider = async (preference, overrideModel) => (preference === 'gemini' ? resolve(preference, overrideModel) : null);
+    h.setCompletion(answerAll());
+    const prep = service(h);
+    expect(await prep.runAccountNow(ACCOUNT, 'sync')).toBeGreaterThan(0);
+    expect(prep.getModelStatus()).toBe('none');
+  });
+
+  it('turning background sorting off stops the pass in flight and applies nothing from it', async () => {
+    const h = harness();
+    const gate = deferred<void>();
+    h.setCompletion(async (prompt, options) => {
+      await Promise.race([
+        gate.promise,
+        new Promise((_resolve, reject) => options.signal?.addEventListener('abort', () => reject(abortError()), { once: true })),
+      ]);
+      return answerAll()(prompt, options);
+    });
+    const prep = service(h);
+    const pass = prep.runAccountNow(ACCOUNT, 'sync');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    h.setAI({});
+    prep.onConfigChanged();
+    gate.resolve();
+    await pass;
+    expect(h.upserts).toHaveLength(0);
+    expect(h.completions).toHaveLength(1);
+    expect(prep.getModelStatus()).not.toBe('unreachable');
   });
 
   it('strips mail text from the chat context on the main side', async () => {
@@ -274,6 +435,40 @@ describe('agent prep: failed decision batches', () => {
     );
     expect(h.upserts.flat()).toHaveLength(18);
     expect(prep.getModelStatus()).toBe('ok');
+  });
+
+  it('a retry clears "unreachable" when the pending work goes to a dedicated background provider', async () => {
+    const h = harness();
+    h.setAI({ ...BACKGROUND_ON, automationProvider: 'openAICompatible', automationModel: 'local-small' });
+    const sortAll = answerAll();
+    let mainDown = true;
+    h.setCompletion(async (prompt, options) => {
+      if (options.preference === 'openAICompatible') return sortAll(prompt, options);
+      if (mainDown) throw new ModelRequestError('http', 'openAI', 'HTTP 503', 503);
+      return { text: 'Thanks, the 24th works for me.', model: 'main-model', provider: 'openAI' };
+    });
+    const prep = service(h);
+    // The model the person asks fails once: it is shown as not answering.
+    await prep.requestAgentDraft(ACCOUNT, 't00', 'req-1');
+    expect(prep.getModelStatus()).toBe('unreachable');
+
+    // Retry: the pending sorting is done by the background provider and succeeds.
+    // Nothing showed the main model failing again, so the status must not stay stuck.
+    mainDown = false;
+    await prep.retry();
+    await vi.waitFor(() => expect(prep.getModelStatus()).toBe('ok'));
+    expect(h.upserts.flat().length).toBeGreaterThan(0);
+  });
+
+  it('a retry keeps "unreachable" when the model itself fails again', async () => {
+    const h = harness();
+    h.setCompletion(async () => { throw new ModelRequestError('http', 'openAI', 'HTTP 503', 503); });
+    const prep = service(h);
+    await prep.runAccountNow(ACCOUNT, 'sync');
+    expect(prep.getModelStatus()).toBe('unreachable');
+    await prep.retry();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(prep.getModelStatus()).toBe('unreachable');
   });
 
   it.each([

@@ -107,7 +107,9 @@ export function AISettingsTab() {
 
     setVerifyStatus(prev => ({ ...prev, [provider]: { status: 'verifying' } }));
     try {
-      const models = await store.verifyConnectionAndFetchModels(provider, key, baseUrl);
+      // Loads the provider's list into the picker. The model stays the user's choice:
+      // nothing is picked from the list on their behalf.
+      await store.verifyConnectionAndFetchModels(provider, key, baseUrl);
       const settingsToSave: Record<string, string> = {
         [keyField]: key,
         [urlField]: baseUrl,
@@ -121,11 +123,6 @@ export function AISettingsTab() {
         ...prev, 
         [provider]: { status: 'success' } 
       }));
-      
-      const modelField = providerConfig.modelEnv;
-      if (!formKeys[modelField] && models.length > 0) {
-        await handleUpdateSetting(modelField, models[0]);
-      }
     } catch (err: any) {
       console.error(err);
       setVerifyStatus(prev => ({ 
@@ -163,11 +160,11 @@ export function AISettingsTab() {
 
   const renderReasoningSelect = (key: string, options: Array<[string, string]>) => (
     <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
-      <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
+      <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking / Reasoning Level:</label>
       <select
         value={formKeys[key] || 'disabled'}
         onChange={(e) => handleUpdateSetting(key, e.target.value)}
-        className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+        className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
       >
         {options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
@@ -183,11 +180,11 @@ export function AISettingsTab() {
       return (
         <div className="flex flex-col gap-2 mt-1 max-w-[280px]">
           <div className="flex flex-col gap-1">
-            <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking Mode:</label>
+            <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Thinking Mode:</label>
             <select
               value={formKeys.DEEPSEEK_THINKING || 'disabled'}
               onChange={(e) => handleUpdateSetting('DEEPSEEK_THINKING', e.target.value)}
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
             >
               <option value="disabled">Disabled</option>
               <option value="enabled">Enabled</option>
@@ -195,11 +192,11 @@ export function AISettingsTab() {
           </div>
           {formKeys.DEEPSEEK_THINKING === 'enabled' && (
             <div className="flex flex-col gap-1">
-              <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Reasoning Effort:</label>
+              <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Reasoning Effort:</label>
               <select
                 value={formKeys.DEEPSEEK_REASONING_EFFORT || 'disabled'}
                 onChange={(e) => handleUpdateSetting('DEEPSEEK_REASONING_EFFORT', e.target.value)}
-                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
               >
                 <option value="disabled">Default / Standard</option>
                 <option value="high">High</option>
@@ -230,7 +227,7 @@ export function AISettingsTab() {
             type="button"
             onClick={() => handleVerify(provider)}
             disabled={statusObj.status === 'verifying'}
-            className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
+            className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
           >
             <RefreshCw className={`w-3 h-3 ${statusObj.status === 'verifying' ? 'animate-spin' : ''}`} />
             {statusObj.status === 'verifying' 
@@ -239,12 +236,12 @@ export function AISettingsTab() {
           </button>
 
           {statusObj.status === 'success' && (
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--success)] font-medium flex items-center gap-0.5">
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--success-solid)] font-medium flex items-center gap-0.5">
               <Check className="w-3.5 h-3.5" /> Verified
             </span>
           )}
           {statusObj.status === 'error' && (
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--danger)] font-medium flex items-start gap-1">
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] font-medium flex items-start gap-1">
               <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
               <span className="max-w-[300px] leading-tight truncate">{statusObj.error}</span>
             </span>
@@ -253,11 +250,11 @@ export function AISettingsTab() {
 
         {hasCached && (
           <div className="flex flex-col gap-1 mt-1 max-w-[280px]">
-            <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Model:</label>
+            <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Default Model:</label>
             <select
               value={formKeys[modelField] || ''}
               onChange={(e) => handleUpdateSetting(modelField, e.target.value)}
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
             >
               <option value="">-- Select Model --</option>
               {cachedModels.map(m => (
@@ -290,12 +287,12 @@ export function AISettingsTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">AI Provider Preference</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Active model orchestration driver</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Active model orchestration driver</span>
           </div>
           <select
             value={providerPreference}
             onChange={(e) => void handleProviderPreferenceChange(e.target.value)}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             <option value="automatic">Automatic</option>
             <option value="openAI">OpenAI</option>
@@ -313,12 +310,12 @@ export function AISettingsTab() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5 min-w-0">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Interactive Model</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Chat, triage, and on-demand compose. Cascade: AI panel session model → this field → provider default below.</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Chat, triage, and on-demand compose. Cascade: AI panel session model → this field → provider default below.</span>
           </div>
           <input
             type="text"
-            placeholder="e.g. gpt-5.4, claude-sonnet-4.6"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none shrink-0 max-w-[220px]"
+            placeholder="Empty: the model chosen for the provider"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none shrink-0 max-w-[220px]"
             value={store.settings.ai.globalDefaultModel}
             onChange={(e) => {
               const val = e.target.value;
@@ -332,12 +329,12 @@ export function AISettingsTab() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5 min-w-0">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Automation Model</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Proactive auto-drafts and background LLM jobs. Empty falls back to Interactive Model, then provider default.</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Proactive auto-drafts and background LLM jobs. Empty falls back to Interactive Model, then provider default.</span>
           </div>
           <input
             type="text"
-            placeholder="e.g. gpt-5.4-mini, gemini-3.5-flash"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none shrink-0 max-w-[220px]"
+            placeholder="Set under Background work"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none shrink-0 max-w-[220px]"
             value={store.settings.ai.automationModel}
             onChange={(e) => {
               const val = e.target.value;
@@ -351,7 +348,7 @@ export function AISettingsTab() {
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Response Tone</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Tone mode for draft suggestions</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">Tone mode for draft suggestions</span>
           </div>
           <select
             value={store.settings.ai.replyTone}
@@ -359,7 +356,7 @@ export function AISettingsTab() {
               const val = e.target.value as any;
               store.updateSettings(s => { s.ai.replyTone = val; });
             }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             <option value="direct">Direct</option>
             <option value="concise">Concise</option>
@@ -371,9 +368,9 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]" />
 
         <div className="flex flex-col gap-1">
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Personalization Notes:</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Personalization Notes:</span>
           <textarea
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[50px] resize-none leading-normal"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none min-h-[50px] resize-none leading-normal"
             placeholder="e.g. Keep suggestions direct. Prefer short, high-signal comments."
             value={store.settings.ai.personalizationNotes}
             onChange={(e) => {
@@ -388,7 +385,7 @@ export function AISettingsTab() {
         {[
           { key: 'allowMailBodyContext', title: 'Include Email bodies in AI Context', desc: 'Allows sending mail message plain text for summaries' },
           { key: 'savePromptHistory', title: 'Save Local Prompt History', desc: 'Log previous inputs in conversation list' },
-          { key: 'proactiveDraftsEnabled', title: 'Generate Proactive Drafts', desc: 'Background-generates reply drafts; may use paid AI tokens' },
+          { key: 'proactiveDraftsEnabled', title: 'Prepare Reply Drafts in Advance', desc: 'Needs background sorting (above this section). Off: drafts are written only on request' },
           { key: 'suggestDrafts', title: 'Show Draft Suggestions', desc: 'Show generated draft reply buttons inside thread details' },
           { key: 'suggestAutoArchive', title: 'Suggest Auto-Archive Rules', desc: 'Highlight low-priority alerts cleanup' },
           { key: 'suggestLabels', title: 'Suggest Labels', desc: 'Perform labeling suggestions' },
@@ -397,7 +394,7 @@ export function AISettingsTab() {
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
             </div>
             <Toggle
               checked={(store.settings.ai as any)[item.key]}
@@ -410,7 +407,7 @@ export function AISettingsTab() {
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex flex-col gap-3">
         <div className="flex flex-col gap-0.5">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Private Daily Briefing</span>
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Local cited inbox briefing with optional semantic-search boost.</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Local cited inbox briefing with optional semantic-search boost.</span>
         </div>
 
         {[
@@ -423,7 +420,7 @@ export function AISettingsTab() {
           <div key={item.key} className="flex items-center justify-between py-0.5">
             <div className="flex flex-col gap-0.5">
               <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{item.title}</span>
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{item.desc}</span>
             </div>
             <Toggle
               checked={Boolean((briefingSettings as any)[item.key])}
@@ -434,36 +431,36 @@ export function AISettingsTab() {
 
         <div className="grid grid-cols-3 gap-2 pt-1">
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Lookback Hours</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Lookback Hours</span>
             <input
               type="number"
               min={1}
               max={168}
               value={briefingSettings.lookbackHours}
               onChange={(event) => updateBriefingSetting('lookbackHours', Number(event.target.value))}
-              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Max Items</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Max Items</span>
             <input
               type="number"
               min={3}
               max={40}
               value={briefingSettings.maxItems}
               onChange={(event) => updateBriefingSetting('maxItems', Number(event.target.value))}
-              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Reminder Hour</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Reminder Hour</span>
             <input
               type="number"
               min={0}
               max={23}
               value={briefingSettings.defaultReminderHour}
               onChange={(event) => updateBriefingSetting('defaultReminderHour', Number(event.target.value))}
-              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             />
           </label>
         </div>
@@ -484,12 +481,12 @@ export function AISettingsTab() {
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Credentials & Endpoint Configuration</span>
         
         <div className="flex flex-col gap-3">
-          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenAI</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenAI</span>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="password"
               placeholder="API Key"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENAI_API_KEY || ''}
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.OPENAI_API_KEY)) e.currentTarget.select();
@@ -500,7 +497,7 @@ export function AISettingsTab() {
             <input
               type="text"
               placeholder="Custom Base URL (optional)"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENAI_BASE_URL || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENAI_BASE_URL: e.target.value }))}
             />
@@ -511,12 +508,12 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
 
         <div className="flex flex-col gap-3">
-          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">Anthropic</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">Anthropic</span>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="password"
               placeholder="API Key"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.ANTHROPIC_API_KEY || ''}
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.ANTHROPIC_API_KEY)) e.currentTarget.select();
@@ -527,7 +524,7 @@ export function AISettingsTab() {
             <input
               type="text"
               placeholder="Custom Base URL (optional)"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.ANTHROPIC_BASE_URL || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, ANTHROPIC_BASE_URL: e.target.value }))}
             />
@@ -538,12 +535,12 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
 
         <div className="flex flex-col gap-3">
-          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">Google Gemini</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">Google Gemini</span>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="password"
               placeholder="API Key"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.GEMINI_API_KEY || ''}
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.GEMINI_API_KEY)) e.currentTarget.select();
@@ -554,7 +551,7 @@ export function AISettingsTab() {
             <input
               type="text"
               placeholder="Custom Base URL (optional)"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.GEMINI_BASE_URL || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, GEMINI_BASE_URL: e.target.value }))}
             />
@@ -565,12 +562,12 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
 
         <div className="flex flex-col gap-3">
-          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenRouter</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenRouter</span>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="password"
               placeholder="API Key"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENROUTER_API_KEY || ''}
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.OPENROUTER_API_KEY)) e.currentTarget.select();
@@ -581,21 +578,21 @@ export function AISettingsTab() {
             <input
               type="text"
               placeholder="Base URL (optional)"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENROUTER_BASE_URL || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_BASE_URL: e.target.value }))}
             />
             <input
               type="text"
               placeholder="HTTP Referer (optional)"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENROUTER_REFERER || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_REFERER: e.target.value }))}
             />
             <input
               type="text"
               placeholder="App title"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENROUTER_APP_TITLE || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENROUTER_APP_TITLE: e.target.value }))}
             />
@@ -606,12 +603,12 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
 
         <div className="flex flex-col gap-3">
-          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">DeepSeek</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">DeepSeek</span>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="password"
               placeholder="API Key"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.DEEPSEEK_API_KEY || ''}
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.DEEPSEEK_API_KEY)) e.currentTarget.select();
@@ -622,7 +619,7 @@ export function AISettingsTab() {
             <input
               type="text"
               placeholder="Custom Base URL (optional)"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.DEEPSEEK_BASE_URL || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, DEEPSEEK_BASE_URL: e.target.value }))}
             />
@@ -633,12 +630,12 @@ export function AISettingsTab() {
         <div className="w-full h-[1px] bg-[var(--border)]/40 mt-1" />
 
         <div className="flex flex-col gap-3">
-          <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenAI-Compatible (Local Ollama / LM Studio)</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">OpenAI-Compatible (Local Ollama / LM Studio)</span>
           <div className="grid grid-cols-2 gap-2">
             <input
               type="password"
               placeholder="API Key"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENAI_COMPATIBLE_API_KEY || ''}
               onFocus={(e) => {
                 if (isStoredSecretPlaceholder(formKeys.OPENAI_COMPATIBLE_API_KEY)) e.currentTarget.select();
@@ -649,7 +646,7 @@ export function AISettingsTab() {
             <input
               type="text"
               placeholder="Endpoint URL"
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               value={formKeys.OPENAI_COMPATIBLE_BASE_URL || ''}
               onChange={(e) => setFormKeys(prev => ({ ...prev, OPENAI_COMPATIBLE_BASE_URL: e.target.value }))}
             />
@@ -661,12 +658,12 @@ export function AISettingsTab() {
           <button
             type="button"
             onClick={handleSaveAIKeys}
-            className="px-4 py-1.5 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/95 transition-colors"
+            className="px-4 py-1.5 bg-[var(--accent-fill)] text-[var(--on-accent)] rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/95 transition-colors"
           >
             Save API Configuration
           </button>
           {savedStatus && (
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--success)] font-medium flex items-center gap-1">
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--success-solid)] font-medium flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" /> API Keys saved successfully
             </span>
           )}

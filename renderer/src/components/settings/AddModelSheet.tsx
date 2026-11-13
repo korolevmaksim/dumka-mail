@@ -3,14 +3,19 @@ import { Check, AlertCircle, X } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
 import { useDialogFocus } from '../../hooks/useDialogFocus';
 import { emitToast } from '../../lib/toastBus';
-import { SETTINGS_BUTTON_CLASS, SETTINGS_INPUT_CLASS, SETTINGS_SELECT_CLASS } from './SettingsControls';
+import { useProviderModels } from '../../hooks/useProviderModels';
+import { ModelPicker } from './ModelPicker';
+import { SETTINGS_BUTTON_CLASS, SETTINGS_INPUT_CLASS, SETTINGS_PRIMARY_BUTTON_CLASS, SETTINGS_SELECT_CLASS } from './SettingsControls';
 import { getAIProviderConfig, isConfigurableAIProvider, type ConfigurableAIProvider } from '../../../../shared/aiProviders';
+import { isAIProviderUnavailable } from '../../../../shared/aiErrors';
 import { resolveAIProviderPreference } from '../../../../shared/aiProviderPreference';
 import {
   ADD_MODEL_PROVIDERS,
+  CHOOSE_MODEL_MESSAGE,
   addModelConfigEntries,
   addModelProviderLabel,
   describeModelConnectionError,
+  hasModelChoice,
   hasStoredKey,
   keyForConnectionTest,
   providerNeedsBaseUrl,
@@ -32,33 +37,37 @@ interface AddModelFormProps {
   onCancel?: () => void;
 }
 
-function initialProvider(preference: string): ConfigurableAIProvider {
-  return isConfigurableAIProvider(preference) ? preference : 'openAI';
+/** The provider in use (also when the preference is `Automatic`), else the first in the list. */
+function initialProvider(preference: string, activeProvider?: string | null): ConfigurableAIProvider {
+  if (isConfigurableAIProvider(preference)) return preference;
+  return activeProvider && isConfigurableAIProvider(activeProvider) ? activeProvider : 'openAI';
 }
 
 /**
- * Provider, API key, optional model, `Test connection`, `Save`.
+ * Provider, API key, model (from the provider's own list), `Test connection`, `Save`.
  * Keys go through the existing `saveAIConfig` path (OS keychain when enabled);
  * the typed key is kept only in this component's state and never logged.
  */
 export function AddModelForm({ onSaved, initialFocusRef, onCancel }: AddModelFormProps) {
   const store = useAppStore();
   const preference = resolveAIProviderPreference(store.settings.ai.provider, store.customEnv.PMC_AI_PROVIDER);
-  const [provider, setProvider] = useState<ConfigurableAIProvider>(() => initialProvider(preference));
+  const activeProvider = store.aiProviderDesc && !isAIProviderUnavailable(store.aiProviderDesc) ? store.aiProviderDesc.preference : null;
+  const [provider, setProvider] = useState<ConfigurableAIProvider>(() => initialProvider(preference, activeProvider));
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
+  /** The model already saved for a provider; otherwise empty until the user chooses one (nothing is built in). */
+  const startingModel = (target: ConfigurableAIProvider) => (store.customEnv[getAIProviderConfig(target).modelEnv] || '').trim();
+  const [model, setModel] = useState(() => startingModel(provider));
   const [baseUrl, setBaseUrl] = useState('');
   const [test, setTest] = useState<TestState>({ status: 'idle' });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const ids = { provider: useId(), key: useId(), keyHelp: useId(), model: useId(), modelList: useId(), baseUrl: useId(), status: useId() };
+  const ids = { provider: useId(), key: useId(), keyHelp: useId(), model: useId(), modelHelp: useId(), baseUrl: useId(), status: useId() };
 
   const config = getAIProviderConfig(provider);
   const keyStored = hasStoredKey(store.customEnv, provider);
   const needsBaseUrl = providerNeedsBaseUrl(provider);
-  const storedModel = store.customEnv[config.modelEnv] || '';
   const storedBaseUrl = store.customEnv[config.baseUrlEnv] || '';
-  const knownModels = store.modelsCache[provider] || [];
+  const providerModels = useProviderModels(provider);
   const input = useMemo(() => ({
     provider,
     apiKey,
@@ -70,24 +79,27 @@ export function AddModelForm({ onSaved, initialFocusRef, onCancel }: AddModelFor
     if (!isConfigurableAIProvider(value)) return;
     setProvider(value);
     setApiKey('');
-    setModel('');
+    setModel(startingModel(value));
     setBaseUrl('');
     setTest({ status: 'idle' });
     setFormError(null);
   };
 
-  const testConnection = async () => {
+  /** Checks the key and loads the provider's model list. Resolves true when the provider answered. */
+  const testConnection = async (): Promise<boolean> => {
     const problem = validateAddModelInput(input, keyStored);
     setFormError(problem);
-    if (problem) return;
+    if (problem) return false;
     setTest({ status: 'testing' });
     try {
       const models = await store.verifyConnectionAndFetchModels(provider, keyForConnectionTest(input, keyStored), input.baseUrl.trim() || undefined);
       setTest({ status: 'success', modelCount: models.length });
+      return true;
     } catch (err) {
       // Log the shape only; provider errors can echo request details.
       console.error(`Add a model: connection test failed for ${provider}.`, err instanceof Error ? err.name : typeof err);
       setTest({ status: 'error', message: describeModelConnectionError(err, provider) });
+      return false;
     }
   };
 
@@ -96,10 +108,23 @@ export function AddModelForm({ onSaved, initialFocusRef, onCancel }: AddModelFor
     const problem = validateAddModelInput(input, keyStored);
     setFormError(problem);
     if (problem) return;
+    if (!hasModelChoice(input, store.customEnv)) {
+      // No model yet: load the provider's list so there is something to choose from.
+      const connected = providerModels.models.length > 0 || await testConnection();
+      if (connected) setFormError(CHOOSE_MODEL_MESSAGE);
+      return;
+    }
     setSaving(true);
+    const modelChanges = Boolean(input.model.trim()) && input.model.trim() !== (store.customEnv[config.modelEnv] || '').trim();
     try {
       await store.saveAIConfig(addModelConfigEntries(input));
-      await store.updateSettings(settings => { settings.ai.provider = provider; });
+      await store.updateSettings(settings => {
+        // A model or provider that changes here must take effect: the app-wide
+        // override (More options → Interactive Model) would otherwise silently
+        // win over it, or be sent to a provider it does not belong to.
+        if (modelChanges || settings.ai.provider !== provider) settings.ai.globalDefaultModel = '';
+        settings.ai.provider = provider;
+      });
       store.setAiProvider(provider);
       setApiKey('');
       emitToast({ type: 'success', message: `${config.displayName} is set up.` });
@@ -163,14 +188,14 @@ export function AddModelForm({ onSaved, initialFocusRef, onCancel }: AddModelFor
           id={ids.key}
           type="password"
           value={apiKey}
-          onChange={event => { setApiKey(event.target.value); setTest({ status: 'idle' }); }}
+          onChange={event => { setApiKey(event.target.value); setTest({ status: 'idle' }); setFormError(null); }}
           placeholder={keyStored ? 'A key is stored. Type a new one to replace it.' : 'Paste your key'}
           aria-describedby={ids.keyHelp}
           autoComplete="off"
           spellCheck={false}
           className={SETTINGS_INPUT_CLASS}
         />
-        <span id={ids.keyHelp} className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+        <span id={ids.keyHelp} className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           {store.settings.privacy.useKeychainForSecrets
             ? 'Stored in the system keychain on this Mac.'
             : 'Stored in the AI config file on this Mac (keychain storage is off in Privacy and data).'}
@@ -178,23 +203,20 @@ export function AddModelForm({ onSaved, initialFocusRef, onCancel }: AddModelFor
       </div>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor={ids.model} className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Model (optional)</label>
-        <input
+        <label htmlFor={ids.model} className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Model</label>
+        <ModelPicker
           id={ids.model}
-          type="text"
+          provider={provider}
           value={model}
-          onChange={event => setModel(event.target.value)}
-          placeholder={storedModel || config.defaultModel}
-          list={knownModels.length > 0 ? ids.modelList : undefined}
-          autoComplete="off"
-          spellCheck={false}
-          className={SETTINGS_INPUT_CLASS}
+          onChange={next => { setModel(next); setFormError(null); }}
+          catalog={providerModels.models}
+          status={providerModels.status}
+          onRefresh={providerModels.canLoad ? providerModels.refresh : undefined}
+          describedBy={ids.modelHelp}
         />
-        {knownModels.length > 0 && (
-          <datalist id={ids.modelList}>
-            {knownModels.map(name => <option key={name} value={name} />)}
-          </datalist>
-        )}
+        <span id={ids.modelHelp} className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+          Used when you ask: summaries, reply drafts and Ask Dumka.
+        </span>
       </div>
 
       <div id={ids.status} role="status" aria-live="polite" className="min-h-[18px] text-[calc(11px*var(--font-scale))]">
@@ -220,12 +242,12 @@ export function AddModelForm({ onSaved, initialFocusRef, onCancel }: AddModelFor
           disabled={test.status === 'testing' || saving}
           className={SETTINGS_BUTTON_CLASS}
         >
-          {test.status === 'testing' ? 'Testing…' : 'Test connection'}
+          {test.status === 'testing' ? 'Loading…' : 'Test and load models'}
         </button>
         <button
           type="submit"
           disabled={saving}
-          className={`${SETTINGS_BUTTON_CLASS} border-[var(--accent)] bg-[var(--accent)] text-white hover:bg-[var(--accent)] hover:border-[var(--accent)] hover:opacity-90`}
+          className={SETTINGS_PRIMARY_BUTTON_CLASS}
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
@@ -274,7 +296,7 @@ export function AddModelSheet({ onClose }: AddModelSheetProps) {
           <div className="flex flex-col gap-0.5">
             <h2 id={titleId} className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Add a model</h2>
             <p id={descId} className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
-              Summaries, sorting with reasons and drafts use this model.
+              Used when you ask: summaries, reply drafts and Ask Dumka.
             </p>
           </div>
           <button

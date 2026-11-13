@@ -78,5 +78,13 @@ describe('calendarDeleteCopy', () => {
     const workspaceSource = readFileSync(join(repoRoot, 'renderer/src/calendar/CalendarWorkspace.tsx'), 'utf8');
     expect(workspaceSource).toContain('calendarDeleteSuccessMessage(wasRecurring, mutationScope)');
 
+    // The calendar's event panel deletes from its read view, with the same scope choices and copy.
+    const panelSource = readFileSync(join(repoRoot, 'renderer/src/calendar/CalendarWorkspaceInspector.tsx'), 'utf8');
+    expect(panelSource).toContain("from '../../../shared/calendarDeleteCopy'");
+    expect(panelSource).toContain('CALENDAR_DELETE_SCOPE_OPTIONS.map');
+    expect(panelSource).toContain("useState<CalendarMutationScope>('single')");
+    expect(panelSource).toContain("calendarDeleteButtonLabel(recurring, deleteScope, isDeleting ? 'deleting' : 'confirm')");
+    expect(panelSource).toContain('onDelete(deleteScope)');
+
   });
 });

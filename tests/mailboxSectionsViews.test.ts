@@ -67,6 +67,10 @@ describe('section keys', () => {
     expect(resolveSectionKey('H', 'KeyH', { shiftKey: true }, sc)).toBe('remindLaterSection');
     expect(resolveSectionKey('v', 'KeyV', { shiftKey: false }, sc)).toBe('moveToSection');
     expect(resolveSectionKey('e', 'KeyE', { shiftKey: false }, sc)).toBe('none');
+    // ⇧R asks the model for a reply draft; a plain R stays the manual reply.
+    expect(resolveSectionKey('R', 'KeyR', { shiftKey: true }, sc)).toBe('draftReply');
+    expect(resolveSectionKey('r', 'KeyR', { shiftKey: false }, sc)).toBe('none');
+    expect(resolveSectionKey('R', 'KeyR', { shiftKey: true, metaKey: true }, sc)).toBe('none');
     expect(resolveSingleKey('e', sc)).toBe('archive');
     expect(resolveSingleKey('h', sc)).toBe('remind');
   });
