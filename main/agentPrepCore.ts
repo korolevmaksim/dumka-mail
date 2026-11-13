@@ -1,6 +1,7 @@
+import { isMessageFromAccount } from '../shared/threadSignals';
 import { summaryModelRoute, summarySettingsFingerprint, type SummarySettingsSource } from '../shared/summarySettings';
 import { prepareThreadSummary } from './agentPrepSummary';
-import { sortingConfig, sortingCacheKey, sortingCacheMatches, type SortingSettingsSource } from '../shared/sortingConfig';
+import { sortingConfig, sortingCacheKey, sortingCompletionCacheKey, sortingCacheMatches, type SortingSettingsSource } from '../shared/sortingConfig';
 import type { DecisionPromptItem, DecisionBatchParseResult } from '../shared/agentPrompts';
 // Agent preparation logic (design-review/SPEC.md §1 model layer, §5), free of
 // database, Electron and provider imports: every dependency is injected, so the
@@ -494,12 +495,14 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
 
   // --- Decisions -------------------------------------------------------------------
 
-  async function latestMessagesFor(accountId: string, threadIds: string[], signal: AbortSignal): Promise<Map<string, MailMessage | null>> {
-    const latest = new Map<string, MailMessage | null>();
+  async function latestMessagesFor(accountId: string, threadIds: string[], signal: AbortSignal): Promise<Map<string, { message: MailMessage | null; accountHasReplied: boolean | undefined }>> {
+    const latest = new Map<string, { message: MailMessage | null; accountHasReplied: boolean | undefined }>();
     for (const threadId of threadIds) {
       if (signal.aborted) break;
       const messages = await deps.listMessagesForThread(accountId, threadId);
-      latest.set(threadId, latestMessageOf(messages));
+      latest.set(threadId, { message: latestMessageOf(messages),
+        accountHasReplied: messages.length ? messages.some(message => !message.labelIds.some(label => label.toUpperCase() === 'DRAFT')
+          && isMessageFromAccount(message, accountId)) : undefined });
     }
     return latest;
   }
@@ -536,7 +539,10 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       const latest = await latestMessagesFor(accountId, candidates.map(candidate => candidate.thread.id), run.controller.signal);
       if (run.controller.signal.aborted) break;
       const now = deps.now();
-      const items = candidates.map(candidate => buildDecisionPromptItem(candidate, latest.get(candidate.thread.id) || null));
+      const items = candidates.map(candidate => {
+        const history = latest.get(candidate.thread.id);
+        return buildDecisionPromptItem(candidate, history?.message || null, history?.accountHasReplied);
+      });
       const prompt = buildDecisionBatchPrompt(items, now);
       const allowed = new Set(candidates.map(candidate => candidate.thread.id));
       // The reads above are asynchronous: check again right before mail text is sent.
@@ -562,7 +568,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
               stream: false,
               signal: run.controller.signal,
             });
-            model = result.model;
+            model = sortingCompletionCacheKey(result.model);
             parsed = parseDecisionBatchResponse(result.text, allowed, now);
             if (!parsed.valid) lastUnusable = new ModelRequestError('invalid', String(result.provider), 'Decision batch answer was not valid JSON.');
           } catch (error) {
@@ -586,7 +592,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
 
       if (!mayReadMail(accountId) || !backgroundSortingEnabled(deps.readSettings(), accountId)
         || JSON.stringify(config) !== JSON.stringify(sortingConfig(deps.readSettings().ai))) break;
-      const records = refineDecisionBatch(candidates, parsed.items, model, now);
+      const records = refineDecisionBatch(candidates, parsed.items, model, now, items);
       if (config.engine === 'openAIDecisions') {
         const classified = new Set(records.map(record => record.threadId));
         // Cache reviewed-but-uncertain threads too, without changing their rule
@@ -723,7 +729,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     const snapshot = await deps.inboxSnapshot(accountId, INBOX_SCAN_LIMIT);
     if (run.controller.signal.aborted) return 0;
     const userDraftThreads = deps.userDraftThreadIds(accountId);
-    const work = selectDraftWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions), { accountEmail: accountId }, {
+    const work = selectDraftWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions.filter(record => record.source !== 'model'
+      || sortingCacheMatches(record.model, sortingConfig(deps.readSettings().ai)))), { accountEmail: accountId }, {
       limit: DRAFT_BATCH_SIZE,
       hasPreparedDraft: (_threadId, lastMessageId) => deps.hasAgentDraftForMessage(accountId, lastMessageId),
       hasUserDraft: threadId => userDraftThreads.has(threadId),

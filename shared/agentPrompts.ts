@@ -1,3 +1,5 @@
+import { isExplicitColdPitch, REPLY_INTENT_POLICY } from './replyIntent';
+import { isOwnDomainSender } from './decision';
 // Agent preparation (design-review/SPEC.md §1 model layer, §5): pure prompt
 // builders, strict response validators and work-list selection for the main
 // process pipeline (`main/agentPrepService.ts`). No Electron / Node / React.
@@ -190,6 +192,8 @@ export interface DecisionPromptItem {
   ruleDecision: Decision;
   signals: string[];
   excerpt: string;
+  accountHasReplied?: boolean;
+  senderIsInternal?: boolean;
 }
 
 function signalList(thread: MailThread): string[] {
@@ -209,7 +213,7 @@ function signalList(thread: MailThread): string[] {
   return list;
 }
 
-export function buildDecisionPromptItem(candidate: DecisionCandidate, latest: MessageTextSource & Partial<Pick<MailMessage, 'senderName' | 'senderEmail' | 'receivedAt'>> | null): DecisionPromptItem {
+export function buildDecisionPromptItem(candidate: DecisionCandidate, latest: MessageTextSource & Partial<Pick<MailMessage, 'senderName' | 'senderEmail' | 'receivedAt'>> | null, accountHasReplied?: boolean): DecisionPromptItem {
   const { thread } = candidate;
   return {
     threadId: thread.id,
@@ -218,6 +222,8 @@ export function buildDecisionPromptItem(candidate: DecisionCandidate, latest: Me
     subject: boundText(thread.subject || '', 300),
     date: latest?.receivedAt || thread.lastMessageAt,
     ruleDecision: candidate.rule.decision,
+    ...(accountHasReplied === undefined ? {} : { accountHasReplied }),
+    senderIsInternal: isOwnDomainSender(latest?.senderEmail || thread.senderEmail, thread.accountId),
     signals: signalList(thread),
     excerpt: latest ? messageExcerpt(latest, DECISION_EXCERPT_MAX) : boundText(thread.snippet || '', DECISION_EXCERPT_MAX),
   };
@@ -228,9 +234,10 @@ export function buildDecisionBatchPrompt(items: readonly DecisionPromptItem[], n
     AGENT_TASK_MARKERS.decisions,
     'You sort an email inbox. For every thread, decide what the user should do with it next.',
     'Each thread has a ruleDecision from local rules. Allowed answers per ruleDecision:',
-    '- "people" (a person wrote): "reply" if the latest message asks the user something or needs an answer from them, otherwise "read".',
+    '- "people" (a person wrote): "reply" only for a legitimate expected personal response, otherwise "read".',
     '- "automated" (machine-sent, not sorted yet): "read" if worth reading now, "later" if it matters at a specific later time, "clear" if it is safe to archive unread.',
     '- "clear" (newsletter or bulk mail): "clear", "later" or "read".',
+    REPLY_INTENT_POLICY,
     'reason: one plain sentence of at most 120 characters that says what is asked of the user or why the thread is safe to clear.',
     'laterAt: an ISO 8601 time when decision is "later", otherwise null.',
     UNTRUSTED_MAIL_RULE,
@@ -315,15 +322,19 @@ export function refineDecisionBatch(
   suggestions: readonly DecisionSuggestion[],
   model: string,
   now: Date = new Date(),
+  evidence: readonly DecisionPromptItem[] = [],
 ): ThreadDecisionRecord[] {
   const byThread = new Map(suggestions.map(item => [item.threadId, item]));
+  const evidenceByThread = new Map(evidence.map(item => [item.threadId, item]));
   const records: ThreadDecisionRecord[] = [];
   for (const candidate of candidates) {
     const suggestion = byThread.get(candidate.thread.id);
     if (!suggestion) continue;
+    const item = evidenceByThread.get(candidate.thread.id);
+    const coldReply = suggestion.decision === 'reply' && item && isExplicitColdPitch(item);
     const refined = applyModelRefinement(candidate.rule, {
-      decision: suggestion.decision,
-      reason: suggestion.reason,
+      decision: coldReply ? 'read' : suggestion.decision,
+      reason: coldReply ? 'Unsolicited outreach; no reply expected.' : suggestion.reason,
       laterAt: suggestion.laterAt,
     });
     if (refined.source !== 'model') continue;

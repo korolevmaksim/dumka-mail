@@ -16,12 +16,18 @@ export function sortingConfig(ai: SortingSettingsSource | null | undefined) {
 }
 
 const DECISIONS_CACHE_PREFIX = 'openAIDecisions:';
+const SORTING_POLICY_VERSION = 'reply-intent-v2';
+const COMPLETION_CACHE_PREFIX = `completion:${SORTING_POLICY_VERSION}:`;
+
+export function sortingCompletionCacheKey(model: string): string {
+  return `${COMPLETION_CACHE_PREFIX}${model}`;
+}
 
 export function sortingCacheKey(config: ReturnType<typeof sortingConfig>): string {
-  return `${DECISIONS_CACHE_PREFIX}${config.minConfidence}:${config.model}`;
+  return `${DECISIONS_CACHE_PREFIX}${SORTING_POLICY_VERSION}:${config.minConfidence}:${config.model}`;
 }
 
 export function sortingCacheMatches(model: string | null, config: ReturnType<typeof sortingConfig>): boolean {
   if (config.engine === 'openAIDecisions') return model === sortingCacheKey(config);
-  return !model?.startsWith(DECISIONS_CACHE_PREFIX);
+  return Boolean(model?.startsWith(COMPLETION_CACHE_PREFIX));
 }

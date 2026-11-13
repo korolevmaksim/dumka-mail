@@ -54,3 +54,33 @@ cancellation, timeout and cache identity. `tests/agentPrepService.test.ts`
 covers routing, permissions, manual corrections, caching and mid-request
 configuration changes. Settings migration and the source-wide no-built-in-model
 regression checks run in the full test suite.
+
+
+## Reply intent and unsolicited outreach
+
+Reply is reserved for a legitimate expected personal response. A question mark,
+IMPORTANT label, direct greeting, human signature or repeated `Re:` follow-up
+is not sufficient. Unsolicited sales, PR, SEO and similar offers, including
+requests to book a call or reply no, are classified as Read when useful rather
+than creating a reply obligation. Relevant new customer/support enquiries may
+still need a reply; no prior reply alone is not evidence of unsolicited mail.
+
+Both text-model and Decisions prompts use `shared/replyIntent.ts`. The bounded
+input also includes whether actual non-draft outgoing messages exist in this
+thread, recognizing SENT aliases. This adds a boolean, not extra message bodies.
+A conservative local veto changes a model's Reply to Read only for explicit
+commercial offers with solicitation cues and known unengaged thread history.
+It does not fire for internal senders or an existing exchange. Broader ambiguous
+cases remain model judgments and can still require a manual correction.
+
+These Read threads remain protected under the existing person rules. This does
+not archive, unsubscribe or send anything, and a manual user classification wins.
+Both engines use a versioned reply-intent cache identity: older model decisions
+are ignored immediately by inbox sections and background draft selection, then
+re-evaluated within the normal bounded background work budget. User corrections
+are retained. The confidence threshold and selected models are unchanged.
+
+Regression tests cover repeated PR outreach without replies, commercial offers,
+legitimate new enquiries, ongoing conversations and SENT aliases, old cached
+Reply decisions, both transports, and prevention of background drafts for a
+rejected reply suggestion. Fixtures are synthetic.

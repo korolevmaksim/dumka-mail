@@ -1,3 +1,4 @@
+import { sortingCacheKey, sortingCompletionCacheKey, sortingConfig } from '../shared/sortingConfig';
 // Agent preparation rules (main/agentPrepCore.ts) with injected fakes: no
 // database, no worker, no provider and no network.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -231,7 +232,7 @@ describe('agent prep: gates', () => {
     const h = harness([thread]);
     h.decisions.push({
       accountId: ACCOUNT, threadId: thread.id, lastMessageId: thread.signals!.lastMessageId, decision: 'reply',
-      reason: 'Asks a question', source: 'model', laterAt: null, model: 'test-model', createdAt: new Date(BASE_TIME).toISOString(),
+      reason: 'Asks a question', source: 'model', laterAt: null, model: sortingCompletionCacheKey('test-model'), createdAt: new Date(BASE_TIME).toISOString(),
     });
     h.setAI({ backgroundSorting: true });
     h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' }));
@@ -556,7 +557,7 @@ describe('agent prep: shared requests', () => {
     // The thread already has a model `reply` decision, so the pass goes straight to drafts.
     h.decisions.push({
       accountId: ACCOUNT, threadId: thread.id, lastMessageId: thread.signals!.lastMessageId, decision: 'reply',
-      reason: 'Asks a question', source: 'model', laterAt: null, model: 'test-model', createdAt: new Date(BASE_TIME).toISOString(),
+      reason: 'Asks a question', source: 'model', laterAt: null, model: sortingCompletionCacheKey('test-model'), createdAt: new Date(BASE_TIME).toISOString(),
     });
     h.setCompletion((_prompt, options) => new Promise((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
@@ -580,7 +581,7 @@ describe('agent prep: shared requests', () => {
     const h = harness([thread]);
     h.decisions.push({
       accountId: ACCOUNT, threadId: thread.id, lastMessageId: thread.signals!.lastMessageId, decision: 'reply',
-      reason: 'Asks a question', source: 'model', laterAt: null, model: 'test-model', createdAt: new Date(BASE_TIME).toISOString(),
+      reason: 'Asks a question', source: 'model', laterAt: null, model: sortingCompletionCacheKey('test-model'), createdAt: new Date(BASE_TIME).toISOString(),
     });
     return { h, thread };
   }
@@ -781,7 +782,7 @@ describe('agent prep: OpenAI Decisions sorting', () => {
     expect(h.deps.completeDecisions).toHaveBeenCalledOnce();
     expect(h.completions).toHaveLength(0);
     expect(h.resolved).toContainEqual({ preference: 'openAI', overrideModel: settings.decisionsModel });
-    expect(h.upserts[0][0]).toMatchObject({ decision: 'reply', model: `openAIDecisions:0.8:${settings.decisionsModel}` });
+    expect(h.upserts[0][0]).toMatchObject({ decision: 'reply', model: sortingCacheKey(sortingConfig(settings)) });
   });
 
   it('does nothing without an explicitly selected Decisions model', async () => {
@@ -911,5 +912,44 @@ describe('summary settings and cache invalidation', () => {
     const before = prep.getModelStatus();
     expect(await prep.requestThreadSummary(ACCOUNT, 't00', 'r1')).toMatchObject({ status: 'error' });
     expect(prep.getModelStatus()).toBe(before);
+  });
+});
+
+describe('cold outreach through the preparation pipeline', () => {
+  it.each(['completion', 'openAIDecisions'] as const)('keeps a cold PR follow-up out of Reply with %s, including cached legacy replies', async engine => {
+    const thread = { ...personThread(0), subject: 'Re: PR idea for Example Ltd', senderEmail: 'seller@external.example' };
+    const h = harness([thread]);
+    const settings = { backgroundSorting: true, proactiveDraftsEnabled: true, sortingEngine: engine, decisionsModel: 'chosen-model' };
+    h.setAI(settings);
+    h.decisions.push({ accountId: ACCOUNT, threadId: thread.id, lastMessageId: thread.signals?.lastMessageId || null,
+      source: 'model', decision: 'reply', reason: '80% confidence', model: engine === 'completion' ? 'old-model' : 'openAIDecisions:0.8:chosen-model', laterAt: null, createdAt: new Date(BASE_TIME).toISOString() });
+    h.deps.listMessagesForThread = async () => [0, 1].map(index => ({ ...messageFor(thread, index),
+      bodyPlain: 'Our PR agency builds earned press coverage. Open to talking about your next business milestone?' }));
+    h.setCompletion(async () => ({ text: JSON.stringify({ items: [{ threadId: thread.id, decision: 'reply', reason: 'Please reply', laterAt: null }] }), model: 'chosen-model', provider: 'openAI' }));
+    h.deps.completeDecisions = async items => {
+      expect(items[0].accountHasReplied).toBe(false);
+      return { valid: true, model: 'chosen-model', items: [{ threadId: thread.id, decision: 'reply', reason: '99% confidence', laterAt: null }] };
+    };
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.upserts.flat()).toHaveLength(1);
+    expect(h.upserts[0][0]).toMatchObject({ decision: 'read', reason: 'Unsolicited outreach; no reply expected.' });
+    expect(h.published.some(event => event.channel === 'api:agentDraftReady')).toBe(false);
+    expect(h.completions).toHaveLength(engine === 'completion' ? 1 : 0);
+  });
+
+  it('recognizes actual outgoing replies from a send-as alias', async () => {
+    const thread = { ...personThread(0), subject: 'Re: PR idea for Example Ltd', senderEmail: 'seller@external.example' };
+    const h = harness([thread]);
+    h.setAI({ backgroundSorting: true, sortingEngine: 'openAIDecisions', decisionsModel: 'chosen-model' });
+    h.deps.listMessagesForThread = async () => [
+      { ...messageFor(thread, 0), senderEmail: 'alias@northwind.example', labelIds: ['SENT'] },
+      { ...messageFor(thread, 1), bodyPlain: 'Our PR agency builds earned press coverage. Open to talking about next steps?' },
+    ];
+    h.deps.completeDecisions = async items => {
+      expect(items[0].accountHasReplied).toBe(true);
+      return { valid: true, model: 'chosen-model', items: [{ threadId: thread.id, decision: 'reply', reason: 'Continue the agreed work', laterAt: null }] };
+    };
+    await service(h).runAccountNow(ACCOUNT);
+    expect(h.upserts[0][0].decision).toBe('reply');
   });
 });
