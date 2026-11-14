@@ -2,7 +2,8 @@ import { SearchFiltersPanel } from './SearchFiltersPanel';
 import { serializeSearchQuery } from '../../../../shared/searchFilters';
 import { forwardRef, type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../stores/AppStore';
-import { SlidersHorizontal, AlertTriangle, Check, LoaderCircle, Search, Sparkles, X } from 'lucide-react';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
+import { SlidersHorizontal, AlertTriangle, Check, CloudOff, LoaderCircle, Search, Sparkles, X } from 'lucide-react';
 import { parseSearchQuery } from '../../../../shared/search';
 import { createSearchCommitController, type SearchCommitController } from './searchCommitController';
 import { getSearchIndicatorState } from './searchIndicator';
@@ -10,10 +11,17 @@ import { isIncompleteBackfillProgress } from '../../../../shared/syncStatusAffor
 
 export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   const store = useAppStore();
+  // Before an account is connected there is nothing to search and no sync to report.
+  const noAccount = store.accounts.length === 0;
+  // Mail actions already applied here that Gmail has not accepted yet.
+  const waitingActions = store.actionLog.reduce((count, entry) => count + (entry.status === 'pending_sync' ? 1 : 0), 0);
+  // "Ready" next to "changes waiting for Gmail" would say two opposite things: the chip speaks alone.
+  const statusText = waitingActions > 0 && store.syncStatusText === 'Ready' ? '' : store.syncStatusText;
   const { searchQuery, searchStatus, setSearchQuery, settingsOpen, setSettingsOpen, cleanupOpen, setCleanupOpen, setWorkspaceView } = store;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [draftQuery, setDraftQuery] = useState(searchQuery);
   const [showNavigationActivity, setShowNavigationActivity] = useState(false);
+  const filtersButtonRef = useRef<HTMLButtonElement | null>(null);
   const committedQueryRef = useRef(searchQuery);
   const commitRef = useRef<(value: string) => void>(() => undefined);
   const controllerRef = useRef<SearchCommitController | null>(null);
@@ -37,6 +45,13 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
   useEffect(() => () => {
     commitController.cancel();
   }, [commitController]);
+
+  // The filters popover closes on the first Escape, before the global
+  // layer-closing shortcut (window bubble listener) clears the search.
+  useEscapeLayer(filtersOpen, () => {
+    setFiltersOpen(false);
+    filtersButtonRef.current?.focus();
+  });
 
   useEffect(() => {
     if (store.navigationActivity.phase === 'idle') {
@@ -84,7 +99,7 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
 
   return (
     <div
-      className="dm-search-chrome dm-toolbar panel-surface flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
+      className="dm-search-chrome dm-toolbar panel-surface relative z-30 flex flex-col border-b border-[var(--border)] bg-[var(--panel-bg)] select-none shrink-0"
       style={{ WebkitAppRegion: 'drag' } as CSSProperties}
     >
       <div className="flex items-center justify-between h-[var(--top-chrome-h)] min-h-[40px] px-4 gap-4 w-full">
@@ -92,12 +107,13 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           className="dm-search-field dm-control flex items-center flex-1 gap-2 bg-[var(--app-bg)] rounded-lg px-2 border border-[var(--border)] max-w-[600px] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] focus-within:outline-offset-1"
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
-          <button type="button" aria-label="Search filters and saved searches" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(open => !open)} className="rounded p-1 hover:bg-[var(--hover-row)]"><SlidersHorizontal className="h-4 w-4" /></button>
+          <button ref={filtersButtonRef} type="button" aria-label="Search filters and saved searches" title="Search filters and saved searches" disabled={noAccount} aria-expanded={filtersOpen} aria-haspopup="dialog" onClick={() => setFiltersOpen(open => !open)} className="rounded p-1 hover:bg-[var(--hover-row)] disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"><SlidersHorizontal className="h-4 w-4" /></button>
           <Search className="w-4 h-4 text-[var(--text-tertiary)]" />
           <input
             ref={ref}
             type="text"
-            placeholder="Search mail"
+            placeholder={noAccount ? 'Connect an account to search mail' : 'Search mail'}
+            disabled={noAccount}
             value={draftQuery}
             onChange={(e) => {
               const nextQuery = e.target.value;
@@ -131,14 +147,14 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
             <span
               aria-live="polite"
               title={searchIndicator.title ?? searchIndicator.label}
-              className="flex shrink-0 items-center gap-1 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]"
+              className="flex shrink-0 items-center gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]"
             >
               {searchIndicator.kind === 'searching' ? (
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
               ) : searchIndicator.kind === 'error' ? (
-                <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />
+                <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning-solid)]" />
               ) : (
-                <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+                <Check className="h-3.5 w-3.5 text-[var(--success-solid)]" />
               )}
               <span>{searchIndicator.label}</span>
             </span>
@@ -149,9 +165,9 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
               onClick={askMailbox}
               disabled={store.aiPanelLoading}
               title="Ask AI assistant to search the local mailbox"
-              className="flex shrink-0 items-center gap-1 rounded border border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--ai-accent)]/60 hover:bg-[var(--ai-accent)]/15 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex shrink-0 items-center gap-1 rounded border border-[var(--ai-accent)]/30 bg-[var(--ai-accent)]/10 px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--ai-accent)]/60 hover:bg-[var(--ai-accent)]/15 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Sparkles className="h-3 w-3 text-[var(--ai-accent)]" />
+              <Sparkles className="h-3 w-3 text-[var(--ai-solid)]" />
               <span>Ask</span>
             </button>
           )}
@@ -167,16 +183,29 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
           {showNavigationActivity && store.navigationActivity.phase !== 'idle' && (
             <span
               aria-live="polite"
-              className="dm-status-chip flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]"
+              className="dm-status-chip flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--raised-surface)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]"
             >
-              <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-[var(--accent)] motion-reduce:animate-none" />
+              <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin text-[var(--accent-ink)] motion-reduce:animate-none" />
               {store.navigationActivity.label}
             </span>
           )}
-          {store.syncStatusText && (
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] font-normal tracking-wide">
-              {store.syncStatusText}
-              {isIncompleteBackfillProgress(store.backfillProgress)
+          {waitingActions > 0 && (
+            // Stays for as long as changes made here have not reached Gmail:
+            // the toast that announced it is gone after a few seconds.
+            <span
+              role="status"
+              data-pending-sync={waitingActions}
+              title={`Gmail could not be reached. ${waitingActions === 1 ? 'This change is' : 'These changes are'} saved on this Mac and will be sent when Gmail is back.`}
+              className="dm-status-chip flex items-center gap-1.5 rounded-full border border-[var(--warning)]/50 bg-[var(--warning)]/10 px-2 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]"
+            >
+              <CloudOff aria-hidden="true" className="h-3.5 w-3.5 text-[var(--warning-solid)]" />
+              {waitingActions === 1 ? '1 change waiting for Gmail' : `${waitingActions} changes waiting for Gmail`}
+            </span>
+          )}
+          {statusText && !noAccount && (
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] font-normal tracking-wide">
+              {statusText}
+              {isIncompleteBackfillProgress(store.backfillProgress) && store.backfillProgress !== store.syncStatusText
                 ? ` · ${store.backfillProgress}`
                 : ''}
             </span>
@@ -184,68 +213,86 @@ export const SearchCockpitBar = forwardRef<HTMLInputElement, {}>(({}, ref) => {
         </div>
       </div>
 
-      {filtersOpen && <div style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}><SearchFiltersPanel key={store.activeAccount?.id} query={draftQuery} onChange={commitSearchImmediately} /></div>}
+      {filtersOpen && (
+        <div
+          role="dialog"
+          aria-label="Search filters"
+          className="absolute left-2 right-2 top-full z-40 mt-1 max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] shadow-xl"
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+        >
+          <SearchFiltersPanel key={store.activeAccount?.id} query={draftQuery} onChange={commitSearchImmediately} />
+        </div>
+      )}
+      {showSearchIntelligence && store.olderMailIndexing && (
+        <p
+          role="status"
+          className="px-4 pb-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]"
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+        >
+          Older mail is still being indexed
+        </p>
+      )}
       {/* Active query chips */}
       {showSearchIntelligence && (
         <div 
-          className="flex flex-wrap items-center gap-2 px-4 pb-2 -mt-1 text-[calc(10px*var(--font-scale))] border-t border-[var(--border)]/30 pt-2"
+          className="flex flex-wrap items-center gap-2 px-4 pb-2 -mt-1 text-[calc(11px*var(--font-scale))] border-t border-[var(--border)]/30 pt-2"
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
           <span className="text-[var(--text-secondary)] font-semibold shrink-0">Filters:</span>
           
           {/* Render active query chips */}
           {parsedSearch.from && (
-            <span className="flex items-center gap-1 bg-[var(--accent)]/15 text-[var(--accent)] px-2 py-0.5 rounded-full border border-[var(--accent)]/20">
+            <span className="flex items-center gap-1 bg-[var(--accent)]/15 text-[var(--accent-ink)] px-2 py-0.5 rounded-full border border-[var(--accent)]/20">
               From: {parsedSearch.from}
-              <button type="button" aria-label="Remove sender filter" onClick={() => removeSearchField('from')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove sender filter" onClick={() => removeSearchField('from')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.domain && (
-            <span className="flex items-center gap-1 bg-[var(--accent)]/15 text-[var(--accent)] px-2 py-0.5 rounded-full border border-[var(--accent)]/20">
+            <span className="flex items-center gap-1 bg-[var(--accent)]/15 text-[var(--accent-ink)] px-2 py-0.5 rounded-full border border-[var(--accent)]/20">
               Domain: {parsedSearch.domain}
-              <button type="button" aria-label="Remove domain filter" onClick={() => removeSearchField('domain')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove domain filter" onClick={() => removeSearchField('domain')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.hasAttachment !== undefined && (
             <span className="flex items-center gap-1 bg-[var(--info)]/15 text-[var(--info)] px-2 py-0.5 rounded-full border border-[var(--info)]/20">
               {parsedSearch.hasAttachment ? 'Has Attachments' : 'No Attachments'}
-              <button type="button" aria-label="Remove attachment filter" onClick={() => removeSearchField('hasAttachment')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove attachment filter" onClick={() => removeSearchField('hasAttachment')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.isUnread !== undefined && (
-            <span className="flex items-center gap-1 bg-[var(--success)]/15 text-[var(--success)] px-2 py-0.5 rounded-full border border-[var(--success)]/20">
+            <span className="flex items-center gap-1 bg-[var(--success)]/15 text-[var(--success-solid)] px-2 py-0.5 rounded-full border border-[var(--success)]/20">
               {parsedSearch.isUnread ? 'Unread' : 'Read'}
-              <button type="button" aria-label="Remove read status filter" onClick={() => removeSearchField('isUnread')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove read status filter" onClick={() => removeSearchField('isUnread')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.label && (
-            <span className="flex items-center gap-1 bg-[var(--ai-accent)]/15 text-[var(--ai-accent)] px-2 py-0.5 rounded-full border border-[var(--ai-accent)]/20">
+            <span className="flex items-center gap-1 bg-[var(--ai-accent)]/15 text-[var(--ai-solid)] px-2 py-0.5 rounded-full border border-[var(--ai-accent)]/20">
               Label: {parsedSearch.label}
-              <button type="button" aria-label="Remove label filter" onClick={() => removeSearchField('label')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove label filter" onClick={() => removeSearchField('label')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.inSplit && (
-            <span className="flex items-center gap-1 bg-[var(--warning)]/15 text-[var(--warning)] px-2 py-0.5 rounded-full border border-[var(--warning)]/20">
+            <span className="flex items-center gap-1 bg-[var(--warning)]/15 text-[var(--warning-solid)] px-2 py-0.5 rounded-full border border-[var(--warning)]/20">
               Split: {parsedSearch.inSplit}
-              <button type="button" aria-label="Remove split filter" onClick={() => removeSearchField('inSplit')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove split filter" onClick={() => removeSearchField('inSplit')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.after && (
             <span className="flex items-center gap-1 bg-[var(--text-tertiary)]/15 text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               After: {parsedSearch.after}
-              <button type="button" aria-label="Remove start date filter" onClick={() => removeSearchField('after')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove start date filter" onClick={() => removeSearchField('after')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.before && (
             <span className="flex items-center gap-1 bg-[var(--text-tertiary)]/15 text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               Before: {parsedSearch.before}
-              <button type="button" aria-label="Remove end date filter" onClick={() => removeSearchField('before')} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label="Remove end date filter" onClick={() => removeSearchField('before')} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           )}
           {parsedSearch.textTerms.map((term: string, i: number) => (
             <span key={i} className="flex items-center gap-1 bg-[var(--border)] text-[var(--text-secondary)] px-2 py-0.5 rounded-full border border-[var(--border)]">
               "{term}"
-              <button type="button" aria-label={`Remove search term ${term}`} onClick={() => removeSearchField('textTerms', term)} className="hover:text-[var(--danger)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" aria-label={`Remove search term ${term}`} onClick={() => removeSearchField('textTerms', term)} className="hover:text-[var(--danger-solid)] cursor-pointer"><X className="w-2.5 h-2.5" /></button>
             </span>
           ))}
 

@@ -1,17 +1,32 @@
 import { applyReviewCorrections } from '../../../shared/reviewCorrections';
+import { chatStream } from './chatStreamStore';
 import type { ReviewCorrection } from '../../../shared/productivity';
 import { useState, useMemo, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
-import { Account, MailThread, MailMessage, MailLabelDefinition, MailSyncCompletion, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, MailTriagePlan, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness, MailActionExecutionResult } from '../../../shared/types';
+import { Account, MailThread, MailMessage, MailLabelDefinition, MailSyncCompletion, AIProviderPreference, AIProviderDescriptor, AIConversation, AIChatMessage, AIAction, AppSettings, AIPromptShortcut, DailyBriefing, DailyBriefingBuildOptions, DailyBriefingItem, AgentPlan, AgentPlanItem, AgentPlanActionPreview, AgentPlanQueueReadiness, MailActionExecutionResult } from '../../../shared/types';
 import { buildThreadContext } from '../../../shared/aiContext';
-import { formatAIUserError } from '../../../shared/aiErrors';
+import { AI_UNREACHABLE_MESSAGE, formatAIUserError } from '../../../shared/aiErrors';
+import { resolveAccountSetting } from '../../../shared/accountSettings';
+import type { MailboxSearchSource } from '../../../shared/types';
+import { mailActionFailureMessage } from '../../../shared/mailActionErrors';
+
+type AIRetryRequest =
+  | { kind: 'chat'; text: string }
+  | { kind: 'instruction'; label: string; instruction: string; requiresThread: boolean };
+
+/** The last failed model request, shown as `Couldn't reach the model. Retry`. */
+export interface AIRequestFailure {
+  /** System message that carries the Retry action. */
+  messageId: string;
+  /** Messages of the failed exchange removed before retrying (the failed user turn). */
+  removeMessageIds: string[];
+  retry: AIRetryRequest;
+}
 import { resolveAIModelForPurpose } from '../../../shared/aiModelPurpose';
 import { withAIRequestTimeout } from '../../../shared/aiRequest';
 import { emitToast } from '../lib/toastBus';
 import { SpeedProof } from './useMailState';
-import { MailTriagePlanner } from '../../../shared/triagePlanner';
-import { buildAITriageContext, buildAITriageInstruction, buildAITriagePlanFromResponse } from '../../../shared/aiTriage';
 import { normalizeDailyBriefingSettings } from '../../../shared/dailyBriefing';
-import { buildAgentPlanFromDailyBriefingItem, buildAgentPlanFromTriagePlan, mergeAgentPlanItem } from '../../../shared/agentPlan';
+import { buildAgentPlanFromDailyBriefingItem, mergeAgentPlanItem } from '../../../shared/agentPlan';
 import {
   dailyBriefingRefreshWindowKey,
   filterAgentPlanItemsForOperatorScope,
@@ -28,8 +43,6 @@ interface UseAIStateProps {
   activeAccount: Account | null;
   openedThread: MailThread | null;
   openedThreadMessages: MailMessage[];
-  visibleThreads: MailThread[];
-  activeSplit: string;
   threads: MailThread[];
   labelDefinitions: MailLabelDefinition[];
   lastSuccessfulSync: MailSyncCompletion | null;
@@ -78,8 +91,6 @@ export function useAIState({
   activeAccount,
   openedThread,
   openedThreadMessages,
-  visibleThreads,
-  activeSplit,
   threads,
   labelDefinitions,
   lastSuccessfulSync,
@@ -94,7 +105,6 @@ export function useAIState({
   const [aiConversations, setAiConversations] = useState<AIConversation[]>([]);
   const [activeAIConversation, setActiveAIConversation] = useState<AIConversation | null>(null);
   const [activeAIMessages, setActiveAIMessages] = useState<AIChatMessage[]>([]);
-  const [triagePlan, setTriagePlan] = useState<MailTriagePlan | null>(null);
   const [rawAgentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
   const [dailyBriefing, setDailyBriefing] = useState<DailyBriefing | null>(null);
   const [dailyBriefingLoading, setDailyBriefingLoading] = useState<boolean>(false);
@@ -113,9 +123,12 @@ export function useAIState({
   const currentOperatorScopeRef = useRef<string | null>(operatorScopeId);
   const operatorScopeGenerationRef = useRef(0);
   const dailyBriefingRequestGenerationRef = useRef(0);
-  const triageRequestGenerationRef = useRef(0);
   const aiChatRequestGenerationRef = useRef(0);
   const aiChatInFlightRef = useRef(false);
+  /** In-flight streaming chat request (`api:streamAIChat`), cancelled by New Chat. */
+  const aiChatStreamRequestRef = useRef<string | null>(null);
+  /** Assistant message currently receiving streamed text. */
+  const [aiStreamingMessageId, setAiStreamingMessageId] = useState<string | null>(null);
   const autoRefreshInFlightRef = useRef<string | null>(null);
   const lastAutoRefreshAttemptRef = useRef<string | null>(null);
 
@@ -124,7 +137,6 @@ export function useAIState({
     currentOperatorScopeRef.current = operatorScopeId;
     operatorScopeGenerationRef.current += 1;
     dailyBriefingRequestGenerationRef.current += 1;
-    triageRequestGenerationRef.current += 1;
     aiChatRequestGenerationRef.current += 1;
     aiChatInFlightRef.current = false;
     setAiPanelLoading(false);
@@ -241,15 +253,41 @@ export function useAIState({
   }, [rawAgentPlan, dailyBriefing, lastAutoRefreshWindow, loadedOperatorScope, operatorScopeId, selectedAgentPlanItemIds]);
 
   // Resolve active AI provider descriptors
+  // Re-read when the panel opens too: a key added in Settings must replace the
+  // "Add a model" line without restarting the app.
   useEffect(() => {
     let active = true;
     window.electronAPI.getAIProviderDescriptor(aiProvider).then(desc => {
       if (active) setAiProviderDesc(desc);
-    });
+    }).catch(error => console.warn('Could not read the AI provider descriptor:', error));
     return () => {
       active = false;
     };
-  }, [aiProvider]);
+  }, [aiProvider, aiPanelOpen]);
+
+  const [aiRequestFailure, setAiRequestFailure] = useState<AIRequestFailure | null>(null);
+  const [pendingAIRetry, setPendingAIRetry] = useState<AIRetryRequest | null>(null);
+
+  const reportAIRequestFailure = (error: unknown, failedUserMessageId: string, retry: AIRetryRequest) => {
+    // Raw (redacted) detail for the developer console only; the main process
+    // writes the full failure to the system log (Settings → Logging).
+    console.error('AI request failed:', formatAIUserError(error));
+    const messageId = crypto.randomUUID();
+    setActiveAIMessages(prev => [...prev, { id: messageId, role: 'system', text: `${AI_UNREACHABLE_MESSAGE}.` }]);
+    setAiRequestFailure({ messageId, removeMessageIds: [failedUserMessageId], retry });
+  };
+
+  const aiRequestFailureRef = useRef<AIRequestFailure | null>(null);
+  aiRequestFailureRef.current = aiRequestFailure;
+
+  const retryLastAIRequest = useCallback(() => {
+    const failure = aiRequestFailureRef.current;
+    if (!failure || aiChatInFlightRef.current) return;
+    const removed = new Set([failure.messageId, ...failure.removeMessageIds]);
+    setActiveAIMessages(prev => prev.filter(message => !removed.has(message.id)));
+    setAiRequestFailure(null);
+    setPendingAIRetry(failure.retry);
+  }, []);
 
   const loadAIConversations = useCallback(async () => {
     if (!settings.ai.savePromptHistory) {
@@ -275,7 +313,17 @@ export function useAIState({
     loadAIConversations();
   }, [loadAIConversations]);
 
+  const cancelChatStream = () => {
+    const requestId = aiChatStreamRequestRef.current;
+    aiChatStreamRequestRef.current = null;
+    setAiStreamingMessageId(null);
+    chatStream.clear();
+    if (requestId) void window.electronAPI.cancelAI(requestId).catch(() => undefined);
+  };
+
   const startNewAIConversation = () => {
+    cancelChatStream();
+    setAiRequestFailure(null);
     aiChatRequestGenerationRef.current += 1;
     aiChatInFlightRef.current = false;
     setAiPanelLoading(false);
@@ -287,8 +335,10 @@ export function useAIState({
     const scopeId = operatorScopeId;
     const scopeGeneration = operatorScopeGenerationRef.current;
     const requestGeneration = ++aiChatRequestGenerationRef.current;
+    cancelChatStream();
     aiChatInFlightRef.current = false;
     setAiPanelLoading(false);
+    setAiRequestFailure(null);
     const msgs = await window.electronAPI.getConversationMessages(conv.id);
     if (scopeId !== currentOperatorScopeRef.current
       || scopeGeneration !== operatorScopeGenerationRef.current
@@ -318,6 +368,7 @@ export function useAIState({
     const start = performance.now();
     aiChatInFlightRef.current = true;
     setAiPanelLoading(true);
+    setAiRequestFailure(null);
 
     const userMsg: AIChatMessage = {
       id: crypto.randomUUID(),
@@ -344,29 +395,79 @@ export function useAIState({
       setActiveAIConversation(conv);
     }
 
+    // Mail bodies reach the model only when the thread's account allows it (SPEC §8).
+    const contextSettings = openedThread
+      ? { ...settings.ai, allowMailBodyContext: resolveAccountSetting(settings, openedThread.accountId, 'modelMayReadMail').value }
+      : settings.ai;
+    const chatContext = openedThread
+      ? buildThreadContext(openedThread, openedThreadMessages, contextSettings)
+      : 'No thread open.';
+    const chatModel = resolveAIModelForPurpose('interactive', {
+      interactiveModel: settings.ai.globalDefaultModel,
+    }, aiModel);
+    // "Ask Dumka" about the open thread streams; mailbox questions (no thread
+    // open) and external tools use the tool-calling path, which does not.
+    const streamThisChat = Boolean(openedThread) && !settings.ai.externalToolsEnabled;
+    let streamingAssistantId: string | null = null;
+
     try {
-      const response = await withAIRequestTimeout(window.electronAPI.completeAI({
-        action: 'chat',
-        context: openedThread
-          ? buildThreadContext(openedThread, openedThreadMessages, settings.ai)
-          : 'No thread open.',
-        conversationHistory: newMsgs,
-        userInstruction: text,
-        toolPolicy: {
-          enabled: settings.ai.externalToolsEnabled,
-          allowMailboxSearch: true,
-          allowCalendarSearch: true,
-          allowActionProposals: true,
-          mailboxAccountIds: proposalAccountIds,
-          calendarAccountIds: proposalAccountIds,
-        },
-      }, aiProvider, resolveAIModelForPurpose('interactive', {
-        interactiveModel: settings.ai.globalDefaultModel,
-      }, aiModel)));
+      let response: { text: string; sources?: MailboxSearchSource[]; proposedActions?: AgentPlanItem[]; proposalWarnings?: string[] };
+      if (streamThisChat) {
+        const requestId = crypto.randomUUID();
+        const assistantId = crypto.randomUUID();
+        streamingAssistantId = assistantId;
+        aiChatStreamRequestRef.current = requestId;
+        setAiStreamingMessageId(assistantId);
+        chatStream.start(assistantId);
+        let streamedText = '';
+        // Deltas go to the separate chat stream store (one publish per frame),
+        // not the global store: the finished answer is committed once below.
+        const unsubscribe = window.electronAPI.onAIStream(event => {
+          if (event.requestId !== requestId || !event.delta || !requestIsCurrent()) return;
+          streamedText += event.delta;
+          chatStream.update(assistantId, streamedText);
+        });
+        try {
+          const streamed = await window.electronAPI.streamAIChat(requestId, {
+            action: 'chat',
+            context: chatContext,
+            conversationHistory: newMsgs,
+            userInstruction: text,
+            // The main process requires the account: it decides from its own settings
+            // whether message text may reach the model for this thread.
+            mailScope: openedThread ? { accountId: openedThread.accountId, threadId: openedThread.id } : undefined,
+          }, aiProvider, chatModel);
+          if (streamed.cancelled) return;
+          response = { text: streamed.text };
+        } finally {
+          unsubscribe();
+          if (aiChatStreamRequestRef.current === requestId) {
+            aiChatStreamRequestRef.current = null;
+            setAiStreamingMessageId(null);
+            chatStream.clear();
+          }
+        }
+      } else {
+        response = await withAIRequestTimeout(window.electronAPI.completeAI({
+          action: 'chat',
+          context: chatContext,
+          conversationHistory: newMsgs,
+          userInstruction: text,
+          toolPolicy: {
+            enabled: settings.ai.externalToolsEnabled,
+            allowMailboxSearch: true,
+            allowCalendarSearch: true,
+            // The floating assistant is a plain chat; the review queue is no longer shown there.
+            allowActionProposals: false,
+            mailboxAccountIds: proposalAccountIds,
+            calendarAccountIds: proposalAccountIds,
+          },
+        }, aiProvider, chatModel));
+      }
       if (!requestIsCurrent()) return;
 
       const assistantMsg: AIChatMessage = {
-        id: crypto.randomUUID(),
+        id: streamingAssistantId || crypto.randomUUID(),
         role: 'assistant',
         text: response.text,
         sources: response.sources,
@@ -410,8 +511,7 @@ export function useAIState({
       }));
     } catch (e) {
       if (!requestIsCurrent()) return;
-      console.error('AI chat completion failed:', e);
-      emitToast({ type: 'error', message: formatAIUserError(e) });
+      reportAIRequestFailure(e, userMsg.id, { kind: 'chat', text });
     } finally {
       if (requestIsCurrent()) {
         aiChatInFlightRef.current = false;
@@ -653,7 +753,7 @@ export function useAIState({
     } catch (error) {
       emitToast({
         type: 'warning',
-        message: error instanceof Error ? error.message : 'The reviewed action could not be applied.',
+        message: mailActionFailureMessage(error),
       });
       return;
     }
@@ -743,6 +843,7 @@ export function useAIState({
 
     aiChatInFlightRef.current = true;
     setAiPanelLoading(true);
+    setAiRequestFailure(null);
     const start = performance.now();
     const notes = settings.ai.personalizationNotes ? `\nPersonalization notes: ${settings.ai.personalizationNotes}` : '';
     const context = requiresThread
@@ -807,8 +908,7 @@ export function useAIState({
       }));
     } catch (e) {
       if (!requestIsCurrent()) return;
-      console.error('AI action failed:', e);
-      setActiveAIMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', text: formatAIUserError(e) }]);
+      reportAIRequestFailure(e, userMsg.id, { kind: 'instruction', label, instruction, requiresThread });
     } finally {
       if (requestIsCurrent()) {
         aiChatInFlightRef.current = false;
@@ -818,10 +918,8 @@ export function useAIState({
   };
 
   const runAIAction = async (action: AIAction) => {
-    if (action === 'queue') {
-      await runAITriagePlan();
-      return;
-    }
+    // The triage queue ('queue') had no screen left; nothing to run.
+    if (action === 'queue') return;
 
     if (action === 'translate' && !settings.ai.translationEnabled) {
       emitToast({ type: 'info', message: 'Translation is disabled in AI settings.' });
@@ -849,101 +947,6 @@ export function useAIState({
       instruction: shortcut.instruction,
       requiresThread: shortcut.requiresThread,
     });
-  };
-
-  const runAITriagePlan = async () => {
-    setAiPanelOpen(true);
-    if (!activeAccount || !operatorScopeId) {
-      setTriagePlan(null);
-      emitToast({ type: 'warning', message: 'Connect an account before building a triage queue.' });
-      return;
-    }
-    const requestToken: OperatorRequestToken = {
-      scopeId: operatorScopeId,
-      scopeGeneration: operatorScopeGenerationRef.current,
-      requestGeneration: ++triageRequestGenerationRef.current,
-    };
-    const requestIsCurrent = () => isOperatorRequestCurrent(
-      requestToken,
-      currentOperatorScopeRef.current,
-      operatorScopeGenerationRef.current,
-      triageRequestGenerationRef.current,
-    );
-    if (visibleThreads.length === 0) {
-      setTriagePlan(null);
-      emitToast({ type: 'info', message: 'No visible messages to triage in this tab.' });
-      return;
-    }
-    
-    setAiPanelLoading(true);
-
-    const visibleThreadsSnapshot = [...visibleThreads];
-    const activeSplitSnapshot = activeSplit;
-    const isAutomationSplit = activeSplitSnapshot === 'automation';
-    const intent = isAutomationSplit ? 'automationCleanup' : 'mailboxTriage';
-    const now = new Date();
-    
-    const fallbackPlan = MailTriagePlanner.build(
-      operatorScopeId,
-      activeSplitSnapshot,
-      visibleThreadsSnapshot,
-      now,
-      intent,
-      8
-    );
-
-    let plan = fallbackPlan;
-    let usedAI = false;
-    const canUseAI = aiProvider !== 'disabled' && aiProviderDesc?.preference !== 'disabled';
-
-    try {
-      if (canUseAI) {
-        const response = await withAIRequestTimeout(window.electronAPI.completeAI({
-          action: 'triage',
-          context: buildAITriageContext(visibleThreadsSnapshot),
-          conversationHistory: [],
-          userInstruction: buildAITriageInstruction(intent),
-        }, aiProvider, resolveAIModelForPurpose('interactive', {
-          interactiveModel: settings.ai.globalDefaultModel,
-        }, aiModel)));
-        if (!requestIsCurrent()) return;
-
-        plan = buildAITriagePlanFromResponse({
-          accountId: fallbackPlan.accountId,
-          sourceTitle: fallbackPlan.sourceTitle,
-          generatedAt: now.toISOString(),
-          sourceThreadCount: fallbackPlan.sourceThreadCount,
-          intent,
-          automationRulePreview: fallbackPlan.automationRulePreview || null,
-          responseText: response.text,
-          threads: visibleThreadsSnapshot,
-        });
-        usedAI = true;
-      }
-    } catch (error) {
-      if (!requestIsCurrent()) return;
-      console.warn('AI triage failed; using deterministic fallback:', error);
-    } finally {
-      if (requestIsCurrent()) setAiPanelLoading(false);
-    }
-
-    if (!requestIsCurrent()) return;
-    setTriagePlan(plan);
-    const reviewPlan = buildAgentPlanFromTriagePlan({ plan, threads: visibleThreadsSnapshot, aiAssisted: usedAI });
-    // Auto-archive suggestions are gated by the AI settings toggle; explicit
-    // user-queued actions (briefing/cleanup/Ask Dumka) are never filtered here.
-    const reviewItems = settings.ai.suggestAutoArchive
-      ? reviewPlan.items
-      : reviewPlan.items.filter(item => item.action !== 'archive');
-    setAgentPlan(prev => reviewItems.reduce((acc, item) => mergeAgentPlanItem(acc, item), prev));
-    setSelectedAgentPlanItemIds(prev => {
-      const next = new Set(prev);
-      for (const item of reviewItems) {
-        if (item.selectionPolicy === 'autoSelected') next.add(item.id);
-      }
-      return next;
-    });
-    emitToast({ type: 'success', message: `${usedAI ? 'AI' : 'Fast'} review queue ready for ${reviewItems.length} actions.` });
   };
 
   const runDailyBriefing = useCallback(async (
@@ -1026,7 +1029,7 @@ export function useAIState({
       if (!requestIsCurrent()) return false;
       console.error('Daily briefing failed:', error);
       if (!behavior.preserveOnError) setDailyBriefing(null);
-      if (!behavior.silent) emitToast({ type: 'error', message: formatAIUserError(error) });
+      if (!behavior.silent) emitToast({ type: 'error', message: "Couldn't build the daily briefing. Details are in Settings → Logging." });
       return false;
     } finally {
       if (requestIsCurrent()) setDailyBriefingLoading(false);
@@ -1094,23 +1097,39 @@ export function useAIState({
     });
   };
 
+  // Run a retry after the failed exchange was removed and this render's
+  // closures see the trimmed conversation.
+  useEffect(() => {
+    if (!pendingAIRetry) return;
+    const retry = pendingAIRetry;
+    setPendingAIRetry(null);
+    if (retry.kind === 'chat') {
+      void sendAIMessage(retry.text);
+    } else {
+      void runAIInstruction(retry);
+    }
+    // Only a new retry request should trigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAIRetry]);
+
   return {
     aiPanelOpen,
     setAiPanelOpen,
+    aiRequestFailure,
+    retryLastAIRequest,
     aiProvider,
     setAiProvider,
     aiProviderDesc,
     aiConversations,
     activeAIConversation,
     activeAIMessages,
-    triagePlan,
-    setTriagePlan,
     agentPlan,
     setAgentPlan,
     dailyBriefing,
     setDailyBriefing,
     dailyBriefingLoading,
     aiPanelLoading,
+    aiStreamingMessageId,
     aiModel,
     setAiModel,
     selectedAgentPlanItemIds,
@@ -1121,7 +1140,6 @@ export function useAIState({
     sendAIMessage,
     runAIAction,
     runAIPromptShortcut,
-    runAITriagePlan,
     runDailyBriefing,
     dismissDailyBriefingItem,
     addDailyBriefingItemToAgentPlan,

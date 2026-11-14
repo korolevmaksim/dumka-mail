@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -14,6 +14,10 @@ export function useDialogFocus(
   initialFocusRef: RefObject<HTMLElement | null>,
   onClose: () => void,
 ): void {
+  // The latest onClose is read through a ref: an inline closure from the
+  // caller must not re-run the effect, which would move focus back and forth.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusTimer = window.setTimeout(() => initialFocusRef.current?.focus(), 0);
@@ -22,7 +26,7 @@ export function useDialogFocus(
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !dialogRef.current) return;
@@ -47,5 +51,5 @@ export function useDialogFocus(
       document.removeEventListener('keydown', handleKeyDown, true);
       previousFocus?.focus();
     };
-  }, [dialogRef, initialFocusRef, onClose]);
+  }, [dialogRef, initialFocusRef]);
 }

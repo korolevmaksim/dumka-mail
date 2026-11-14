@@ -147,3 +147,17 @@ describe('resolveThreadHeaderIdentity', () => {
     });
   });
 });
+
+describe('resolveThreadHeaderIdentity for a thread the account started', () => {
+  it('names the latest other sender instead of the account', () => {
+    const identity = resolveThreadHeaderIdentity(
+      makeThread(),
+      [
+        makeMessage({ id: 'm1', senderName: 'Me', senderEmail: 'social@example.com', receivedAt: '2026-06-30T09:00:00.000Z', labelIds: ['SENT'] }),
+        makeMessage({ id: 'm2', senderName: 'Reply Person', senderEmail: 'reply@example.com', receivedAt: '2026-06-30T10:00:00.000Z' }),
+      ],
+      { messagesKey: 'social@example.com:thread-1', status: 'ready' },
+    );
+    expect(identity).toEqual({ senderName: 'Reply Person', senderEmail: 'reply@example.com', source: 'message' });
+  });
+});

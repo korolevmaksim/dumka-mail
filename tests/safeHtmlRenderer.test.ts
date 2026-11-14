@@ -35,6 +35,20 @@ describe('hasRemoteImages', () => {
   it('ignores local cid and data image references', () => {
     expect(hasRemoteImages('<img src="cid:hero"><img src="data:image/png;base64,AAAA">')).toBe(false);
   });
+
+  it('still sees a remote src in an unclosed last tag', () => {
+    expect(hasRemoteImages('<p>x</p><img src="https://example.com/a.png"')).toBe(true);
+  });
+
+  it('stays linear on adversarial unclosed tags', () => {
+    for (const unit of ['<img ', '<source ', '<img src="', '<img src=x ']) {
+      const input = unit.repeat(Math.floor((1024 * 1024) / unit.length));
+      const started = performance.now();
+      hasRemoteImages(input);
+      hasRemoteImages(`${input}>`);
+      expect(performance.now() - started).toBeLessThan(200);
+    }
+  });
 });
 
 describe('removeDarkColorSchemeMediaRules', () => {

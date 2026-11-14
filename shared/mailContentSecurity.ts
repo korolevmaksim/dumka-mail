@@ -1,4 +1,5 @@
 import type { MailSecurityWarning } from './types';
+import { createForwardFinder } from './htmlScan';
 
 const SHORT_LINK_HOSTS = new Set([
   'bit.ly',
@@ -64,22 +65,50 @@ function isHiddenPixelTag(tag: string): boolean {
     /(?:^|;)\s*max-height\s*:\s*0(?:px)?(?:\s*!important)?(?:;|$)/i.test(style);
 }
 
-export function detectTrackingPixelTags(html: string): string[] {
-  if (!html) return [];
-  const tags = html.match(/<img\b[^>]*>/gi) || [];
-  return tags.filter(tag => {
-    const src = quotedAttr(tag, 'src');
-    return Boolean(src && /^https?:\/\//i.test(src) && isHiddenPixelTag(tag));
-  });
+/**
+ * Every `<img …>` tag, with the semantics of `/<img\b[^>]*>/gi` (from `<img`
+ * to the first `>` after it), found in one linear pass. The regex itself is
+ * quadratic on unclosed tags (`'<img '.repeat(n)` rescans to the end from
+ * each one), and this runs on every message body before rendering.
+ */
+function imgTagRanges(html: string): Array<[start: number, end: number]> {
+  const opener = /<img\b/gi;
+  const nextGt = createForwardFinder(html, '>');
+  const ranges: Array<[number, number]> = [];
+  let match: RegExpExecArray | null;
+  while ((match = opener.exec(html)) !== null) {
+    const gt = nextGt(match.index + match[0].length);
+    // No `>` left: no later `<img` can close either.
+    if (gt === -1) break;
+    ranges.push([match.index, gt + 1]);
+    opener.lastIndex = gt + 1;
+  }
+  return ranges;
 }
 
+function isTrackingPixelTag(tag: string): boolean {
+  const src = quotedAttr(tag, 'src');
+  return Boolean(src && /^https?:\/\//i.test(src) && isHiddenPixelTag(tag));
+}
+
+export function detectTrackingPixelTags(html: string): string[] {
+  if (!html) return [];
+  return imgTagRanges(html)
+    .map(([start, end]) => html.slice(start, end))
+    .filter(isTrackingPixelTag);
+}
+
+/** Linear and never skipped (no size cap): skipping would let tracking pixels load. */
 export function stripTrackingPixelsFromHtml(html: string): string {
   if (!html) return html;
-  return html.replace(/<img\b[^>]*>/gi, tag => {
-    const src = quotedAttr(tag, 'src');
-    if (!src || !/^https?:\/\//i.test(src)) return tag;
-    return isHiddenPixelTag(tag) ? '' : tag;
-  });
+  let out = '';
+  let last = 0;
+  for (const [start, end] of imgTagRanges(html)) {
+    if (!isTrackingPixelTag(html.slice(start, end))) continue;
+    out += html.slice(last, start);
+    last = end;
+  }
+  return last === 0 ? html : out + html.slice(last);
 }
 
 function stripTags(value: string): string {

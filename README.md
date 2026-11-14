@@ -2,27 +2,19 @@
 
 Dumka Mail is a local-first desktop Gmail client built with Electron, React, TypeScript, Tailwind CSS, and SQLite.
 
-The app syncs Gmail metadata and messages into a local SQLite cache, applies mailbox actions optimistically, and uses optional AI providers for triage, summaries, drafting, and rewrites. Provider keys and OAuth refresh tokens are stored outside the repository and outside the bundled app.
+The app syncs Gmail metadata and messages into a local SQLite cache, applies mailbox actions optimistically, sorts the inbox into decision sections, and uses optional AI providers to refine that sorting, summarize long threads, and prepare reply drafts. Provider keys and OAuth refresh tokens are stored outside the repository and outside the bundled app.
 
-![Dumka Mail Soft interface with a list-first inbox, split inbox tabs, agenda, mailbox health, speed proof, and action ledger](./docs/media/dumka-inbox.png)
+![Dumka Mail inbox (earlier layout)](./docs/media/dumka-inbox.png)
 
-> The public product images use reserved `.example` addresses and fully synthetic mail, calendar, and account data.
+> The public product images use reserved `.example` addresses and fully synthetic mail, calendar, and account data. They were captured before the decision-sections redesign: the split-inbox tabs, the Today and Privacy & Cleanup screens, and the docked AI panel they show are no longer in the app.
 
 ## Status
 
 This project is early alpha software. It is useful for local development and experimentation. Local packages are unsigned by default; signed and notarized macOS distribution builds require Apple Developer credentials.
 
-## Product tour
-
-![Dumka Mail product tour showing Inbox, Today, Calendar, and Privacy & Cleanup](./docs/media/dumka-product-tour.gif)
-
 ## Screenshots
 
-| Today workspace | Calendar workspace |
-| --- | --- |
-| ![Dumka Mail Today workspace with a synthetic daily briefing and review queue](./docs/media/dumka-today.png) | ![Dumka Mail Calendar workspace with a synthetic day schedule and agenda](./docs/media/dumka-calendar.png) |
-
-![Dumka Mail Privacy and Cleanup workspace with synthetic sender suggestions](./docs/media/dumka-cleanup.png)
+![Dumka Mail Calendar workspace with a synthetic day schedule and agenda](./docs/media/dumka-calendar.png)
 
 The complete asset guide, including the GitHub social preview, is in [docs/media](./docs/media/README.md).
 
@@ -33,17 +25,21 @@ The complete asset guide, including the GitHub social preview, is in [docs/media
 - Persistent reconnect guidance for expired, revoked, missing, or under-scoped Google authorization; affected background retries pause until the account is reauthorized.
 - Optional incremental Google Calendar and Google Contacts authorization from settings.
 - First-class local-first Calendar workspace with per-account and unified multi-calendar views, Google colors and access roles, cache-first Month/Week/Day/Agenda/Quarter/Year layouts, offline search, calendar sets, event templates, secondary time zones, and keyboard navigation.
-- Split inbox categories, editable custom category rules with local email autocomplete, multi-address sender/recipient matching, domain and subject filters, saved views, reminders, snooze notifications, and action history.
+- Inbox sorted into decision sections: `Reply` / `People`, `Read`, `Event`, `Later`, `Automated`, `Clear`, `Unsubscribe`. A deterministic rule layer works without a model and never sweeps mail from people, security notices, or invitations; a configured model may refine it; a manual move (`V`) wins over both. `⇧E` archives the Clear group and `⇧H` schedules the Later group as one undoable batch.
+- Mailboxes: Inbox, Later (reminders), Waiting (sent without a reply), Drafts, Sent, All mail, Trash, Spam, Muted; Unified Inbox with `⌘0`. Reminders, snooze notifications, and action history.
+- Sender rules per account, created only by explicit consent after you repeatedly archive a sender's routine mail: new mail from that sender is archived on arrival and listed under "Handled for you" with Bring back. Two bring-backs switch the rule off. Rules run only when the account allows "Prepare and apply my sender rules".
+- Custom category rules and their settings are kept in Settings, but no longer shown as inbox tabs.
 - Search operators for sender, labels, attachments, date ranges, and mailbox scope.
 - Offline-first mailbox mutations with background reconciliation, including archive, read state, trash, spam, ignore, nested Gmail labels, scheduled sends, rule-driven forwarding, and safe auto-replies.
 - Address book sync with contact detail cards, local notes, display-name edits, mailing groups, internal compose handoff, and compose autocomplete.
 - Compose, reply, forward, send later, draft mailbox restore, signatures, snippet templates, attachments, insert-link editing, print, and sent mail sync.
-- Right-panel mini-calendar and agenda with multi-day event coverage, local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
+- Calendar tools with local and guest free/busy availability suggestions, guest-aware proposed-time insertion, natural-language quick event creation with recurring presets and Google Meet, calendar invite cards with conflict checks, add-to-calendar/RSVP actions, and scheduling-link insertion.
 - Full Calendar event management includes all-day events, guests and notification choice, reminders, visibility/free-busy status, Google Meet, recurring instance/series/future-split operations, drag/move, `.ics` preview import/export, native reminders, ETag conflict protection, and a durable offline mutation queue. Mail-derived events keep an explicit source-thread link; mail reminders and Reply Pipeline deadlines appear as visually distinct local tasks.
 - Optional AI providers: OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, and OpenAI-compatible endpoints.
 - Local mailbox search plus read-only cached-calendar search/free-slot tools for interactive AI assistant chats, with bounded Operator account scope; opt-in MCP and web-search tools keep secrets in OS-backed credential storage.
-- Agentic mail layer with a durable Today operator workspace, locally persisted daily briefings and Agent Review Queue state, source-cited assistant proposals for reply drafts, reminders, archive, and existing user labels, and a stateful Reply Pipeline that combines inbound reply obligations with outbound follow-ups. Pipeline drafts use the normal draft mailbox, preserve user edits, fall back to deterministic templates, and are never sent without an explicit user send action. Source-cited AI-assisted triage, opt-in automation-model drafting, notification filtering and actions, monitored mail rules with disabled, shadow, and active modes, one-click unsubscribe support, local security snapshots, tracker stripping, and phishing-link warnings are also included.
-- Privacy & Cleanup sender review with locally computed volume/risk signals, recent-message preview, dry-run Archive/Unsubscribe proposals, and persistent account-scoped sender exclusions with Undo/Restore management.
+- Agent work in place, in the main process: a summary above long threads (with its own provider/model, language and user context in Settings → AI model → Thread summaries; see [summary settings](docs/SUMMARIES.md)) and a reply draft written into the docked editor when you ask for one (`Draft a reply`, `⇧R`). Background work by the model — sorting new mail with a reason on each row, and optionally preparing reply drafts in advance — is off by default and is turned on in Settings → AI model, where its provider and model are chosen from the provider's own list. No model is built into the app: every model in use is one you chose in settings. It never sends, unsubscribes, answers invitations, or deletes on its own. "Ask Dumka" (`⌘J` or the command palette) answers in a floating panel with streamed responses.
+- Reply Pipeline / Waiting: inbound reply obligations and outbound follow-ups; pipeline drafts use the normal draft mailbox and are never sent without an explicit send.
+- Per-account notification filtering (`People only / All / None`) and actions, monitored mail rules with disabled, shadow, and active modes, unsubscribe through a confirmation sheet, local security snapshots, tracker stripping, and phishing-link warnings.
 - Keyboard shortcut discovery overlay, fuzzy command palette matching, virtualized mailbox lists, and accessible thread/draft list semantics.
 - Independent appearance controls for the original Classic interface and the softer border-light interface, each compatible with light, dark, and system color modes, existing density options, font scaling, and custom accent colors.
 - I18n foundation with persisted interface language settings, an English catalog, and pseudo-locale QA for localized surfaces.
@@ -53,7 +49,7 @@ The complete asset guide, including the GitHub social preview, is in [docs/media
 ## Requirements
 
 - macOS for the currently tested desktop package. Windows/Linux use Electron safeStorage for local token persistence when OS encryption is available.
-- Node.js 22 or newer.
+- Node.js 22.12 or newer (Node.js 24 is used in CI and the Electron runtime).
 - npm 10 or newer.
 - A Google OAuth desktop client JSON file with Gmail API access. Calendar and Contacts scopes are requested later from Settings only when those integrations are enabled.
 
@@ -87,7 +83,7 @@ Do not commit local OAuth files, provider keys, refresh tokens, SQLite databases
 
 ## Productivity workflows
 
-Today includes a prioritized attention list, confirmed commitments, and reversible AI preferences. Search supports visual filters and saved queries. See [docs/PRODUCTIVITY.md](docs/PRODUCTIVITY.md) for workflows, scope, and verification boundaries.
+Search supports visual filters and saved queries. Commitments, AI corrections, and attention snoozes are still stored locally but currently have no screen. See [docs/PRODUCTIVITY.md](docs/PRODUCTIVITY.md) for what is reachable and what is stored.
 
 ## Development
 
@@ -140,3 +136,5 @@ Please do not open public issues with secrets, tokens, real email content, or OA
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+Dependency versions, security resolution and compatibility checks are recorded in [Dependency maintenance](docs/DEPENDENCIES.md).

@@ -1,0 +1,373 @@
+{
+  "startInbox": "Inbox 28",
+  "endInbox": "Inbox 2",
+  "counts": {
+    "keys": 143,
+    "typedChars": 1937,
+    "pointerClicks": 2,
+    "decisions": 49
+  },
+  "automationRunSeconds": 117.6,
+  "log": [
+    {
+      "subject": "Q3 rollout: can we move the pilot to the 24th?",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Q3 rollout: can we move the pi\""
+      ]
+    },
+    {
+      "subject": "Need your numbers for Thursday's board deck",
+      "action": "reply+remind",
+      "notes": [
+        "after send title=\"Need your numbers for Thursday\"",
+        "remind menu: ",
+        "after remind title=\"Need your numbers for Thursday\" menuOpen=false"
+      ]
+    },
+    {
+      "subject": "Need your numbers for Thursday's board deck",
+      "action": "reply+remind",
+      "notes": [
+        "after send title=\"Need your numbers for Thursday\"",
+        "remind menu: ",
+        "after remind title=\"\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "split": "1",
+      "note": "had to press Enter again to open next thread"
+    },
+    {
+      "subject": "Need your numbers for Thursday's board deck",
+      "action": "reply+remind",
+      "notes": [
+        "after send title=\"Need your numbers for Thursday\"",
+        "remind menu: Remind me | Need your numbers for Thursday's board deck | Later today | Today at 8:53 ",
+        "after remind title=\"Invitation: Lumen Labs weekly \" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "subject": "Invitation: Lumen Labs weekly sync",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Re: Contract redlines v3 — two\""
+      ]
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Re: Contract redlines v3 — two\""
+      ]
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"\"",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "split": "1",
+      "note": "had to press Enter again to open next thread"
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Re: Contract redlines v3 — two\""
+      ]
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Re: Contract redlines v3 — two\""
+      ]
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Re: Contract redlines v3 — two\""
+      ]
+    },
+    {
+      "subject": "Re: Contract redlines v3 — two open points",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Re: Contract redlines v3 — two\""
+      ]
+    },
+    {
+      "subject": "Interview loop for Jamie Chen — are you free Wed 2–3pm?",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Interview loop for Jamie Chen \""
+      ]
+    },
+    {
+      "subject": "Interview loop for Jamie Chen — are you free Wed 2–3pm?",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Interview loop for Jamie Chen \""
+      ]
+    },
+    {
+      "subject": "Interview loop for Jamie Chen — are you free Wed 2–3pm?",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Interview loop for Jamie Chen \""
+      ]
+    },
+    {
+      "split": "1",
+      "note": "had to press Enter again to open next thread"
+    },
+    {
+      "subject": "Interview loop for Jamie Chen — are you free Wed 2–3pm?",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Interview loop for Jamie Chen \""
+      ]
+    },
+    {
+      "subject": "FYI: offsite moved to October",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Updated invitation: 1:1 Daniel / Alex",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Intro: Alex <> Tomás (Brightwa\""
+      ]
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Intro: Alex <> Tomás (Brightwa\""
+      ]
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"\"",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "split": "1",
+      "note": "had to press Enter again to open next thread"
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Intro: Alex <> Tomás (Brightwa\""
+      ]
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Intro: Alex <> Tomás (Brightwa\""
+      ]
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Intro: Alex <> Tomás (Brightwa\""
+      ]
+    },
+    {
+      "subject": "Intro: Alex <> Tomás (Brightwave)",
+      "action": "reply",
+      "notes": [
+        "after send title=\"Intro: Alex <> Tomás (Brightwa\""
+      ]
+    },
+    {
+      "subject": "Need your numbers for Thursday's board deck",
+      "action": "reply+remind",
+      "notes": [
+        "after send title=\"Need your numbers for Thursday\"",
+        "remind menu: ",
+        "after remind title=\"Need your numbers for Thursday\" menuOpen=false"
+      ]
+    },
+    {
+      "subject": "Need your numbers for Thursday's board deck",
+      "action": "reply+remind",
+      "notes": [
+        "after send title=\"Need your numbers for Thursday\"",
+        "remind menu: ",
+        "after remind title=\"\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "split": "1",
+      "note": "had to press Enter again to open next thread"
+    },
+    {
+      "subject": "Need your numbers for Thursday's board deck",
+      "action": "reply+remind",
+      "notes": [
+        "after send title=\"Need your numbers for Thursday\"",
+        "remind menu: Remind me | Need your numbers for Thursday's board deck | Later today | Today at 8:54 ",
+        "after remind title=\"\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "subject": "Re: Invoice #2291 approved",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Receipt for your subscription — €29.00",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "You have 3 new connection requests",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Priya Raman commented on \"Pilot plan\"",
+      "action": "remind",
+      "notes": [
+        "remind menu: Remind me | Priya Raman commented on \"Pilot plan\" | Later today | Today at 8:54 PM | Thi",
+        "after remind title=\"\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "split": "4",
+      "note": "had to press Enter again to open next thread"
+    },
+    {
+      "subject": "[Trackline] NW-1432 assigned to you: Export fails for large ",
+      "action": "remind",
+      "notes": [
+        "remind menu: Remind me | [Trackline] NW-1432 assigned to you: Export fails for large accounts | L",
+        "after remind title=\"[Trackline] NW-1398 moved to D\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "subject": "[Trackline] NW-1398 moved to Done",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Resolved: Elevated API latency (eu-west)",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "October newsletter: benefits enrollment, new joiners, office",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "New sign-in from Chrome on macOS",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "[northwind/api] Fix retry backoff for webhook delivery (#482",
+      "action": "remind",
+      "notes": [
+        "remind menu: Remind me | [northwind/api] Fix retry backoff for webhook delivery (#482) | Later to",
+        "after remind title=\"[northwind/api] Run failed: CI\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "subject": "[northwind/api] Run failed: CI on main (build #9121)",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Your package arrives tomorrow",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Deploy freeze Fri 18:00 – Mon 09:00",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Re: Onboarding flow v4 — feedback round",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Issue #212: The hidden cost of flaky tests",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "Last chance: 40% off annual plans",
+      "action": "unsubscribe",
+      "notes": [
+        "unsubscribe dialog: (none)",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "subject": "Your e-ticket: BER → LIS, 14 Oct",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "5 onboarding teardown lessons",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "New arrivals for autumn",
+      "action": "unsubscribe",
+      "notes": [
+        "unsubscribe dialog: (none)",
+        "thread already left the reader before archive"
+      ]
+    },
+    {
+      "subject": "Call for papers closes Friday",
+      "action": "archive",
+      "notes": []
+    },
+    {
+      "subject": "[northwind/api] Fix retry backoff for webhook delivery (#482",
+      "action": "remind",
+      "notes": [
+        "remind menu: Remind me | [northwind/api] Fix retry backoff for webhook delivery (#482) | Later to",
+        "after remind title=\"\" menuOpen=false",
+        "thread already left the reader before archive"
+      ]
+    }
+  ],
+  "toasts": "Clear inbox split  Jump to other splits or press ⌘N / C to compose. || Archived. Undo Archived. Undo Archived. Undo Reminder set for Tomorrow at 9:00 AM. Undo"
+}

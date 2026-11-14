@@ -1,4 +1,4 @@
-export const SEARCH_INPUT_COMMIT_DELAY_MS = 250;
+export const SEARCH_INPUT_COMMIT_DELAY_MS = 80;
 
 export interface SearchCommitController {
   schedule: (value: string) => void;

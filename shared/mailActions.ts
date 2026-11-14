@@ -48,6 +48,12 @@ export function reverseMailActionKind(kind: ActionKind): ActionKind | null {
       return 'markUnread';
     case 'markUnread':
       return 'markRead';
+    // Later (⇧H / group reminders): one Z clears the reminders it set. The
+    // clearReminder log keeps the original reminderAt, so redo restores it.
+    case 'setReminder':
+      return 'clearReminder';
+    case 'clearReminder':
+      return 'setReminder';
     default:
       return null;
   }

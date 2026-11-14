@@ -86,7 +86,11 @@ export const ThreadMessageList = memo(function ThreadMessageList({
           onClick={revealEarlierMessages}
           className="mx-auto rounded-full border border-[var(--border)] bg-[var(--raised-surface)] px-4 py-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)] transition-colors hover:border-[var(--strong-border)] hover:text-[var(--text-primary)]"
         >
-          {isExpanding ? 'Rendering messages…' : `Show ${Math.min(EARLIER_MESSAGE_BATCH_SIZE, earlierCount)} of ${earlierCount} earlier messages`}
+          {isExpanding
+            ? 'Rendering messages…'
+            : earlierCount <= EARLIER_MESSAGE_BATCH_SIZE
+              ? `Show ${earlierCount} earlier ${earlierCount === 1 ? 'message' : 'messages'}`
+              : `Show ${EARLIER_MESSAGE_BATCH_SIZE} more of ${earlierCount} earlier messages`}
         </button>
       )}
       {visibleMessages.map(message => (

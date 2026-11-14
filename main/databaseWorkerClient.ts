@@ -1,5 +1,6 @@
 import path from 'path';
 import { Worker } from 'worker_threads';
+import { createWritePrioritySignal } from './sqliteWriteGuard';
 import type { MailEmbeddingRow } from './database';
 import type {
   DatabaseWorkerPayload,
@@ -17,7 +18,14 @@ import {
   DATABASE_WORKER_REQUEST_TIMEOUT_MS,
   databaseWorkerTimeoutMessage,
 } from '../shared/databaseWorkerTimeout';
-import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat } from '../shared/types';
+import type { ThreadMaintenanceResult } from './migrations';
+import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat, ThreadDecisionRecord } from '../shared/types';
+
+/** What one agent-prep pass reads: the newest inbox threads and their cached decisions. */
+export interface AgentPrepInboxSnapshot {
+  threads: MailThread[];
+  decisions: ThreadDecisionRecord[];
+}
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -54,6 +62,9 @@ function createError(error: { name: string; message: string; stack?: string }): 
 
 class DatabaseWorkerClient {
   private worker: Worker | null = null;
+  // Shared counter: the main thread announces interactive writes, the worker
+  // pauses between bulk chunks while it is non-zero. Kept across restarts.
+  private writePrioritySignal: SharedArrayBuffer | null = null;
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private shuttingDown = false;
@@ -61,7 +72,10 @@ class DatabaseWorkerClient {
   private getWorker(): Worker {
     if (this.worker) return this.worker;
 
-    const worker = new Worker(path.join(__dirname, 'databaseWorker.js'));
+    if (!this.writePrioritySignal) this.writePrioritySignal = createWritePrioritySignal();
+    const worker = new Worker(path.join(__dirname, 'databaseWorker.js'), {
+      workerData: { writePrioritySignal: this.writePrioritySignal },
+    });
     this.worker = worker;
     this.shuttingDown = false;
 
@@ -162,6 +176,23 @@ class DatabaseWorkerClient {
         await yieldToEventLoop();
       }
     }
+  }
+
+  countInboxThreads(accountIds: string[]): Promise<Record<string, number>> {
+    return this.request<Record<string, number>>({ type: 'countInboxThreads', accountIds, nowIso: new Date().toISOString() });
+  }
+
+  agentPrepInbox(accountId: string, limit: number): Promise<AgentPrepInboxSnapshot> {
+    return this.request<AgentPrepInboxSnapshot>({ type: 'agentPrepInbox', accountId, limit });
+  }
+
+  getThreads(accountId: string, threadIds: string[]): Promise<MailThread[]> {
+    return this.request<MailThread[]>({ type: 'getThreads', accountId, threadIds });
+  }
+
+  /** One committed chunk of the `in_inbox` / signals maintenance pass. */
+  runThreadMaintenance(chunkSize?: number): Promise<ThreadMaintenanceResult> {
+    return this.request<ThreadMaintenanceResult>({ type: 'runThreadMaintenance', chunkSize });
   }
 
   listThreads(accountIds: string[]): Promise<MailThread[]> {

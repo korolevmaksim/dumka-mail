@@ -39,7 +39,7 @@ export class RendererErrorBoundary extends Component<
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="self-center mt-2 px-4 py-2 rounded-md bg-[var(--accent)] text-white text-[calc(12px*var(--font-scale))] font-medium cursor-pointer hover:opacity-90"
+            className="self-center mt-2 px-4 py-2 rounded-md bg-[var(--accent-fill)] text-[var(--on-accent)] text-[calc(12px*var(--font-scale))] font-medium cursor-pointer hover:opacity-90"
           >
             Reload window
           </button>

@@ -1,11 +1,9 @@
 import type { CalendarEvent, CalendarEventCreateInput, CalendarEventUpdateInput, CalendarWorkspaceView } from '../../../shared/types';
+import { calendarHeaderTitle, secondaryClockLabel } from './calendarDateLabels';
 
-export function calendarWorkspaceTitle(anchor: Date, view: CalendarWorkspaceView): string {
-  if (view === 'day') return anchor.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  if (view === 'week' || view === 'agenda') return anchor.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
-  if (view === 'quarter') return `Q${Math.floor(anchor.getMonth() / 3) + 1} ${anchor.getFullYear()}`;
-  if (view === 'year') return String(anchor.getFullYear());
-  return anchor.toLocaleDateString([], { month: 'long', year: 'numeric' });
+/** Header title for a view; see `calendarHeaderTitle`. */
+export function calendarWorkspaceTitle(anchor: Date, view: CalendarWorkspaceView, weekStartsOn: 0 | 1 = 1): string {
+  return calendarHeaderTitle(anchor, view, weekStartsOn);
 }
 
 export function restoredCalendarAnchor(value: string): Date {
@@ -31,14 +29,9 @@ export function calendarEventFormKey(mode: 'create' | 'edit', event: CalendarEve
   return `${mode}:${event?.accountId || 'new'}:${event?.id || 'draft'}:${session}`;
 }
 
-export function secondaryCalendarTimeLabel(timeZone: string): string | null {
-  if (!timeZone) return null;
-  try {
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone });
-    return `${time} ${timeZone.split('/').pop()?.replaceAll('_', ' ') || timeZone}`;
-  } catch {
-    return null;
-  }
+/** "14:30 Tokyo" (24-hour) for a second time zone; null when the zone is unknown. */
+export function secondaryCalendarTimeLabel(timeZone: string, now: Date = new Date()): string | null {
+  return secondaryClockLabel(timeZone, now);
 }
 
 export function calendarEventUpdateInput(

@@ -1,9 +1,12 @@
+import { resolveAfterSend, sendButtonLabel, type SendIntent } from '../../../../shared/sendFlow';
+import { resolveAccountSetting } from '../../../../shared/accountSettings';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Bold,
   Braces,
   Calendar,
+  CalendarClock,
   Clock,
   ExternalLink,
   Italic,
@@ -30,6 +33,10 @@ import { RichTextEditor, RichTextEditorHandle } from '../compose/RichTextEditor'
 import { SendLaterMenu } from '../compose/SendLaterMenu';
 import { DraftPlaceholderWarning } from '../compose/DraftPlaceholderWarning';
 
+function CalendarClockIcon() {
+  return <CalendarClock aria-hidden="true" className="h-3.5 w-3.5" />;
+}
+
 interface ToolbarButtonProps {
   title: string;
   onClick: () => void;
@@ -42,11 +49,13 @@ function ToolbarButton({ title, onClick, children, active = false }: ToolbarButt
     <button
       type="button"
       title={title}
+      aria-label={title}
+      aria-pressed={active || undefined}
       onClick={onClick}
       onMouseDown={(event) => event.preventDefault()}
-      className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${
         active
-          ? 'bg-[var(--hover-row)] text-[var(--accent)]'
+          ? 'bg-[var(--hover-row)] text-[var(--accent-ink)]'
           : 'text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]'
       }`}
     >
@@ -59,7 +68,32 @@ function recipientList(recipients: { email: string }[]): string {
   return recipients.map(recipient => recipient.email).filter(Boolean).join(', ');
 }
 
-export function InlineReplyComposer() {
+function KeyHint({ keys }: { keys: string[] }) {
+  return (
+    <span aria-hidden="true" className="inline-flex items-center gap-0.5">
+      {keys.map(key => (
+        <kbd key={key} className="inline-flex min-w-[16px] items-center justify-center rounded border border-current/40 px-1 font-mono text-[calc(10px*var(--font-scale))] font-medium leading-[14px] opacity-80">
+          {key}
+        </kbd>
+      ))}
+    </span>
+  );
+}
+
+export interface InlineReplyComposerProps {
+  /** Routes Send through the reply dock (reminder, prepared-draft bookkeeping). */
+  onSend?: (intent: SendIntent) => void;
+  /** Agent notice shown above the editor (`Draft written by the model`, `Use the draft`). */
+  banner?: ReactNode;
+  /** Extra controls in the footer, after the send buttons (`Remind me if no reply`). */
+  footerExtra?: ReactNode;
+  /** Increment to focus the editor (`R` while the dock is open). */
+  focusSignal?: number;
+  /** false: a new draft is shown without taking focus (prepared drafts). */
+  focusOnOpen?: boolean;
+}
+
+export function InlineReplyComposer({ onSend, banner, footerExtra, focusSignal = 0, focusOnOpen = true }: InlineReplyComposerProps = {}) {
   const store = useAppStore();
   const editorRef = useRef<RichTextEditorHandle>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -85,11 +119,16 @@ export function InlineReplyComposer() {
     setLiveBodyPlain(draft.bodyPlain);
     setLiveBodyHtml(draft.bodyHtml ?? null);
     setQuotedTextExpanded(false);
+    if (!focusOnOpen) return;
     window.setTimeout(() => {
-      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       editorRef.current?.focusAtStart();
     }, 50);
   }, [store.activeDraft?.id, store.activeDraft?.threadId, store.composeLayout, store.openedThread?.id]);
+
+  useEffect(() => {
+    if (focusSignal === 0) return;
+    editorRef.current?.focus();
+  }, [focusSignal]);
 
   const activeDraft = store.activeDraft;
 
@@ -232,40 +271,45 @@ export function InlineReplyComposer() {
     }
   };
 
+  // Per-account "After sending a reply" (SPEC §3, §8): the label shows what ⌘↩ will do.
+  const accountAfterSend = resolveAccountSetting(store.settings, activeDraft.accountId, 'afterSend').value;
+  const primaryAfterSend = resolveAfterSend(accountAfterSend, 'default');
+  const sendAndArchive = primaryAfterSend === 'archive';
+  const primaryLabel = sendButtonLabel(primaryAfterSend, true);
+  const secondaryLabel = sendAndArchive ? 'Send only' : 'Send and archive';
+  const send = (intent: SendIntent) => {
+    if (onSend) onSend(intent);
+    else void store.sendDraftWithUndo({ intent });
+  };
+
   return (
     <div
       ref={composerRef}
-      className="dm-compose dm-panel print-hidden mt-6 flex shrink-0 flex-col overflow-hidden rounded-[8px] border border-[var(--strong-border)] bg-[var(--panel-bg)] shadow-[0_10px_32px_rgba(0,0,0,0.08)]"
+      data-reply-composer
+      className="dm-compose print-hidden flex min-h-0 flex-1 flex-col"
     >
-      <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--rail-bg)] px-4 py-3 select-none">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Reply</span>
-          <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
-            {activeDraft.accountId}
-          </span>
-        </div>
+      {banner}
+      <div className="flex shrink-0 items-center gap-2 px-1 pb-1.5 text-[calc(11px*var(--font-scale))] select-none">
+        <span className="shrink-0 font-semibold text-[var(--text-secondary)]">To</span>
+        <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={ccEmails ? `${toEmails}; Cc ${ccEmails}` : toEmails}>
+          {toEmails}
+          {ccEmails && <span className="text-[var(--text-tertiary)]"> · Cc {ccEmails}</span>}
+        </span>
+        <span className="hidden shrink-0 truncate text-[var(--text-tertiary)] sm:inline">{activeDraft.accountId}</span>
         <button
           type="button"
           onClick={() => store.setComposeLayout('floating')}
-          title="Pop out reply"
-          className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+          title="Open the reply in its own window to change To, Cc and Bcc"
+          data-reply-edit-recipients
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-semibold text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
         >
-          <ExternalLink className="h-4 w-4" />
+          Edit recipients
+          <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
       </div>
 
-      <div className="space-y-1 border-b border-[var(--border)] px-4 py-3 text-[calc(12px*var(--font-scale))]">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="w-8 shrink-0 text-[var(--text-secondary)]">To</span>
-          <span className="truncate text-[var(--text-primary)]" title={toEmails}>{toEmails}</span>
-        </div>
-        {ccEmails && (
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="w-8 shrink-0 text-[var(--text-secondary)]">Cc</span>
-            <span className="truncate text-[var(--text-primary)]" title={ccEmails}>{ccEmails}</span>
-          </div>
-        )}
-      </div>
+      {/* The editor scrolls on its own; the toolbar and footer below always stay visible. */}
+      <div className="flex min-h-[72px] flex-1 flex-col overflow-hidden rounded-[var(--control-radius)] border border-[var(--strong-border)] bg-[var(--raised-surface)]" data-reply-editor>
 
       <RichTextEditor
         ref={editorRef}
@@ -289,7 +333,7 @@ export function InlineReplyComposer() {
           profile: store.settings.profile,
           accountId: activeDraft.accountId,
         }}
-        editorClassName="min-h-[170px] max-h-[min(42vh,420px)] px-4 py-3"
+        editorClassName="min-h-[64px]! px-4 py-3"
         collapseQuotedText={hasQuotedReply && !quotedTextExpanded}
         onChange={(bodyPlain, bodyHtml) => {
           setLiveBodyPlain(bodyPlain);
@@ -302,14 +346,16 @@ export function InlineReplyComposer() {
       <DraftPlaceholderWarning bodyPlain={liveBodyPlain} bodyHtml={liveBodyHtml} />
 
       {hasQuotedReply && (
-        <div className="border-t border-[var(--border)]/40 px-4 py-2 select-none">
+        <div className="shrink-0 border-t border-[var(--border)]/40 px-4 py-1.5 select-none">
           <button
             type="button"
             title={quotedTextExpanded ? 'Hide quoted text' : 'Show quoted text'}
+            aria-label={quotedTextExpanded ? 'Hide quoted text' : 'Show quoted text'}
+            aria-expanded={quotedTextExpanded}
             onClick={() => setQuotedTextExpanded(value => !value)}
             className={`inline-flex h-6 items-center justify-center rounded-md px-2 transition-colors ${
               quotedTextExpanded
-                ? 'bg-[var(--hover-row)] text-[var(--accent)]'
+                ? 'bg-[var(--hover-row)] text-[var(--accent-ink)]'
                 : 'bg-[var(--hover-row)]/50 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -319,7 +365,7 @@ export function InlineReplyComposer() {
       )}
 
       {activeDraft.attachments.length > 0 && (
-        <div className="border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-2 select-none">
+        <div className="max-h-[64px] shrink-0 overflow-y-auto border-t border-[var(--border)] px-4 py-1.5 select-none">
           <div className="flex flex-wrap gap-1.5">
             {activeDraft.attachments.map(att => (
               <div key={att.id} className="inline-flex max-w-[260px] items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--raised-surface)] px-2.5 py-1 text-[calc(11px*var(--font-scale))]">
@@ -327,8 +373,9 @@ export function InlineReplyComposer() {
                 <button
                   type="button"
                   onClick={() => store.removeAttachmentFromDraft(att.id)}
-                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger-solid)]"
                   title={`Remove ${att.filename}`}
+                  aria-label={`Remove ${att.filename}`}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -338,80 +385,98 @@ export function InlineReplyComposer() {
         </div>
       )}
 
-      <div className="flex items-center justify-between border-t border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 select-none">
-        <div className="flex min-w-0 items-center gap-2">
-          {store.draftSaveStatusLabel && (
-            <span className={`mr-1 text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text-tertiary)]'}`}>
-              {store.draftSaveStatusLabel}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => void store.sendDraftWithUndo()}
-            className="mr-2 inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--accent)] px-4 text-[calc(12px*var(--font-scale))] font-semibold text-white hover:opacity-95"
-          >
-            <Send className="h-3.5 w-3.5" />
-            Send
-          </button>
-          <ToolbarButton title="Bold" onClick={() => execute('bold')}><Bold className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Italic" onClick={() => execute('italic')}><Italic className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Underline" onClick={() => execute('underline')}><Underline className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Bullet list" onClick={() => execute('insertUnorderedList')}><List className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Numbered list" onClick={() => execute('insertOrderedList')}><ListOrdered className="h-4 w-4" /></ToolbarButton>
-          <div className="relative">
-            <ToolbarButton title="Link" onClick={openLinkPopover}><Link className="h-4 w-4" /></ToolbarButton>
-            {linkOpen && (
-              <LinkPopover
-                selectedText={linkSelectedText}
-                onSubmit={insertLink}
-                onCancel={closeLinkPopover}
-              />
-            )}
-          </div>
-        </div>
+      </div>
 
-        <div className="flex shrink-0 items-center gap-1">
-          <ToolbarButton title="AI assistant" onClick={() => store.setAiPanelOpen(!store.aiPanelOpen)}>
-            <Sparkles className="h-4 w-4 text-[var(--ai-accent)]" />
-          </ToolbarButton>
-          <div className="relative">
-            <ToolbarButton title="Send later" active={Boolean(activeDraft.sendAt)} onClick={() => setSendLaterOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
-            {sendLaterOpen && (
-              <SendLaterMenu
-                onSchedule={(date) => void store.scheduleDraftSend(date)}
-                onClose={() => setSendLaterOpen(false)}
-                align="right"
-              />
-            )}
-          </div>
-          {reminderThread && (
-            <div className="relative">
-              <ToolbarButton title="Remind me" active={Boolean(reminderThread.reminderAt)} onClick={() => setReminderOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
-              {reminderOpen && (
-                <SnoozeMenu
-                  align="right"
-                  targetSubject={reminderThread.subject}
-                  onPick={(date) => store.snoozeThread(reminderThread, date)}
-                  onClose={() => setReminderOpen(false)}
-                />
-              )}
-            </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-0.5 gap-y-1 pt-1.5 select-none" role="toolbar" aria-label="Formatting and attachments">
+        <ToolbarButton title="Bold" onClick={() => execute('bold')}><Bold className="h-3.5 w-3.5" /></ToolbarButton>
+        <ToolbarButton title="Italic" onClick={() => execute('italic')}><Italic className="h-3.5 w-3.5" /></ToolbarButton>
+        <ToolbarButton title="Underline" onClick={() => execute('underline')}><Underline className="h-3.5 w-3.5" /></ToolbarButton>
+        <ToolbarButton title="Bullet list" onClick={() => execute('insertUnorderedList')}><List className="h-3.5 w-3.5" /></ToolbarButton>
+        <ToolbarButton title="Numbered list" onClick={() => execute('insertOrderedList')}><ListOrdered className="h-3.5 w-3.5" /></ToolbarButton>
+        <div className="relative">
+          <ToolbarButton title="Link" onClick={openLinkPopover}><Link className="h-3.5 w-3.5" /></ToolbarButton>
+          {linkOpen && (
+            <LinkPopover
+              selectedText={linkSelectedText}
+              onSubmit={insertLink}
+              onCancel={closeLinkPopover}
+            />
           )}
-          <ToolbarButton title="Scheduling link" onClick={() => void insertSchedulingLink()}><Calendar className="h-4 w-4" /></ToolbarButton>
+        </div>
+        <span className="flex-1" />
+        <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-3.5 w-3.5" /></ToolbarButton>
+        <div className="relative">
+          <ToolbarButton title="Templates and snippets" active={templatesOpen} onClick={() => setTemplatesOpen(value => !value)}><Braces className="h-3.5 w-3.5" /></ToolbarButton>
+          {templatesOpen && (
+            <ComposeTemplatesMenu
+              templates={store.settings.snippets.templates}
+              onInsertDefaultSnippet={insertDefaultSnippet}
+              onInsertTemplate={insertSnippetTemplate}
+              onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
+              onClose={() => setTemplatesOpen(false)}
+            />
+          )}
+        </div>
+        <ToolbarButton title="Insert scheduling link" onClick={() => void insertSchedulingLink()}><Calendar className="h-3.5 w-3.5" /></ToolbarButton>
+        <div className="relative">
+          <ToolbarButton title="Send later" active={Boolean(activeDraft.sendAt)} onClick={() => setSendLaterOpen(value => !value)}><Clock className="h-3.5 w-3.5" /></ToolbarButton>
+          {sendLaterOpen && (
+            <SendLaterMenu
+              onSchedule={(date) => void store.scheduleDraftSend(date)}
+              onClose={() => setSendLaterOpen(false)}
+              align="right"
+            />
+          )}
+        </div>
+        {reminderThread && (
           <div className="relative">
-            <ToolbarButton title="Templates and snippets" active={templatesOpen} onClick={() => setTemplatesOpen(value => !value)}><Braces className="h-4 w-4" /></ToolbarButton>
-            {templatesOpen && (
-              <ComposeTemplatesMenu
-                templates={store.settings.snippets.templates}
-                onInsertDefaultSnippet={insertDefaultSnippet}
-                onInsertTemplate={insertSnippetTemplate}
-                onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
+            <ToolbarButton title="Later: bring this conversation back" active={Boolean(reminderThread.reminderAt)} onClick={() => setReminderOpen(value => !value)}><CalendarClockIcon /></ToolbarButton>
+            {reminderOpen && (
+              <SnoozeMenu
+                floating
+                targetSubject={reminderThread.subject}
+                onPick={(date) => store.snoozeThread(reminderThread, date)}
+                onClose={() => setReminderOpen(false)}
               />
             )}
           </div>
-          <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-4 w-4" /></ToolbarButton>
-        </div>
+        )}
+        <ToolbarButton title="AI assistant" onClick={() => store.setAiPanelOpen(!store.aiPanelOpen)}>
+          <Sparkles className="h-3.5 w-3.5 text-[var(--ai-solid)]" />
+        </ToolbarButton>
+        <ToolbarButton title="Discard draft" onClick={() => store.discardDraft(activeDraft.id)}><Trash2 className="h-3.5 w-3.5" /></ToolbarButton>
+        {store.draftSaveStatusLabel && (
+          <span className={`pl-2 text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger-solid)]' : 'text-[var(--text-tertiary)]'}`} role="status">
+            {store.draftSaveStatusLabel}
+          </span>
+        )}
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-2 pt-2 select-none" data-reply-footer>
+        <button
+          type="button"
+          onClick={() => send('default')}
+          aria-keyshortcuts="Meta+Enter"
+          data-reply-send="primary"
+          title={sendAndArchive ? 'Send and archive (⌘↩)' : 'Send (⌘↩)'}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--control-radius)] bg-[var(--accent-fill)] px-3 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+        >
+          <Send aria-hidden="true" className="h-3.5 w-3.5" />
+          {primaryLabel}
+          <KeyHint keys={['⌘', '↩']} />
+        </button>
+        <button
+          type="button"
+          onClick={() => send('alternate')}
+          aria-keyshortcuts="Meta+Shift+Enter"
+          data-reply-send="secondary"
+          title={`${secondaryLabel} (⌘⇧↩)`}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[var(--control-radius)] border border-[var(--strong-border)] px-3 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
+        >
+          {secondaryLabel}
+          <KeyHint keys={['⌘', '⇧', '↩']} />
+        </button>
+        {footerExtra}
       </div>
     </div>
   );

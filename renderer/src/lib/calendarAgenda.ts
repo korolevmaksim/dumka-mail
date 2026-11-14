@@ -1,16 +1,14 @@
 import type { CalendarEvent } from '../../../shared/types';
+import { formatTimeRange, formatWeekdayDay } from '../../../shared/dateFormat';
 
-type LocaleArg = string | string[] | undefined;
-
-export function agendaEventTime(event: CalendarEvent, locale?: LocaleArg): string {
+/** "14:00–14:45", or "All day". Uses the app's shared 24-hour vocabulary. */
+export function agendaEventTime(event: CalendarEvent, now: Date = new Date()): string {
   if (event.isAllDay) return 'All day';
-  const start = new Date(event.startAt);
-  const end = new Date(event.endAt);
-  return `${start.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })} - ${end.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })}`;
+  return formatTimeRange(event.startAt, event.endAt, now);
 }
 
-export function upcomingAgendaDateTimeLabel(event: CalendarEvent, locale?: LocaleArg): string {
-  const start = new Date(event.startAt);
-  const day = start.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
-  return `${day} · ${agendaEventTime(event, locale)}`;
+/** "Thu, Nov 12 · 14:00–14:45" */
+export function upcomingAgendaDateTimeLabel(event: CalendarEvent, now: Date = new Date()): string {
+  const start = event.isAllDay && event.startDate ? new Date(`${event.startDate}T00:00:00`) : new Date(event.startAt);
+  return `${formatWeekdayDay(start, now)} · ${agendaEventTime(event, now)}`;
 }

@@ -1,0 +1,65 @@
+import { open, sleep } from './capture-lib.mjs';
+const a = await open();
+const { page } = a;
+// Theme is set on Settings → Appearance (the first select on that page).
+const setTheme = async value => {
+  const alreadyOpen = await page.eval(`Array.from(document.querySelectorAll('button')).some(b => b.innerText.trim() === 'Close settings')`);
+  if (!alreadyOpen) await page.eval(`document.querySelector('button[title=Settings]').click()`);
+  await sleep(800);
+  await a.clickText('Appearance', 'button');
+  await sleep(900);
+  await page.eval(`(() => { const sel = Array.from(document.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'system')); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(sel, ${JSON.stringify(value)}); sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(900);
+  if (value === 'light') await a.shot('48-light-settings-appearance');
+  await a.clickText('Close settings', 'button');
+  await sleep(900);
+  console.log('theme', await page.eval(`document.documentElement.getAttribute('data-theme')`));
+};
+
+await a.step('light theme', async () => {
+  await setTheme('light');
+  await a.shot('40-light-inbox');
+  await a.openThread('Q3 rollout');
+  await a.blur();
+  await a.shot('41-light-thread');
+  await page.key('R', { shift: true, code: 'KeyR' });
+  await page.waitFor(`document.querySelector('[data-reply-dock]').getAttribute('data-reply-dock') === 'prepared'`, { timeoutMs: 20000 }).catch(() => {});
+  await a.shot('42-light-thread-draft');
+  await a.openThread('Pragmatic Dispatch').catch(async () => { await page.eval(`(() => { const g = document.querySelector('[data-group-expand]'); g && g.click(); })()`); await sleep(600); await a.openThread('Pragmatic Dispatch'); });
+  await a.blur();
+  await a.shot('43-light-newsletter');
+  await page.key('k', { meta: true, code: 'KeyK' });
+  await sleep(700);
+  await a.shot('44-light-command-palette');
+  await a.esc(1);
+  await page.eval(`document.querySelector('button[title=Settings]').click()`);
+  await sleep(900);
+  await a.clickText('AI model', 'button');
+  await sleep(1500);
+  await a.shot('45-light-settings-ai-model');
+  await a.clickText('alex.morgan@northwind', 'button');
+  await sleep(1200);
+  await a.shot('46-light-settings-account');
+  await a.clickText('Close settings', 'button');
+  await sleep(800);
+  await page.eval(`(() => { const b = document.querySelector('button[title*="Calendar"],button[aria-label*="Calendar"]'); b && b.click(); })()`);
+  await sleep(2500);
+  await a.shot('47-light-calendar');
+  await page.key('1', { meta: true, code: 'Digit1' });
+  await sleep(1200);
+});
+await a.step('narrow window (dark)', async () => {
+  await setTheme('dark');
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 700, deviceScaleFactor: 2, mobile: false });
+  await sleep(1500);
+  console.log('size', await page.eval(`({ w: innerWidth, h: innerHeight })`));
+  await a.esc(2);
+  await a.shot('50-narrow-inbox');
+  await a.openThread('Need your numbers');
+  await a.blur();
+  await a.shot('51-narrow-thread');
+  await page.send('Emulation.clearDeviceMetricsOverride');
+  await sleep(1000);
+  console.log('size', await page.eval(`({ w: innerWidth, h: innerHeight })`));
+});
+page.close();

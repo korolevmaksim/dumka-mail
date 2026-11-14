@@ -19,6 +19,7 @@ export type DatabaseWorkerPayload =
   | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { type: 'saveThreads'; threads: MailThread[] }
   | { type: 'listThreads'; accountIds: string[] }
+  | { type: 'countInboxThreads'; accountIds: string[]; nowIso: string }
   | { type: 'listMessagesForThread'; accountId: string; threadId: string }
   | { type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
   | { type: 'recentSenderMessages'; accountId: string; senderEmail: string; limit: number }
@@ -33,7 +34,10 @@ export type DatabaseWorkerPayload =
   | { type: 'embeddingCandidates'; accountId: string; model: string; source: EmbeddingCandidateSource }
   | { type: 'saveEmbeddingVectors'; rows: MailEmbeddingRow[] }
   | { type: 'selectBriefingThreads'; accountId: string; selection: BriefingThreadSelection }
-  | { type: 'briefingThreadBatch'; accountId: string; threadIds: string[] };
+  | { type: 'briefingThreadBatch'; accountId: string; threadIds: string[] }
+  | { type: 'agentPrepInbox'; accountId: string; limit: number }
+  | { type: 'getThreads'; accountId: string; threadIds: string[] }
+  | { type: 'runThreadMaintenance'; chunkSize?: number };
 
 /** A payload as the worker receives it, correlated back to its pending promise. */
 export type DatabaseWorkerRequest = DatabaseWorkerPayload & { id: number };

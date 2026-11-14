@@ -1,94 +1,64 @@
-import { Check, MailMinus, ShieldAlert, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { useState } from 'react';
+import { MailMinus, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useAppStore } from '../stores/AppStore';
+import { UnsubscribeConfirmSheet } from './UnsubscribeConfirmSheet';
+import { unsubscribeTargetFromCandidate, type UnsubscribeTarget } from '../../../shared/unsubscribeConfirm';
 import { emitToast } from '../lib/toastBus';
 import type { MailSecurityWarning } from '../../../shared/types';
 import { selectThreadSecurityWarnings } from './threadSecurityWarnings';
 
 function severityClass(severity: MailSecurityWarning['severity']): string {
-  if (severity === 'danger') return 'border-[var(--danger)]/35 bg-[var(--danger)]/10 text-[var(--danger)]';
-  if (severity === 'warning') return 'border-[var(--warning)]/35 bg-[var(--warning)]/10 text-[var(--warning)]';
+  if (severity === 'danger') return 'border-[var(--danger)]/35 bg-[var(--danger)]/10 text-[var(--danger-solid)]';
+  if (severity === 'warning') return 'border-[var(--warning)]/35 bg-[var(--warning)]/10 text-[var(--warning-solid)]';
   return 'border-[var(--border)] bg-[var(--raised-surface)] text-[var(--text-secondary)]';
 }
 
+/** Safety warnings and the unsubscribe entry above the messages of the open thread. */
 export function AgenticThreadPanel() {
   const store = useAppStore();
   const insights = store.threadAgentInsights;
-  const draft = insights?.draftSuggestion || null;
   const unsubscribe = insights?.unsubscribeCandidate || null;
   const warnings = selectThreadSecurityWarnings(insights?.securityInsights || []);
   const hasThreatWarning = warnings.some(warning => warning.severity !== 'info');
+  const [confirmTargets, setConfirmTargets] = useState<UnsubscribeTarget[] | null>(null);
+  const [unsubscribing, setUnsubscribing] = useState(false);
 
-  if (!draft && !unsubscribe?.canOneClick && warnings.length === 0 && !store.agentInsightsLoading) {
+  // A prepared draft appears only in the reply dock (ReplyDock), never here.
+  if (!unsubscribe?.canOneClick && warnings.length === 0 && !confirmTargets) {
     return null;
   }
 
-  const latestMessage = store.openedThreadMessages[store.openedThreadMessages.length - 1] || null;
-
-  const applyDraft = async () => {
-    if (!draft || !latestMessage) return;
-    store.startReplyWithBody(latestMessage, draft.bodyPlain);
-    await store.markAgentDraftSuggestionApplied(draft.id);
-    emitToast({ type: 'success', message: 'AI draft inserted.' });
+  // Never unsubscribe on a single click: open the confirmation sheet first.
+  const unsubscribeThread = () => {
+    const target = unsubscribeTargetFromCandidate(unsubscribe);
+    if (!target) {
+      emitToast({ type: 'warning', message: 'No usable unsubscribe method found for this sender.' });
+      return;
+    }
+    setConfirmTargets([target]);
   };
 
-  const dismissDraft = async () => {
-    if (!draft) return;
-    await store.dismissAgentDraftSuggestion(draft.id);
-  };
-
-  const unsubscribeThread = async () => {
-    if (!store.openedThread) return;
-    await store.unsubscribeThread(store.openedThread.id);
+  const confirmUnsubscribe = async (options: { archive: boolean }) => {
+    if (!confirmTargets) return;
+    setUnsubscribing(true);
+    try {
+      await store.unsubscribeSenders(confirmTargets, options);
+    } finally {
+      setUnsubscribing(false);
+      setConfirmTargets(null);
+    }
   };
 
   return (
     <div className="mb-4 flex flex-col gap-2 select-none">
-      {draft && (
-        <div className="dm-inset rounded-[6px] border border-[var(--accent)]/25 bg-[var(--accent)]/10 px-3 py-2.5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" />
-              <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-                Draft ready
-              </span>
-              <span className="truncate text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">
-                {draft.model}
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onClick={applyDraft}
-                title="Insert draft"
-                className="flex items-center gap-1 rounded bg-[var(--accent)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-semibold text-white hover:opacity-90"
-              >
-                <Check className="h-3.5 w-3.5" />
-                Insert
-              </button>
-              <button
-                type="button"
-                onClick={dismissDraft}
-                title="Dismiss draft"
-                className="rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-          <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[calc(11px*var(--font-scale))] leading-relaxed text-[var(--text-secondary)]">
-            {draft.bodyPlain}
-          </p>
-        </div>
-      )}
-
       {(unsubscribe?.canOneClick || warnings.length > 0) && (
         <div className="dm-inset flex flex-col gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--raised-surface)] px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
               {hasThreatWarning ? (
-                <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />
+                <ShieldAlert className="h-4 w-4 text-[var(--warning-solid)]" />
               ) : (
-                <ShieldCheck className="h-4 w-4 text-[var(--accent)]" />
+                <ShieldCheck className="h-4 w-4 text-[var(--accent-ink)]" />
               )}
               {hasThreatWarning ? 'Mail safety' : 'Mail privacy'}
             </div>
@@ -96,10 +66,10 @@ export function AgenticThreadPanel() {
               <button
                 type="button"
                 onClick={unsubscribeThread}
-                title="Unsubscribe and archive"
+                title="Unsubscribe (asks for confirmation)"
                 className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)]"
               >
-                <MailMinus className="h-3.5 w-3.5 text-[var(--accent)]" />
+                <MailMinus className="h-3.5 w-3.5 text-[var(--accent-ink)]" />
                 Unsubscribe
               </button>
             )}
@@ -109,7 +79,7 @@ export function AgenticThreadPanel() {
               {warnings.map((warning, index) => (
                 <div
                   key={`${warning.messageId}:${warning.kind}:${index}`}
-                  className={`rounded border px-2 py-1.5 text-[calc(10px*var(--font-scale))] ${severityClass(warning.severity)}`}
+                  className={`rounded border px-2 py-1.5 text-[calc(11px*var(--font-scale))] ${severityClass(warning.severity)}`}
                 >
                   <span className="font-semibold">{warning.title}</span>
                   <span className="text-[var(--text-secondary)]"> · {warning.detail}</span>
@@ -118,6 +88,14 @@ export function AgenticThreadPanel() {
             </div>
           )}
         </div>
+      )}
+      {confirmTargets && (
+        <UnsubscribeConfirmSheet
+          targets={confirmTargets}
+          busy={unsubscribing}
+          onConfirm={options => void confirmUnsubscribe(options)}
+          onCancel={() => setConfirmTargets(null)}
+        />
       )}
     </div>
   );

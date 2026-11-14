@@ -1,0 +1,43 @@
+{
+ "profile": "p1",
+ "runs": 5,
+ "medianWindowTargetMs": 955,
+ "medianFirstRowsMs": 1218,
+ "samples": [
+  {
+   "windowTargetMs": 956,
+   "firstRowsMs": 1218,
+   "domContentLoaded": 263,
+   "load": 264,
+   "sinceNavStart": 448
+  },
+  {
+   "windowTargetMs": 950,
+   "firstRowsMs": 1212,
+   "domContentLoaded": 303,
+   "load": 304,
+   "sinceNavStart": 484
+  },
+  {
+   "windowTargetMs": 933,
+   "firstRowsMs": 1219,
+   "domContentLoaded": 284,
+   "load": 284,
+   "sinceNavStart": 487
+  },
+  {
+   "windowTargetMs": 955,
+   "firstRowsMs": 1215,
+   "domContentLoaded": 272,
+   "load": 272,
+   "sinceNavStart": 455
+  },
+  {
+   "windowTargetMs": 966,
+   "firstRowsMs": 1232,
+   "domContentLoaded": 271,
+   "load": 271,
+   "sinceNavStart": 456
+  }
+ ]
+}

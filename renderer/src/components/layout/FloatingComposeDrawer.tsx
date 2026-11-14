@@ -26,8 +26,9 @@ import {
   X,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/AppStore';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 import { emitToast } from '../../lib/toastBus';
-import { formatAIUserError } from '../../../../shared/aiErrors';
+import { AI_UNREACHABLE_MESSAGE, formatAIUserError } from '../../../../shared/aiErrors';
 import { withAIRequestTimeout } from '../../../../shared/aiRequest';
 import { resolveAIModelForPurpose } from '../../../../shared/aiModelPurpose';
 import {
@@ -87,6 +88,8 @@ export function FloatingComposeDrawer() {
   const [linkSelectedText, setLinkSelectedText] = useState('');
   const [linkSelectionRange, setLinkSelectionRange] = useState<Range | null>(null);
   const [reminderOpen, setReminderOpen] = useState(false);
+  // The AI compose strip is a sub-panel of the draft: Esc closes it first.
+  useEscapeLayer(aiOpen, () => setAiOpen(false));
   const [subject, setSubject] = useState('');
   const [liveBodyPlain, setLiveBodyPlain] = useState('');
   const [liveBodyHtml, setLiveBodyHtml] = useState<string | null>(null);
@@ -440,7 +443,8 @@ export function FloatingComposeDrawer() {
       setAiOpen(false);
       emitToast({ type: 'success', message: mode === 'draft' ? 'AI draft inserted.' : 'AI rewrite inserted.' });
     } catch (error) {
-      emitToast({ type: 'error', message: formatAIUserError(error) });
+      console.error('AI compose request failed:', formatAIUserError(error));
+      emitToast({ type: 'error', message: `${AI_UNREACHABLE_MESSAGE}. Try again.` });
     } finally {
       setAiBusy(false);
     }
@@ -461,7 +465,7 @@ export function FloatingComposeDrawer() {
             {activeDraft.accountId}
           </span>
           {store.draftSaveStatusLabel && (
-            <span className={`text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text-tertiary)]'}`}>
+            <span className={`text-[calc(11px*var(--font-scale))] ${store.draftSaveStatus === 'error' ? 'text-[var(--danger-solid)]' : 'text-[var(--text-tertiary)]'}`}>
               {store.draftSaveStatusLabel}
             </span>
           )}
@@ -515,12 +519,12 @@ export function FloatingComposeDrawer() {
         </div>
         <div className="flex shrink-0 gap-2 pt-3 text-[calc(11px*var(--font-scale))] font-medium select-none">
           {!showCc && (
-            <button type="button" onClick={() => setShowCc(true)} className="text-[var(--text-secondary)] hover:text-[var(--accent)]">
+            <button type="button" onClick={() => setShowCc(true)} className="text-[var(--text-secondary)] hover:text-[var(--accent-ink)]">
               Cc
             </button>
           )}
           {!showBcc && (
-            <button type="button" onClick={() => setShowBcc(true)} className="text-[var(--text-secondary)] hover:text-[var(--accent)]">
+            <button type="button" onClick={() => setShowBcc(true)} className="text-[var(--text-secondary)] hover:text-[var(--accent-ink)]">
               Bcc
             </button>
           )}
@@ -603,7 +607,7 @@ export function FloatingComposeDrawer() {
                 <button
                   type="button"
                   onClick={() => store.removeAttachmentFromDraft(att.id)}
-                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                  className="rounded p-0.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger-solid)]"
                   title={`Remove ${att.filename}`}
                 >
                   <X className="h-3 w-3" />
@@ -636,7 +640,7 @@ export function FloatingComposeDrawer() {
               type="button"
               disabled={aiBusy}
               onClick={() => void runAICompose('draft')}
-              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] disabled:opacity-50"
             >
               {aiBusy ? 'Writing…' : 'Generate draft'}
             </button>
@@ -649,10 +653,18 @@ export function FloatingComposeDrawer() {
           <button
             type="button"
             onClick={() => void store.sendDraftWithUndo()}
-            className="mr-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-4 py-2 text-[calc(12px*var(--font-scale))] font-semibold text-white hover:opacity-95"
+            aria-keyshortcuts="Meta+Enter"
+            title={`Send (⌘↩). You can undo for ${Math.max(0, Math.round(store.settings.compose.sendUndoDelay ?? 10))} s.`}
+            className="mr-2 inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-fill)] px-4 py-2 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
           >
-            <Send className="h-3.5 w-3.5" />
+            <Send aria-hidden="true" className="h-3.5 w-3.5" />
             Send
+            {/* The same key as in the reply editor. */}
+            <span aria-hidden="true" className="inline-flex items-center gap-0.5 opacity-85">
+              {['⌘', '↩'].map(key => (
+                <kbd key={key} className="inline-flex min-w-[16px] items-center justify-center rounded border border-current/40 px-1 font-mono text-[calc(10px*var(--font-scale))] font-medium leading-[14px]">{key}</kbd>
+              ))}
+            </span>
           </button>
           <ToolbarButton title="Bold" onClick={() => execute('bold')}><Bold className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Italic" onClick={() => execute('italic')}><Italic className="h-4 w-4" /></ToolbarButton>
@@ -690,10 +702,10 @@ export function FloatingComposeDrawer() {
         <div className="relative flex items-center gap-1">
           <ToolbarButton title="Attach file" onClick={() => void store.addAttachmentToDraft()}><Paperclip className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Insert inline image" onClick={() => void insertInlineImageFromDialog()}><Image className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton title="AI compose" onClick={() => setAiOpen(value => !value)}><Sparkles className="h-4 w-4 text-[var(--ai-accent)]" /></ToolbarButton>
+          <ToolbarButton title="AI compose" onClick={() => setAiOpen(value => !value)}><Sparkles className="h-4 w-4 text-[var(--ai-solid)]" /></ToolbarButton>
           {reminderThread && (
             <div className="relative">
-              <ToolbarButton title="Remind me" onClick={() => setReminderOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
+              <ToolbarButton title="Later: bring this conversation back" onClick={() => setReminderOpen(value => !value)}><Clock className="h-4 w-4" /></ToolbarButton>
               {reminderOpen && (
                 <SnoozeMenu
                   align="right"
@@ -715,6 +727,7 @@ export function FloatingComposeDrawer() {
               onInsertAvailability={() => void insertAvailability()}
               onInsertCalendly={() => void insertSchedulingLink('calendly')}
               onInsertCalCom={() => void insertSchedulingLink('calCom')}
+              onClose={() => setSchedulingOpen(false)}
             />
           )}
 
@@ -724,6 +737,7 @@ export function FloatingComposeDrawer() {
               onInsertDefaultSnippet={insertDefaultSnippet}
               onInsertTemplate={insertSnippetTemplate}
               onSaveBodyAsSnippet={() => void saveCurrentBodyAsSnippet()}
+              onClose={() => setTemplatesOpen(false)}
             />
           )}
         </div>

@@ -1,3 +1,5 @@
+import { gmailBackgroundTraffic } from './gmailBackgroundTraffic';
+import { isRateLimitError } from './remoteRetry';
 import crypto from 'crypto';
 import { GmailSignatureSyncResult, MailLabelDefinition, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
 import { paginateGmailHistory } from '../shared/gmailHistory';
@@ -99,13 +101,22 @@ async function throwGoogleApiFailure(email: string, response: Response, context:
     throw new GoogleReauthorizationRequiredError(email, reason);
   }
   const summary = body.trim().slice(0, 1000);
-  const error = new Error(`${context}: HTTP ${response.status}${summary ? ` — ${summary}` : ''}`) as Error & {
-    status: number;
-    retryAfter: string | null;
-  };
-  error.status = response.status;
-  error.retryAfter = response.headers.get('Retry-After');
+  const error = Object.assign(new Error(`${context}: HTTP ${response.status}${summary ? ` — ${summary}` : ''}`), {
+    status: response.status,
+    retryAfter: response.headers.get('Retry-After'),
+    rateLimited: isRateLimitError({ status: response.status, message: body }),
+  });
+  gmailBackgroundTraffic.noteFailure(email, error);
   throw error;
+}
+
+async function interactiveGmailRequest(email: string, url: string, options: RequestInit, timeoutMs?: number): Promise<Response> {
+  return gmailBackgroundTraffic.runInteractive(email, async () => {
+    const token = await getAccessToken(email);
+    const headers = new Headers(options.headers);
+    headers.set('Authorization', `Bearer ${token}`);
+    return fetchWithTimeout(url, { ...options, headers }, timeoutMs);
+  });
 }
 
 export function buildGoogleTokenRevokeRequest(refreshToken: string): { url: string; body: string } {
@@ -562,8 +573,9 @@ export const GmailSyncService = {
 
   // Backfill: pages through all mail
   async syncBackfillPage(email: string, pageToken?: string): Promise<{ threads: MailThread[]; messages: MailMessage[]; nextPageToken?: string }> {
+    await gmailBackgroundTraffic.waitForSlot(email);
     const accessToken = await getAccessToken(email);
-    let endpoint = 'https://gmail.googleapis.com/gmail/v1/users/me/threads?maxResults=100&q=-in:spam+-in:trash';
+    let endpoint = 'https://gmail.googleapis.com/gmail/v1/users/me/threads?maxResults=20&q=-in:spam+-in:trash';
     if (pageToken) {
       endpoint += `&pageToken=${pageToken}`;
     }
@@ -580,9 +592,10 @@ export const GmailSyncService = {
     const threadSummaries = data.threads || [];
     const nextPageToken = data.nextPageToken;
 
-    // Fetch details (concurrency = 8)
-    const threadDetailsRaw = await poolConcurrentTasks(threadSummaries, 8, async (tSummary: any) => {
+    // Pace full-thread reads and yield between them for interactive mutations.
+    const threadDetailsRaw = await poolConcurrentTasks(threadSummaries, 1, async (tSummary: any) => {
       try {
+        await gmailBackgroundTraffic.waitForSlot(email);
         const detailRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${tSummary.id}`, {
           headers: { 'Authorization': `Bearer ${accessToken}` }
         });
@@ -591,7 +604,9 @@ export const GmailSyncService = {
         }
         return await detailRes.json();
       } catch (err) {
-        if (isGoogleReauthorizationRequiredError(err)) throw err;
+        // Only a vanished thread may be skipped. Incomplete pages must not
+        // advance the persisted cursor after quota, transport or server errors.
+        if (!(err instanceof Error && 'status' in err && err.status === 404)) throw err;
         console.warn(`Thread backfill detail error for ${tSummary.id}:`, err);
         return null;
       }
@@ -667,11 +682,9 @@ export const GmailSyncService = {
 
   // Mutation: Modify labels on thread
   async modifyLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): Promise<void> {
-    const accessToken = await getAccessToken(email);
-    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/modify`, {
+    const res = await interactiveGmailRequest(email, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/modify`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -686,10 +699,8 @@ export const GmailSyncService = {
   },
 
   async trashThread(email: string, threadId: string): Promise<void> {
-    const accessToken = await getAccessToken(email);
-    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/trash`, {
+    const res = await interactiveGmailRequest(email, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/trash`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${accessToken}` }
     });
 
     if (!res.ok) {
@@ -698,10 +709,8 @@ export const GmailSyncService = {
   },
 
   async untrashThread(email: string, threadId: string): Promise<void> {
-    const accessToken = await getAccessToken(email);
-    const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/untrash`, {
+    const res = await interactiveGmailRequest(email, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/untrash`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${accessToken}` }
     });
 
     if (!res.ok) {
@@ -711,7 +720,6 @@ export const GmailSyncService = {
 
   // Outgoing Send: Builds MIME payload and submits
   async sendDraft(email: string, draft: { to: Recipient[]; cc: Recipient[]; bcc: Recipient[]; subject: string; bodyPlain: string; bodyHtml?: string | null; attachments?: AttachmentMetadata[]; threadId?: string | null; replyMessageId?: string | null; replyReferences?: string | null; rfcMessageId?: string | null }): Promise<string> {
-    const accessToken = await getAccessToken(email);
     
     // MIME Construction
     const alternativeBoundary = `----=_Part_Alt_${crypto.randomBytes(8).toString('hex')}`;
@@ -833,10 +841,9 @@ export const GmailSyncService = {
       body.threadId = draft.threadId;
     }
 
-    const res = await fetchWithTimeout('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    const res = await interactiveGmailRequest(email, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)

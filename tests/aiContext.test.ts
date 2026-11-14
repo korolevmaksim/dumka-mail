@@ -46,6 +46,12 @@ function makeAISettings(allowMailBodyContext: boolean): AISettings {
     provider: 'automatic',
     globalDefaultModel: '',
     automationModel: '',
+    automationProvider: '',
+    summary: { provider: '', model: '', language: 'auto', instructions: '' },
+    sortingEngine: 'completion',
+    decisionsModel: '',
+    decisionsMinConfidence: 0.8,
+    backgroundSorting: false,
     fallback: { isEnabled: false, orderText: '' },
     providerConfigurations: [],
     promptShortcuts: [],
@@ -268,5 +274,23 @@ describe('buildThreadContext', () => {
 
   it('returns an empty string for a null thread with no messages', () => {
     expect(buildThreadContext(null, [], makeAISettings(true))).toBe('');
+  });
+});
+
+describe('buildMetadataOnlyThreadContext', () => {
+  it('keeps subjects, senders and dates and drops snippets and bodies', async () => {
+    const { buildMetadataOnlyThreadContext } = await import('../shared/aiContext');
+    const context = buildMetadataOnlyThreadContext(
+      { subject: 'Pilot date', senderNames: ['Priya Raman'], hasAttachments: false },
+      [
+        { senderName: 'Priya Raman', senderEmail: 'priya@lumenlabs.example', subject: 'Pilot date', receivedAt: '2026-10-10T12:00:00.000Z', hasAttachments: false },
+        { senderName: '', senderEmail: 'alex@northwind.example', subject: 'Re: Pilot date', receivedAt: '2026-10-10T11:00:00.000Z', hasAttachments: false },
+      ],
+    );
+    expect(context).toContain('Subject: Pilot date');
+    expect(context).toContain('Senders: Priya Raman');
+    expect(context.indexOf('alex@northwind.example')).toBeLessThan(context.indexOf('from Priya Raman'));
+    expect(context).not.toMatch(/Body:|Snippet:/);
+    expect(buildMetadataOnlyThreadContext(null, [])).toBe('No thread open.');
   });
 });

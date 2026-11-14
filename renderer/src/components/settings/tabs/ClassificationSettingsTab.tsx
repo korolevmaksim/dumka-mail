@@ -202,7 +202,7 @@ export function ClassificationSettingsTab() {
                   setCategoryToDelete(null);
                   emitToast({ type: 'success', message: `Deleted tab “${categoryToDelete.displayName}”` });
                 }}
-                className="px-3 py-1.5 bg-[var(--danger)] text-white hover:bg-[var(--danger)]/90 rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
+                className="px-3 py-1.5 bg-[var(--danger-fill)] text-[var(--on-accent)] hover:bg-[var(--danger)]/90 rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
               >
                 Delete
               </button>
@@ -229,7 +229,7 @@ export function ClassificationSettingsTab() {
 
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1">
-                <label htmlFor="edit-category-name" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</label>
+                <label htmlFor="edit-category-name" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</label>
                 <input
                   ref={editNameInputRef}
                   id="edit-category-name"
@@ -242,7 +242,7 @@ export function ClassificationSettingsTab() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label htmlFor="edit-category-color" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Color:</label>
+                <label htmlFor="edit-category-color" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Color:</label>
                 <select
                   id="edit-category-color"
                   value={categoryToEdit.colorHex || '#8b5cf6'}
@@ -261,7 +261,7 @@ export function ClassificationSettingsTab() {
 
               {!categoryToEdit.isSystem && (
                 <div className="flex flex-col gap-1">
-                  <label htmlFor="edit-category-account" className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Scope:</label>
+                  <label htmlFor="edit-category-account" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Scope:</label>
                   <select
                     id="edit-category-account"
                     value={normalizeClassificationScope(categoryToEdit.accountId)}
@@ -298,7 +298,7 @@ export function ClassificationSettingsTab() {
                   setCategoryToEdit(null);
                   emitToast({ type: 'success', message: `Saved changes to “${categoryToEdit.displayName}”` });
                 }}
-                className="px-3 py-1.5 bg-[var(--accent)] text-white hover:bg-[var(--accent)]/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
+                className="px-3 py-1.5 bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent)]/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-semibold text-[calc(11px*var(--font-scale))] cursor-pointer transition-colors"
               >
                 Save
               </button>
@@ -313,7 +313,7 @@ export function ClassificationSettingsTab() {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[calc(9px*var(--font-scale))] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Scope</span>
+        <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Scope</span>
         <div className="flex gap-1.5 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--rail-bg)] p-1">
           {scopeOptions.map(option => {
             const active = option.id === normalizedSelectedScope;
@@ -329,7 +329,7 @@ export function ClassificationSettingsTab() {
                 title={option.detail ? `${option.label} · ${option.detail}` : option.label}
                 className={`min-w-[116px] max-w-[190px] h-[34px] px-2.5 rounded-md flex items-center gap-2 text-left shrink-0 transition-colors ${
                   active
-                    ? 'bg-[var(--accent)] text-white shadow-sm'
+                    ? 'bg-[var(--accent-fill)] text-[var(--on-accent)] shadow-sm'
                     : 'bg-[var(--panel-bg)] text-[var(--text-primary)] hover:bg-[var(--border)]/20'
                 }`}
               >
@@ -338,7 +338,7 @@ export function ClassificationSettingsTab() {
                   style={option.colorHex ? { backgroundColor: option.colorHex } : undefined}
                 />
                 <span className="min-w-0 flex flex-col leading-tight">
-                  <span className="truncate text-[calc(10px*var(--font-scale))] font-semibold">{option.label}</span>
+                  <span className="truncate text-[calc(11px*var(--font-scale))] font-semibold">{option.label}</span>
                   {option.detail && (
                     <span className={`truncate text-[calc(8px*var(--font-scale))] ${active ? 'text-white/75' : 'text-[var(--text-secondary)]'}`}>{option.detail}</span>
                   )}
@@ -354,24 +354,24 @@ export function ClassificationSettingsTab() {
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Manage Inbox Tabs</span>
         <div className="flex flex-col gap-2 p-3 bg-[var(--panel-bg)] border border-[var(--border)] rounded-md">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Create Custom Tab</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Create Custom Tab</span>
             <span className="text-[calc(8px*var(--font-scale))] text-[var(--text-secondary)] truncate max-w-[260px]">{selectedScopeLabel}</span>
           </div>
           <div className="flex gap-2.5 items-end flex-wrap sm:flex-nowrap w-full">
             <div className="flex-1 min-w-[140px] flex flex-col gap-1">
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Tab Name:</span>
               <input
                 id="new-tab-name-pref"
                 type="text"
                 placeholder="e.g. Work, Github, Family"
-                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none w-full h-[26px]"
+                className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none w-full h-[26px]"
               />
             </div>
             <div className="w-[100px] flex flex-col gap-1 shrink-0">
-              <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Color:</span>
+              <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Color:</span>
               <select
                 id="new-tab-color-pref"
-                className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
+                className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer w-full h-[26px]"
               >
                 <option value="#8b5cf6">Purple</option>
                 <option value="#10b981">Green</option>
@@ -391,7 +391,7 @@ export function ClassificationSettingsTab() {
                 store.addTabCategory(nameEl.value.trim(), colorEl.value, normalizedSelectedScope);
                 nameEl.value = '';
               }}
-              className="px-3.5 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/90 transition-colors h-[26px] shrink-0"
+              className="px-3.5 py-1 bg-[var(--accent-fill)] text-[var(--on-accent)] rounded font-medium text-[calc(11px*var(--font-scale))] cursor-pointer hover:bg-[var(--accent)]/90 transition-colors h-[26px] shrink-0"
             >
               Add
             </button>
@@ -401,7 +401,7 @@ export function ClassificationSettingsTab() {
         {/* Draggable tab list */}
         <div className="flex flex-col gap-1.5 mt-1.5">
           {visibleCategories.length === 0 ? (
-            <div className="bg-[var(--panel-bg)] border border-dashed border-[var(--border)] rounded px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+            <div className="bg-[var(--panel-bg)] border border-dashed border-[var(--border)] rounded px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
               No custom tabs for {selectedScopeLabel}.
             </div>
           ) : visibleCategories.map((category) => (
@@ -442,20 +442,20 @@ export function ClassificationSettingsTab() {
 
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 cursor-pointer">
-                  <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{category.active ? 'Visible' : 'Hidden'}</span>
+                  <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{category.active ? 'Visible' : 'Hidden'}</span>
                   <input
                     type="checkbox"
                     checked={category.active}
                     disabled={category.id === 'other'}
                     onChange={(e) => store.toggleTabCategory(category.id, e.target.checked)}
-                    className="w-3.5 h-3.5 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
+                    className="w-3.5 h-3.5 text-[var(--accent-ink)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
                   />
                 </label>
                 <button
                   type="button"
                   onClick={() => setCategoryToEdit(category)}
                   aria-label={`Edit ${category.displayName} tab category`}
-                  className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--accent)] cursor-pointer"
+                  className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--accent-ink)] cursor-pointer"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
@@ -464,7 +464,7 @@ export function ClassificationSettingsTab() {
                     type="button"
                     onClick={() => setCategoryToDelete(category)}
                     aria-label={`Delete ${category.displayName} tab category`}
-                    className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
+                    className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--danger-solid)] cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -492,7 +492,7 @@ export function ClassificationSettingsTab() {
       <div className="flex flex-col gap-2">
         <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Configured Rules ({visibleRules.length})</span>
         {visibleRules.length === 0 ? (
-          <div className="bg-[var(--rail-bg)] border border-dashed border-[var(--border)] rounded-md px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="bg-[var(--rail-bg)] border border-dashed border-[var(--border)] rounded-md px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             No rules for {selectedScopeLabel}.
           </div>
         ) : visibleRules.map(rule => {
@@ -513,9 +513,9 @@ export function ClassificationSettingsTab() {
                   checked={rule.active}
                   aria-label={`${rule.active ? 'Disable' : 'Enable'} classification rule`}
                   onChange={(e) => store.updateCustomClassifierRule(rule.id, { active: e.target.checked })}
-                  className="mt-0.5 w-3.5 h-3.5 shrink-0 text-[var(--accent)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
+                  className="mt-0.5 w-3.5 h-3.5 shrink-0 text-[var(--accent-ink)] bg-[var(--app-bg)] border border-[var(--border)] rounded cursor-pointer accent-[var(--accent)]"
                 />
-                <div className="flex min-w-0 flex-col gap-1 text-[calc(10px*var(--font-scale))]">
+                <div className="flex min-w-0 flex-col gap-1 text-[calc(11px*var(--font-scale))]">
                   <span>
                     If <strong>{CLASSIFICATION_FIELD_LABELS[rule.field]}</strong> {rule.condition}{values.length > 1 ? ' any of' : ''}
                   </span>
@@ -523,14 +523,14 @@ export function ClassificationSettingsTab() {
                     {values.map(value => (
                       <span
                         key={value.toLowerCase()}
-                        className="max-w-full truncate rounded border border-[var(--border)] bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-primary)]"
+                        className="max-w-full truncate rounded border border-[var(--border)] bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]"
                         title={value}
                       >
                         {value}
                       </span>
                     ))}
                   </div>
-                  <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
+                  <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] flex items-center gap-1.5">
                     <span>Route: <strong>{categoryRouteLabel(rule.targetCategory, store.tabCategories, store.accounts)}</strong></span>
                     <span>•</span>
                     <span>Scope: <strong>{scopeDisplayLabel(normalizeClassificationScope(rule.accountId), store.accounts, { compactGlobal: true })}</strong></span>
@@ -542,7 +542,7 @@ export function ClassificationSettingsTab() {
                   type="button"
                   onClick={() => setEditingRuleId(rule.id)}
                   aria-label={`Edit classification rule for ${values.join(', ')}`}
-                  className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--accent)] cursor-pointer"
+                  className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--accent-ink)] cursor-pointer"
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
@@ -553,7 +553,7 @@ export function ClassificationSettingsTab() {
                     store.deleteCustomClassifierRule(rule.id);
                   }}
                   aria-label={`Delete classification rule for ${values.join(', ')}`}
-                  className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--danger)] cursor-pointer"
+                  className="p-1 rounded hover:bg-[var(--hover-row)] text-[var(--text-secondary)] hover:text-[var(--danger-solid)] cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>

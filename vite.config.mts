@@ -21,7 +21,7 @@ export default defineConfig(() => {
             minify: false,
             outDir: 'dist-electron/main',
             rollupOptions: {
-              external: ['better-sqlite3', '@modelcontextprotocol/sdk', 'eventsource']
+              external: ['better-sqlite3', '@modelcontextprotocol/sdk']
             }
           }
         }
@@ -70,8 +70,8 @@ export default defineConfig(() => {
   return {
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, './renderer/src'),
-        'shared': path.resolve(__dirname, './shared')
+        '@': path.resolve(import.meta.dirname, './renderer/src'),
+        'shared': path.resolve(import.meta.dirname, './shared')
       }
     },
     plugins: [

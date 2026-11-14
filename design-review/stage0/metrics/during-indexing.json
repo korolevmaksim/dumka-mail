@@ -1,0 +1,149 @@
+{
+  "label": "during-indexing",
+  "at": "2026-11-12T16:46:59.163Z",
+  "reps": 8,
+  "env": {
+    "w": 1440,
+    "h": 900,
+    "dpr": 2,
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.271 Electron/42.5.0 Safari/537.36",
+    "cores": 8
+  },
+  "listNavigateJK": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 12.7,
+    "p95Ms": 16.1,
+    "minMs": 2.6,
+    "maxMs": 16.1,
+    "medianDomMs": 3.6,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadOpenHeader_plainPerson": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 8.7,
+    "p95Ms": 11.2,
+    "minMs": 4.4,
+    "maxMs": 11.2,
+    "medianDomMs": 5.2,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadOpenBody_plainPerson": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 66.6,
+    "p95Ms": 189.5,
+    "minMs": 60.4,
+    "maxMs": 189.5,
+    "medianDomMs": 50.7,
+    "longTasks": 1,
+    "maxLongTaskMs": 128
+  },
+  "threadClose_plainPerson": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 5.9,
+    "p95Ms": 18.4,
+    "minMs": 4.1,
+    "maxMs": 18.4,
+    "medianDomMs": 5.4,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadOpenHeader_newsletterHtml": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 11.2,
+    "p95Ms": 17.3,
+    "minMs": 5.7,
+    "maxMs": 17.3,
+    "medianDomMs": 5.3,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadOpenBody_newsletterHtml": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 68.7,
+    "p95Ms": 70.3,
+    "minMs": 60.6,
+    "maxMs": 70.3,
+    "medianDomMs": 52,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadClose_newsletterHtml": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 13.9,
+    "p95Ms": 16.9,
+    "minMs": 3.8,
+    "maxMs": 16.9,
+    "medianDomMs": 4.6,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadOpenHeader_longThread14": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 10.3,
+    "p95Ms": 17.8,
+    "minMs": 5.4,
+    "maxMs": 17.8,
+    "medianDomMs": 5.2,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadOpenBody_longThread14": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 66.7,
+    "p95Ms": 67.2,
+    "minMs": 62.2,
+    "maxMs": 67.2,
+    "medianDomMs": 54.4,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "threadClose_longThread14": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 18.3,
+    "p95Ms": 21,
+    "minMs": 5.6,
+    "maxMs": 21,
+    "medianDomMs": 5.4,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "search": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 273.3,
+    "p95Ms": 276,
+    "minMs": 263,
+    "maxMs": 276,
+    "medianDomMs": 264.4,
+    "longTasks": 0,
+    "maxLongTaskMs": 0,
+    "note": "includes 250 ms input debounce",
+    "resultCounts": {
+      "rollout": "18 rendered rows; setsize=78",
+      "invoice": "3 rendered rows; setsize=3",
+      "priya": "18 rendered rows; setsize=91",
+      "webhook retries": "18 rendered rows; setsize=75",
+      "budget review": "18 rendered rows; setsize=72",
+      "from:trackline": "20 rendered rows; setsize=323",
+      "contract": "18 rendered rows; setsize=81",
+      "pilot feedback": "18 rendered rows; setsize=77"
+    }
+  },
+  "dbCounts": {
+    "workBackfilledThreads": 6034,
+    "workDone": true,
+    "homeDone": false
+  }
+}

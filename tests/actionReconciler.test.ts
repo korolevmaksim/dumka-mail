@@ -117,6 +117,16 @@ describe('isTransientHttpError', () => {
       new Date('2026-07-04T12:00:00.000Z'),
     )).toBe('2026-07-04T12:00:30.000Z');
   });
+
+  it.each(['rateLimitExceeded', 'userRateLimitExceeded', 'RATE_LIMIT_EXCEEDED'])('retries Google 403 %s with a default cooldown', reason => {
+    const error = new Error(`Label modification failed: HTTP 403 — {"error":{"errors":[{"reason":"${reason}"}]}}`);
+    expect(isTransientHttpError(error)).toBe(true);
+    expect(scheduledAtForRetry(error, NOW)).toBe('2026-07-04T12:01:00.000Z');
+  });
+
+  it.each(['insufficientPermissions', 'domainPolicy', 'dailyLimitExceeded'])('does not retry Google 403 %s as a temporary quota', reason => {
+    expect(isTransientHttpError(new Error(`HTTP 403 — {"error":{"errors":[{"reason":"${reason}"}]}}`))).toBe(false);
+  });
 });
 
 describe('reconcilePendingActions dispatch', () => {
@@ -177,6 +187,22 @@ describe('reconcilePendingActions dispatch', () => {
 });
 
 describe('reconcilePendingActions transient HTTP failure', () => {
+  it('keeps a quota-limited archive pending without rollback and completes it on a later pass', async () => {
+    const error = Object.assign(new Error('HTTP 403 — {"error":{"errors":[{"reason":"rateLimitExceeded"}]}}'), { status: 403 });
+    const h = makeDeps({ pending: [makeAction({ kind: 'markDone' })], gmailError: error });
+    await reconcilePendingActions(h.deps);
+    const parked = h.saved[h.saved.length - 1];
+    expect(parked.status).toBe('pending_sync');
+    expect(parked.scheduledAt).toBe('2026-07-04T12:01:00.000Z');
+    expect(h.rollbacks).toEqual([]);
+    const retry = makeDeps({ pending: [parked] });
+    retry.deps.now = () => new Date('2026-07-04T12:01:00.000Z');
+    await reconcilePendingActions(retry.deps);
+    expect(retry.saved.at(-1)?.status).toBe('completed');
+    expect(retry.gmailCalls).toHaveLength(1);
+    expect(retry.rollbacks).toEqual([]);
+  });
+
   it('parks a 429 as pending_sync with Retry-After instead of rolling back', async () => {
     const err = Object.assign(new Error('Label modification failed: HTTP 429 — rateLimit'), {
       status: 429,

@@ -1,0 +1,150 @@
+{
+  "label": "big-panels",
+  "at": "2026-11-12T16:43:48.276Z",
+  "reps": 8,
+  "env": {
+    "w": 1440,
+    "h": 900,
+    "dpr": 2,
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.271 Electron/42.5.0 Safari/537.36",
+    "cores": 8
+  },
+  "open_commandPalette": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 16.1,
+    "p95Ms": 19.4,
+    "minMs": 13.9,
+    "maxMs": 19.4,
+    "medianDomMs": 7.5,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "close_commandPalette": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 15.6,
+    "p95Ms": 19.6,
+    "minMs": 4.2,
+    "maxMs": 19.6,
+    "medianDomMs": 3.8,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "open_compose": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 16,
+    "p95Ms": 18.6,
+    "minMs": 10.4,
+    "maxMs": 18.6,
+    "medianDomMs": 7.7,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "close_compose": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 7.9,
+    "p95Ms": 16.9,
+    "minMs": 4.6,
+    "maxMs": 16.9,
+    "medianDomMs": 4.3,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "open_today": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 28.8,
+    "p95Ms": 41.3,
+    "minMs": 24.5,
+    "maxMs": 41.3,
+    "medianDomMs": 27.4,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "close_today": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 39.5,
+    "p95Ms": 49.8,
+    "minMs": 30.6,
+    "maxMs": 49.8,
+    "medianDomMs": 38.2,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "open_settings": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 13.7,
+    "p95Ms": 15.4,
+    "minMs": 11.6,
+    "maxMs": 15.4,
+    "medianDomMs": 9.1,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "close_settings": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 14.9,
+    "p95Ms": 15.1,
+    "minMs": 14.2,
+    "maxMs": 15.1,
+    "medianDomMs": 13.2,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "open_aiPanel": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 30,
+    "p95Ms": 31.2,
+    "minMs": 27.6,
+    "maxMs": 31.2,
+    "medianDomMs": 27.8,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "close_aiPanel": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 14.6,
+    "p95Ms": 17.3,
+    "minMs": 14.3,
+    "maxMs": 17.3,
+    "medianDomMs": 8.2,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "open_calendar": {
+    "n": 0,
+    "timeouts": 8,
+    "medianMs": null,
+    "p95Ms": null,
+    "minMs": null,
+    "maxMs": null,
+    "medianDomMs": null,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "close_calendar": {
+    "n": 8,
+    "timeouts": 0,
+    "medianMs": 54.5,
+    "p95Ms": 66.4,
+    "minMs": 48.6,
+    "maxMs": 66.4,
+    "medianDomMs": 53,
+    "longTasks": 0,
+    "maxLongTaskMs": 0
+  },
+  "dbCounts": {
+    "workBackfilledThreads": 6034,
+    "homeBackfilledThreads": 1512,
+    "workDone": true,
+    "homeDone": true
+  }
+}

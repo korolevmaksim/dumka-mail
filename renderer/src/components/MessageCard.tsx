@@ -1,4 +1,6 @@
 import { memo, useState, useEffect, useMemo, useRef } from 'react';
+import { formatDateTime, formatFullDateTime } from '../../../shared/dateFormat';
+import { nameInitials } from '../../../shared/threadCounterparty';
 import { AttachmentMetadata, MailMessage } from '../../../shared/types';
 import { Check, Copy, Paperclip, Download, ImageOff, X, RefreshCw, FileCode, ChevronUp, ChevronDown, ExternalLink } from 'lucide-react';
 import { colorFromString } from './AccountAvatar';
@@ -14,13 +16,14 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
   const [imagesAllowed, setImagesAllowed] = useState(defaultLoadImages);
   const [copied, setCopied] = useState(false);
   const [showRawModal, setShowRawModal] = useState(false);
-  const renderHtmlBody = hasRenderableHtmlBody(msg.bodyHtml, msg.bodyPlain);
+  // Body scans run once per body, not on every render (state changes, copy, images).
+  const renderHtmlBody = useMemo(() => hasRenderableHtmlBody(msg.bodyHtml, msg.bodyPlain), [msg.bodyHtml, msg.bodyPlain]);
   const htmlBody = renderHtmlBody ? msg.bodyHtml || '' : '';
-  const remoteImages = htmlBody ? hasRemoteImages(htmlBody) : false;
-  const initials = (msg.senderName || msg.senderEmail || '?').trim().substring(0, 2).toUpperCase();
+  const remoteImages = useMemo(() => (htmlBody ? hasRemoteImages(htmlBody) : false), [htmlBody]);
+  const initials = nameInitials(msg.senderName, msg.senderEmail);
   const [inlineAttachmentData, setInlineAttachmentData] = useState<Record<string, string>>({});
 
-  const htmlHasCidReferences = /cid:/i.test(htmlBody);
+  const htmlHasCidReferences = useMemo(() => /cid:/i.test(htmlBody), [htmlBody]);
   const inlineImageAttachments = useMemo(
     () => msg.attachments.filter(att => shouldTreatAsInlineImage(att, htmlBody)),
     [msg.attachments, htmlBody]
@@ -99,7 +102,7 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[calc(10px*var(--font-scale))] font-bold text-white shrink-0"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[calc(11px*var(--font-scale))] font-bold text-white shrink-0"
               style={{ backgroundColor: colorFromString(msg.senderEmail || msg.senderName) }}
             >
               {initials}
@@ -115,7 +118,7 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
                   title="Copy email address"
                   className="p-0.5 rounded hover:bg-[var(--hover-row)] cursor-pointer text-[var(--text-tertiary)] hover:text-[var(--text-primary)] shrink-0"
                 >
-                  {copied ? <Check className="w-3 h-3 text-[var(--success)]" /> : <Copy className="w-3 h-3" />}
+                  {copied ? <Check className="w-3 h-3 text-[var(--success-solid)]" /> : <Copy className="w-3 h-3" />}
                 </button>
               </div>
               <RecipientList label="To" recipients={msg.to || []} />
@@ -123,13 +126,13 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] whitespace-nowrap mt-0.5">
-              {new Date(msg.receivedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] whitespace-nowrap mt-0.5">
+              {formatDateTime(msg.receivedAt)}
             </span>
             <button
               onClick={() => setShowRawModal(true)}
               title="Show Original (Raw Message Source)"
-              className="px-2 py-0.5 rounded hover:bg-[var(--hover-row)] text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] hover:text-[var(--accent)] font-medium cursor-pointer transition-colors"
+              className="px-2 py-0.5 rounded hover:bg-[var(--hover-row)] text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] hover:text-[var(--accent-ink)] font-medium cursor-pointer transition-colors"
             >
               Show original
             </button>
@@ -140,7 +143,7 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
         {remoteImages && !imagesAllowed && (
           <button
             onClick={() => setImagesAllowed(true)}
-            className="w-full flex items-center gap-2 mb-3 px-3 py-1.5 bg-[var(--warning)]/10 border border-[var(--warning)]/25 rounded text-[calc(10px*var(--font-scale))] text-[var(--warning)] hover:bg-[var(--warning)]/15 transition-colors cursor-pointer"
+            className="w-full flex items-center gap-2 mb-3 px-3 py-1.5 bg-[var(--warning)]/10 border border-[var(--warning)]/25 rounded text-[calc(11px*var(--font-scale))] text-[var(--warning-solid)] hover:bg-[var(--warning)]/15 transition-colors cursor-pointer"
           >
             <ImageOff className="w-3.5 h-3.5 shrink-0" />
             <span>Remote images blocked for privacy.</span>
@@ -166,7 +169,7 @@ export const MessageCard = memo(function MessageCard({ msg, defaultLoadImages }:
         {/* Attachments */}
         {visibleAttachments.length > 0 && (
           <div className="mt-4 flex flex-col gap-1.5 border-t border-[var(--border)] pt-3">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
               {visibleAttachments.length} Attachment{visibleAttachments.length === 1 ? '' : 's'}
             </span>
             <div className="flex flex-wrap gap-2">
@@ -291,7 +294,7 @@ function AttachmentChip({
       <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] max-w-[180px] truncate">
         {attachment.filename}
       </span>
-      <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">{sizeLabel}</span>
+      <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{sizeLabel}</span>
       {openable && (
         <button
           type="button"
@@ -329,7 +332,7 @@ function shouldTreatAsInlineImage(att: AttachmentMetadata, html: string): boolea
   return att.isInline === true || Boolean(att.contentId) || att.filename.toLowerCase() === 'inline';
 }
 
-function RawMessageModal({
+export function RawMessageModal({
   accountId,
   messageId,
   onClose,
@@ -496,7 +499,7 @@ function RawMessageModal({
             data-match-idx={currentMatchIdx}
             className={`rounded-[2px] px-0.5 font-semibold select-text transition-colors ${
               isActive 
-                ? 'bg-[var(--accent)] text-white shadow-[0_0_0_2px_var(--accent)] animate-pulse' 
+                ? 'bg-[var(--accent-fill)] text-[var(--on-accent)] shadow-[0_0_0_2px_var(--accent)] animate-pulse' 
                 : 'bg-[var(--warning)]/40 text-[var(--text-primary)] border-b border-[var(--warning)]'
             }`}
           >
@@ -520,7 +523,7 @@ function RawMessageModal({
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-2.5">
-            <FileCode className="w-5 h-5 text-[var(--accent)]" />
+            <FileCode className="w-5 h-5 text-[var(--accent-ink)]" />
             <div>
               <h3 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Original Message Source</h3>
               <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">RFC 822 format & complete headers (Press Cmd+F / Ctrl+F to search)</p>
@@ -546,7 +549,7 @@ function RawMessageModal({
           <span className="truncate">{msg.senderName ? `${msg.senderName} <${msg.senderEmail}>` : msg.senderEmail}</span>
 
           <span className="font-semibold text-[var(--text-tertiary)]">Date:</span>
-          <span>{new Date(msg.receivedAt).toLocaleString()}</span>
+          <span>{formatFullDateTime(msg.receivedAt)}</span>
         </div>
 
         {/* Toolbar Controls */}
@@ -559,8 +562,8 @@ function RawMessageModal({
             >
               {copied ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-[var(--success)]" />
-                  <span className="text-[var(--success)] font-medium">Copied!</span>
+                  <Check className="w-3.5 h-3.5 text-[var(--success-solid)]" />
+                  <span className="text-[var(--success-solid)] font-medium">Copied!</span>
                 </>
               ) : (
                 <>
@@ -591,7 +594,7 @@ function RawMessageModal({
               disabled={loading || !!error}
               className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-[calc(11px*var(--font-scale))] transition-all cursor-pointer ${
                 searchOpen
-                  ? 'bg-[var(--accent)]/10 border-[var(--accent)] text-[var(--accent)] font-medium'
+                  ? 'bg-[var(--accent)]/10 border-[var(--accent)] text-[var(--accent-ink)] font-medium'
                   : 'bg-[var(--raised-surface)] border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--text-secondary)]'
               }`}
             >
@@ -628,7 +631,7 @@ function RawMessageModal({
                 className="w-48 bg-transparent border-0 outline-none text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] placeholder-[var(--text-tertiary)]"
               />
               {searchQuery && (
-                <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] px-1 border-r border-[var(--border)] shrink-0 font-medium">
+                <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] px-1 border-r border-[var(--border)] shrink-0 font-medium">
                   {matchesCount > 0 ? `${activeMatchIndex + 1} of ${matchesCount}` : '0 of 0'}
                 </span>
               )}
@@ -662,12 +665,12 @@ function RawMessageModal({
 
           {loading ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[var(--app-bg)]">
-              <RefreshCw className="w-6 h-6 animate-spin text-[var(--accent)]" />
+              <RefreshCw className="w-6 h-6 animate-spin text-[var(--accent-ink)]" />
               <span className="text-[calc(12px*var(--font-scale))] text-[var(--text-secondary)] font-medium">Fetching original message source…</span>
             </div>
           ) : error ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-[var(--app-bg)]">
-              <div className="text-[var(--danger)] font-semibold text-[calc(13px*var(--font-scale))] mb-2">Error Loading Message</div>
+              <div className="text-[var(--danger-solid)] font-semibold text-[calc(13px*var(--font-scale))] mb-2">Error Loading Message</div>
               <div className="text-[var(--text-secondary)] text-[calc(12px*var(--font-scale))] max-w-md mb-4">{error}</div>
               <button
                 onClick={() => {
@@ -677,7 +680,7 @@ function RawMessageModal({
                     .then(text => { setRawText(text); setLoading(false); })
                     .catch(err => { setError(err.message || 'Failed to fetch raw message source'); setLoading(false); });
                 }}
-                className="px-4 py-2 bg-[var(--accent)] text-white rounded-md text-[calc(12px*var(--font-scale))] font-medium cursor-pointer hover:opacity-90 transition-opacity"
+                className="px-4 py-2 bg-[var(--accent-fill)] text-[var(--on-accent)] rounded-md text-[calc(12px*var(--font-scale))] font-medium cursor-pointer hover:opacity-90 transition-opacity"
               >
                 Retry
               </button>

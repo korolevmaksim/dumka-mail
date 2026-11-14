@@ -16,8 +16,12 @@ import { CalendarAgendaView, CalendarOverviewView } from './CalendarOverviewView
 import { CalendarSidebar } from './CalendarSidebar';
 import { calendarDuplicateInput, calendarEventFormKey, calendarEventUpdateInput, localCalendarDateKey, resolveCalendarAccountScope, restoredCalendarAnchor, secondaryCalendarTimeLabel } from './calendarWorkspaceUtils';
 import { CalendarHeader, CALENDAR_VIEW_OPTIONS } from './CalendarHeader';
-import { CalendarRelatedMail } from './CalendarRelatedMail';
-import { CalendarImportPreview, CalendarWorkspaceEventForm, CalendarWorkspaceEventSummary } from './CalendarWorkspaceInspector';
+import { CalendarEventDetails, CalendarImportPreview, CalendarWorkspaceEventForm } from './CalendarWorkspaceInspector';
+import { calendarEventKey } from './calendarTimeLayout';
+import { useElementSize } from './useElementSize';
+
+/** Below this workspace width an open event panel hides the sidebar, so all day columns stay visible. */
+const NARROW_WORKSPACE_WIDTH = 1200;
 
 export function CalendarWorkspace() {
   const store = useAppStore();
@@ -36,6 +40,8 @@ export function CalendarWorkspace() {
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CalendarEvent[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** Sidebar shown on request although a narrow window hid it for the event panel. */
+  const [sidebarOverride, setSidebarOverride] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -45,6 +51,8 @@ export function CalendarWorkspace() {
   const [icsCalendarId, setIcsCalendarId] = useState('primary');
   const [draftSeed, setDraftSeed] = useState<{ summary: string; attendees: string[]; sourceMessageId?: string | null; sourceThreadId?: string | null } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const { width: workspaceWidth } = useElementSize(workspaceRef);
   const loadedCalendarAccountsRef = useRef(new Set<string>());
   const settings = store.settings.calendar;
   const accountEmailsKey = useMemo(() => store.accounts.map(account => account.email).sort().join('\n'), [store.accounts]);
@@ -130,6 +138,9 @@ export function CalendarWorkspace() {
   }, [query, scopedAccountIds]);
 
   useEffect(() => {
+    if (formMode === null && selectedEvent === null && icsPreview === null) setSidebarOverride(false);
+  }, [formMode, icsPreview, selectedEvent]);
+  useEffect(() => {
     const dateKey = localCalendarDateKey(anchor);
     if (settings.lastAnchorDate === dateKey) return;
     void store.updateSettings(draft => { draft.calendar.lastAnchorDate = dateKey; });
@@ -137,8 +148,10 @@ export function CalendarWorkspace() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (store.workspaceView !== 'calendar') return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey) return;
       const target = event.target as HTMLElement | null;
-      const isEditing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable;
+      const isEditing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable
+        || Boolean(target?.closest?.('[data-calendar-editor], [role="dialog"]'));
       if (isEditing && event.key !== 'Escape') return;
       if (event.altKey && selectedEvent && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault();
@@ -166,10 +179,16 @@ export function CalendarWorkspace() {
       } else if (event.key === 'ArrowRight') {
         setAnchor(current => calendarNavigationDate(current, view, 1));
       } else if (event.key === 'Escape') {
-        setFormMode(null);
-        setSelectedEvent(null);
-        setQuery('');
-        searchRef.current?.blur();
+        if (query) {
+          setQuery('');
+          searchRef.current?.blur();
+        } else if (formMode === 'edit' && selectedEvent) {
+          setFormMode(null);
+        } else {
+          closePanel();
+        }
+      } else if (event.altKey) {
+        return;
       } else {
         const option = CALENDAR_VIEW_OPTIONS.find(item => item.shortcut === event.key);
         if (option) changeView(option.id);
@@ -192,7 +211,7 @@ export function CalendarWorkspace() {
     if (!event) return;
     setAccountEmail(request.accountId);
     setAnchor(new Date(event.startAt));
-    openEdit(event);
+    openEvent(event);
     store.clearCalendarFocusRequest();
   }, [store.calendarEvents, store.calendarFocusRequest]);
   function changeView(next: CalendarWorkspaceView) {
@@ -209,6 +228,20 @@ export function CalendarWorkspace() {
     setAnchor(date);
     if (view === 'quarter' || view === 'year') changeView('day');
   }
+
+  /** `+N more`, a week column's day name: show that whole day. */
+  function openDay(date: Date) {
+    setSelectedDate(date);
+    setAnchor(date);
+    changeView('day');
+  }
+
+  function closePanel() {
+    setFormMode(null);
+    setSelectedEvent(null);
+    setDraftSeed(null);
+    setIcsPreview(null);
+  }
   function openCreate(date: Date, rangeOverride?: { startAt: string; endAt: string }, preserveSeed = false) {
     setIcsPreview(null);
     if (!preserveSeed) setDraftSeed(null);
@@ -219,14 +252,31 @@ export function CalendarWorkspace() {
     setFormMode('create');
   }
 
-  function openEdit(event: CalendarEvent) {
+  function calendarFor(event: CalendarEvent) {
+    return store.calendarLists.find(item => item.accountId === event.accountId && item.id === event.calendarId);
+  }
+
+  function isWritable(event: CalendarEvent): boolean {
+    const role = calendarFor(event)?.accessRole;
+    return role === 'writer' || role === 'owner';
+  }
+
+  /** Opens the read view of an event (editing is a separate step). */
+  function openEvent(event: CalendarEvent) {
     setIcsPreview(null);
     setSelectedEvent(event);
     setSelectedDate(new Date(event.startAt));
     setInitialRange(null);
-    const calendar = accountCalendars.find(item => item.accountId === event.accountId && item.id === event.calendarId);
+    setFormMode(null);
+  }
+
+  function editEvent(event: CalendarEvent) {
+    if (!isWritable(event)) return;
+    setIcsPreview(null);
+    setSelectedEvent(event);
+    setInitialRange(null);
     setFormSession(session => session + 1);
-    setFormMode(calendar?.accessRole === 'writer' || calendar?.accessRole === 'owner' ? 'edit' : null);
+    setFormMode('edit');
   }
 
   async function refresh() {
@@ -256,7 +306,7 @@ export function CalendarWorkspace() {
       setSelectedDate(savedDate);
       setAnchor(savedDate);
       setDraftSeed(null);
-      setFormMode('edit');
+      setFormMode(null);
       emitToast({ type: 'success', message: formMode === 'edit' ? 'Event updated.' : 'Event created.' });
       const savedRange = calendarViewRange(savedDate, view, settings.weekStartsOn);
       void store.syncCalendarAgenda(saved.accountId, savedRange).catch(error => {
@@ -433,8 +483,8 @@ export function CalendarWorkspace() {
       if (!invite) throw new Error('No supported VEVENT was found in this file.');
       const existing = accountEvents.find(event => event.iCalUID === invite.uid);
       if (existing) {
-        openEdit(existing);
-        emitToast({ type: 'warning', message: 'This calendar event is already in the local cache.' });
+        openEvent(existing);
+        emitToast({ type: 'warning', message: 'This event is already in your calendar.' });
         return;
       }
       const defaultCalendar = mutationCalendars.find(calendar => calendar.id === settings.defaultCalendarId)
@@ -456,8 +506,8 @@ export function CalendarWorkspace() {
       const saved = await window.electronAPI.importCalendarInvite(mutationAccount, icsPreview.invite, icsCalendarId);
       await store.syncCalendarAgenda(mutationAccount, range);
       setIcsPreview(null);
-      openEdit(saved);
-      emitToast({ type: 'success', message: 'Calendar file imported.' });
+      openEvent(saved);
+      emitToast({ type: 'success', message: 'Event imported.' });
     } catch (error) {
       console.error('Calendar ICS import failed:', error);
       emitToast({ type: 'error', message: 'Could not import the event.' });
@@ -484,8 +534,8 @@ export function CalendarWorkspace() {
     if (!writableCalendar) { emitToast({ type: 'warning', message: 'No writable calendar is available for this account.' }); return; }
     try {
       const saved = await store.createCalendarEvent(calendarDuplicateInput(event, writableCalendar.id), event.accountId);
-      setSelectedEvent(saved); setSelectedDate(new Date(saved.startAt)); setFormMode('edit');
-      emitToast({ type: 'success', message: 'Event duplicated. Guest emails were not sent.' });
+      setSelectedEvent(saved); setSelectedDate(new Date(saved.startAt)); setInitialRange(null); setFormSession(session => session + 1); setFormMode('edit');
+      emitToast({ type: 'success', message: 'Copy created. Guests were not emailed.' });
     } catch (error) {
       console.error('Calendar duplicate failed:', error); emitToast({ type: 'error', message: 'Could not duplicate the event.' });
     }
@@ -514,7 +564,7 @@ export function CalendarWorkspace() {
         sourceThreadId: event.sourceThreadId,
         sourceMessageId: event.sourceMessageId,
       }, event.accountId);
-      emitToast({ type: 'success', message: `${durationMinutes}-minute travel block created.` });
+      emitToast({ type: 'success', message: `${durationMinutes} min of travel blocked before the event.` });
     } catch (error) {
       console.error('Travel block creation failed:', error); emitToast({ type: 'error', message: 'Could not create the travel block.' });
     }
@@ -525,7 +575,7 @@ export function CalendarWorkspace() {
     setIsResponding(true);
     try {
       const updated = await store.respondToCalendarEvent(selectedEvent, status);
-      setSelectedEvent(updated); emitToast({ type: 'success', message: `Invitation ${status === 'accepted' ? 'accepted' : status === 'declined' ? 'declined' : 'marked tentative'}.` });
+      setSelectedEvent(updated); emitToast({ type: 'success', message: `Answered ${status === 'accepted' ? 'Yes' : status === 'declined' ? 'No' : 'Maybe'}.` });
     } catch (error) {
       console.error('Calendar RSVP failed:', error); emitToast({ type: 'error', message: 'Could not update the invitation response.' });
     } finally {
@@ -533,67 +583,94 @@ export function CalendarWorkspace() {
     }
   }
 
-  const inspectorOpen = formMode !== null || selectedEvent !== null;
+  const inspectorOpen = formMode !== null || selectedEvent !== null || icsPreview !== null;
+  const narrow = workspaceWidth > 0 && workspaceWidth < NARROW_WORKSPACE_WIDTH;
+  const sidebarAutoHidden = inspectorOpen && narrow && !sidebarOverride;
+  const showSidebar = sidebarOpen && !sidebarAutoHidden;
+
+  function toggleSidebar() {
+    if (sidebarOpen && sidebarAutoHidden) setSidebarOverride(true);
+    else if (sidebarOpen && inspectorOpen && narrow) { setSidebarOverride(false); setSidebarOpen(false); }
+    else setSidebarOpen(value => !value);
+  }
+  const selectedEventKey = selectedEvent ? calendarEventKey(selectedEvent) : null;
+  const selectedCalendar = selectedEvent ? calendarFor(selectedEvent) : undefined;
 
   return (
-    <div className="dm-calendar-workspace flex h-full min-h-0 flex-col bg-[var(--app-bg)]" aria-label="Calendar workspace">
+    <div ref={workspaceRef} className="dm-calendar-workspace flex h-full min-h-0 flex-col bg-[var(--app-bg)]" aria-label="Calendar">
       <CalendarHeader
         anchor={anchor}
         view={view}
-        sidebarOpen={sidebarOpen}
+        weekStartsOn={settings.weekStartsOn}
+        sidebarOpen={showSidebar}
         secondaryTime={secondaryTime}
         secondaryTimeZone={settings.secondaryTimeZone}
         query={query}
         searchInputRef={searchRef}
         searchResults={visibleSearchResults}
         isSyncing={isSyncing}
-        onToggleSidebar={() => setSidebarOpen(value => !value)}
+        onToggleSidebar={toggleSidebar}
         onPrevious={() => setAnchor(current => calendarNavigationDate(current, view, -1))}
         onToday={() => { setAnchor(new Date()); setSelectedDate(new Date()); }}
         onNext={() => setAnchor(current => calendarNavigationDate(current, view, 1))}
         onChangeView={changeView}
         onChangeQuery={setQuery}
-        onSelectSearchResult={event => { setAnchor(new Date(event.startAt)); setQuery(''); openEdit(event); }}
+        onSelectSearchResult={event => { setAnchor(new Date(event.startAt)); setQuery(''); openEvent(event); }}
         onRefresh={() => void refresh()}
         onImport={() => void chooseIcsImport()}
         onCreate={() => openCreate(selectedDate)}
       />
-      {syncError && <div role="status" className="shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--warning)]">{syncError}</div>}
+      {syncError && <div role="status" className="shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--warning-solid)]">{syncError}</div>}
       <div className="dm-calendar-body flex min-h-0 flex-1">
-        {sidebarOpen && <CalendarSidebar accounts={store.accounts} accountEmail={accountEmail} anchor={anchor} selectedDate={selectedDate} events={visibleEvents} calendars={accountCalendars} mutationAccount={mutationAccount} settings={settings} mailTasks={mailTasks} threads={store.threads} syncIssues={syncIssues} onAccountChange={changeAccountScope} onSelectDate={selectDate} onSelectEvent={openEdit} onNavigateMonth={delta => { const next = calendarNavigationDate(anchor, 'month', delta); setAnchor(next); setSelectedDate(next); }} onCreate={openCreate} onAuthorize={() => void store.authorizeGoogleIntegration('calendar', mutationAccount)} onApplyCalendarSet={applyCalendarSet} onCreateCalendarSet={createCalendarSet} onDeleteCalendarSet={deleteActiveCalendarSet} onToggleCalendar={toggleCalendar} onToggleCalendarAlerts={toggleCalendarAlerts} onCompleteTask={task => void completeMailTask(task)} onSnoozeTask={task => void snoozeMailTask(task)} onOpenThread={thread => void store.openThreadFromCalendar(thread)} onResolveConflict={(action, strategy) => void resolveConflict(action, strategy)} />}
-        <main className="dm-calendar-canvas min-w-0 flex-1 overflow-hidden">
-          {view === 'month' && <CalendarMonthView anchor={anchor} selectedDate={selectedDate} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} onSelectDate={selectDate} onCreate={openCreate} onSelectEvent={openEdit} onMoveEvent={(event, update) => void moveEvent(event, update.startAt, update.endAt, update.startDate, update.endDate)} />}
-          {(view === 'day' || view === 'week') && <CalendarTimeGrid anchor={anchor} mode={view} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} workingDays={settings.workingDays} workingHoursStart={settings.availabilityStartTime} workingHoursEnd={settings.availabilityEndTime} onSelectDate={selectDate} onCreateRange={(startAt, endAt) => openCreate(new Date(startAt), { startAt, endAt })} onSelectEvent={openEdit} onMoveEvent={(event, startAt, endAt) => void moveEvent(event, startAt, endAt)} onResizeEvent={(event, endAt) => void moveEvent(event, event.startAt, endAt)} />}
-          {view === 'agenda' && <CalendarAgendaView anchor={anchor} events={visibleEvents} calendars={accountCalendars} onSelectDate={selectDate} onSelectEvent={openEdit} onCreate={openCreate} />}
+        {showSidebar && <CalendarSidebar accounts={store.accounts} accountEmail={accountEmail} anchor={anchor} selectedDate={selectedDate} selectedEventKey={selectedEventKey} events={visibleEvents} calendars={accountCalendars} mutationAccount={mutationAccount} settings={settings} mailTasks={mailTasks} threads={store.threads} syncIssues={syncIssues} onAccountChange={changeAccountScope} onSelectDate={selectDate} onSelectEvent={openEvent} onNavigateMonth={delta => { const next = calendarNavigationDate(anchor, 'month', delta); setAnchor(next); setSelectedDate(next); }} onCreate={openCreate} onAuthorize={() => void store.authorizeGoogleIntegration('calendar', mutationAccount)} onApplyCalendarSet={applyCalendarSet} onCreateCalendarSet={createCalendarSet} onDeleteCalendarSet={deleteActiveCalendarSet} onToggleCalendar={toggleCalendar} onToggleCalendarAlerts={toggleCalendarAlerts} onCompleteTask={task => void completeMailTask(task)} onSnoozeTask={task => void snoozeMailTask(task)} onOpenThread={thread => void store.openThreadFromCalendar(thread)} onResolveConflict={(action, strategy) => void resolveConflict(action, strategy)} />}
+        <main className="dm-calendar-canvas min-w-0 flex-1 overflow-hidden" aria-label="Calendar view">
+          {view === 'month' && <CalendarMonthView anchor={anchor} selectedDate={selectedDate} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} selectedEventKey={selectedEventKey} onSelectDate={selectDate} onOpenDay={openDay} onCreate={openCreate} onSelectEvent={openEvent} onMoveEvent={(event, update) => void moveEvent(event, update.startAt, update.endAt, update.startDate, update.endDate)} />}
+          {(view === 'day' || view === 'week') && <CalendarTimeGrid anchor={anchor} mode={view} events={visibleEvents} calendars={accountCalendars} weekStartsOn={settings.weekStartsOn} showWeekends={settings.showWeekends} workingDays={settings.workingDays} workingHoursStart={settings.availabilityStartTime} workingHoursEnd={settings.availabilityEndTime} selectedEventKey={selectedEventKey} onSelectDate={selectDate} onOpenDay={openDay} onCreateRange={(startAt, endAt) => openCreate(new Date(startAt), { startAt, endAt })} onSelectEvent={openEvent} onMoveEvent={(event, startAt, endAt) => void moveEvent(event, startAt, endAt)} onResizeEvent={(event, endAt) => void moveEvent(event, event.startAt, endAt)} />}
+          {view === 'agenda' && <CalendarAgendaView anchor={anchor} events={visibleEvents} calendars={accountCalendars} selectedEventKey={selectedEventKey} onSelectDate={selectDate} onSelectEvent={openEvent} onCreate={openCreate} />}
           {(view === 'quarter' || view === 'year') && <CalendarOverviewView anchor={anchor} events={visibleEvents} mode={view} weekStartsOn={settings.weekStartsOn} onSelectDate={selectDate} onCreate={openCreate} />}
         </main>
-        {(inspectorOpen || icsPreview) && (
-          <aside className="dm-calendar-inspector w-[340px] shrink-0 overflow-y-auto border-l border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            {icsPreview && (
+        {inspectorOpen && (
+          <aside className="dm-calendar-inspector flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--panel-bg)]" aria-label={formMode ? (formMode === 'edit' ? 'Edit event' : 'New event') : icsPreview ? 'Import event' : 'Event details'}>
+            {icsPreview && !formMode && (
               <CalendarImportPreview preview={icsPreview} calendarId={icsCalendarId} calendars={mutationCalendars} isSaving={isSaving} onChangeCalendar={setIcsCalendarId} onClose={() => setIcsPreview(null)} onConfirm={() => void confirmIcsImport()} />
             )}
-            {!formMode && selectedEvent && (
-              <CalendarWorkspaceEventSummary mode="readOnly" event={selectedEvent} isResponding={isResponding} travelTimeMinutes={settings.defaultTravelTimeMinutes} onClose={() => setSelectedEvent(null)} onRespond={status => void respondToEvent(status)} onDuplicate={() => void duplicateEvent(selectedEvent)} onDraftFollowUp={() => draftMeetingFollowUp(selectedEvent)} onAddTravel={() => void addTravelBlock(selectedEvent)} />
-            )}
-            {formMode === 'edit' && selectedEvent && (
-              <CalendarWorkspaceEventSummary mode="edit" event={selectedEvent} isResponding={isResponding} travelTimeMinutes={settings.defaultTravelTimeMinutes} onClose={() => setSelectedEvent(null)} onRespond={status => void respondToEvent(status)} onDuplicate={() => void duplicateEvent(selectedEvent)} onDraftFollowUp={() => draftMeetingFollowUp(selectedEvent)} onAddTravel={() => void addTravelBlock(selectedEvent)} />
+            {!formMode && !icsPreview && selectedEvent && (
+              <CalendarEventDetails
+                key={calendarEventKey(selectedEvent)}
+                event={selectedEvent}
+                calendar={selectedCalendar}
+                writable={isWritable(selectedEvent)}
+                isResponding={isResponding}
+                isDeleting={isDeleting}
+                travelTimeMinutes={settings.defaultTravelTimeMinutes}
+                threads={store.threads}
+                onClose={closePanel}
+                onEdit={() => editEvent(selectedEvent)}
+                onDuplicate={() => void duplicateEvent(selectedEvent)}
+                onDelete={scope => void deleteSelectedEvent(scope)}
+                onRespond={status => void respondToEvent(status)}
+                onDraftFollowUp={() => draftMeetingFollowUp(selectedEvent)}
+                onAddTravel={() => void addTravelBlock(selectedEvent)}
+                onOpenThread={thread => void store.openThreadFromCalendar(thread)}
+              />
             )}
             {formMode && <CalendarWorkspaceEventForm
               key={calendarEventFormKey(formMode, selectedEvent, formSession)}
               mode={formMode}
-              event={selectedEvent}
+              event={formMode === 'edit' ? selectedEvent : null}
               selectedDate={selectedDate}
               defaultAccountId={selectedEvent?.accountId || mutationAccount}
               onSaveTemplate={saveEventTemplate}
               draftSeed={draftSeed}
               initialRange={initialRange}
               isSaving={isSaving}
-              isDeleting={isDeleting}
-              onCancel={() => { setFormMode(null); setSelectedEvent(null); setDraftSeed(null); }}
+              onCancel={() => {
+                if (formMode === 'edit' && selectedEvent) setFormMode(null);
+                else closePanel();
+              }}
+              onClose={closePanel}
               onSubmit={submitEvent}
-              onDelete={selectedEvent ? deleteSelectedEvent : undefined}
             />}
-            {selectedEvent && <CalendarRelatedMail event={selectedEvent} threads={store.threads} onOpen={thread => void store.openThreadFromCalendar(thread)} />}
           </aside>
         )}
       </div>

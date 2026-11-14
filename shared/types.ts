@@ -1,3 +1,4 @@
+import type { SummarySettings } from './summarySettings';
 import type { AppLanguage } from './i18n';
 import type { SystemLoggingSettings } from './systemLogs';
 
@@ -55,7 +56,11 @@ export interface ComposeSignatureSettings {
 }
 
 export type MailLabel = 'INBOX' | 'UNREAD' | 'SENT' | 'IMPORTANT' | 'CATEGORY_PRIMARY' | 'CATEGORY_UPDATES' | 'CATEGORY_PROMOTIONS' | string;
-export type MailboxView = 'inbox' | 'drafts' | 'sent' | 'trash' | 'spam' | 'muted';
+/**
+ * `later`: threads with a pending reminder; `waiting`: sent conversations still
+ * waiting for a reply; `allMail`: every cached thread except Trash and Spam.
+ */
+export type MailboxView = 'inbox' | 'later' | 'waiting' | 'drafts' | 'sent' | 'allMail' | 'trash' | 'spam' | 'muted';
 
 export interface MailThread {
   id: ThreadID;
@@ -73,6 +78,68 @@ export interface MailThread {
   hasAttachments: boolean;
   isUnread: boolean;
   reminderAt?: string | null;
+  /**
+   * Header-derived facts the decision engine (`shared/decision.ts`) needs.
+   * Computed when the thread is built from its messages; absent on rows cached
+   * before the decision engine existed until the signals backfill reaches them.
+   */
+  signals?: ThreadSignals;
+}
+
+/** Inbox section a thread is sorted into. See `shared/decision.ts`. */
+export type Decision = 'reply' | 'read' | 'event' | 'later' | 'clear' | 'unsubscribe' | 'people' | 'automated';
+
+export type ThreadDecisionSource = 'rule' | 'model' | 'user';
+
+export interface ThreadDecision {
+  decision: Decision;
+  /** One short phrase for the list row; '' when there is nothing to say. */
+  reason: string;
+  source: ThreadDecisionSource;
+  /** True: never part of a group action and never subject to a sender rule. */
+  protected: boolean;
+  /** Suggested time for `later`. */
+  laterAt?: string | null;
+}
+
+export interface ThreadSignals {
+  /** Any message in the thread carries a calendar (text/calendar or .ics) part. */
+  hasCalendarInvite: boolean;
+  /** The latest invite is METHOD:REQUEST and the account has not answered it (PARTSTAT=NEEDS-ACTION). */
+  inviteNeedsAnswer: boolean;
+  /**
+   * The latest invite's calendar data could be read, so `inviteNeedsAnswer` is
+   * a real answer. False when the only calendar part is a Gmail attachment not
+   * fetched yet (or undecodable): the invite state is unknown.
+   */
+  inviteStateKnown?: boolean;
+  hasListUnsubscribe: boolean;
+  /** RFC 8058: List-Unsubscribe-Post: List-Unsubscribe=One-Click with an https List-Unsubscribe URI. */
+  hasOneClickUnsubscribe: boolean;
+  listId: string | null;
+  /** Precedence: bulk / junk. `Precedence: list` (discussion lists) does not count. */
+  isBulk: boolean;
+  /** Auto-Submitted present and not `no` (RFC 3834). */
+  isAutoSubmitted: boolean;
+  /** The last message in the thread was sent by the account itself. */
+  fromUser: boolean;
+  /** Gmail id of the last message; used to expire cached decisions in `thread_decisions`. */
+  lastMessageId: string | null;
+}
+
+/** A row of the `thread_decisions` cache (model output or a user correction). */
+export interface ThreadDecisionRecord {
+  accountId: AccountID;
+  threadId: ThreadID;
+  /** The thread's last message when the decision was made; a different id means the record is stale. */
+  lastMessageId: string | null;
+  decision: Decision;
+  reason: string;
+  source: ThreadDecisionSource;
+  laterAt: string | null;
+  /** Model identifier for `source: 'model'`; null otherwise. */
+  model: string | null;
+  createdAt: string;
 }
 
 export interface Recipient {
@@ -806,6 +873,19 @@ export interface MailboxDelta {
   deletedThreadIds: ThreadID[];
   revision: number;
   completedAt: string;
+  /** 'backfill' marks older-mail indexing pages; they are not a "sync completed" signal. */
+  source?: 'sync' | 'backfill';
+}
+
+/** Main-process history backfill progress for one account (`api:backfillProgress`). */
+export interface MailboxBackfillProgressEvent {
+  accountId: AccountID;
+  threadsIndexed: number;
+  completed: boolean;
+  /** True while the main-process loop is fetching pages for this account. */
+  running: boolean;
+  /** Why the loop stopped before completing, when it did. */
+  pausedReason?: 'network' | 'reauthorization' | 'error' | null;
 }
 
 export interface MailboxSyncHealthEvent {
@@ -1114,7 +1194,11 @@ export interface ComposeSettings {
   alwaysReplyAll: boolean;
   sendUndoDelay: number;
   defaultFontSize: 'compact' | 'normal' | 'large';
+  /** What `⌘↩` does with a reply's thread once it is sent; `⌘⇧↩` does the opposite. */
+  afterSend: ComposeAfterSend;
 }
+
+export type ComposeAfterSend = 'archive' | 'keep';
 
 export interface CalendarSettings {
   showAgendaInRightPanel: boolean;
@@ -1241,11 +1325,26 @@ export interface AgentRulesSettings {
 }
 
 export interface AISettings {
+  summary: SummarySettings;
+  sortingEngine: 'completion' | 'openAIDecisions';
+  decisionsModel: string;
+  decisionsMinConfidence: number;
   provider: AIProviderPreference;
   /** Interactive model override for chat, triage, compose assist. Empty → provider env default. */
   globalDefaultModel: string;
-  /** Automation model override for proactive drafts and other background LLM jobs. Empty → interactive/default. */
+  /** Model for background work (sorting, drafts prepared in advance). Empty → interactive/default. */
   automationModel: string;
+  /**
+   * Provider for background work. Empty → the provider used for everything else.
+   * Lets background sorting run on a cheaper or local model than chat.
+   */
+  automationProvider: Exclude<AIProviderPreference, 'automatic' | 'disabled'> | '';
+  /**
+   * App default for "sort new mail with the model in the background"
+   * (per account: `accountOverrides[id].backgroundSorting`). Off by default:
+   * the model then works only when the user asks.
+   */
+  backgroundSorting: boolean;
   fallback: AIFallbackSettings;
   providerConfigurations: AIProviderConfiguration[];
   promptShortcuts: AIPromptShortcut[];
@@ -1285,6 +1384,10 @@ export interface AppearanceSettings {
   enablePreviewPane: boolean;
   fontScale: number;
   readerMaxWidth?: 'full' | 'wide' | 'standard' | 'narrow';
+  /** Width of the mailbox list (px) the person chose by dragging the divider; unset → the default. */
+  listWidthHome?: number;
+  /** The same for when a conversation is open beside the list. */
+  listWidthReading?: number;
 }
 
 export interface DataSettings {
@@ -1321,8 +1424,99 @@ export interface SearchProvidersSettings {
   perplexity: SearchProviderConfig;
 }
 
+// === Per-account settings (design-review/SPEC.md §8) ===
+// Resolution lives in `shared/accountSettings.ts`: an account override wins,
+// otherwise the app-level value applies.
+
+/** Which new mail raises a desktop notification for an account. */
+export type AccountNotificationMode = 'people' | 'all' | 'none';
+
+/** What the agent may do without asking. It never sends, unsubscribes, answers invitations or deletes. */
+export type AgentAutonomy = 'prepare' | 'prepareAndRules';
+
+/** "Always archive mail from <sender>" for one account (SPEC §7). Created by an explicit user agreement only. */
+export interface SenderRule {
+  id: string;
+  /** Lowercased sender address. */
+  senderEmail: string;
+  senderName?: string;
+  action: 'archive';
+  enabled: boolean;
+  createdAt: string;
+  confirmations: number;
+  /** Mail of this sender the user brought back to the inbox while the rule existed. */
+  bringBacks: number;
+  /** Set when the rule was switched off automatically after repeated bring-backs. */
+  autoDisabledAt?: string;
+}
+
+/** Learning counters per account and sender (`sender_rule_stats`, SPEC §7). */
+export interface SenderRuleStats {
+  accountId: string;
+  /** Lowercased sender address. */
+  senderEmail: string;
+  senderName: string;
+  /** Threads of this sender the user archived while their rule decision was `clear` / `unsubscribe`. One per thread. */
+  confirmations: number;
+  /** Such archives the user undid or moved back to the inbox within the bring-back window. */
+  bringBacks: number;
+  lastConfirmedAt: string | null;
+  /** `Not now` on the offer: no further offers for this sender. */
+  dismissedAt: string | null;
+}
+
+/** A thread a sender rule archived on arrival, not yet reviewed or brought back ("Handled for you"). */
+export interface SenderRuleHandledItem {
+  actionId: string;
+  accountId: string;
+  threadId: string;
+  senderEmail: string;
+  senderName: string;
+  subject: string;
+  ruleId: string;
+  handledAt: string;
+}
+
+/** Main → renderer: sender-rule counters or the handled list of an account changed. */
+export interface SenderRulesChangedEvent {
+  accountId: string;
+  /** Present when a bring-back was just counted for this sender. */
+  bringBack?: {
+    senderEmail: string;
+    senderName: string;
+    /** The rule that had archived the thread, when it was a rule archive. */
+    ruleId: string | null;
+  };
+}
+
+/** Every field is optional: an absent field inherits the app default. */
+export interface AccountSettingsOverride {
+  /** Overrides `compose.afterSend`. */
+  afterSend?: ComposeAfterSend;
+  /** Overrides `accountDefaults.notifications`. */
+  notifications?: AccountNotificationMode;
+  /** Overrides `accountDefaults.agentAutonomy`. */
+  agentAutonomy?: AgentAutonomy;
+  /** Overrides `ai.allowMailBodyContext`. */
+  modelMayReadMail?: boolean;
+  /** Overrides `ai.backgroundSorting`. */
+  backgroundSorting?: boolean;
+  /** Per-account only; there is no app default. */
+  senderRules?: SenderRule[];
+}
+
+/** App-level defaults for per-account settings that have no older global home. */
+export interface AccountDefaultsSettings {
+  notifications: AccountNotificationMode;
+  agentAutonomy: AgentAutonomy;
+}
+
 export interface AppSettings {
   settingsSchemaVersion: number;
+  /** App defaults for the account page; `afterSend` and `modelMayReadMail` inherit from `compose` / `ai`. */
+  accountDefaults: AccountDefaultsSettings;
+  /** Keyed by lowercased account email. Overrides of disconnected accounts are kept unless their cache is purged. */
+  accountOverrides: Record<AccountID, AccountSettingsOverride>;
   profile: ProfileSettings;
   general: GeneralSettings;
   inbox: InboxSettings;

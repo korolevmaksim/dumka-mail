@@ -222,7 +222,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
           </button>
           <div>
             <h2 className="text-[calc(15px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Application Log</h2>
-            <p className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+            <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
               {paused ? `Paused${unseen ? ` · ${unseen} new` : ''}` : 'Live updates enabled'}
               {stats ? ` · ${stats.total.toLocaleString()} total logged` : ''}
             </p>
@@ -233,7 +233,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
             type="button"
             onClick={() => setSortOrder(current => (current === 'desc' ? 'asc' : 'desc'))}
             title={sortOrder === 'desc' ? 'Showing newest events first. Click to view oldest first.' : 'Showing oldest events first. Click to view newest first.'}
-            className="inline-flex h-7 items-center gap-1.5 rounded border border-[var(--border)] px-2.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] cursor-pointer"
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-[var(--border)] px-2.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] cursor-pointer"
           >
             <ArrowUpDown className="h-3.5 w-3.5 text-[var(--accent-ink)]" />
             <span>{sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}</span>
@@ -244,9 +244,9 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
               if (paused) void loadLatest(true);
               setPaused(value => !value);
             }}
-            className="inline-flex h-7 items-center gap-1.5 rounded border border-[var(--border)] px-2.5 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] cursor-pointer"
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-[var(--border)] px-2.5 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] cursor-pointer"
           >
-            {paused ? <CirclePlay className="h-3.5 w-3.5 text-[var(--success)]" /> : <CirclePause className="h-3.5 w-3.5" />}
+            {paused ? <CirclePlay className="h-3.5 w-3.5 text-[var(--success-solid)]" /> : <CirclePause className="h-3.5 w-3.5" />}
             {paused ? 'Resume' : 'Pause'}
           </button>
           <button
@@ -263,7 +263,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
             onClick={() => setClearConfirm(true)}
             aria-label="Clear logs"
             title="Clear logs"
-            className="flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--danger)] hover:text-[var(--danger)] cursor-pointer"
+            className="flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--danger)] hover:text-[var(--danger-solid)] cursor-pointer"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -272,16 +272,16 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
 
       {clearConfirm && (
         <div role="alert" className="flex items-center justify-between gap-4 rounded bg-[color-mix(in_srgb,var(--danger)_8%,transparent)] px-3 py-2">
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-primary)]">Clear all retained application logs? This cannot be undone.</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)]">Clear all retained application logs? This cannot be undone.</span>
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => setClearConfirm(false)} className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer">Cancel</button>
+            <button type="button" onClick={() => setClearConfirm(false)} className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer">Cancel</button>
             <button
               type="button"
               onClick={() => {
                 void window.electronAPI.clearSystemLogs().then(() => loadLatest(true));
                 setClearConfirm(false);
               }}
-              className="rounded bg-[var(--danger-solid)] px-2.5 py-1 text-[calc(10px*var(--font-scale))] font-semibold text-white cursor-pointer"
+              className="rounded bg-[var(--danger-solid)] px-2.5 py-1 text-[calc(11px*var(--font-scale))] font-semibold text-white cursor-pointer"
             >
               Clear Logs
             </button>
@@ -300,7 +300,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
                 type="button"
                 aria-pressed={active}
                 onClick={() => toggleLevel(level)}
-                className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[calc(10px*var(--font-scale))] font-medium cursor-pointer ${active ? 'bg-[var(--selected-row)] text-[var(--text-primary)]' : 'text-[var(--text-tertiary)] hover:bg-[var(--hover-row)]'}`}
+                className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[calc(11px*var(--font-scale))] font-medium cursor-pointer ${active ? 'bg-[var(--selected-row)] text-[var(--text-primary)]' : 'text-[var(--text-tertiary)] hover:bg-[var(--hover-row)]'}`}
               >
                 <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: LEVEL_COLORS[level], opacity: active ? 1 : 0.45 }} />
                 {LEVEL_LABELS[level]}
@@ -318,7 +318,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
             onChange={event => setSearch(event.target.value)}
             placeholder="Search messages or sources"
             aria-label="Search application logs"
-            className="dm-control h-7 w-full rounded border border-[var(--border)] bg-[var(--app-bg)] pl-7 pr-7 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+            className="dm-control h-7 w-full rounded border border-[var(--border)] bg-[var(--app-bg)] pl-7 pr-7 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
           />
           {search && (
             <button
@@ -336,7 +336,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
           value={source}
           onChange={event => setSource(event.target.value)}
           aria-label="Filter by source"
-          className="dm-control h-7 max-w-[180px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          className="dm-control h-7 max-w-[180px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
         >
           <option value="">All sources</option>
           {(stats?.sources || []).map(candidate => <option key={candidate} value={candidate}>{candidate}</option>)}
@@ -344,7 +344,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="dm-panel relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--app-bg)]">
-        <div className="grid shrink-0 grid-cols-[88px_72px_130px_minmax(0,1fr)_48px] border-b border-[var(--border)] bg-[var(--rail-bg)] px-2 py-1.5 text-[calc(9px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
+        <div className="grid shrink-0 grid-cols-[88px_72px_130px_minmax(0,1fr)_48px] border-b border-[var(--border)] bg-[var(--rail-bg)] px-2 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
           <span>Time</span><span>Level</span><span>Source</span><span>Message</span><span className="text-right pr-1">Actions</span>
         </div>
         <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
@@ -352,7 +352,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
             <div className="flex h-48 flex-col items-center justify-center text-center">
               <Search className="mb-2 h-5 w-5 text-[var(--text-tertiary)]" />
               <div className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">No matching events</div>
-              <div className="mt-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Adjust the level, source, or search filters.</div>
+              <div className="mt-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Adjust the level, source, or search filters.</div>
             </div>
           )}
 
@@ -362,17 +362,17 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
             const hasDetails = Boolean(entry.details && Object.keys(entry.details).length > 0);
             return (
               <div key={entry.id}>
-                {showDay && <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(9px*var(--font-scale))] font-medium text-[var(--text-secondary)]">{day}</div>}
+                {showDay && <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]">{day}</div>}
                 <div
                   onClick={() => hasDetails && setExpandedId(expanded ? null : entry.id)}
                   className={`group grid w-full grid-cols-[88px_72px_130px_minmax(0,1fr)_48px] items-start border-b border-[var(--border)]/60 px-2 py-1.5 text-left ${hasDetails ? 'hover:bg-[var(--hover-row)] cursor-pointer' : 'hover:bg-[var(--hover-row)]/50 cursor-default'}`}
                 >
-                  <span className="font-mono text-[calc(9px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]">{timeLabel(entry.occurredAt)}</span>
-                  <span className="inline-flex items-center gap-1.5 text-[calc(9px*var(--font-scale))] font-semibold" style={{ color: LEVEL_COLORS[entry.level] }}>
+                  <span className="font-mono text-[calc(10px*var(--font-scale))] tabular-nums text-[var(--text-tertiary)]">{timeLabel(entry.occurredAt)}</span>
+                  <span className="inline-flex items-center gap-1.5 text-[calc(11px*var(--font-scale))] font-semibold" style={{ color: LEVEL_COLORS[entry.level] }}>
                     <span className="h-1.5 w-1.5 rounded-full bg-current" />{LEVEL_LABELS[entry.level]}
                   </span>
-                  <span className="truncate pr-3 text-[calc(9px*var(--font-scale))] font-medium text-[var(--text-secondary)]" title={entry.source}>{entry.source}</span>
-                  <span className="flex min-w-0 items-start gap-1.5 text-[calc(10px*var(--font-scale))] leading-relaxed text-[var(--text-primary)]">
+                  <span className="truncate pr-3 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-secondary)]" title={entry.source}>{entry.source}</span>
+                  <span className="flex min-w-0 items-start gap-1.5 text-[calc(11px*var(--font-scale))] leading-relaxed text-[var(--text-primary)]">
                     {hasDetails ? (expanded ? <ChevronDown className="mt-0.5 h-3 w-3 shrink-0 text-[var(--text-tertiary)]" /> : <ChevronRight className="mt-0.5 h-3 w-3 shrink-0 text-[var(--text-tertiary)]" />) : <span className="w-3 shrink-0" />}
                     <span className="break-words">{entry.message}</span>
                   </span>
@@ -383,12 +383,12 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
                       title="Copy log entry"
                       className="opacity-0 group-hover:opacity-100 focus:opacity-100 flex h-5 w-5 items-center justify-center rounded text-[var(--text-tertiary)] hover:bg-[var(--selected-row)] hover:text-[var(--text-primary)] transition-opacity cursor-pointer"
                     >
-                      {isCopied ? <Check className="h-3 w-3 text-[var(--success)]" /> : <Copy className="h-3 w-3" />}
+                      {isCopied ? <Check className="h-3 w-3 text-[var(--success-solid)]" /> : <Copy className="h-3 w-3" />}
                     </button>
                   </div>
                 </div>
                 {expanded && entry.details && (
-                  <dl className="grid grid-cols-[160px_minmax(0,1fr)] gap-x-3 gap-y-1 border-b border-[var(--border)] bg-[var(--rail-bg)] px-5 py-2.5 font-mono text-[calc(9px*var(--font-scale))]">
+                  <dl className="grid grid-cols-[160px_minmax(0,1fr)] gap-x-3 gap-y-1 border-b border-[var(--border)] bg-[var(--rail-bg)] px-5 py-2.5 font-mono text-[calc(10px*var(--font-scale))]">
                     {Object.entries(entry.details).map(([key, value]) => (
                       <div key={key} className="contents">
                         <dt className="truncate text-[var(--text-tertiary)]">{key}</dt>
@@ -403,7 +403,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
 
           {hasMore && (
             <div className="flex justify-center border-b border-[var(--border)] py-2">
-              <button type="button" onClick={() => void loadOlder()} disabled={loadingOlder} className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--accent-ink)] disabled:opacity-50 cursor-pointer">
+              <button type="button" onClick={() => void loadOlder()} disabled={loadingOlder} className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--accent-ink)] disabled:opacity-50 cursor-pointer">
                 {loadingOlder ? 'Loading older events…' : 'Load older events'}
               </button>
             </div>
@@ -414,7 +414,7 @@ export function SystemLogViewer({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={scrollToTop}
-            className="absolute bottom-4 right-4 flex h-8 items-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-3 text-[calc(10px*var(--font-scale))] font-semibold text-white shadow-md hover:opacity-90 transition-opacity cursor-pointer z-20"
+            className="absolute bottom-4 right-4 flex h-8 items-center gap-1.5 rounded-full bg-[var(--accent-solid)] px-3 text-[calc(11px*var(--font-scale))] font-semibold text-white shadow-md hover:opacity-90 transition-opacity cursor-pointer z-20"
           >
             Jump to newest
           </button>

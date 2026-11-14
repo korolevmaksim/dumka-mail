@@ -78,7 +78,7 @@ export const RecipientList = memo(function RecipientList({
 
   return (
     <div
-      className="flex items-baseline gap-1 min-w-0 text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]"
+      className="flex items-baseline gap-1 min-w-0 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]"
       data-email-search-skip=""
     >
       <span className="shrink-0">{label}:</span>
@@ -111,7 +111,7 @@ export const RecipientList = memo(function RecipientList({
           onClick={() => setExpanded(value => !value)}
           aria-expanded={expanded}
           title={expanded ? 'Show fewer recipients' : `Show all ${recipients.length} recipients`}
-          className="flex items-center gap-0.5 shrink-0 px-1 -mx-1 rounded hover:bg-[var(--hover-row)] hover:text-[var(--accent)] cursor-pointer transition-colors"
+          className="flex items-center gap-0.5 shrink-0 px-1 -mx-1 rounded hover:bg-[var(--hover-row)] hover:text-[var(--accent-ink)] cursor-pointer transition-colors"
         >
           {expanded ? (
             <>

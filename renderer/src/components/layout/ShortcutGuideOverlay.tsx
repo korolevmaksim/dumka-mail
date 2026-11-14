@@ -1,5 +1,6 @@
 import { Keyboard, X } from 'lucide-react';
 import { shortcutGuideSections } from '../../../../shared/shortcutGuide';
+import { KEYMAP_GROUP_LABELS, shortcutPresetLabel, type KeymapGroup } from '../../../../shared/appKeymap';
 import type { ShortcutSettings } from '../../../../shared/types';
 
 interface ShortcutGuideOverlayProps {
@@ -23,33 +24,34 @@ export function ShortcutGuideOverlay({ isOpen, settings, onClose }: ShortcutGuid
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--accent)]/12 text-[var(--accent)]">
-              <Keyboard className="h-4 w-4" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--accent)]/12 text-[var(--accent-ink)]">
+              <Keyboard aria-hidden="true" className="h-4 w-4" />
             </span>
             <div>
               <h2 id="shortcut-guide-title" className="text-[calc(13px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
-                Keyboard Shortcuts
+                Keyboard shortcuts
               </h2>
-              <p className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
-                {settings.mode === 'appleMail' ? 'Apple Mail mode' : settings.mode === 'gmail' ? 'Gmail mode' : 'Superhuman mode'}
+              <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+                {shortcutPresetLabel(settings.mode)}. Only keys that work with your settings are listed.
               </p>
             </div>
           </div>
           <button
             type="button"
             title="Close"
+            aria-label="Close keyboard shortcuts"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)]"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           >
-            <X className="h-4 w-4" />
+            <X aria-hidden="true" className="h-4 w-4" />
           </button>
         </div>
 
         <div className="grid gap-4 overflow-y-auto p-4 md:grid-cols-2">
           {sections.map(section => (
             <section key={section.title} className="min-w-0">
-              <h3 className="mb-2 text-[calc(11px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
-                {section.title}
+              <h3 className="mb-2 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">
+                {KEYMAP_GROUP_LABELS[section.title as KeymapGroup] ?? section.title}
               </h3>
               <div className="dm-inset overflow-hidden rounded-lg border border-[var(--border)]">
                 {section.items.map(item => (

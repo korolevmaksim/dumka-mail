@@ -8,7 +8,6 @@ let StdioClientTransport: any;
 let getDefaultMCPEnvironment: (() => Record<string, string>) | undefined;
 let SSEClientTransport: any;
 let StreamableHTTPClientTransport: any;
-let EventSourcePolyfill: any;
 
 async function loadMcpModule() {
   if (McpClient) return;
@@ -16,7 +15,6 @@ async function loadMcpModule() {
   const stdio = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const sse = await import('@modelcontextprotocol/sdk/client/sse.js');
   const streamableHttp = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
-  const evs = (await import('eventsource')) as any;
 
   McpClient = mcpSdk.Client;
   StdioClientTransport = stdio.StdioClientTransport;
@@ -25,10 +23,6 @@ async function loadMcpModule() {
     : undefined;
   SSEClientTransport = sse.SSEClientTransport;
   StreamableHTTPClientTransport = streamableHttp.StreamableHTTPClientTransport;
-  EventSourcePolyfill = evs.default || evs;
-
-  // Make EventSource globally available for the SSE transport
-  (global as any).EventSource = EventSourcePolyfill;
 }
 
 export interface MCPToolSchema {

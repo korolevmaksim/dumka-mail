@@ -63,7 +63,7 @@ export function LoggingSettingsTab() {
             </span>
             <div className="min-w-0">
               <div className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Application Log</div>
-              <div className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <div className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 {stats.total === 0
                   ? 'No events recorded yet'
                   : `${formatCount(stats.total)} events · ${formatCount(stats.error)} errors · ${formatCount(stats.warning)} warnings`}
@@ -84,7 +84,7 @@ export function LoggingSettingsTab() {
           <div className="flex items-center justify-between gap-5">
             <div className="min-w-0">
               <label htmlFor="log-retention" className="block text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Retention period</label>
-              <p className="mt-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Entries older than this are removed automatically.</p>
+              <p className="mt-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Entries older than this are removed automatically.</p>
             </div>
             <select
               id="log-retention"
@@ -94,7 +94,7 @@ export function LoggingSettingsTab() {
                 store.updateSettings(settings => { settings.logging.retentionDays = retentionDays; });
                 window.setTimeout(refreshStats, 250);
               }}
-              className="dm-control h-[var(--settings-control-h)] min-w-[132px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+              className="dm-control h-[var(--settings-control-h)] min-w-[132px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
             >
               {SYSTEM_LOG_RETENTION_OPTIONS.map(days => (
                 <option key={days} value={days}>{days === 1 ? '1 day' : `${days} days`}</option>
@@ -107,7 +107,7 @@ export function LoggingSettingsTab() {
           <div className="flex items-center justify-between gap-5">
             <div className="min-w-0">
               <label htmlFor="log-entry-limit" className="block text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Maximum records</label>
-              <p className="mt-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">A size guard removes the oldest records even within retention.</p>
+              <p className="mt-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">A size guard removes the oldest records even within retention.</p>
             </div>
             <select
               id="log-entry-limit"
@@ -117,7 +117,7 @@ export function LoggingSettingsTab() {
                 store.updateSettings(settings => { settings.logging.maxEntries = maxEntries; });
                 window.setTimeout(refreshStats, 250);
               }}
-              className="dm-control h-[var(--settings-control-h)] min-w-[132px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+              className="dm-control h-[var(--settings-control-h)] min-w-[132px] bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
             >
               {SYSTEM_LOG_MAX_ENTRY_OPTIONS.map(limit => (
                 <option key={limit} value={limit}>{formatCount(limit)}</option>
@@ -131,15 +131,15 @@ export function LoggingSettingsTab() {
         <div className="dm-inset flex gap-3 rounded-lg bg-[var(--app-bg)] p-3.5">
           <Database className="mt-0.5 h-4 w-4 shrink-0 text-[var(--info)]" />
           <div>
-            <div className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Stored locally</div>
-            <p className="mt-0.5 text-[calc(9px*var(--font-scale))] leading-relaxed text-[var(--text-secondary)]">Structured events stay in Dumka Mail’s SQLite database and are never uploaded by this feature.</p>
+            <div className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Stored locally</div>
+            <p className="mt-0.5 text-[calc(11px*var(--font-scale))] leading-relaxed text-[var(--text-secondary)]">Structured events stay in Dumka Mail’s SQLite database and are never uploaded by this feature.</p>
           </div>
         </div>
         <div className="dm-inset flex gap-3 rounded-lg bg-[var(--app-bg)] p-3.5">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--success)]" />
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--success-solid)]" />
           <div>
-            <div className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Safe by default</div>
-            <p className="mt-0.5 text-[calc(9px*var(--font-scale))] leading-relaxed text-[var(--text-secondary)]">Tokens are always removed. Personal identifiers follow the Redact Logs preference under Privacy.</p>
+            <div className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Safe by default</div>
+            <p className="mt-0.5 text-[calc(11px*var(--font-scale))] leading-relaxed text-[var(--text-secondary)]">Tokens are always removed. Personal identifiers follow the Redact Logs preference under Privacy.</p>
           </div>
         </div>
       </div>

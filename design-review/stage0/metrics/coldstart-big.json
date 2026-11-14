@@ -1,0 +1,43 @@
+{
+ "profile": "pbig",
+ "runs": 5,
+ "medianWindowTargetMs": 965,
+ "medianFirstRowsMs": 1507,
+ "samples": [
+  {
+   "windowTargetMs": 974,
+   "firstRowsMs": 1507,
+   "domContentLoaded": 265,
+   "load": 265,
+   "sinceNavStart": 717
+  },
+  {
+   "windowTargetMs": 965,
+   "firstRowsMs": 1515,
+   "domContentLoaded": 269,
+   "load": 269,
+   "sinceNavStart": 742
+  },
+  {
+   "windowTargetMs": 940,
+   "firstRowsMs": 1467,
+   "domContentLoaded": 255,
+   "load": 255,
+   "sinceNavStart": 702
+  },
+  {
+   "windowTargetMs": 944,
+   "firstRowsMs": 1499,
+   "domContentLoaded": 263,
+   "load": 263,
+   "sinceNavStart": 736
+  },
+  {
+   "windowTargetMs": 1004,
+   "firstRowsMs": 1563,
+   "domContentLoaded": 315,
+   "load": 315,
+   "sinceNavStart": 792
+  }
+ ]
+}

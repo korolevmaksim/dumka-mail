@@ -29,6 +29,14 @@ describe('AppSettings defaults and migrations', () => {
     expect(merged.appearance.interfaceStyle).toBe('classic');
   });
 
+  it('defaults "After sending a reply" to archive and keeps stored choices', () => {
+    expect(DEFAULT_SETTINGS.compose.afterSend).toBe('archive');
+    // Settings stored before the option existed load with the default.
+    expect(mergeSettings({ compose: { sendUndoDelay: 5 } }).compose).toMatchObject({ sendUndoDelay: 5, afterSend: 'archive' });
+    expect(mergeSettings({ compose: { afterSend: 'keep' } }).compose.afterSend).toBe('keep');
+    expect(mergeSettings({ compose: { afterSend: 'sometimes' } }).compose.afterSend).toBe('archive');
+  });
+
   it('ships with system language as the default interface locale', () => {
     expect(DEFAULT_SETTINGS.general.language).toBe('system');
   });
@@ -165,6 +173,19 @@ describe('AppSettings defaults and migrations', () => {
     expect(merged.ai.automationModel).toBe('');
   });
 
+  it('keeps background model work off for new and upgraded installs until the user turns it on', () => {
+    expect(DEFAULT_SETTINGS.ai.backgroundSorting).toBe(false);
+    expect(DEFAULT_SETTINGS.ai.proactiveDraftsEnabled).toBe(false);
+    expect(DEFAULT_SETTINGS.ai.automationProvider).toBe('');
+    // A settings blob from a release that predates the switch.
+    const upgraded = mergeSettings({ settingsSchemaVersion: SETTINGS_SCHEMA_VERSION - 1, ai: { provider: 'openAI', allowMailBodyContext: true } });
+    expect(upgraded.ai.backgroundSorting).toBe(false);
+    expect(upgraded.ai.automationProvider).toBe('');
+    // A deliberate choice survives a reload.
+    const chosen = mergeSettings({ settingsSchemaVersion: SETTINGS_SCHEMA_VERSION, ai: { backgroundSorting: true, automationProvider: 'gemini', automationModel: 'gemini-3.5-flash-lite' } });
+    expect(chosen.ai).toMatchObject({ backgroundSorting: true, automationProvider: 'gemini', automationModel: 'gemini-3.5-flash-lite' });
+  });
+
   it('preserves a user-configured automation model independently of interactive model', () => {
     const merged = mergeSettings({
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -267,4 +288,27 @@ describe('AppSettings defaults and migrations', () => {
     expect(merged.mailRules.rules[0].mode).toBe('active');
     expect(merged.mailRules.rules[0].actions[0].type).toBe('archive');
   });
+});
+
+describe('Decisions sorting settings', () => {
+  it('migrates without guessing a model or enabling background requests', () => {
+    const merged = mergeSettings({ ai: { provider: 'anthropic' } });
+    expect(merged.ai).toMatchObject({ sortingEngine: 'completion', decisionsModel: '', decisionsMinConfidence: 0.8, backgroundSorting: false });
+  });
+  it('preserves the independent Decisions model across save/reload', () => {
+    const merged = mergeSettings(JSON.parse(JSON.stringify({ ai: { provider: 'anthropic', globalDefaultModel: 'interactive-model',
+      automationModel: 'draft-model', sortingEngine: 'openAIDecisions', decisionsModel: 'sorting-model', decisionsMinConfidence: 0.9 } })));
+    expect(merged.ai).toMatchObject({ provider: 'anthropic', globalDefaultModel: 'interactive-model', automationModel: 'draft-model',
+      sortingEngine: 'openAIDecisions', decisionsModel: 'sorting-model', decisionsMinConfidence: 0.9 });
+  });
+});
+
+
+it('migrates missing and partial summary settings without changing the main model', () => {
+  const old = mergeSettings({ ai: { provider: 'anthropic', globalDefaultModel: 'main-model' } });
+  expect(old.ai.summary).toEqual({ provider: '', model: '', language: 'auto', instructions: '' });
+  const configured = mergeSettings({ ai: { ...old.ai, summary: { language: 'ru', instructions: ' Focus on next steps. ' } } });
+  expect(configured.ai.summary).toEqual({ provider: '', model: '', language: 'ru', instructions: 'Focus on next steps.' });
+  expect(configured.ai.globalDefaultModel).toBe('main-model');
+  expect(mergeSettings({ ai: { summary: null } }).ai.summary).toEqual(old.ai.summary);
 });

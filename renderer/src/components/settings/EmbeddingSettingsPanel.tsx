@@ -12,7 +12,6 @@ import {
 } from '../../../../shared/types';
 import {
   EMBEDDING_PROVIDER_ORDER,
-  getEmbeddingModelPresets,
   getEmbeddingProviderConfig,
   normalizeEmbeddingSettings,
 } from '../../../../shared/embeddingProviders';
@@ -81,17 +80,6 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
   }, [accountKey, store.settings.ai.semanticSearchEnabled, store.settings.ai.semanticSearchEnabledByAccount]);
 
   const providerConfig = getEmbeddingProviderConfig(embeddingSettings.provider);
-  const presets = getEmbeddingModelPresets(embeddingSettings.provider);
-  const selectedPreset = presets.find(preset => preset.id === embeddingSettings.model);
-  const dimensionOptions = useMemo(() => {
-    const values = new Set<number>();
-    for (const preset of presets) {
-      for (const value of preset.dimensions || []) values.add(value);
-    }
-    return [...values].sort((a, b) => b - a);
-  }, [presets]);
-  const dimensionIsPreset = embeddingSettings.dimensions === null || dimensionOptions.includes(embeddingSettings.dimensions);
-  const modelIsPreset = presets.some(preset => preset.id === embeddingSettings.model);
   const keyName = providerConfig.apiKeyEnv;
   const keyValue = keyName ? formKeys[keyName] || '' : '';
 
@@ -124,7 +112,8 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
     const nextConfig = getEmbeddingProviderConfig(provider);
     updateEmbeddings({
       provider,
-      model: nextConfig.defaultModel,
+      // A model id belongs to one provider: it is entered again for the new one.
+      model: '',
       baseURL: nextConfig.defaultBaseUrl,
       dimensions: null,
     });
@@ -246,13 +235,13 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
       {store.accounts.length > 1 && (
         <div className="flex items-center justify-between border-b border-[var(--border)] pb-3 mb-1">
           <div className="flex flex-col gap-0.5">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Configure Account</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Select email account to configure embeddings</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Configure Account</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Select email account to configure embeddings</span>
           </div>
           <select
             value={activeAccountId}
             onChange={(event) => setLocalAccountId(event.target.value)}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
           >
             {store.accounts.map(acc => (
               <option key={acc.email} value={acc.email}>
@@ -266,7 +255,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Semantic Search Embeddings</span>
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Provider, model, dimensions, and local endpoint for semantic indexing</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Provider, model, dimensions, and local endpoint for semantic indexing</span>
         </div>
         <Toggle
           checked={semanticSearchEnabled}
@@ -284,11 +273,11 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
       </div>
 
       <div className="flex items-center justify-between">
-        <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Embedding Provider</span>
+        <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Embedding Provider</span>
         <select
           value={embeddingSettings.provider}
           onChange={(event) => updateProvider(event.target.value as AIEmbeddingProvider)}
-          className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
+          className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
         >
           {EMBEDDING_PROVIDER_ORDER.map(provider => {
             const config = getEmbeddingProviderConfig(provider);
@@ -302,7 +291,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
           <input
             type="password"
             placeholder={providerConfig.requiresApiKey ? 'API Key' : 'API Key (optional)'}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={keyValue}
             onFocus={(event) => {
               if (isStoredSecretPlaceholder(keyValue)) event.currentTarget.select();
@@ -314,57 +303,40 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
         <input
           type="text"
           placeholder="Base URL"
-          className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+          className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
           value={embeddingSettings.baseURL}
           onChange={(event) => updateEmbeddings({ baseURL: event.target.value })}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <select
-          value={modelIsPreset ? embeddingSettings.model : '__custom__'}
-          onChange={(event) => {
-            if (event.target.value === '__custom__') return;
-            updateEmbeddings({ model: event.target.value, dimensions: null });
-          }}
-          className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-        >
-          {presets.map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
-          <option value="__custom__">Custom model</option>
-        </select>
         <input
           type="text"
-          placeholder="Custom model id"
-          className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+          aria-label="Embedding model"
+          placeholder={`Embedding model, as ${providerConfig.displayName} names it`}
+          autoComplete="off"
+          spellCheck={false}
+          className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
           value={embeddingSettings.model}
-          onChange={(event) => updateEmbeddings({ model: event.target.value })}
+          onChange={(event) => updateEmbeddings({ model: event.target.value, dimensions: null })}
         />
-      </div>
-
-      {providerConfig.supportsDimensions && (
-        <div className="grid grid-cols-2 gap-2">
-          <select
-            value={dimensionIsPreset ? String(embeddingSettings.dimensions || '') : '__custom__'}
-            onChange={(event) => {
-              if (event.target.value === '__custom__') return;
-              updateEmbeddings({ dimensions: event.target.value ? Number(event.target.value) : null });
-            }}
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none cursor-pointer"
-          >
-            <option value="">Provider default{selectedPreset?.dimensions?.[0] ? ` (${selectedPreset.dimensions[0]} if provider uses max)` : ''}</option>
-            {dimensionOptions.map(value => <option key={value} value={value}>{value}</option>)}
-            <option value="__custom__">Custom dimensions</option>
-          </select>
+        {providerConfig.supportsDimensions ? (
           <input
             type="number"
             min={1}
             step={1}
-            placeholder="Custom dimensions"
-            className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+            aria-label="Embedding dimensions"
+            placeholder="Dimensions (empty: the model's own)"
+            className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             value={embeddingSettings.dimensions || ''}
             onChange={(event) => updateEmbeddings({ dimensions: event.target.value ? Number(event.target.value) : null })}
           />
-        </div>
+        ) : <span />}
+      </div>
+      {!embeddingSettings.model && (
+        <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+          Enter the embedding model to use. Nothing is indexed until one is set.
+        </span>
       )}
 
       <div className="flex items-center gap-2">
@@ -372,18 +344,18 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
           type="button"
           onClick={handleTest}
           disabled={testStatus.status === 'testing'}
-          className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
+          className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] active:translate-y-px"
         >
           <RefreshCw className={`w-3 h-3 ${testStatus.status === 'testing' ? 'animate-spin' : ''}`} />
           {testStatus.status === 'testing' ? 'Testing…' : 'Test Embeddings'}
         </button>
         {testStatus.status === 'success' && (
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--success)] font-medium flex items-center gap-1">
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--success-solid)] font-medium flex items-center gap-1">
             <Check className="w-3.5 h-3.5" /> {testStatus.message}
           </span>
         )}
         {testStatus.status === 'error' && (
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--danger)] font-medium flex items-start gap-1 min-w-0">
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] font-medium flex items-start gap-1 min-w-0">
             <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
             <span className="truncate">{testStatus.message}</span>
           </span>
@@ -393,8 +365,8 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
       <div className="border-t border-[var(--border)] pt-3 flex flex-col gap-2">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex flex-col gap-0.5">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Embedding Index</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] truncate" title={indexStatus?.currentModel || ''}>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Embedding Index</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] truncate" title={indexStatus?.currentModel || ''}>
               {activeAccountId ? `Account: ${activeAccountId}` : 'No account selected'}
               {indexStatus?.currentModel ? ` • ${compactModelKey(indexStatus.currentModel)}` : ''}
             </span>
@@ -403,7 +375,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
             type="button"
             onClick={() => void runIndexAction('refresh')}
             disabled={!activeAccountId || Boolean(indexBusy)}
-            className="flex items-center gap-1 px-2 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+            className="flex items-center gap-1 px-2 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
           >
             <RefreshCw className={`w-3 h-3 ${indexBusy === 'refresh' ? 'animate-spin' : ''}`} />
             Refresh
@@ -417,7 +389,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
           />
         </div>
 
-        <div className="grid grid-cols-4 gap-2 text-[calc(9px*var(--font-scale))]">
+        <div className="grid grid-cols-4 gap-2 text-[calc(11px*var(--font-scale))]">
           <div className="bg-[var(--app-bg)] border border-[var(--border)] rounded p-2">
             <div className="text-[var(--text-secondary)]">Indexed</div>
             <div className="text-[var(--text-primary)] font-semibold">{formatCount(indexStatus?.indexedMessages || 0)}</div>
@@ -437,7 +409,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
         </div>
 
         {indexStatus?.job && indexStatus.job.state !== 'completed' && (
-          <div className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             Job {indexStatus.job.state}: {formatCount(indexStatus.job.processed)} / {formatCount(indexStatus.job.total)}
             {indexStatus.job.failed > 0 ? ` • ${formatCount(indexStatus.job.failed)} failed` : ''}
             {indexStatus.job.error ? ` • ${indexStatus.job.error}` : ''}
@@ -445,12 +417,12 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
         )}
 
         {semanticSearchDisabled && (
-          <div className="text-[calc(9px*var(--font-scale))] text-[var(--warning)]">
+          <div className="text-[calc(11px*var(--font-scale))] text-[var(--warning-solid)]">
             Semantic search is off. Indexing controls are disabled until you enable it.
           </div>
         )}
         {indexError && (
-          <div className="text-[calc(9px*var(--font-scale))] text-[var(--danger)] flex items-start gap-1 min-w-0">
+          <div className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] flex items-start gap-1 min-w-0">
             <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
             <span className="truncate">{indexError}</span>
           </div>
@@ -462,7 +434,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
               type="button"
               onClick={() => void runIndexAction('cancel')}
               disabled={indexBusy === 'cancel'}
-              className="flex items-center gap-1 px-2.5 py-1 border border-[var(--danger)] text-[calc(9px*var(--font-scale))] text-[var(--danger)] hover:bg-[var(--danger)]/10 rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              className="flex items-center gap-1 px-2.5 py-1 border border-[var(--danger)] text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] hover:bg-[var(--danger)]/10 rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
             >
               <XCircle className="w-3 h-3" />
               Cancel
@@ -473,7 +445,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
                 type="button"
                 onClick={() => void runIndexAction('reindex')}
                 disabled={controlsDisabled}
-                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               >
                 <RefreshCw className={`w-3 h-3 ${indexBusy === 'reindex' ? 'animate-spin' : ''}`} />
                 Reindex Missing
@@ -482,7 +454,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
                 type="button"
                 onClick={() => void runIndexAction('rebuild', { clearCurrent: true })}
                 disabled={controlsDisabled}
-                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               >
                 <RotateCcw className={`w-3 h-3 ${indexBusy === 'rebuild' ? 'animate-spin' : ''}`} />
                 Rebuild Current
@@ -491,7 +463,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
                 type="button"
                 onClick={() => void runIndexAction('deleteCurrent')}
                 disabled={!activeAccountId || Boolean(indexBusy) || currentIndexRows === 0}
-                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--danger)] hover:text-[var(--danger)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--danger)] hover:text-[var(--danger-solid)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               >
                 <Trash2 className="w-3 h-3" />
                 Delete Current
@@ -500,7 +472,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
                 type="button"
                 onClick={() => void runIndexAction('deleteOld')}
                 disabled={!activeAccountId || Boolean(indexBusy) || (indexStatus?.otherIndexedMessages || 0) === 0}
-                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--danger)] hover:text-[var(--danger)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                className="flex items-center gap-1 px-2.5 py-1 border border-[var(--border)] text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--danger)] hover:text-[var(--danger-solid)] rounded cursor-pointer transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               >
                 <Trash2 className="w-3 h-3" />
                 Delete Old
@@ -510,7 +482,7 @@ export function EmbeddingSettingsPanel({ formKeys, setFormKeys, onSecretBlur }: 
         </div>
 
         {indexStatus?.models.length ? (
-          <div className="flex flex-col gap-1 text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+          <div className="flex flex-col gap-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
             {indexStatus.models.slice(0, 4).map(model => (
               <div key={model.model} className="flex items-center justify-between gap-2 min-w-0">
                 <span className="truncate" title={model.model}>{model.isCurrent ? 'Current' : 'Old'}: {compactModelKey(model.model)}</span>

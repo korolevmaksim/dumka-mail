@@ -1,4 +1,153 @@
 import Database from 'better-sqlite3';
+import { computeThreadSignals } from '../shared/threadSignals';
+import type { AttachmentMetadata, MailHeader } from '../shared/types';
+
+/**
+ * Set once every thread row carries `in_inbox` and every inbox thread has
+ * signals computed with the current rules (`Precedence: list` is no longer
+ * bulk). Until then readers use the slower label-JSON fallback.
+ */
+export const THREAD_MAINTENANCE_DONE_KEY = 'migration:threadMaintenance:v3';
+const THREAD_MAINTENANCE_CURSOR_KEY = 'migration:threadMaintenance:v3:cursor';
+export const THREAD_MAINTENANCE_CHUNK = 400;
+
+const maintenanceDone = new WeakMap<Database.Database, boolean>();
+
+/** True once the chunked thread maintenance pass has finished on this database. */
+export function isThreadMaintenanceDone(db: Database.Database): boolean {
+  if (maintenanceDone.get(db)) return true;
+  const done = Boolean(db.prepare('SELECT 1 FROM settings WHERE key = ?').get(THREAD_MAINTENANCE_DONE_KEY));
+  if (done) maintenanceDone.set(db, true);
+  return done;
+}
+
+/** `labelIds` → the `in_inbox` column value. */
+export function inInboxValue(labelIds: readonly unknown[] | null | undefined): number {
+  return (labelIds || []).some(label => String(label).toUpperCase() === 'INBOX') ? 1 : 0;
+}
+
+/**
+ * SQL predicate for "the thread is in the inbox". Uses the indexed `in_inbox`
+ * column once maintenance is done; before that, rows not yet flagged fall back
+ * to scanning the label JSON.
+ */
+export function inboxThreadPredicate(db: Database.Database, alias = ''): string {
+  const column = (name: string) => (alias ? `${alias}.${name}` : name);
+  if (isThreadMaintenanceDone(db)) return `${column('in_inbox')} = 1`;
+  return `(${column('in_inbox')} = 1 OR (${column('in_inbox')} IS NULL AND instr(upper(${column('label_ids_json')}), '"INBOX"') > 0))`;
+}
+
+export interface ThreadMaintenanceResult {
+  done: boolean;
+  scanned: number;
+  inboxFlagsSet: number;
+  /** Threads whose signals were (re)computed in this chunk. */
+  signalsUpdated: { accountId: string; threadId: string }[];
+}
+
+/**
+ * Whether a row's stored signals must be recomputed. Inbox rows without
+ * signals are filled; any row (inbox or archived, so a thread restored later
+ * is right too) is recomputed when its signals may be stale: `isBulk` set
+ * under the old rule that counted `Precedence: list`, or an invite stored
+ * before `inviteStateKnown` existed.
+ */
+export function storedSignalsNeedRecompute(value: string | null, inInbox: boolean): boolean {
+  if (!value) return inInbox;
+  try {
+    const parsed = JSON.parse(value) as { isBulk?: unknown; hasCalendarInvite?: unknown; inviteStateKnown?: unknown } | null;
+    if (!parsed || typeof parsed !== 'object') return inInbox;
+    if (parsed.isBulk === true) return true;
+    return parsed.hasCalendarInvite === true && typeof parsed.inviteStateKnown !== 'boolean';
+  } catch {
+    return inInbox;
+  }
+}
+
+/**
+ * One chunk of the resumable thread maintenance pass (run by the database
+ * worker at idle, never at startup on the main thread): walks `threads` by
+ * rowid from a persisted cursor, fills `in_inbox`, fills signals for inbox
+ * threads without them, and recomputes stale signals on any thread
+ * (`storedSignalsNeedRecompute`).
+ * The done marker is written only when the walk reaches the end.
+ * The caller wraps this in a write transaction.
+ */
+export function runThreadMaintenanceChunk(db: Database.Database, chunkSize = THREAD_MAINTENANCE_CHUNK): ThreadMaintenanceResult {
+  const empty: ThreadMaintenanceResult = { done: true, scanned: 0, inboxFlagsSet: 0, signalsUpdated: [] };
+  if (isThreadMaintenanceDone(db)) return empty;
+  const cursorRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(THREAD_MAINTENANCE_CURSOR_KEY) as { value: string } | undefined;
+  const cursor = Number(cursorRow?.value) || 0;
+  const limit = Math.max(1, Math.floor(chunkSize));
+  const rows = db.prepare(`
+    SELECT rowid AS row_id, account_id, id, label_ids_json, in_inbox, signals_json
+    FROM threads WHERE rowid > ? ORDER BY rowid LIMIT ?
+  `).all(cursor, limit) as { row_id: number; account_id: string; id: string; label_ids_json: string; in_inbox: number | null; signals_json: string | null }[];
+
+  const accountEmails = new Map<string, string>();
+  for (const row of db.prepare('SELECT id, email FROM accounts').all() as { id: string; email: string | null }[]) {
+    if (row.email) accountEmails.set(row.id, row.email);
+  }
+  const setInbox = db.prepare('UPDATE threads SET in_inbox = ? WHERE rowid = ?');
+  const setSignals = db.prepare('UPDATE threads SET signals_json = ? WHERE rowid = ?');
+  const selectMessages = db.prepare(`
+    SELECT id, sender_email, label_ids_json, headers_json, attachments_json
+    FROM messages WHERE account_id = ? AND thread_id = ? ORDER BY received_at ASC
+  `);
+
+  const result: ThreadMaintenanceResult = { done: false, scanned: rows.length, inboxFlagsSet: 0, signalsUpdated: [] };
+  for (const row of rows) {
+    const inInbox = inInboxValue(parseJsonArrayOrEmpty<string>(row.label_ids_json));
+    if (row.in_inbox !== inInbox) {
+      setInbox.run(inInbox, row.row_id);
+      result.inboxFlagsSet += 1;
+    }
+    if (!storedSignalsNeedRecompute(row.signals_json, inInbox === 1)) continue;
+    const messages = selectMessages.all(row.account_id, row.id) as SignalBackfillMessageRow[];
+    if (messages.length === 0) continue;
+    const signals = computeThreadSignals(messages.map(message => ({
+      id: message.id,
+      senderEmail: message.sender_email,
+      labelIds: parseJsonArrayOrEmpty<string>(message.label_ids_json),
+      headers: parseJsonArrayOrEmpty<MailHeader>(message.headers_json),
+      attachments: parseJsonArrayOrEmpty<AttachmentMetadata>(message.attachments_json),
+    })), accountEmails.get(row.account_id) || row.account_id);
+    const json = JSON.stringify(signals);
+    if (json !== row.signals_json) {
+      setSignals.run(json, row.row_id);
+      result.signalsUpdated.push({ accountId: row.account_id, threadId: row.id });
+    }
+  }
+
+  if (rows.length < limit) {
+    db.prepare('DELETE FROM settings WHERE key = ?').run(THREAD_MAINTENANCE_CURSOR_KEY);
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(THREAD_MAINTENANCE_DONE_KEY, new Date().toISOString());
+    maintenanceDone.set(db, true);
+    result.done = true;
+  } else {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+      .run(THREAD_MAINTENANCE_CURSOR_KEY, String(rows[rows.length - 1].row_id));
+  }
+  return result;
+}
+
+interface SignalBackfillMessageRow {
+  id: string;
+  sender_email: string;
+  label_ids_json: string;
+  headers_json: string | null;
+  attachments_json: string | null;
+}
+
+function parseJsonArrayOrEmpty<T>(value: string | null | undefined): T[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as T[] : [];
+  } catch {
+    return [];
+  }
+}
 
 export function runMigrations(db: Database.Database) {
   // Self-heal: Drop old camelCase ai_conversations table if it exists
@@ -22,6 +171,38 @@ export function runMigrations(db: Database.Database) {
     revision INTEGER NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL,
     PRIMARY KEY (account_id, id)
   )`);
+
+  // thread_decisions first shipped (unreleased) keyed by (account_id, thread_id),
+  // so a model row and a user correction overwrote each other. Rebuild it with
+  // the per-source key, keeping the rows; a no-op once the key includes source.
+  try {
+    const columns = db.pragma('table_info(thread_decisions)') as { name: string; pk: number }[];
+    if (columns.length > 0 && !columns.some(column => column.name === 'source' && column.pk > 0)) {
+      db.transaction(() => {
+        db.exec(`
+          ALTER TABLE thread_decisions RENAME TO thread_decisions_legacy;
+          CREATE TABLE thread_decisions (
+              account_id TEXT NOT NULL,
+              thread_id TEXT NOT NULL,
+              last_message_id TEXT,
+              decision TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              source TEXT NOT NULL,
+              later_at TEXT,
+              model TEXT,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (account_id, thread_id, source)
+          );
+          INSERT OR IGNORE INTO thread_decisions
+            SELECT account_id, thread_id, last_message_id, decision, reason, source, later_at, model, created_at
+            FROM thread_decisions_legacy;
+          DROP TABLE thread_decisions_legacy;
+        `);
+      })();
+    }
+  } catch (e) {
+    console.error('Migration error rebuilding thread_decisions:', e);
+  }
 
   // Execute base tables
   db.exec(`
@@ -163,8 +344,70 @@ export function runMigrations(db: Database.Database) {
         label_ids_json TEXT NOT NULL,
         has_attachments INTEGER NOT NULL,
         is_unread INTEGER NOT NULL,
+        signals_json TEXT,
+        -- 1 / 0 from label_ids_json; NULL until the maintenance pass fills old rows.
+        in_inbox INTEGER,
         PRIMARY KEY (account_id, id)
     );
+
+    -- Decision engine cache (design-review/SPEC.md §1): model decisions and
+    -- user corrections per thread, one row per source so a model refresh never
+    -- overwrites a correction. A row is stale once the thread's last message
+    -- id differs from last_message_id.
+    CREATE TABLE IF NOT EXISTS thread_decisions (
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        last_message_id TEXT,
+        decision TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL,
+        later_at TEXT,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, thread_id, source)
+    );
+
+    -- Agent thread summaries (SPEC §3, §5), valid while last_message_id is
+    -- the thread's last message.
+    CREATE TABLE IF NOT EXISTS thread_summaries (
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        last_message_id TEXT NOT NULL,
+        bullets_json TEXT NOT NULL,
+        cache_key TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, thread_id)
+    );
+
+    -- Sender rules (SPEC §7): learning counters per sender, and one row per
+    -- archive that can be brought back (user confirmations and rule archives).
+    -- The rules themselves live in settings.accountOverrides[account].senderRules.
+    CREATE TABLE IF NOT EXISTS sender_rule_stats (
+        account_id TEXT NOT NULL,
+        sender_email TEXT NOT NULL,
+        sender_name TEXT NOT NULL DEFAULT '',
+        confirmations INTEGER NOT NULL DEFAULT 0,
+        bring_backs INTEGER NOT NULL DEFAULT 0,
+        last_confirmed_at TEXT,
+        dismissed_at TEXT,
+        PRIMARY KEY (account_id, sender_email)
+    );
+
+    CREATE TABLE IF NOT EXISTS sender_rule_archives (
+        action_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        sender_email TEXT NOT NULL,
+        sender_name TEXT NOT NULL DEFAULT '',
+        subject TEXT NOT NULL DEFAULT '',
+        origin TEXT NOT NULL,
+        rule_id TEXT,
+        archived_at TEXT NOT NULL,
+        brought_back_at TEXT,
+        reviewed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sender_rule_archives_thread ON sender_rule_archives(account_id, thread_id);
 
     CREATE TABLE IF NOT EXISTS messages (
         id TEXT NOT NULL,
@@ -443,6 +686,7 @@ export function runMigrations(db: Database.Database) {
     { table: 'contacts', column: 'local_display_name', definition: 'local_display_name TEXT' },
     { table: 'contacts', column: 'local_phone_numbers_json', definition: 'local_phone_numbers_json TEXT' },
     { table: 'contacts', column: 'local_organizations_json', definition: 'local_organizations_json TEXT' },
+    { table: 'thread_summaries', column: 'cache_key', definition: "cache_key TEXT NOT NULL DEFAULT ''" },
     { table: 'messages', column: 'attachments_json', definition: 'attachments_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'to_recipients_json', definition: 'to_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'messages', column: 'cc_recipients_json', definition: 'cc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
@@ -453,6 +697,8 @@ export function runMigrations(db: Database.Database) {
     { table: 'messages', column: 'rfc_in_reply_to', definition: 'rfc_in_reply_to TEXT' },
     { table: 'threads', column: 'to_recipients_json', definition: 'to_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
     { table: 'threads', column: 'cc_recipients_json', definition: 'cc_recipients_json TEXT NOT NULL DEFAULT \'[]\'' },
+    { table: 'threads', column: 'signals_json', definition: 'signals_json TEXT' },
+    { table: 'threads', column: 'in_inbox', definition: 'in_inbox INTEGER' },
     { table: 'sync_state', column: 'history_backfill_page_token', definition: 'history_backfill_page_token TEXT' },
     { table: 'sync_state', column: 'last_history_backfill_at', definition: 'last_history_backfill_at TEXT' },
     { table: 'sync_state', column: 'history_backfill_completed_at', definition: 'history_backfill_completed_at TEXT' },
@@ -501,6 +747,18 @@ export function runMigrations(db: Database.Database) {
     } catch (e) {
       console.error(`Migration error for ${table}.${column}:`, e);
     }
+  }
+
+  // Inbox reads (agent prep, rail badges, signal backfill) by account, newest
+  // first, without scanning the archive. Created after the column loop so it
+  // also works on databases that only just gained `in_inbox`.
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_threads_account_inbox ON threads(account_id, in_inbox, last_message_at DESC);');
+    // Partial index: empty once every row is flagged, so the startup probe for
+    // unflagged rows is one index lookup.
+    db.exec('CREATE INDEX IF NOT EXISTS idx_threads_in_inbox_unset ON threads(in_inbox) WHERE in_inbox IS NULL;');
+  } catch (e) {
+    console.error('Migration error creating idx_threads_account_inbox:', e);
   }
 
   const indexedCalendarCount = db.prepare('SELECT COUNT(*) AS count FROM calendar_search').get() as { count: number };
@@ -600,6 +858,28 @@ export function runMigrations(db: Database.Database) {
     }
   } catch (e) {
     console.error('Migration error backfilling thread recipients:', e);
+  }
+
+  // Threads cached before the decision engine have no signals, and rows from
+  // before `in_inbox` have no flag. Nothing heavy runs here at startup: the
+  // database worker walks the table in small chunks at idle
+  // (`runThreadMaintenanceChunk`) and sets THREAD_MAINTENANCE_DONE_KEY at the end.
+  // A database with no threads has nothing to walk.
+  try {
+    const markerSet = Boolean(db.prepare('SELECT 1 FROM settings WHERE key = ?').get(THREAD_MAINTENANCE_DONE_KEY));
+    if (markerSet) {
+      // A downgrade or another branch may have written rows without `in_inbox`
+      // after the pass finished: run it again. One probe of the partial
+      // index idx_threads_in_inbox_unset.
+      if (db.prepare('SELECT 1 FROM threads WHERE in_inbox IS NULL LIMIT 1').get()) {
+        db.prepare('DELETE FROM settings WHERE key = ?').run(THREAD_MAINTENANCE_DONE_KEY);
+        maintenanceDone.delete(db);
+      }
+    } else if (!db.prepare('SELECT 1 FROM threads LIMIT 1').get()) {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(THREAD_MAINTENANCE_DONE_KEY, new Date().toISOString());
+    }
+  } catch (e) {
+    console.error('Migration error checking thread maintenance:', e);
   }
 
   // Idempotent backfill: completed unsubscribe actions that predate the

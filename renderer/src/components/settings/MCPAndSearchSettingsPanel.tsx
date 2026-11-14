@@ -222,7 +222,7 @@ export function MCPAndSearchSettingsPanel() {
     <div className="flex-1 flex flex-col gap-5 max-w-[600px] select-text">
       <div>
         <h2 className="text-[calc(14px*var(--font-scale))] font-semibold text-[var(--text-primary)] mb-1 flex items-center gap-1.5">
-          <Cpu className="w-5 h-5 text-[var(--accent)]" />
+          <Cpu className="w-5 h-5 text-[var(--accent-ink)]" />
           MCP & Search Configuration
         </h2>
         <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
@@ -233,7 +233,7 @@ export function MCPAndSearchSettingsPanel() {
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--rail-bg)] flex items-center justify-between gap-4">
         <div>
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Allow AI Assistant Tool Use</span>
-          <p className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] mt-0.5">
+          <p className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] mt-0.5">
             Enables approved MCP and search tools only for interactive assistant chats.
           </p>
         </div>
@@ -253,7 +253,7 @@ export function MCPAndSearchSettingsPanel() {
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] flex items-center gap-1">
-              <Globe className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <Globe className="w-3.5 h-3.5 text-[var(--accent-ink)]" />
               Tavily Web Search
             </span>
             <Toggle checked={tavilyEnabled} onChange={setTavilyEnabled} />
@@ -275,7 +275,7 @@ export function MCPAndSearchSettingsPanel() {
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] flex items-center gap-1">
-              <Globe className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <Globe className="w-3.5 h-3.5 text-[var(--accent-ink)]" />
               Brave Search
             </span>
             <Toggle checked={braveEnabled} onChange={setBraveEnabled} />
@@ -297,7 +297,7 @@ export function MCPAndSearchSettingsPanel() {
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <Sparkles className="w-3.5 h-3.5 text-[var(--accent-ink)]" />
               Perplexity Conversational Search
             </span>
             <Toggle checked={perplexityEnabled} onChange={setPerplexityEnabled} />
@@ -315,7 +315,7 @@ export function MCPAndSearchSettingsPanel() {
 
         <button
           onClick={handleSaveSearchProviders}
-          className="mt-2 w-fit px-3 py-1 bg-[var(--accent)] hover:opacity-90 text-[calc(11px*var(--font-scale))] font-semibold text-white rounded cursor-pointer transition-opacity"
+          className="mt-2 w-fit px-3 py-1 bg-[var(--accent-fill)] hover:opacity-90 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] rounded cursor-pointer transition-opacity"
         >
           Save Search Providers
         </button>
@@ -328,7 +328,7 @@ export function MCPAndSearchSettingsPanel() {
           {!editingServer && (
             <button
               onClick={handleStartAddServer}
-              className="flex items-center gap-0.5 text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline font-semibold"
+              className="flex items-center gap-0.5 text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline font-semibold"
             >
               <Plus className="w-3 h-3" /> Add Server
             </button>
@@ -339,7 +339,7 @@ export function MCPAndSearchSettingsPanel() {
         {editingServer && (
           <div className="bg-[var(--app-bg)] border border-[var(--border)] rounded-lg p-3 flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-[calc(10px*var(--font-scale))] font-bold text-[var(--text-primary)]">
+              <span className="text-[calc(11px*var(--font-scale))] font-bold text-[var(--text-primary)]">
                 {serverName ? `Edit ${serverName}` : 'New Custom MCP Server'}
               </span>
               <button onClick={() => setEditingServer(null)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
@@ -348,7 +348,7 @@ export function MCPAndSearchSettingsPanel() {
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Server Name</label>
+              <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Server Name</label>
               <input
                 type="text"
                 placeholder="e.g. My Files Tool"
@@ -359,7 +359,7 @@ export function MCPAndSearchSettingsPanel() {
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Connection Type</label>
+              <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Connection Type</label>
               <select
                 value={serverType}
                 onChange={e => setServerType(e.target.value as any)}
@@ -374,7 +374,7 @@ export function MCPAndSearchSettingsPanel() {
             {serverType === 'stdio' ? (
               <>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Command</label>
+                  <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Command</label>
                   <input
                     type="text"
                     placeholder="e.g. node or npx or python"
@@ -384,7 +384,7 @@ export function MCPAndSearchSettingsPanel() {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Arguments (comma-separated)</label>
+                  <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Arguments (comma-separated)</label>
                   <input
                     type="text"
                     placeholder="e.g. -y, @modelcontextprotocol/server-everything, arg2"
@@ -395,10 +395,10 @@ export function MCPAndSearchSettingsPanel() {
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Custom Environment Variables</label>
+                    <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Custom Environment Variables</label>
                     <button
                       onClick={handleAddEnvRow}
-                      className="text-[calc(9px*var(--font-scale))] text-[var(--accent)] hover:underline"
+                      className="text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline"
                     >
                       + Add Variable
                     </button>
@@ -410,7 +410,7 @@ export function MCPAndSearchSettingsPanel() {
                         placeholder="KEY"
                         value={row.key}
                         onChange={e => handleEnvKeyChange(idx, e.target.value)}
-                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                       />
                       <span className="text-[var(--text-secondary)]">=</span>
                       <input
@@ -418,9 +418,9 @@ export function MCPAndSearchSettingsPanel() {
                         placeholder="value"
                         value={row.value}
                         onChange={e => handleEnvValChange(idx, e.target.value)}
-                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                       />
-                      <button onClick={() => handleRemoveEnvRow(idx)} className="text-[var(--danger)] hover:opacity-85">
+                      <button onClick={() => handleRemoveEnvRow(idx)} className="text-[var(--danger-solid)] hover:opacity-85">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -430,7 +430,7 @@ export function MCPAndSearchSettingsPanel() {
             ) : (
               <>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Server URL</label>
+                  <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Server URL</label>
                   <input
                     type="text"
                     placeholder={serverType === 'sse' ? 'e.g. http://localhost:3000/sse' : 'e.g. http://localhost:3000/mcp'}
@@ -441,10 +441,10 @@ export function MCPAndSearchSettingsPanel() {
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Custom HTTP Headers</label>
+                    <label className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Custom HTTP Headers</label>
                     <button
                       onClick={handleAddHeaderRow}
-                      className="text-[calc(9px*var(--font-scale))] text-[var(--accent)] hover:underline"
+                      className="text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline"
                     >
                       + Add Header
                     </button>
@@ -456,7 +456,7 @@ export function MCPAndSearchSettingsPanel() {
                         placeholder="Header"
                         value={row.key}
                         onChange={e => handleHeaderKeyChange(idx, e.target.value)}
-                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                       />
                       <span className="text-[var(--text-secondary)]">=</span>
                       <input
@@ -464,9 +464,9 @@ export function MCPAndSearchSettingsPanel() {
                         placeholder="value"
                         value={row.value}
                         onChange={e => handleHeaderValChange(idx, e.target.value)}
-                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                        className="flex-1 bg-[var(--rail-bg)] border border-[var(--border)] rounded px-2 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                       />
-                      <button onClick={() => handleRemoveHeaderRow(idx)} className="text-[var(--danger)] hover:opacity-85">
+                      <button onClick={() => handleRemoveHeaderRow(idx)} className="text-[var(--danger-solid)] hover:opacity-85">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -477,13 +477,13 @@ export function MCPAndSearchSettingsPanel() {
 
             <div className="flex items-center justify-between mt-1">
               <div className="flex items-center gap-2">
-                <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] font-medium">Enabled</span>
+                <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] font-medium">Enabled</span>
                 <Toggle checked={serverEnabled} onChange={setServerEnabled} />
               </div>
               <button
                 onClick={handleSaveServer}
                 disabled={!serverName.trim()}
-                className="px-3 py-1 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-[calc(11px*var(--font-scale))] font-semibold text-white rounded cursor-pointer transition-opacity"
+                className="px-3 py-1 bg-[var(--accent-fill)] hover:opacity-90 disabled:opacity-50 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] rounded cursor-pointer transition-opacity"
               >
                 Save Server Config
               </button>
@@ -494,7 +494,7 @@ export function MCPAndSearchSettingsPanel() {
         {/* Servers list */}
         <div className="flex flex-col gap-2">
           {mcpServers.length === 0 ? (
-            <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] italic">No custom MCP servers configured.</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] italic">No custom MCP servers configured.</span>
           ) : (
             mcpServers.map(srv => {
               const statusObj = verifyStatus[srv.id] || { status: 'idle' };
@@ -508,7 +508,7 @@ export function MCPAndSearchSettingsPanel() {
                         <Globe className="w-3.5 h-3.5 text-[var(--text-secondary)] shrink-0" />
                       )}
                       <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{srv.name}</span>
-                      <span className="text-[calc(9px*var(--font-scale))] px-1.5 py-0.5 rounded bg-[var(--hover-row)] border border-[var(--border)] text-[var(--text-secondary)]">
+                      <span className="text-[calc(11px*var(--font-scale))] px-1.5 py-0.5 rounded bg-[var(--hover-row)] border border-[var(--border)] text-[var(--text-secondary)]">
                         {srv.type.toUpperCase()}
                       </span>
                     </div>
@@ -517,13 +517,13 @@ export function MCPAndSearchSettingsPanel() {
                       <Toggle checked={srv.enabled} onChange={val => handleToggleServerEnabled(srv, val)} />
                       <button
                         onClick={() => handleStartEditServer(srv)}
-                        className="text-[calc(10px*var(--font-scale))] text-[var(--accent)] hover:underline font-semibold"
+                        className="text-[calc(11px*var(--font-scale))] text-[var(--accent-ink)] hover:underline font-semibold"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => handleDeleteServer(srv.id)}
-                        className="text-[calc(10px*var(--font-scale))] text-[var(--danger)] hover:underline font-semibold"
+                        className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] hover:underline font-semibold"
                       >
                         Remove
                       </button>
@@ -531,11 +531,11 @@ export function MCPAndSearchSettingsPanel() {
                   </div>
 
                   {srv.type === 'stdio' ? (
-                    <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] leading-tight">
+                    <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] leading-tight">
                       Cmd: <code className="bg-[var(--rail-bg)] px-1 rounded">{srv.command} {srv.args?.join(' ')}</code>
                     </span>
                   ) : (
-                    <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] leading-tight truncate">
+                    <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] leading-tight truncate">
                       URL: <code className="bg-[var(--rail-bg)] px-1 rounded">{srv.url}</code>
                     </span>
                   )}
@@ -545,20 +545,20 @@ export function MCPAndSearchSettingsPanel() {
                       <button
                         onClick={() => handleTestServer(srv)}
                         disabled={statusObj.status === 'verifying'}
-                        className="flex items-center gap-1 px-2 py-0.5 border border-[var(--border)] hover:border-[var(--strong-border)] rounded text-[calc(9px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1 px-2 py-0.5 border border-[var(--border)] hover:border-[var(--strong-border)] rounded text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] cursor-pointer transition-colors disabled:opacity-50"
                       >
                         <RefreshCw className={`w-2.5 h-2.5 ${statusObj.status === 'verifying' ? 'animate-spin' : ''}`} />
                         Test Connection
                       </button>
 
                       {statusObj.status === 'success' && (
-                        <span className="text-[calc(10px*var(--font-scale))] text-[var(--success)] font-medium flex items-center gap-0.5">
+                        <span className="text-[calc(11px*var(--font-scale))] text-[var(--success-solid)] font-medium flex items-center gap-0.5">
                           <Check className="w-3.5 h-3.5" /> Connected ({statusObj.toolsCount} tools)
                         </span>
                       )}
 
                       {statusObj.status === 'error' && (
-                        <span className="text-[calc(9px*var(--font-scale))] text-[var(--danger)] font-medium flex items-center gap-1 max-w-[320px] truncate" title={statusObj.error}>
+                        <span className="text-[calc(11px*var(--font-scale))] text-[var(--danger-solid)] font-medium flex items-center gap-1 max-w-[320px] truncate" title={statusObj.error}>
                           <AlertCircle className="w-3 h-3 shrink-0" /> Failed: {statusObj.error}
                         </span>
                       )}

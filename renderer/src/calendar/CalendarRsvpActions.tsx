@@ -1,4 +1,5 @@
 import type { CalendarAttendeeResponse } from '../../../shared/types';
+import { CalendarSegmented } from './calendarUi';
 
 interface CalendarRsvpActionsProps {
   currentStatus: CalendarAttendeeResponse;
@@ -6,27 +7,27 @@ interface CalendarRsvpActionsProps {
   onRespond: (status: CalendarAttendeeResponse) => void;
 }
 
-const RESPONSES: Array<{ status: CalendarAttendeeResponse; label: string }> = [
-  { status: 'accepted', label: 'Accept' },
-  { status: 'tentative', label: 'Maybe' },
-  { status: 'declined', label: 'Decline' },
+type Answer = Exclude<CalendarAttendeeResponse, 'needsAction'>;
+
+const RESPONSES: Array<{ id: Answer; label: string; title: string }> = [
+  { id: 'accepted', label: 'Yes', title: 'Yes, I will attend' },
+  { id: 'tentative', label: 'Maybe', title: 'Maybe' },
+  { id: 'declined', label: 'No', title: 'No, I will not attend' },
 ];
 
+/** "Going?  Yes | Maybe | No": the answer you gave is pressed. */
 export function CalendarRsvpActions({ currentStatus, disabled = false, onRespond }: CalendarRsvpActionsProps) {
   return (
-    <div className="flex items-center gap-1" role="group" aria-label="Respond to invitation">
-      {RESPONSES.map(response => (
-        <button
-          key={response.status}
-          type="button"
-          disabled={disabled}
-          aria-pressed={currentStatus === response.status}
-          onClick={() => onRespond(response.status)}
-          className={`rounded border px-2 py-1 text-[calc(9px*var(--font-scale))] font-semibold disabled:opacity-50 ${currentStatus === response.status ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]' : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--hover-row)]'}`}
-        >
-          {response.label}
-        </button>
-      ))}
+    <div className="flex flex-wrap items-center gap-2">
+      <span id="calendar-rsvp-label" className="text-[calc(12px*var(--font-scale))] font-medium text-[var(--text-primary)]">Going?</span>
+      <CalendarSegmented
+        label="Going?"
+        options={RESPONSES}
+        value={currentStatus === 'needsAction' ? null : currentStatus}
+        disabled={disabled}
+        onChange={onRespond}
+      />
+      {currentStatus === 'needsAction' && <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Not answered yet</span>}
     </div>
   );
 }

@@ -1,7 +1,10 @@
 import type { MailboxDelta, MailboxView, MailThread, TabCategory } from '../../../shared/types';
 import { isThreadInMailbox } from '../../../shared/mailboxView';
+import { emptyMailboxCounts } from '../../../shared/mailboxNavigation';
 
-const INDEXED_MAILBOXES = ['inbox', 'sent', 'trash', 'spam', 'muted'] as const;
+// `waiting` depends on Follow-up Radar state and `drafts` on the drafts store,
+// so both are computed outside the per-thread index.
+const INDEXED_MAILBOXES = ['inbox', 'later', 'sent', 'allMail', 'trash', 'spam', 'muted'] as const;
 type IndexedMailbox = typeof INDEXED_MAILBOXES[number];
 
 export interface MailboxIndex {
@@ -52,21 +55,16 @@ export async function buildMailboxIndexCooperatively({
   const inboxBySplit = new Map<string, MailThread[]>();
   const mailboxThreads: Record<IndexedMailbox, MailThread[]> = {
     inbox: [],
+    later: [],
     sent: [],
+    allMail: [],
     trash: [],
     spam: [],
     muted: [],
   };
   const splitCounts: Record<string, number> = {};
   const splitUnreadCounts: Record<string, number> = {};
-  const mailboxCounts: Record<MailboxView, number> = {
-    inbox: 0,
-    drafts: 0,
-    sent: 0,
-    trash: 0,
-    spam: 0,
-    muted: 0,
-  };
+  const mailboxCounts: Record<MailboxView, number> = emptyMailboxCounts();
   for (const category of tabCategories) {
     splitCounts[category.id] = 0;
     splitUnreadCounts[category.id] = 0;
@@ -111,13 +109,17 @@ export async function buildMailboxIndexCooperatively({
   };
 }
 
+/**
+ * Threads of a mailbox. `activeSplit` narrows the inbox to one split bucket;
+ * `null` returns the whole inbox (the decision-sections inbox, SPEC §2).
+ */
 export function threadsForMailboxIndex(
   index: MailboxIndex,
   mailboxView: MailboxView,
-  activeSplit: string,
+  activeSplit: string | null,
 ): MailThread[] {
-  if (mailboxView === 'drafts') return [];
-  if (mailboxView === 'inbox') return index.inboxBySplit.get(activeSplit) || [];
+  if (mailboxView === 'drafts' || mailboxView === 'waiting') return [];
+  if (mailboxView === 'inbox' && activeSplit !== null) return index.inboxBySplit.get(activeSplit) || [];
   return index.mailboxThreads[mailboxView];
 }
 
@@ -151,13 +153,10 @@ export function replaceThreadInMailboxIndex({
   getThreadCategory: (thread: MailThread) => string;
 }): MailboxIndex {
   const key = threadKey(previousThread);
-  const mailboxThreads: Record<IndexedMailbox, MailThread[]> = {
-    inbox: withoutThread(index.mailboxThreads.inbox, key),
-    sent: withoutThread(index.mailboxThreads.sent, key),
-    trash: withoutThread(index.mailboxThreads.trash, key),
-    spam: withoutThread(index.mailboxThreads.spam, key),
-    muted: withoutThread(index.mailboxThreads.muted, key),
-  };
+  const mailboxThreads = {} as Record<IndexedMailbox, MailThread[]>;
+  for (const mailbox of INDEXED_MAILBOXES) {
+    mailboxThreads[mailbox] = withoutThread(index.mailboxThreads[mailbox], key);
+  }
   const inboxBySplit = new Map<string, MailThread[]>();
   for (const [category, threads] of index.inboxBySplit) {
     inboxBySplit.set(category, withoutThread(threads, key));
@@ -197,8 +196,11 @@ export function replaceThreadInMailboxIndex({
     splitUnreadCounts,
     mailboxCounts: {
       inbox: mailboxThreads.inbox.length,
+      later: mailboxThreads.later.length,
+      waiting: index.mailboxCounts.waiting,
       drafts: index.mailboxCounts.drafts,
       sent: mailboxThreads.sent.length,
+      allMail: mailboxThreads.allMail.length,
       trash: mailboxThreads.trash.length,
       spam: mailboxThreads.spam.length,
       muted: mailboxThreads.muted.length,

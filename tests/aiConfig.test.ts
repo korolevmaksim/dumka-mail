@@ -168,6 +168,33 @@ describe('saveAIConfigAsync self-healing and separation', () => {
     expect(descriptor.status).toBe('Configured');
   });
 
+  it('reports a provider with a key but no chosen model as not usable, instead of inventing a model', async () => {
+    mockUseKeychain = true;
+    mockFileContent = '';
+    mockKeychain.set('ai-secret:OPENAI_API_KEY', 'fixture-openai-keychain-key');
+
+    const descriptor = await getAIProviderDescriptor('openAI' as any);
+    expect(descriptor.model).toBe('');
+    expect(descriptor.status).toBe('Missing model');
+
+    // A model passed by the caller (the one chosen in settings) makes it usable.
+    const chosen = await getAIProviderDescriptor('openAI' as any, 'model-from-settings');
+    expect(chosen.model).toBe('model-from-settings');
+    expect(chosen.status).toBe('Configured');
+  });
+
+  it('automatic prefers a provider that has both a key and a chosen model', async () => {
+    mockUseKeychain = true;
+    mockFileContent = 'GEMINI_MODEL=model-from-settings\n';
+    mockKeychain.set('ai-secret:OPENAI_API_KEY', 'fixture-openai-keychain-key');
+    mockKeychain.set('ai-secret:GEMINI_API_KEY', 'fixture-gemini-keychain-key');
+
+    const descriptor = await getAIProviderDescriptor('automatic');
+    expect(descriptor.preference).toBe('gemini');
+    expect(descriptor.model).toBe('model-from-settings');
+    expect(descriptor.status).toBe('Configured');
+  });
+
   it('lists only Gemini models that support generateContent for chat use', async () => {
     mockUseKeychain = true;
     mockFileContent = '';

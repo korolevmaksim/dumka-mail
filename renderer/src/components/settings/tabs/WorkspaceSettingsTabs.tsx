@@ -144,8 +144,8 @@ export function LabelsTab() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{activeEmailLabel(selectedLabelEmail)}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
-              {selectedAccount ? 'Labels are cached separately for this Gmail account.' : 'Choose a Gmail account to manage labels.'}
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+              {selectedAccount ? 'Each Gmail account has its own labels.' : 'Choose a Gmail account to manage labels.'}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -154,7 +154,7 @@ export function LabelsTab() {
               onChange={(event) => setSelectedLabelEmail(event.target.value)}
               disabled={store.accounts.length === 0}
               title="Gmail account"
-              className="max-w-[260px] rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+              className="max-w-[260px] rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
             >
               {store.accounts.length === 0 ? (
                 <option value="">No accounts</option>
@@ -166,7 +166,7 @@ export function LabelsTab() {
               type="button"
               onClick={() => void syncSelectedLabels()}
               disabled={!selectedLabelEmail || labelsSyncing}
-              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${labelsSyncing ? 'animate-spin' : ''}`} />
               {labelsSyncing ? 'Syncing' : 'Sync'}
@@ -201,7 +201,7 @@ export function LabelsTab() {
             type="button"
             onClick={() => void create()}
             disabled={!selectedLabelEmail || !newLabelName.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FolderPlus className="h-3.5 w-3.5" />
             Create
@@ -210,7 +210,7 @@ export function LabelsTab() {
 
         <div className="flex flex-col gap-1.5">
           {userLabels.length === 0 ? (
-            <span className="text-[calc(11px*var(--font-scale))] italic text-[var(--text-secondary)]">No custom labels cached yet.</span>
+            <span className="text-[calc(11px*var(--font-scale))] italic text-[var(--text-secondary)]">No labels of your own yet.</span>
           ) : flattenedLabels.map(node => (
             <div
               key={node.fullName}
@@ -225,7 +225,7 @@ export function LabelsTab() {
                     <select
                       value={editingParentName}
                       onChange={(event) => setEditingParentName(event.target.value)}
-                      className="max-w-[150px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                      className="max-w-[150px] rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
                     >
                       <option value="">Top level</option>
                       {parentOptions.map(parent => (
@@ -259,13 +259,13 @@ export function LabelsTab() {
                       if (event.key === 'Escape' && !deletingId) setPendingDeleteId(null);
                     }}
                   >
-                    <span className="text-[calc(10px*var(--font-scale))] font-medium text-[var(--danger)]">Delete?</span>
+                    <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--danger-solid)]">Delete?</span>
                     <button
                       autoFocus
                       type="button"
                       disabled={deletingId === node.label.id}
                       onClick={() => setPendingDeleteId(null)}
-                      className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded border border-[var(--border)] bg-[var(--panel-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Cancel
                     </button>
@@ -273,7 +273,7 @@ export function LabelsTab() {
                       type="button"
                       disabled={deletingId === node.label.id}
                       onClick={() => void deleteLabel(node.label!.id)}
-                      className="rounded bg-[var(--danger)] px-2 py-1 text-[calc(10px*var(--font-scale))] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded bg-[var(--danger-fill)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {deletingId === node.label.id ? 'Deleting' : 'Delete'}
                     </button>
@@ -305,14 +305,14 @@ export function LabelsTab() {
                         setEditingId(null);
                         setPendingDeleteId(node.label!.id);
                       }}
-                      className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger)]"
+                      className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--hover-row)] hover:text-[var(--danger-solid)]"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 )
               ) : (
-                <span className="rounded bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">folder</span>
+                <span className="rounded bg-[var(--app-bg)] px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">folder</span>
               )}
             </div>
           ))}
@@ -320,10 +320,10 @@ export function LabelsTab() {
 
         {systemLabels.length > 0 && (
           <div className="border-t border-[var(--border)] pt-3">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">System labels</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">System labels</span>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {systemLabels.map(label => (
-                <span key={label.id} className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+                <span key={label.id} className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                   {label.name}
                 </span>
               ))}
@@ -355,13 +355,13 @@ export function CalendarSettingsTab() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{enabled ? 'Calendar enabled' : 'Calendar not enabled'}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{activeEmailLabel(activeEmail)}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{activeEmailLabel(activeEmail)}</span>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => void store.authorizeGoogleIntegration('calendar')}
-              className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white"
+              className="flex items-center gap-1.5 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)]"
             >
               <CalendarDays className="h-3.5 w-3.5" />
               {enabled ? 'Refresh Calendar Access' : 'Enable Calendar'}
@@ -370,7 +370,7 @@ export function CalendarSettingsTab() {
               type="button"
               onClick={() => void store.syncCalendarAgenda()}
               disabled={!enabled}
-              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Sync Agenda
@@ -380,7 +380,7 @@ export function CalendarSettingsTab() {
 
         {writableCalendars.length > 0 && (
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default calendar</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default calendar</span>
             <select value={store.settings.calendar.defaultCalendarId} onChange={event => { const value = event.target.value; store.updateSettings(s => { s.calendar.defaultCalendarId = value; }); }} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none">
               {writableCalendars.map(calendar => <option key={`${calendar.accountId}:${calendar.id}`} value={calendar.id}>{calendar.summary}</option>)}
             </select>
@@ -389,7 +389,7 @@ export function CalendarSettingsTab() {
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Calendly URL</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Calendly URL</span>
             <input
               value={store.settings.calendar.calendlyUrl}
               onChange={(event) => {
@@ -401,7 +401,7 @@ export function CalendarSettingsTab() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Cal.com URL</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Cal.com URL</span>
             <input
               value={store.settings.calendar.calComUrl}
               onChange={(event) => {
@@ -415,17 +415,17 @@ export function CalendarSettingsTab() {
         </div>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Secondary display time zone</span>
+          <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Secondary display time zone</span>
           <input value={store.settings.calendar.secondaryTimeZone} onChange={event => { const value = event.target.value; store.updateSettings(s => { s.calendar.secondaryTimeZone = value; }); }} placeholder="America/New_York" className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none" />
         </label>
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Favorite time zones</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Favorite time zones</span>
             <input value={store.settings.calendar.favoriteTimeZones.join(', ')} onChange={event => { const values = event.target.value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 8); store.updateSettings(s => { s.calendar.favoriteTimeZones = values; }); }} placeholder="Europe/London, Asia/Tokyo" className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default travel block</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default travel block</span>
             <select value={store.settings.calendar.defaultTravelTimeMinutes} onChange={event => { const value = Number(event.target.value); store.updateSettings(s => { s.calendar.defaultTravelTimeMinutes = value; }); }} className="rounded border border-[var(--border)] bg-[var(--app-bg)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none">
               <option value={0}>Disabled</option><option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>1 hour</option>
             </select>
@@ -434,11 +434,11 @@ export function CalendarSettingsTab() {
 
         {store.settings.calendar.eventTemplates.length > 0 && (
           <div className="rounded-md border border-[var(--border)] bg-[var(--app-bg)] p-2">
-            <div className="mb-1 text-[calc(9px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">Event templates</div>
+            <div className="mb-1 text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-tertiary)]">Event templates</div>
             {store.settings.calendar.eventTemplates.map(template => (
-              <div key={template.id} className="flex items-center justify-between gap-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+              <div key={template.id} className="flex items-center justify-between gap-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                 <span className="truncate">{template.name} · {template.durationMinutes} min</span>
-                <button type="button" onClick={() => store.updateSettings(s => { s.calendar.eventTemplates = s.calendar.eventTemplates.filter(item => item.id !== template.id); })} className="text-[var(--danger)]">Delete</button>
+                <button type="button" onClick={() => store.updateSettings(s => { s.calendar.eventTemplates = s.calendar.eventTemplates.filter(item => item.id !== template.id); })} className="text-[var(--danger-solid)]">Delete</button>
               </div>
             ))}
           </div>
@@ -446,7 +446,7 @@ export function CalendarSettingsTab() {
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default duration</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default duration</span>
             <input
               type="number"
               min={15}
@@ -460,7 +460,7 @@ export function CalendarSettingsTab() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default link</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default link</span>
             <select
               value={store.settings.calendar.defaultConferenceProvider}
               onChange={(event) => {
@@ -479,7 +479,7 @@ export function CalendarSettingsTab() {
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default workspace view</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default workspace view</span>
             <select
               value={store.settings.calendar.defaultView}
               onChange={(event) => {
@@ -493,7 +493,7 @@ export function CalendarSettingsTab() {
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default reminder</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Default reminder</span>
             <select
               value={store.settings.calendar.defaultReminderMinutes}
               onChange={(event) => store.updateSettings(s => { s.calendar.defaultReminderMinutes = Number(event.target.value); })}
@@ -505,20 +505,20 @@ export function CalendarSettingsTab() {
           </label>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+        <div className="flex flex-wrap items-center gap-4 rounded-md border border-[var(--border)] bg-[var(--app-bg)] px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.weekStartsOn === 1} onChange={event => store.updateSettings(s => { s.calendar.weekStartsOn = event.target.checked ? 1 : 0; })} className="accent-[var(--accent)]" />Week starts Monday</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.showWeekends} onChange={event => store.updateSettings(s => { s.calendar.showWeekends = event.target.checked; })} className="accent-[var(--accent)]" />Show weekends</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.showAgendaInRightPanel} onChange={event => store.updateSettings(s => { s.calendar.showAgendaInRightPanel = event.target.checked; })} className="accent-[var(--accent)]" />Mail sidebar agenda</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={store.settings.calendar.hideNotificationDetails} onChange={event => store.updateSettings(s => { s.calendar.hideNotificationDetails = event.target.checked; })} className="accent-[var(--accent)]" />Hide event details in notifications</label>
         </div>
 
-        <button type="button" onClick={() => { store.setSettingsOpen(false); store.setWorkspaceView('calendar'); }} className="flex w-fit items-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-2 text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--accent)]">
+        <button type="button" onClick={() => { store.setSettingsOpen(false); store.setWorkspaceView('calendar'); }} className="flex w-fit items-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-2 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)] hover:border-[var(--accent)]">
           <CalendarDays className="h-3.5 w-3.5" />Open Calendar workspace
         </button>
 
         <div className="grid grid-cols-4 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Lookahead</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Lookahead</span>
             <input
               type="number"
               min={1}
@@ -532,7 +532,7 @@ export function CalendarSettingsTab() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Start</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Start</span>
             <input
               type="time"
               value={store.settings.calendar.availabilityStartTime}
@@ -544,7 +544,7 @@ export function CalendarSettingsTab() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">End</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">End</span>
             <input
               type="time"
               value={store.settings.calendar.availabilityEndTime}
@@ -556,7 +556,7 @@ export function CalendarSettingsTab() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Step</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)]">Step</span>
             <input
               type="number"
               min={15}

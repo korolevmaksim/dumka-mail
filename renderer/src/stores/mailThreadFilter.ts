@@ -1,6 +1,6 @@
 import type { MailLabelDefinition, MailThread, TabCategory, MailboxView } from '../../../shared/types';
 import type { SplitInboxKind } from '../../../shared/classifier';
-import { isThreadInMailbox } from '../../../shared/mailboxView';
+import { isThreadInMailbox, type MailboxFilterOptions } from '../../../shared/mailboxView';
 import { threadMatchesLabelSearchQuery } from '../../../shared/labels';
 import { matchesSearchDateRange, parseSearchQuery, searchTextQuery } from '../../../shared/search';
 import type { ThreadSearchMatch } from './mailSearchHelpers';
@@ -9,6 +9,8 @@ export const DEFAULT_THREAD_FILTER_SLICE_MS = 8;
 
 const MAILBOX_SEARCH_ALIASES: Record<string, MailboxView> = {
   inbox: 'inbox',
+  later: 'later',
+  allmail: 'allMail',
   sent: 'sent',
   trash: 'trash',
   spam: 'spam',
@@ -54,8 +56,11 @@ export interface CooperativeThreadFilterInput {
   threads: MailThread[];
   searchQuery: string;
   matches: ThreadSearchMatch[];
-  activeSplit: SplitInboxKind;
+  /** `null`: the whole inbox (decision sections); a split id narrows it to that split. */
+  activeSplit: SplitInboxKind | null;
   mailboxView: MailboxView;
+  /** Options for `isThreadInMailbox` beyond muted labels (Waiting inputs). */
+  mailboxFilterOptions?: MailboxFilterOptions;
   now: Date;
   tabCategories: TabCategory[];
   labelDefinitions: MailLabelDefinition[];
@@ -78,6 +83,7 @@ export async function filterVisibleThreadsCooperatively({
   labelDefinitions,
   mutedLabelIdsByAccount,
   getThreadCategory,
+  mailboxFilterOptions,
   yieldToUI = defaultYieldToUI,
   sliceMs = DEFAULT_THREAD_FILTER_SLICE_MS,
   nowMs = () => performance.now(),
@@ -90,10 +96,11 @@ export async function filterVisibleThreadsCooperatively({
   const matchThreadIds = textQuery ? new Set(matches.map(match => match.threadId)) : null;
   const filtered: MailThread[] = [];
   const safeSliceMs = Math.max(1, sliceMs);
+  const filterOptions = { ...mailboxFilterOptions, mutedLabelIdsByAccount };
   const matchesSearchThread = (thread: MailThread): boolean => {
     if (!parsed) return false;
     if (matchThreadIds && !matchThreadIds.has(thread.id)) return false;
-    if (mailboxView !== 'inbox' && !isThreadInMailbox(thread, mailboxView, now, { mutedLabelIdsByAccount })) return false;
+    if (mailboxView !== 'inbox' && !isThreadInMailbox(thread, mailboxView, now, filterOptions)) return false;
     if (parsed.from) {
       const from = parsed.from;
       const senderMatches = thread.senderEmail.includes(from) ||
@@ -110,10 +117,10 @@ export async function filterVisibleThreadsCooperatively({
   };
   const matchesDefaultThread = (thread: MailThread): boolean => {
     if (mailboxView !== 'inbox') {
-      return isThreadInMailbox(thread, mailboxView, now, { mutedLabelIdsByAccount });
+      return isThreadInMailbox(thread, mailboxView, now, filterOptions);
     }
-    return isThreadInMailbox(thread, 'inbox', now, { mutedLabelIdsByAccount }) &&
-      getThreadCategory(thread) === activeSplit;
+    return isThreadInMailbox(thread, 'inbox', now, filterOptions) &&
+      (activeSplit === null || getThreadCategory(thread) === activeSplit);
   };
 
   let sliceStartedAt = nowMs();

@@ -8,7 +8,8 @@ import {
 } from './database';
 import { completeAI, getAIProviderDescriptor } from './ai';
 import { buildThreadContext } from '../shared/aiContext';
-import { resolveAIModelForPurpose } from '../shared/aiModelPurpose';
+import { resolveBackgroundModelRoute } from '../shared/aiModelPurpose';
+import { resolveAccountSetting } from '../shared/accountSettings';
 import { startReply } from '../shared/compose';
 import { buildInitialDraftBodyWithSignature, plainTextToHtmlFragment } from '../shared/draftHtml';
 import { planReplyPipelineMessageReplay } from './replyPipelineReplay';
@@ -60,6 +61,7 @@ function emptyComposeSettings(): ComposeSettings {
     alwaysReplyAll: false,
     sendUndoDelay: 10,
     defaultFontSize: 'normal',
+    afterSend: 'archive',
   };
 }
 
@@ -109,27 +111,58 @@ function shouldUseAutomation(settings: Partial<AppSettings>): settings is Partia
   );
 }
 
+/**
+ * Whether the model may write this account's reply-pipeline draft: the
+ * automation is opted into and the account's own "Mail text may be sent to
+ * the model" switch is on.
+ */
+function modelDraftAllowed(settings: Partial<AppSettings>, accountId: string): settings is Partial<AppSettings> & { ai: AISettings } {
+  return shouldUseAutomation(settings) && resolveAccountSetting(settings, accountId, 'modelMayReadMail').value === true;
+}
+
+/** Model requests in flight, by account, so a settings change can cancel them. */
+const draftRequests = new Map<string, Set<AbortController>>();
+
+/** Cancels model drafts being written for accounts that no longer allow them. */
+function cancelDisallowedDrafts(): void {
+  const settings = readAppSettings();
+  for (const [accountId, controllers] of draftRequests) {
+    if (modelDraftAllowed(settings, accountId)) continue;
+    for (const controller of controllers) controller.abort();
+  }
+}
+
 async function generateDraftBody(
   state: ReplyPipelineState,
   messages: MailMessage[],
   settings: Partial<AppSettings>,
 ): Promise<{ body: string; origin: 'automation' | 'template' }> {
-  if (!shouldUseAutomation(settings)) {
-    return { body: deterministicBody(state), origin: 'template' };
-  }
+  const template = () => ({ body: deterministicBody(state), origin: 'template' as const });
+  if (!modelDraftAllowed(settings, state.accountId)) return template();
 
   const thread = ThreadsRepo.get(state.accountId, state.threadId);
-  if (!thread) return { body: deterministicBody(state), origin: 'template' };
+  if (!thread) return template();
+
+  const controller = new AbortController();
+  const accountRequests = draftRequests.get(state.accountId) || new Set<AbortController>();
+  accountRequests.add(controller);
+  draftRequests.set(state.accountId, accountRequests);
+  // Read from the stored settings each time: the switch may have been turned off a moment ago.
+  const stillAllowed = () => !controller.signal.aborted && modelDraftAllowed(readAppSettings(), state.accountId);
 
   try {
-    const overrideModel = resolveAIModelForPurpose('automation', {
+    // The same provider and model as the rest of the automation: a model chosen
+    // for a dedicated background provider is never sent to the main one.
+    const { preference, overrideModel } = resolveBackgroundModelRoute({
+      provider: settings.ai.provider,
+      automationProvider: settings.ai.automationProvider,
       interactiveModel: settings.ai.globalDefaultModel,
       automationModel: settings.ai.automationModel,
     });
-    const descriptor = await getAIProviderDescriptor(settings.ai.provider, overrideModel);
-    if (descriptor.preference === 'disabled') {
-      return { body: deterministicBody(state), origin: 'template' };
-    }
+    const descriptor = await getAIProviderDescriptor(preference, overrideModel);
+    if (descriptor.preference === 'disabled') return template();
+    // The lookup above is asynchronous: check again right before mail text leaves the machine.
+    if (!stillAllowed()) return template();
 
     const instruction = state.sourceKind === 'outbound'
       ? 'Write a concise, polite follow-up to the latest sent email. Return only the editable email body. Do not invent facts, recipients, dates, or availability.'
@@ -139,17 +172,23 @@ async function generateDraftBody(
       context: buildThreadContext(thread, messages, settings.ai),
       conversationHistory: [],
       userInstruction: instruction,
-    }, settings.ai.provider, overrideModel);
+    }, preference, overrideModel, { signal: controller.signal });
+    // Turned off while the model was writing: its answer is not used.
+    if (!stillAllowed()) return template();
     const body = response.text
       .replace(/^subject\s*:\s.*$/gim, '')
       .replace(/^draft\s*:\s*/i, '')
       .trim();
     if (body.length >= 8) return { body, origin: 'automation' };
   } catch (error) {
-    console.warn('[Reply Pipeline] Automation draft failed; using template:', error);
+    // A cancelled request is the expected result of turning the setting off.
+    if (!controller.signal.aborted) console.warn('[Reply Pipeline] Automation draft failed; using template:', error);
+  } finally {
+    accountRequests.delete(controller);
+    if (accountRequests.size === 0 && draftRequests.get(state.accountId) === accountRequests) draftRequests.delete(state.accountId);
   }
 
-  return { body: deterministicBody(state), origin: 'template' };
+  return template();
 }
 
 function buildDraft(
@@ -202,6 +241,11 @@ function refreshState(state: ReplyPipelineState, now: Date): ReplyPipelineState 
 }
 
 export const ReplyPipelineService = {
+  /** Call after settings change: stops model drafts for accounts that no longer allow them. */
+  cancelDisallowedDrafts(): void {
+    cancelDisallowedDrafts();
+  },
+
   reconcileCandidates(candidates: ReplyPipelineCandidate[], at = new Date()): ReplyPipelineState[] {
     const normalized: ReplyPipelineState[] = [];
     for (const candidate of candidates) {

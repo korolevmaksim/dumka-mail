@@ -47,6 +47,7 @@ export {
   ContactGroupsRepo,
   ContactsRepo,
   ThreadsRepo,
+  ThreadDecisionsRepo,
   LabelsRepo,
   MessagesRepo,
   EmailSuggestionsRepo,

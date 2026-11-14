@@ -1,9 +1,12 @@
 import React from 'react';
+import type { AccountTag } from '../../../shared/accountTags';
+import { AccountTagChip } from './mailbox/SectionRows';
 import { Paperclip, Clock, Check, Zap } from 'lucide-react';
 import { MailThread } from '../../../shared/types';
 import { primaryRowLabel } from '../../../shared/labels';
 import { normalizePreview } from '../../../shared/textNormalizer';
 import { listTimestamp } from '../../../shared/dateFormat';
+import { nameInitials, threadRowSender } from '../../../shared/threadCounterparty';
 
 function avatarColor(s: string): string {
   let hash = 0;
@@ -19,6 +22,10 @@ interface ThreadRowProps {
   isSelected: boolean;
   isSelectionModeActive: boolean;
   isSemanticMatch?: boolean;
+  /** Display name of the thread's account, so the row names the other party, not the account. */
+  accountName?: string;
+  /** Set in lists that mix accounts: which account this conversation is in. */
+  accountTag?: AccountTag;
   positionInSet?: number;
   setSize?: number;
   onClick: () => void;
@@ -38,14 +45,17 @@ function ThreadRow({
   isSelected,
   isSelectionModeActive,
   isSemanticMatch,
+  accountName,
+  accountTag,
   positionInSet,
   setSize,
   onClick,
   onToggleSelect,
   onContextMenu
 }: ThreadRowProps) {
-  const senderText = thread.senderNames.length > 0 ? thread.senderNames.join(', ') : thread.senderEmail;
-  const initials = (senderText || '?').trim().substring(0, 2).toUpperCase();
+  // Same counterparty rule as the inbox rows: the other party, never the account itself.
+  const senderText = threadRowSender(thread, { email: thread.accountId, displayName: accountName });
+  const initials = nameInitials(senderText);
   const label = primaryRowLabel(thread);
   const preview = normalizePreview(thread.snippet);
   const [isHovered, setIsHovered] = React.useState(false);
@@ -78,7 +88,7 @@ function ThreadRow({
       }}
       className={`w-4.5 h-4.5 rounded-full border flex items-center justify-center transition-all cursor-pointer outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 ${
         isSelected
-          ? 'bg-[var(--accent)] border-[var(--accent)] text-white shadow-sm'
+          ? 'bg-[var(--accent-fill)] border-[var(--accent)] text-[var(--on-accent)] shadow-sm'
           : 'border-[var(--strong-border)] hover:border-[var(--accent)] bg-[var(--panel-bg)]'
       }`}
     >
@@ -100,6 +110,10 @@ function ThreadRow({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onKeyDown={(e) => {
+        // Only the row itself: a nested control (selection button) activates natively.
+        if (e.target !== e.currentTarget) return;
+        // ⌘↩ / ⌘⇧↩ belong to the reply dock (send), not to the row.
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onClick();
@@ -119,7 +133,7 @@ function ThreadRow({
           ) : (
             <div
               aria-hidden="true"
-              className="relative w-6 h-6 rounded-full flex items-center justify-center text-[calc(10px*var(--font-scale))] font-bold text-white shrink-0"
+              className="relative w-6 h-6 rounded-full flex items-center justify-center text-[calc(11px*var(--font-scale))] font-bold text-white shrink-0"
               style={{ backgroundColor: avatarColor(thread.senderEmail || senderText) }}
             >
               {initials}
@@ -146,8 +160,11 @@ function ThreadRow({
           <span className={`text-[calc(12px*var(--font-scale))] truncate text-[var(--text-primary)] ${thread.isUnread ? 'font-semibold' : 'font-medium'}`}>
             {senderText}
           </span>
-          <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)] shrink-0 whitespace-nowrap">
-            {listTimestamp(thread.lastMessageAt)}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {accountTag && <AccountTagChip tag={accountTag} />}
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)] shrink-0 whitespace-nowrap">
+              {listTimestamp(thread.lastMessageAt)}
+            </span>
           </span>
         </div>
 
@@ -155,7 +172,7 @@ function ThreadRow({
         <div className="flex items-center gap-1.5 min-w-0">
           {label && (
             <span
-              className="text-[calc(9px*var(--font-scale))] px-1 py-px rounded-[3px] shrink-0 max-w-[80px] truncate font-medium leading-[14px]"
+              className="text-[calc(11px*var(--font-scale))] px-1 py-px rounded-[3px] shrink-0 max-w-[80px] truncate font-medium leading-[14px]"
               style={{ color: label.color, backgroundColor: `color-mix(in srgb, ${label.color} 16%, transparent)` }}
             >
               {label.name}
@@ -175,7 +192,7 @@ function ThreadRow({
             </span>
           )}
           {thread.hasAttachments && <Paperclip aria-hidden="true" className="w-3 h-3 text-[var(--text-tertiary)] shrink-0" />}
-          {thread.reminderAt && <Clock aria-hidden="true" className="w-3 h-3 text-[var(--accent)] shrink-0" />}
+          {thread.reminderAt && <Clock aria-hidden="true" className="w-3 h-3 text-[var(--accent-ink)] shrink-0" />}
         </div>
       </div>
     </div>

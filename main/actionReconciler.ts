@@ -1,3 +1,6 @@
+import { isTransientHttpError, scheduledAtForRetry } from './remoteRetry';
+export { isTransientHttpError, parseRetryAfterMs, scheduledAtForRetry } from './remoteRetry';
+import { isSqliteBusyError } from './sqliteWriteGuard';
 import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../shared/types';
 import { createRfcMessageId, resolveActionRfcMessageId } from '../shared/rfcMessageId';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
@@ -8,6 +11,8 @@ export interface ReconcilerDeps {
     listPending(nowIso?: string): MailActionLog[];
     listRunning(): MailActionLog[];
     save(log: MailActionLog): void;
+    /** Current stored state of one action; lets the loop skip actions settled since the snapshot. */
+    get?(id: string): MailActionLog | null;
   };
   threads: {
     get(accountId: string, threadId: string): MailThread | null;
@@ -27,7 +32,14 @@ export interface ReconcilerDeps {
   buildForwardDraft(accountId: string, thread: MailThread, forwardTo: string): unknown;
   buildAutoReplyDraft(accountId: string, threadId: string, replyBody: string): unknown;
   onDraftSent?: (accountId: string, draftId: string) => void;
+  /**
+   * Throws when a parked `markDone` / `applyLabel` must not reach Gmail any
+   * more (AI proposals, sender-rule archives). A throw fails the action
+   * permanently and rolls back its local change; nothing is sent.
+   */
   validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
+  /** After an action failed permanently and its local change was rolled back. */
+  onPermanentFailure?: (action: MailActionLog) => void;
   shouldDeferAccount?: (accountId: string) => boolean;
   onActionLogChanged?: () => void;
   createRfcMessageId?: () => string;
@@ -55,40 +67,6 @@ export function isNetworkError(err: any): boolean {
     code === 'EHOSTUNREACH' ||
     code === 'ENETUNREACH'
   );
-}
-
-export function isTransientHttpError(err: unknown): boolean {
-  if (!err) return false;
-  const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
-  if (name === 'AbortError' || name === 'TimeoutError' || name === 'RequestTimeoutError') return true;
-  const status = err && typeof err === 'object' && 'status' in err
-    ? Number((err as { status?: number }).status)
-    : NaN;
-  if (Number.isFinite(status) && (status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599))) {
-    return true;
-  }
-  const msg = String((err as { message?: string })?.message || err);
-  const match = msg.match(/HTTP\s+(\d{3})/i);
-  if (!match) return false;
-  const code = Number(match[1]);
-  return code === 408 || code === 425 || code === 429 || (code >= 500 && code <= 599);
-}
-
-export function parseRetryAfterMs(retryAfter: string | null | undefined, now = new Date()): number | null {
-  if (!retryAfter) return null;
-  const seconds = Number(retryAfter);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 15 * 60 * 1000);
-  const date = Date.parse(retryAfter);
-  if (!Number.isFinite(date)) return null;
-  return Math.max(0, Math.min(date - now.getTime(), 15 * 60 * 1000));
-}
-
-export function scheduledAtForRetry(error: unknown, now = new Date()): string | null {
-  const retryAfter = error && typeof error === 'object' && 'retryAfter' in error
-    ? (error as { retryAfter?: string | null }).retryAfter
-    : null;
-  const ms = parseRetryAfterMs(retryAfter, now);
-  return ms == null ? null : new Date(now.getTime() + ms).toISOString();
 }
 
 export function isRetryableRemoteError(error: unknown): boolean {
@@ -157,6 +135,14 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
     // mail-only reconciler from fabricating a successful no-op.
     if (action.kind === 'createCalendarEvent' || action.kind === 'updateCalendarEvent' || action.kind === 'deleteCalendarEvent') {
       continue;
+    }
+    // The list above is a snapshot, and earlier iterations await Gmail. An action
+    // cancelled, failed or completed in the meantime (for example a parked rule
+    // archive cancelled because the user brought the conversation back) must not
+    // be replayed, and must not be treated as a fresh rejection either.
+    if (deps.actionLog.get) {
+      const stored = deps.actionLog.get(action.id);
+      if (!stored || stored.status !== 'pending_sync') continue;
     }
     action.status = 'running';
     deps.actionLog.save(action);
@@ -261,6 +247,18 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       deps.actionLog.save(action);
       logger.log(`[Sync Worker] Successfully synced action ${action.id} of kind ${action.kind}`);
     } catch (err: any) {
+      if (isSqliteBusyError(err)) {
+        // The local database stayed busy past the write retries. That is not a
+        // Gmail failure: never roll back or fail the action, retry next pass.
+        logger.log(`[Sync Worker] Local database busy, will retry action ${action.id} later.`);
+        try {
+          action.status = 'pending_sync';
+          deps.actionLog.save(action);
+        } catch {
+          // Still busy; the action keeps its stored status and is retried.
+        }
+        break;
+      }
       if (isRetryableRemoteError(err)) {
         logger.log(`[Sync Worker] Remote access is unavailable, will retry action ${action.id} later:`, err.message);
         action.status = 'pending_sync';
@@ -308,6 +306,11 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
               deps.threads.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
             }
           }
+        }
+        try {
+          deps.onPermanentFailure?.(action);
+        } catch (hookError) {
+          logger.error('[Sync Worker] Post-failure hook failed:', hookError);
         }
       }
     }

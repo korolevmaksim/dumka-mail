@@ -8,21 +8,22 @@ interface CalendarEventParticipantsProps {
 }
 
 const RESPONSE_LABELS: Record<CalendarAttendeeResponse, string> = {
-  accepted: 'Accepted',
-  declined: 'Declined',
-  tentative: 'Tentative',
-  needsAction: 'Awaiting reply',
+  accepted: 'Yes',
+  declined: 'No',
+  tentative: 'Maybe',
+  needsAction: 'No answer',
 };
 
-const RESPONSE_COLORS: Record<CalendarAttendeeResponse, string> = {
-  accepted: 'bg-[var(--success)]',
-  declined: 'bg-[var(--danger)]',
-  tentative: 'bg-[var(--warning)]',
-  needsAction: 'bg-[var(--text-tertiary)]',
+// Shape as well as colour: a filled dot for yes, a ring for maybe, a dash for no.
+const RESPONSE_MARKS: Record<CalendarAttendeeResponse, string> = {
+  accepted: 'h-2 w-2 rounded-full bg-[var(--success-solid)]',
+  declined: 'h-[2px] w-2 bg-[var(--danger-solid)]',
+  tentative: 'h-2 w-2 rounded-full border-2 border-[var(--warning-solid)]',
+  needsAction: 'h-2 w-2 rounded-full border border-[var(--text-tertiary)]',
 };
 
 function participantInitials(name: string): string {
-  const parts = name.split(/\s+/).filter(Boolean);
+  const parts = name.replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean);
   if (parts.length === 0) return '?';
   return parts.slice(0, 2).map(part => part[0]?.toLocaleUpperCase()).join('');
 }
@@ -33,49 +34,50 @@ export function CalendarEventParticipants({ event }: CalendarEventParticipantsPr
   const visibleParticipants = expanded ? participants : participants.slice(0, 5);
   const hiddenCount = participants.length - visibleParticipants.length;
 
+  const headingId = `calendar-participants-${event.accountId}-${event.calendarId}-${event.id}`;
   return (
-    <section className="border-y border-[var(--border)] py-2" aria-labelledby={`calendar-participants-${event.accountId}-${event.calendarId}-${event.id}`}>
-      <div className="mb-1.5 flex items-center gap-1.5">
-        <Users className="h-3.5 w-3.5 text-[var(--text-tertiary)]" aria-hidden="true" />
-        <h3 id={`calendar-participants-${event.accountId}-${event.calendarId}-${event.id}`} className="font-semibold text-[var(--text-primary)]">Participants</h3>
-        <span className="text-[var(--text-tertiary)]">{participants.length}</span>
+    <section aria-labelledby={headingId}>
+      <div className="mb-1 flex items-center gap-1.5">
+        <Users className="h-3.5 w-3.5 text-[var(--text-secondary)]" aria-hidden="true" />
+        <h3 id={headingId} className="text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
+          {participants.length === 0 ? 'No participants' : `${participants.length} ${participants.length === 1 ? 'participant' : 'participants'}`}
+        </h3>
       </div>
-      {participants.length === 0 ? (
-        <p className="text-[var(--text-tertiary)]">No participants</p>
-      ) : (
+      {participants.length > 0 && (
         <>
-          <ul className="divide-y divide-[var(--border)]">
+          <ul className="flex flex-col">
             {visibleParticipants.map(participant => {
               const name = calendarParticipantDisplayName(participant);
               const status = participant.responseStatus;
+              const roles = [participant.isOrganizer ? 'Organizer' : null, participant.optional ? 'Optional' : null].filter(Boolean).join(' · ');
               return (
-                <li key={participant.email.toLocaleLowerCase()} className="flex min-w-0 items-center gap-2 py-1.5">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--raised-surface)] text-[calc(8px*var(--font-scale))] font-semibold text-[var(--text-secondary)]" aria-hidden="true">
+                <li key={participant.email.toLocaleLowerCase()} className="flex min-w-0 items-center gap-2 py-1">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--raised-surface)] text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-secondary)] shadow-[inset_0_0_0_1px_var(--border)]" aria-hidden="true">
                     {participantInitials(name)}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-1">
+                  <span className="min-w-0 flex-1" title={participant.email}>
+                    <span className="flex min-w-0 items-center gap-1 text-[calc(12px*var(--font-scale))]">
                       <span className="truncate font-medium text-[var(--text-primary)]">{name}</span>
-                      {participant.isSelf && <span className="shrink-0 text-[var(--text-tertiary)]">(you)</span>}
+                      {participant.isSelf && <span className="shrink-0 text-[var(--text-secondary)]">(you)</span>}
                     </span>
-                    {participant.displayName && <span className="block truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{participant.email}</span>}
-                  </span>
-                  <span className="shrink-0 text-right text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">
-                    {participant.isOrganizer && <span className="block">Organizer</span>}
-                    {status && (
-                      <span className="flex items-center justify-end gap-1">
-                        <span className={`h-1.5 w-1.5 rounded-full ${RESPONSE_COLORS[status]}`} aria-hidden="true" />
-                        {RESPONSE_LABELS[status]}
+                    {(roles || participant.displayName) && (
+                      <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+                        {[roles, participant.displayName ? participant.email : null].filter(Boolean).join(' · ')}
                       </span>
                     )}
-                    {participant.optional && <span className="block">Optional</span>}
                   </span>
+                  {status && (
+                    <span className="flex shrink-0 items-center gap-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
+                      <span className={RESPONSE_MARKS[status]} aria-hidden="true" />
+                      {RESPONSE_LABELS[status]}
+                    </span>
+                  )}
                 </li>
               );
             })}
           </ul>
           {participants.length > 5 && (
-            <button type="button" onClick={() => setExpanded(value => !value)} className="mt-1.5 font-semibold text-[var(--accent)] hover:underline">
+            <button type="button" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} className="mt-1 inline-flex min-h-6 items-center rounded text-[calc(12px*var(--font-scale))] font-medium text-[var(--accent-ink)] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
               {expanded ? 'Show fewer' : `Show ${hiddenCount} more`}
             </button>
           )}

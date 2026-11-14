@@ -106,3 +106,21 @@ describe('hasDedicatedAutomationModel', () => {
     expect(hasDedicatedAutomationModel({})).toBe(false);
   });
 });
+
+describe('resolveBackgroundModelRoute', () => {
+  it('follows the main provider and its model cascade when no provider is chosen for background work', async () => {
+    const { resolveBackgroundModelRoute } = await import('../shared/aiModelPurpose');
+    expect(resolveBackgroundModelRoute({ provider: 'automatic', automationProvider: '', interactiveModel: 'main', automationModel: '' }))
+      .toEqual({ preference: 'automatic', overrideModel: 'main', dedicated: false });
+    expect(resolveBackgroundModelRoute({ provider: 'openAI', automationProvider: 'not-a-provider', interactiveModel: 'main', automationModel: 'small' }))
+      .toEqual({ preference: 'openAI', overrideModel: 'small', dedicated: false });
+  });
+
+  it('never borrows the interactive model for a provider chosen for background work', async () => {
+    const { resolveBackgroundModelRoute } = await import('../shared/aiModelPurpose');
+    expect(resolveBackgroundModelRoute({ provider: 'anthropic', automationProvider: 'openAI', interactiveModel: 'claude-sonnet-5-5', automationModel: ' gpt-6-luna ' }))
+      .toEqual({ preference: 'openAI', overrideModel: 'gpt-6-luna', dedicated: true });
+    expect(resolveBackgroundModelRoute({ provider: 'anthropic', automationProvider: 'deepSeek', interactiveModel: 'claude-sonnet-5-5', automationModel: '' }))
+      .toEqual({ preference: 'deepSeek', overrideModel: undefined, dedicated: true });
+  });
+});

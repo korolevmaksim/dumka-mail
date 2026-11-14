@@ -117,14 +117,14 @@ export function ContactsTab() {
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{enabled ? 'Contacts enabled' : 'Contacts not enabled'}</span>
-            <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">{activeEmailLabel(activeEmail)}</span>
+            <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{activeEmailLabel(activeEmail)}</span>
           </div>
           <div className="flex items-center gap-2">
             {!enabled && (
               <button
                 type="button"
                 onClick={() => void store.authorizeGoogleIntegration('contacts')}
-                className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-white"
+                className="flex items-center gap-1.5 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)]"
               >
                 <Users className="h-3.5 w-3.5" />
                 Enable Contacts
@@ -134,7 +134,7 @@ export function ContactsTab() {
               type="button"
               onClick={() => void store.syncContacts()}
               disabled={!enabled}
-              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] hover:border-[var(--strong-border)] disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Sync
@@ -172,13 +172,13 @@ export function ContactsTab() {
                     {contact.photoUrl ? (
                       <img src={contact.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
                     ) : (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[calc(11px*var(--font-scale))] font-bold text-white">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[calc(11px*var(--font-scale))] font-bold text-[var(--on-accent)]">
                         {contactInitials(contact)}
                       </div>
                     )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">{contact.displayName || contact.email}</span>
-                      <span className="block truncate text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">{contact.email}</span>
+                      <span className="block truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">{contact.email}</span>
                     </span>
                   </button>
                 );
@@ -195,7 +195,7 @@ export function ContactsTab() {
                   {selectedContact.photoUrl ? (
                     <img src={selectedContact.photoUrl} alt="" className="h-12 w-12 rounded-full object-cover" />
                   ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[calc(14px*var(--font-scale))] font-bold text-white">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[calc(14px*var(--font-scale))] font-bold text-[var(--on-accent)]">
                       {contactInitials(selectedContact)}
                     </div>
                   )}
@@ -221,7 +221,7 @@ export function ContactsTab() {
                         type="button"
                         title="Compose email"
                         onClick={() => startDraft([contactRecipient(selectedContact)])}
-                        className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent)]"
+                        className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent-ink)]"
                       >
                         <Mail className="h-3 w-3" />
                       </button>
@@ -230,7 +230,7 @@ export function ContactsTab() {
                           type="button"
                           title="Save contact"
                           onClick={() => void saveContactDraft()}
-                          className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent)]"
+                          className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--hover-row)] hover:text-[var(--accent-ink)]"
                         >
                           <Check className="h-3 w-3" />
                         </button>
@@ -241,7 +241,7 @@ export function ContactsTab() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1">
-                    <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Phones</span>
+                    <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Phones</span>
                     <textarea
                       value={phoneDraft}
                       onChange={(event) => setPhoneDraft(event.target.value)}
@@ -252,7 +252,7 @@ export function ContactsTab() {
                     />
                   </label>
                   <label className="flex flex-col gap-1">
-                    <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Work</span>
+                    <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Work</span>
                     <textarea
                       value={organizationDraft}
                       onChange={(event) => setOrganizationDraft(event.target.value)}
@@ -265,7 +265,7 @@ export function ContactsTab() {
                 </div>
 
                 <label className="flex min-h-0 flex-1 flex-col gap-1">
-                  <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Local notes</span>
+                  <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Local notes</span>
                   <textarea
                     value={notesDraft}
                     onChange={(event) => setNotesDraft(event.target.value)}
@@ -276,10 +276,10 @@ export function ContactsTab() {
                 </label>
 
                 <div>
-                  <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Groups</span>
+                  <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Groups</span>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {store.contactGroups.length === 0 ? (
-                      <span className="text-[calc(10px*var(--font-scale))] text-[var(--text-tertiary)]">Create a group to build mailing lists.</span>
+                      <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">Create a group to build mailing lists.</span>
                     ) : store.contactGroups.map(group => {
                       const selected = selectedContact.groupIds.includes(group.id);
                       return (
@@ -288,9 +288,9 @@ export function ContactsTab() {
                           type="button"
                           title={`${selected ? 'Remove from' : 'Add to'} ${group.name}`}
                           onClick={() => toggleContactGroup(selectedContact.id, selectedContact.groupIds, group.id)}
-                          className={`max-w-[180px] truncate rounded border px-2 py-1 text-[calc(10px*var(--font-scale))] ${
+                          className={`max-w-[180px] truncate rounded border px-2 py-1 text-[calc(11px*var(--font-scale))] ${
                             selected
-                              ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                              ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent-ink)]'
                               : 'border-[var(--border)] bg-[var(--raised-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                           }`}
                         >
@@ -305,7 +305,7 @@ export function ContactsTab() {
           </div>
 
           <div className="flex min-h-[460px] flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] p-3">
-            <span className="text-[calc(10px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Mailing Groups</span>
+            <span className="text-[calc(11px*var(--font-scale))] font-semibold uppercase text-[var(--text-secondary)]">Mailing Groups</span>
             <div className="flex gap-1.5">
               <input
                 value={newGroupName}
@@ -314,7 +314,7 @@ export function ContactsTab() {
                   if (event.key === 'Enter') createGroup();
                 }}
                 placeholder="New group"
-                className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none"
+                className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none"
               />
               <button
                 type="button"
@@ -327,13 +327,13 @@ export function ContactsTab() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
               {store.contactGroups.length === 0 ? (
-                <div className="rounded border border-dashed border-[var(--border)] px-3 py-4 text-center text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+                <div className="rounded border border-dashed border-[var(--border)] px-3 py-4 text-center text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                   No groups yet.
                 </div>
               ) : (
                 <div className="flex flex-col gap-1">
                   {store.contactGroups.map(group => (
-                    <div key={group.id} className="flex items-center justify-between gap-1 rounded bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))]">
+                    <div key={group.id} className="flex items-center justify-between gap-1 rounded bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))]">
                       {editingGroupId === group.id ? (
                         <input
                           autoFocus
@@ -344,7 +344,7 @@ export function ContactsTab() {
                             if (event.key === 'Enter') void saveGroupName();
                             if (event.key === 'Escape') cancelRenameGroup();
                           }}
-                          className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1.5 py-0.5 text-[calc(10px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                          className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--panel-bg)] px-1.5 py-0.5 text-[calc(11px*var(--font-scale))] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
                         />
                       ) : (
                         <span className="truncate text-[var(--text-primary)]" title={group.name}>
@@ -366,7 +366,7 @@ export function ContactsTab() {
                           title="Compose to group"
                           onClick={() => startDraft(groupRecipients(store.contacts, group.id))}
                           disabled={(groupMembershipCounts.get(group.id) ?? group.memberCount) === 0}
-                          className="rounded p-1 text-[var(--text-secondary)] hover:text-[var(--accent)] disabled:opacity-40"
+                          className="rounded p-1 text-[var(--text-secondary)] hover:text-[var(--accent-ink)] disabled:opacity-40"
                         >
                           <Mail className="h-3 w-3" />
                         </button>
@@ -374,7 +374,7 @@ export function ContactsTab() {
                           type="button"
                           title="Delete group"
                           onClick={() => void store.deleteContactGroup(group.id)}
-                          className="rounded p-1 text-[var(--text-secondary)] hover:text-[var(--danger)]"
+                          className="rounded p-1 text-[var(--text-secondary)] hover:text-[var(--danger-solid)]"
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>

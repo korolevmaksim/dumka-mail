@@ -11,8 +11,11 @@
   --focus-row: color-mix(in srgb, var(--accent) 16%, transparent);
   --border: rgba(0, 0, 0, 0.08);
   --strong-border: rgba(0, 0, 0, 0.14);
+  /* Outline of a field, select, checkbox or an off switch: at least 3:1 against every surface (WCAG 1.4.11). */
+  --control-border: rgba(0, 0, 0, 0.44);
   --text-primary: rgba(0, 0, 0, 0.86);
   --text-secondary: rgba(0, 0, 0, 0.65);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23000000' stroke-opacity='0.6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
   --text-tertiary: rgba(0, 0, 0, 0.54);
   --ai-accent: #9173ED;
   --info: #087D98;
@@ -23,11 +26,21 @@
   --control-bg: var(--app-bg);
   --inset-surface: var(--app-bg);
   --accent-surface: color-mix(in srgb, var(--accent) 12%, transparent);
-  --accent-solid: var(--accent);
-  --ai-solid: var(--ai-accent);
-  --success-solid: var(--success);
-  --warning-solid: var(--warning);
-  --danger-solid: var(--danger);
+  /* `*-solid`: the colour as text or an icon on this theme's surfaces (AA, 4.5:1).
+     On a light surface the raw hues are too pale for text, so they are deepened. */
+  --accent-solid: color-mix(in srgb, var(--accent) 68%, #111827);
+  --ai-solid: color-mix(in srgb, var(--ai-accent) 72%, #111827);
+  --success-solid: color-mix(in srgb, var(--success) 75%, #111827);
+  --warning-solid: color-mix(in srgb, var(--warning) 62%, #111827);
+  --danger-solid: color-mix(in srgb, var(--danger) 85%, #111827);
+  /* `*-fill`: a background that carries `--on-accent` (white) text at AA.
+     Filled buttons use these, never the raw hue (white on raw accent is 3.1:1). */
+  --on-accent: #FFFFFF;
+  --accent-fill: color-mix(in srgb, var(--accent) 70%, #111827);
+  --ai-fill: color-mix(in srgb, var(--ai-accent) 75%, #111827);
+  --success-fill: color-mix(in srgb, var(--success) 75%, #111827);
+  --warning-fill: color-mix(in srgb, var(--warning) 62%, #111827);
+  --danger-fill: color-mix(in srgb, var(--danger) 82%, #111827);
   --panel-radius: 8px;
   --row-radius: 6px;
   --control-radius: 4px;
@@ -36,7 +49,7 @@
   /* Accent is a SINGLE hex shared by both themes (overridden at runtime from
      settings.appearance.accentColorHex). Do not diverge per-theme. */
   --accent: #668FEA;
-  --accent-ink: var(--accent);
+  --accent-ink: var(--accent-solid);
 
   /* Font scale multiplier — set at runtime from settings.appearance.fontScale.
      Only text scales; layout dimensions (widths, heights, paddings) stay fixed. */
@@ -93,8 +106,10 @@
   --focus-row: color-mix(in srgb, var(--accent) 28%, transparent);
   --border: rgba(255, 255, 255, 0.105);
   --strong-border: rgba(255, 255, 255, 0.18);
+  --control-border: rgba(255, 255, 255, 0.35);
   --text-primary: rgba(255, 255, 255, 0.90);
   --text-secondary: rgba(255, 255, 255, 0.65);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23ffffff' stroke-opacity='0.7' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
   --text-tertiary: rgba(255, 255, 255, 0.54);
   --ai-accent: #B39CFF;
   --info: #63CBE0;
@@ -104,12 +119,17 @@
   --failed: rgba(239, 68, 68, 0.72);
   --control-bg: var(--app-bg);
   --inset-surface: var(--app-bg);
+  /* On dark surfaces the raw hues already read as text; fills still need deepening for white text. */
   --accent-ink: var(--accent);
   --accent-solid: var(--accent);
   --ai-solid: var(--ai-accent);
   --success-solid: var(--success);
   --warning-solid: var(--warning);
   --danger-solid: var(--danger);
+  --ai-fill: color-mix(in srgb, var(--ai-accent) 60%, #111827);
+  --success-fill: color-mix(in srgb, var(--success) 60%, #111827);
+  --warning-fill: color-mix(in srgb, var(--warning) 55%, #111827);
+  --danger-fill: color-mix(in srgb, var(--danger) 80%, #111827);
   /* --accent intentionally NOT overridden here (single value, runtime-set) */
 }
 
@@ -139,6 +159,7 @@
   --danger-solid: #A9343A;
   --border: #DCE4EE;
   --strong-border: #B7C3D3;
+  --control-border: #7A8AA2;
   --text-primary: #161D2D;
   --text-secondary: #536178;
   --text-tertiary: #607086;
@@ -169,6 +190,7 @@
   --danger-solid: #A9343A;
   --border: #2E3D54;
   --strong-border: #51647E;
+  --control-border: #5F7390;
   --text-primary: #F3F6FB;
   --text-secondary: #BAC5D5;
   --text-tertiary: #9DABC0;
@@ -243,6 +265,20 @@ body {
 [data-interface-style="soft"] [class~="rounded-[6px]"],
 [data-interface-style="soft"] [class~="rounded-[7px]"] {
   border-radius: var(--control-radius);
+}
+
+/* Drop-down lists draw their own arrow: the system one sits flush against the
+   border. `!important` keeps it through rules that set the `background`
+   shorthand (focus, the Soft style), which would otherwise remove the image. */
+select:not([multiple]):not([size]) {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: var(--select-chevron) !important;
+  background-repeat: no-repeat !important;
+  background-position: right 10px center !important;
+  background-size: 12px 12px !important;
+  padding-right: 30px !important;
+  text-overflow: ellipsis;
 }
 
 [data-interface-style="soft"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
@@ -603,8 +639,9 @@ body {
 .text-meta {
   font-size: calc(11px * var(--font-scale));
 }
+/* Nothing readable goes below 11px; the smaller step only keeps the class name alive. */
 .text-small-meta {
-  font-size: calc(10px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
 }
 
 /* Scrollbar customization */
@@ -852,7 +889,7 @@ body {
 
 /* Shared controls for Today, search filters, and inline preference editors. */
 .dm-productivity { font-size: calc(12px * var(--font-scale)); color: var(--text-primary); }
-.dm-productivity-input { min-height: 32px; border: 1px solid var(--strong-border); border-radius: var(--control-radius); background: var(--panel-bg); color: var(--text-primary); padding: 5px 8px; }
+.dm-productivity-input { min-height: 32px; border: 1px solid var(--control-border); border-radius: var(--control-radius); background: var(--panel-bg); color: var(--text-primary); padding: 5px 8px; }
 .dm-productivity-input::placeholder { color: var(--text-secondary); }
 .dm-productivity-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--strong-border); border-radius: var(--control-radius); background: var(--panel-bg); color: var(--text-primary); cursor: pointer; }
 .dm-productivity-button:hover:not(:disabled) { background: var(--hover-row); }

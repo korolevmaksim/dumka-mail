@@ -6,11 +6,11 @@ interface ToastItem extends ToastInput {
   id: string;
 }
 
-const TONE: Record<ToastType, { color: string; solidColor: string; Icon: typeof Info }> = {
-  success: { color: 'var(--success)', solidColor: 'var(--success-solid)', Icon: CheckCircle },
-  error: { color: 'var(--danger)', solidColor: 'var(--danger-solid)', Icon: AlertCircle },
-  warning: { color: 'var(--warning)', solidColor: 'var(--warning-solid)', Icon: AlertCircle },
-  info: { color: 'var(--accent-ink)', solidColor: 'var(--accent-solid)', Icon: Info },
+const TONE: Record<ToastType, { color: string; Icon: typeof Info }> = {
+  success: { color: 'var(--success)', Icon: CheckCircle },
+  error: { color: 'var(--danger)', Icon: AlertCircle },
+  warning: { color: 'var(--warning)', Icon: AlertCircle },
+  info: { color: 'var(--accent-ink)', Icon: Info },
 };
 
 export function ToastHost() {
@@ -51,8 +51,8 @@ export function ToastHost() {
               <button
                 type="button"
                 onClick={() => { t.onAction?.(); dismiss(t.id); }}
-                className="text-[calc(11px*var(--font-scale))] font-semibold px-2 py-1 rounded-lg text-white cursor-pointer hover:opacity-90 transition-opacity shrink-0"
-                style={{ backgroundColor: tone.solidColor }}
+                // One look for every toast action (Undo, Retry, Open): the tone is carried by the icon and border.
+                className="shrink-0 cursor-pointer rounded-lg bg-[var(--accent-fill)] px-2 py-1 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
               >
                 {t.actionLabel}
               </button>

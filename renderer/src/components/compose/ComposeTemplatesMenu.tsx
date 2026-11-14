@@ -1,11 +1,14 @@
 import { Braces, Save } from 'lucide-react';
 import type { SnippetTemplate } from '../../../../shared/types';
+import { useEscapeLayer } from '../../hooks/useEscapeLayer';
 
 interface ComposeTemplatesMenuProps {
   templates: SnippetTemplate[];
   onInsertDefaultSnippet: () => void;
   onInsertTemplate: (template: SnippetTemplate) => void;
   onSaveBodyAsSnippet: () => void;
+  /** Esc closes the menu (not the draft behind it). */
+  onClose?: () => void;
 }
 
 export function ComposeTemplatesMenu({
@@ -13,7 +16,9 @@ export function ComposeTemplatesMenu({
   onInsertDefaultSnippet,
   onInsertTemplate,
   onSaveBodyAsSnippet,
+  onClose,
 }: ComposeTemplatesMenuProps) {
+  useEscapeLayer(true, onClose);
   return (
     <div className="dm-overlay absolute bottom-10 right-8 z-50 w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] p-1.5 shadow-xl">
       <button
@@ -37,7 +42,7 @@ export function ComposeTemplatesMenu({
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="truncate font-medium">{template.title}</span>
                 {template.trigger && (
-                  <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">{template.trigger}</span>
+                  <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">{template.trigger}</span>
                 )}
               </span>
             </button>

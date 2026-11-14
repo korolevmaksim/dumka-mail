@@ -1,5 +1,6 @@
-import { parentPort } from 'worker_threads';
-import { getDatabase, initializeDatabase, MessagesRepo, ThreadsRepo } from './database';
+import { parentPort, workerData } from 'worker_threads';
+import { attachWritePrioritySignal } from './sqliteWriteGuard';
+import { getDatabase, initializeDatabase, MessagesRepo, ThreadDecisionsRepo, ThreadsRepo } from './database';
 import {
   collectBriefingThreadBatch,
   collectPendingEmbeddingCandidates,
@@ -37,6 +38,7 @@ function send(response: DatabaseWorkerResponse) {
   parentPort?.postMessage(response);
 }
 
+attachWritePrioritySignal((workerData as { writePrioritySignal?: SharedArrayBuffer } | null)?.writePrioritySignal);
 initializeDatabase();
 
 parentPort?.on('message', (request: DatabaseWorkerRequest) => {
@@ -50,6 +52,11 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
 
     if (request.type === 'senderCleanupStats') {
       send({ id: request.id, ok: true, result: MessagesRepo.senderCleanupStats(request.accountId) });
+      return;
+    }
+
+    if (request.type === 'countInboxThreads') {
+      send({ id: request.id, ok: true, result: ThreadsRepo.countInbox(request.accountIds, request.nowIso) });
       return;
     }
 
@@ -129,6 +136,28 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
         ok: true,
         result: collectBriefingThreadBatch(request.accountId, request.threadIds),
       });
+      return;
+    }
+
+    if (request.type === 'agentPrepInbox') {
+      // Agent prep reads: the newest inbox threads (indexed, bounded) and only
+      // their cached decisions, off the Electron main event loop.
+      const threads = ThreadsRepo.listRecentInbox(request.accountId, request.limit);
+      const decisions = ThreadDecisionsRepo.listForThreads(request.accountId, threads.map(thread => thread.id));
+      send({ id: request.id, ok: true, result: { threads, decisions } });
+      return;
+    }
+
+    if (request.type === 'getThreads') {
+      const threads = request.threadIds.slice(0, 500)
+        .map(threadId => ThreadsRepo.get(request.accountId, threadId))
+        .filter((thread): thread is NonNullable<typeof thread> => Boolean(thread));
+      send({ id: request.id, ok: true, result: threads });
+      return;
+    }
+
+    if (request.type === 'runThreadMaintenance') {
+      send({ id: request.id, ok: true, result: ThreadsRepo.runMaintenanceChunk(request.chunkSize) });
       return;
     }
 

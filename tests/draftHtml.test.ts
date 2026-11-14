@@ -24,6 +24,7 @@ const compose: ComposeSettings = {
   alwaysReplyAll: false,
   sendUndoDelay: 10,
   defaultFontSize: 'normal',
+  afterSend: 'archive',
 };
 
 const profile: ProfileSettings = {

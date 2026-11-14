@@ -21,11 +21,9 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
 
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["renderer/src/*"],
-      "shared/*": ["shared/*"]
+      "@/*": ["./renderer/src/*"],
+      "shared/*": ["./shared/*"]
     }
   },
   "include": ["main/**/*.ts", "renderer/src/**/*.ts", "renderer/src/**/*.tsx", "shared/**/*.ts", "tests/**/*.ts"]

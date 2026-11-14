@@ -168,10 +168,77 @@ describe('ReplyPipelineService', () => {
     harness.completeAI.mockResolvedValue({ text: 'Thanks, I will review this today.' });
 
     const result = await ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
-    expect(harness.completeAI).toHaveBeenCalledWith(expect.any(Object), 'automatic', 'automation-model');
+    expect(harness.completeAI).toHaveBeenCalledWith(expect.any(Object), 'automatic', 'automation-model', { signal: expect.any(AbortSignal) });
     expect(result.state.draftOrigin).toBe('automation');
     expect(result.state.hasPlaceholders).toBe(false);
     expect(result.draft.bodyPlain).toContain('Thanks, I will review this today.');
+  });
+
+  it('writes the template, not a model draft, when the account does not let mail text reach the model', async () => {
+    harness.settings = {
+      ...harness.settings,
+      ai: { ...(harness.settings.ai as object), proactiveDraftsEnabled: true, automationModel: 'automation-model' },
+      accountOverrides: { 'me@example.com': { modelMayReadMail: false } },
+    };
+    harness.descriptor.mockResolvedValue({ preference: 'openAI', model: 'automation-model' });
+    const result = await ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
+    expect(harness.completeAI).not.toHaveBeenCalled();
+    expect(result.state.draftOrigin).toBe('template');
+  });
+
+  it('sends the automation model to the provider chosen for background work, not to the main one', async () => {
+    harness.settings = {
+      ...harness.settings,
+      ai: {
+        ...(harness.settings.ai as object),
+        proactiveDraftsEnabled: true,
+        automationProvider: 'openAICompatible',
+        automationModel: 'local-small',
+      },
+    };
+    harness.descriptor.mockResolvedValue({ preference: 'openAICompatible', model: 'local-small' });
+    harness.completeAI.mockResolvedValue({ text: 'Thanks, I will review this today.' });
+    await ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
+    expect(harness.completeAI).toHaveBeenCalledWith(expect.any(Object), 'openAICompatible', 'local-small', { signal: expect.any(AbortSignal) });
+  });
+
+  it('sends nothing when mail access is withdrawn while the provider is being looked up', async () => {
+    const ai = { ...(harness.settings.ai as object), proactiveDraftsEnabled: true, automationModel: 'automation-model' };
+    harness.settings = { ...harness.settings, ai };
+    let finishLookup!: (value: unknown) => void;
+    harness.descriptor.mockReturnValue(new Promise(resolve => { finishLookup = resolve; }));
+    const pending = ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
+    await vi.waitFor(() => expect(harness.descriptor).toHaveBeenCalledTimes(1));
+    harness.settings = { ...harness.settings, ai, accountOverrides: { 'me@example.com': { modelMayReadMail: false } } };
+    finishLookup({ preference: 'openAI', model: 'automation-model' });
+    const result = await pending;
+    expect(harness.completeAI).not.toHaveBeenCalled();
+    expect(result.state.draftOrigin).toBe('template');
+  });
+
+  it('cancels the request and uses the template when mail access is withdrawn while the model is writing', async () => {
+    const ai = { ...(harness.settings.ai as object), proactiveDraftsEnabled: true, automationModel: 'automation-model' };
+    harness.settings = { ...harness.settings, ai };
+    harness.descriptor.mockResolvedValue({ preference: 'openAI', model: 'automation-model' });
+    let signal: AbortSignal | undefined;
+    let answer!: (value: { text: string }) => void;
+    harness.completeAI.mockImplementation((_request, _preference, _model, options: { signal?: AbortSignal }) => {
+      signal = options?.signal;
+      return new Promise(resolve => { answer = resolve; });
+    });
+    const pending = ReplyPipelineService.prepareDraft('me@example.com', 'thread-1');
+    await vi.waitFor(() => expect(harness.completeAI).toHaveBeenCalledTimes(1));
+    expect(signal?.aborted).toBe(false);
+
+    harness.settings = { ...harness.settings, ai, accountOverrides: { 'me@example.com': { modelMayReadMail: false } } };
+    ReplyPipelineService.cancelDisallowedDrafts();
+    expect(signal?.aborted).toBe(true);
+
+    // Even if the provider answers after the cancel, the model text is not used.
+    answer({ text: 'Thanks, I will review this today.' });
+    const result = await pending;
+    expect(result.state.draftOrigin).toBe('template');
+    expect(result.draft.bodyPlain).not.toContain('Thanks, I will review this today.');
   });
 
   it('falls back deterministically when the automation provider fails', async () => {

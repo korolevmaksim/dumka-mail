@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Mail } from 'lucide-react';
 import type { CalendarEvent, MailThread } from '../../../shared/types';
 
 interface CalendarRelatedMailProps {
@@ -40,12 +41,28 @@ export function CalendarRelatedMail({ event, threads, onOpen }: CalendarRelatedM
   }, [event, sourceThread?.id, threads]);
 
   if (!sourceThread && suggestions.length === 0) return null;
+  const linkClass = 'block w-full min-w-0 truncate rounded px-1.5 py-1 text-left text-[calc(12px*var(--font-scale))] hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]';
   return (
-    <section className="dm-inset mt-3 rounded-lg border border-[var(--border)] bg-[var(--app-bg)] p-2.5" aria-label="Related mail">
-      <h3 className="text-[calc(9px*var(--font-scale))] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]">Related mail</h3>
-      {sourceThread && <button type="button" onClick={() => onOpen(sourceThread)} className="mt-2 block w-full truncate text-left text-[calc(10px*var(--font-scale))] font-semibold text-[var(--accent)]">Source · {sourceThread.subject}</button>}
-      {suggestions.length > 0 && <div className="mt-2 text-[calc(9px*var(--font-scale))] text-[var(--text-tertiary)]">Suggested from participants or subject — not linked</div>}
-      {suggestions.map(thread => <button key={`${thread.accountId}:${thread.id}`} type="button" onClick={() => onOpen(thread)} className="mt-1 block w-full truncate rounded px-1 py-1 text-left text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)] hover:bg-[var(--hover-row)]">{thread.subject}</button>)}
+    <section aria-labelledby={`calendar-related-${event.id}`}>
+      <h3 id={`calendar-related-${event.id}`} className="mb-1 flex items-center gap-1.5 text-[calc(12px*var(--font-scale))] font-semibold text-[var(--text-primary)]">
+        <Mail className="h-3.5 w-3.5 text-[var(--text-secondary)]" aria-hidden="true" />
+        Related mail
+      </h3>
+      {sourceThread && (
+        <button type="button" onClick={() => onOpen(sourceThread)} title={sourceThread.subject} className={`${linkClass} font-medium text-[var(--accent-ink)]`}>
+          {sourceThread.subject || '(no subject)'}
+        </button>
+      )}
+      {suggestions.length > 0 && (
+        <>
+          <p className="mt-1 px-1.5 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Maybe related (same people or subject)</p>
+          {suggestions.map(thread => (
+            <button key={`${thread.accountId}:${thread.id}`} type="button" onClick={() => onOpen(thread)} title={thread.subject} className={`${linkClass} text-[var(--text-primary)]`}>
+              {thread.subject || '(no subject)'}
+            </button>
+          ))}
+        </>
+      )}
     </section>
   );
 }

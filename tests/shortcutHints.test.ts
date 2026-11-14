@@ -41,12 +41,12 @@ describe('hintsForContext — list', () => {
       'A reply all',
       'F forward',
       'S summarize',
-      'E done',
+      'E archive',
       'U read/unread',
       'C compose',
       '/ search',
       'G/⇧G mailbox',
-      '⌘J ask AI',
+      '⌘J Ask Dumka',
       'J/K move', // vim effective in superhuman mode
       '↩/O open', // list context (thread not open)
       '⌘K commands',
@@ -57,12 +57,12 @@ describe('hintsForContext — list', () => {
   it('uses combo shortcuts and no vim in appleMail mode', () => {
     const hints = hintsForContext('list', appleMail);
     expect(pairs(hints)).toEqual([
-      '⌘⇧E done',
+      '⌘⇧E archive',
       '⌘⇧U read',
       '⌘N compose',
       '/ search',
       'G/⇧G mailbox',
-      '⌘J ask AI',
+      '⌘J Ask Dumka',
       '↩ open',
       '⌘K commands',
     ]);
@@ -113,7 +113,7 @@ describe('hintsForContext — compose', () => {
     const hints = hintsForContext('compose', superhuman);
     expect(pairs(hints)).toEqual([
       '⌘↩ send',
-      '⌘J ask AI',
+      '⌘J Ask Dumka',
       '⌘K commands',
       'esc discard',
     ]);
@@ -123,7 +123,7 @@ describe('hintsForContext — compose', () => {
     const hints = hintsForContext('compose', { ...superhuman, commandPaletteEnabled: false });
     expect(pairs(hints)).toEqual([
       '⌘↩ send',
-      '⌘J ask AI',
+      '⌘J Ask Dumka',
       'esc discard',
     ]);
   });
@@ -135,7 +135,7 @@ describe('hintsForContext — search', () => {
     expect(pairs(hints)).toEqual([
       'esc close',
       '↩/O open',
-      '⌘J ask AI',
+      '⌘J Ask Dumka',
       'J/K move',
       '⌘K commands',
       '? shortcuts',
@@ -147,7 +147,7 @@ describe('hintsForContext — search', () => {
     expect(pairs(hints)).toEqual([
       'esc close',
       '↩ open',
-      '⌘J ask AI',
+      '⌘J Ask Dumka',
       '⌘K commands',
     ]);
   });
@@ -175,10 +175,10 @@ describe('resolveHintLayout', () => {
 
   it('drops the highest-priority hint first when one must be removed', () => {
     // Crafted hints with distinct priorities: command(0, protected),
-    // mark done(100), reply(25). Full width ~272.7; at 250 exactly one drops.
+    // archive(100), reply(25). Full width ~272.7; at 250 exactly one drops.
     const hints: ShortcutHint[] = [
       { keys: '⌘K', label: 'command' },
-      { keys: 'E', label: 'mark done' },
+      { keys: 'E', label: 'archive' },
       { keys: 'R', label: 'reply' },
     ];
     const full = resolveHintLayout(hints, 100000);
@@ -186,9 +186,9 @@ describe('resolveHintLayout', () => {
 
     const tight = resolveHintLayout(hints, 250);
     expect(tight.overflowCount).toBe(1);
-    // 'mark done' (priority 100) is the one removed.
+    // 'archive' (priority 100) is the one removed.
     const labels = tight.displayHints.map((h) => h.label);
-    expect(labels).not.toContain('mark done');
+    expect(labels).not.toContain('archive');
     expect(tight.displayHints).toEqual([
       { keys: '⌘K', label: 'command' },
       { keys: 'R', label: 'reply' },

@@ -133,7 +133,7 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
           <span className="text-[calc(11px*var(--font-scale))] font-semibold text-[var(--text-primary)]">Automatic Mail Actions</span>
-          <span className="text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">Observe new rules in shadow mode, then promote them when the evidence looks right.</span>
+          <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">Observe new rules in shadow mode, then promote them when the evidence looks right.</span>
         </div>
         <Toggle
           checked={store.settings.mailRules.enabled}
@@ -201,7 +201,7 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
               type="text"
               value="Threaded reply"
               disabled
-              className="bg-[var(--app-bg)] border border-[var(--border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] outline-none disabled:opacity-70"
+              className="bg-[var(--app-bg)] border border-[var(--control-border)] rounded px-2.5 py-1 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] outline-none disabled:opacity-70"
             />
           ) : (
             <input
@@ -216,7 +216,7 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
           <button
             type="button"
             onClick={addRule}
-            className="px-4 py-1 bg-[var(--accent)] text-white rounded font-medium text-[calc(11px*var(--font-scale))] hover:bg-[var(--accent)]/90"
+            className="px-4 py-1 bg-[var(--accent-fill)] text-[var(--on-accent)] rounded font-medium text-[calc(11px*var(--font-scale))] hover:bg-[var(--accent)]/90"
           >
             Add
           </button>
@@ -233,7 +233,7 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
       </div>
 
       {scopedRules.length === 0 ? (
-        <div className="bg-[var(--panel-bg)] border border-dashed border-[var(--border)] rounded-md px-3 py-2 text-[calc(10px*var(--font-scale))] text-[var(--text-secondary)]">
+        <div className="bg-[var(--panel-bg)] border border-dashed border-[var(--border)] rounded-md px-3 py-2 text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
           No automatic action rules for {scopeLabel}.
         </div>
       ) : (
@@ -243,13 +243,13 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
             const sendLike = hasSendLikeAction(rule);
             return (
               <div key={rule.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2">
-                <div className="min-w-0 flex flex-col gap-0.5 text-[calc(10px*var(--font-scale))]">
+                <div className="min-w-0 flex flex-col gap-0.5 text-[calc(11px*var(--font-scale))]">
                   <span className="truncate text-[var(--text-primary)]">{rule.title}</span>
-                  <span className="truncate text-[calc(9px*var(--font-scale))] text-[var(--text-secondary)]">
+                  <span className="truncate text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)]">
                     {rule.actions.map(actionLabel).join(', ')} · {scopeLabel}
                   </span>
                   {sendLike && mode === 'active' && (
-                    <span className="text-[calc(9px*var(--font-scale))] text-[var(--warning)]">
+                    <span className="text-[calc(11px*var(--font-scale))] text-[var(--warning-solid)]">
                       Active mode can send mail automatically.
                     </span>
                   )}
@@ -268,9 +268,9 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
                       }));
                     }}
                     title={sendLike ? 'Active mode can send mail automatically' : 'Choose whether this rule observes or applies matches'}
-                    className={`rounded border bg-[var(--app-bg)] px-2 py-1 text-[calc(10px*var(--font-scale))] ${
+                    className={`rounded border bg-[var(--app-bg)] px-2 py-1 text-[calc(11px*var(--font-scale))] ${
                       sendLike && mode === 'active'
-                        ? 'border-[var(--warning)] text-[var(--warning)]'
+                        ? 'border-[var(--warning)] text-[var(--warning-solid)]'
                         : 'border-[var(--border)] text-[var(--text-primary)]'
                     }`}
                   >
@@ -282,7 +282,7 @@ export function MailRulesSettingsSection({ selectedScope }: MailRulesSettingsSec
                     type="button"
                     title="Delete rule"
                     onClick={() => deleteRule(rule.id)}
-                    className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger)]"
+                    className="p-1 rounded hover:bg-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger-solid)]"
                   >
                     <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                   </button>

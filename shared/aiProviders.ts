@@ -9,8 +9,8 @@ export interface AIProviderConfig {
   optionLabel: string;
   apiKeyEnv: string;
   baseUrlEnv: string;
+  /** Where the chosen model id is stored. There is no built-in model: it always comes from settings. */
   modelEnv: string;
-  defaultModel: string;
   defaultBaseUrl: string;
   transport: string;
   modelSelectionMode: 'catalog' | 'custom';
@@ -36,7 +36,6 @@ export const AI_PROVIDER_CONFIGS: Record<ConfigurableAIProvider, AIProviderConfi
     apiKeyEnv: 'OPENAI_API_KEY',
     baseUrlEnv: 'OPENAI_BASE_URL',
     modelEnv: 'OPENAI_MODEL',
-    defaultModel: 'gpt-5.4-mini',
     defaultBaseUrl: '',
     transport: 'responses',
     modelSelectionMode: 'catalog',
@@ -51,7 +50,6 @@ export const AI_PROVIDER_CONFIGS: Record<ConfigurableAIProvider, AIProviderConfi
     apiKeyEnv: 'ANTHROPIC_API_KEY',
     baseUrlEnv: 'ANTHROPIC_BASE_URL',
     modelEnv: 'ANTHROPIC_MODEL',
-    defaultModel: 'claude-sonnet-4.6',
     defaultBaseUrl: '',
     transport: 'messages',
     modelSelectionMode: 'catalog',
@@ -66,7 +64,6 @@ export const AI_PROVIDER_CONFIGS: Record<ConfigurableAIProvider, AIProviderConfi
     apiKeyEnv: 'GEMINI_API_KEY',
     baseUrlEnv: 'GEMINI_BASE_URL',
     modelEnv: 'GEMINI_MODEL',
-    defaultModel: 'gemini-3.5-flash',
     defaultBaseUrl: '',
     transport: 'generateContent',
     modelSelectionMode: 'catalog',
@@ -81,7 +78,6 @@ export const AI_PROVIDER_CONFIGS: Record<ConfigurableAIProvider, AIProviderConfi
     apiKeyEnv: 'OPENROUTER_API_KEY',
     baseUrlEnv: 'OPENROUTER_BASE_URL',
     modelEnv: 'OPENROUTER_MODEL',
-    defaultModel: '~openai/gpt-latest',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     transport: 'chat.completions',
     modelSelectionMode: 'catalog',
@@ -96,7 +92,6 @@ export const AI_PROVIDER_CONFIGS: Record<ConfigurableAIProvider, AIProviderConfi
     apiKeyEnv: 'DEEPSEEK_API_KEY',
     baseUrlEnv: 'DEEPSEEK_BASE_URL',
     modelEnv: 'DEEPSEEK_MODEL',
-    defaultModel: 'deepseek-v4-flash',
     defaultBaseUrl: 'https://api.deepseek.com',
     transport: 'chat.completions',
     modelSelectionMode: 'catalog',
@@ -111,7 +106,6 @@ export const AI_PROVIDER_CONFIGS: Record<ConfigurableAIProvider, AIProviderConfi
     apiKeyEnv: 'OPENAI_COMPATIBLE_API_KEY',
     baseUrlEnv: 'OPENAI_COMPATIBLE_BASE_URL',
     modelEnv: 'OPENAI_COMPATIBLE_MODEL',
-    defaultModel: 'local-mail-model',
     defaultBaseUrl: '',
     transport: 'chat.completions',
     modelSelectionMode: 'custom',
@@ -146,5 +140,29 @@ export function resolveConfiguredProviderModel(
   env: Record<string, string | undefined>
 ): string {
   const config = getAIProviderConfig(provider);
-  return env[config.modelEnv]?.trim() || config.defaultModel;
+  return env[config.modelEnv]?.trim() || '';
+}
+
+// --- Request formats that depend on the model generation -----------------------
+// These read the generation number from whatever model the user chose; no model
+// id is listed, so a newer generation keeps working without a code change.
+
+function geminiGeneration(model: string, family: RegExp): number | null {
+  const match = family.exec(model.replace(/^models\//, ''));
+  return match ? Number(match[1]) : null;
+}
+
+/** Gemini text models from generation 3 on take `thinkingLevel`; older ones do not. */
+export function geminiSupportsThinkingLevel(model: string): boolean {
+  const generation = geminiGeneration(model, /^gemini-(\d+)(?:[.-]|$)/);
+  return generation !== null && generation >= 3;
+}
+
+/**
+ * Gemini embedding models from generation 2 on take the retrieval instruction
+ * in the text itself; `…-001` style models take a `taskType` instead.
+ */
+export function geminiEmbeddingUsesInlineInstruction(model: string): boolean {
+  const generation = geminiGeneration(model, /^gemini-embedding-(\d+)(?:[.-]|$)/);
+  return generation !== null && generation >= 2;
 }

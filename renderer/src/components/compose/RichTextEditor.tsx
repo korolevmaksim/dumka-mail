@@ -223,7 +223,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         </div>
       )}
       {isDraggingFiles && (
-        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[var(--accent)] bg-[var(--accent)]/10 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--accent)]">
+        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[var(--accent)] bg-[var(--accent)]/10 text-[calc(13px*var(--font-scale))] font-semibold text-[var(--accent-ink)]">
           Drop files to attach
         </div>
       )}

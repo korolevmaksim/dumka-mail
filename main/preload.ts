@@ -1,4 +1,5 @@
 import type { ProductivityRecord } from '../shared/productivity';
+import type { AgentDraftReadyEvent, AgentDraftResult, AIStreamEvent, ModelStatus, ThreadSummaryResult } from '../shared/agentPrompts';
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   Account,
@@ -17,7 +18,12 @@ import {
   MailThread,
   MailMessage,
   MailboxDelta,
+  ThreadDecisionRecord,
+  SenderRuleHandledItem,
+  SenderRuleStats,
+  SenderRulesChangedEvent,
   MailboxSyncHealthEvent,
+  MailboxBackfillProgressEvent,
   Draft,
   SyncState,
   MailActionLog,
@@ -57,6 +63,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Threads
   listThreads: (accountId: string) => ipcRenderer.invoke('db:listThreads', accountId),
   listThreadsForAccounts: (accountIds: string[]) => ipcRenderer.invoke('db:listThreadsForAccounts', accountIds),
+  countInboxThreads: (accountIds: string[]): Promise<Record<string, number>> => ipcRenderer.invoke('db:countInboxThreads', accountIds),
+  listThreadDecisions: (accountId: string): Promise<ThreadDecisionRecord[]> => ipcRenderer.invoke('db:listThreadDecisions', accountId),
+  saveThreadDecision: (row: ThreadDecisionRecord): Promise<ThreadDecisionRecord> => ipcRenderer.invoke('db:saveThreadDecision', row),
+  deleteThreadDecision: (accountId: string, threadId: string): Promise<void> => ipcRenderer.invoke('db:deleteThreadDecision', accountId, threadId),
+  listSenderRuleStats: (accountId: string): Promise<SenderRuleStats[]> => ipcRenderer.invoke('db:listSenderRuleStats', accountId),
+  dismissSenderRuleOffer: (accountId: string, senderEmail: string): Promise<void> => ipcRenderer.invoke('db:dismissSenderRuleOffer', accountId, senderEmail),
+  listSenderRuleHandled: (accountId: string): Promise<SenderRuleHandledItem[]> => ipcRenderer.invoke('db:listSenderRuleHandled', accountId),
+  markSenderRuleHandledReviewed: (accountId: string): Promise<number> => ipcRenderer.invoke('db:markSenderRuleHandledReviewed', accountId),
   saveThreads: (threads: MailThread[]) => ipcRenderer.invoke('db:saveThreads', threads),
   deleteThread: (accountId: string, threadId: string) => ipcRenderer.invoke('db:deleteThread', accountId, threadId),
 
@@ -204,7 +218,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteEmbeddingIndex: (accountId: string, model: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> => ipcRenderer.invoke('api:deleteEmbeddingIndex', accountId, model),
   deleteOtherEmbeddingIndexes: (accountId: string): Promise<{ deleted: number; status: EmbeddingIndexStatus }> => ipcRenderer.invoke('api:deleteOtherEmbeddingIndexes', accountId),
   searchSemantic: (accountId: string, query: string, limit?: number) => ipcRenderer.invoke('api:searchSemantic', accountId, query, limit),
-  unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string) => ipcRenderer.invoke('api:unsubscribeThread', email, threadId, actionId, sourceMessageId),
+  unsubscribeThread: (email: string, threadId: string, actionId?: string, sourceMessageId?: string, options?: { archive?: boolean }) => ipcRenderer.invoke('api:unsubscribeThread', email, threadId, actionId, sourceMessageId, options),
   listCleanupSenderStats: (accountId: string) => ipcRenderer.invoke('api:listCleanupSenderStats', accountId),
   listRecentSenderMessages: (accountId: string, senderEmail: string, limit = 3): Promise<MailMessage[]> => ipcRenderer.invoke('api:listRecentSenderMessages', accountId, senderEmail, limit),
   loadAIConfig: () => ipcRenderer.invoke('api:loadAIConfig'),
@@ -299,6 +313,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.off('api:mailboxSyncHealth', listener);
     };
   },
+  onBackfillProgress: (callback: (event: MailboxBackfillProgressEvent) => void) => {
+    const listener = (_: unknown, event: MailboxBackfillProgressEvent) => callback(event);
+    ipcRenderer.on('api:backfillProgress', listener);
+    return () => {
+      ipcRenderer.off('api:backfillProgress', listener);
+    };
+  },
   onActionLogChanged: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('api:actionLogChanged', listener);
@@ -336,4 +357,50 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
   },
   notifyDraftsFlushed: () => ipcRenderer.send('app:draftsFlushed'),
+
+  // --- Agent preparation and streaming (design-review/SPEC.md §5) ---------------
+  getModelStatus: (): Promise<ModelStatus> => ipcRenderer.invoke('api:getModelStatus'),
+  retryAgentPrep: (): Promise<ModelStatus> => ipcRenderer.invoke('api:retryAgentPrep'),
+  cancelAI: (requestId: string): Promise<void> => ipcRenderer.invoke('api:cancelAI', requestId),
+  requestThreadSummary: (accountId: string, threadId: string, requestId: string): Promise<ThreadSummaryResult> =>
+    ipcRenderer.invoke('api:requestThreadSummary', accountId, threadId, requestId),
+  requestAgentDraft: (accountId: string, threadId: string, requestId: string, purpose?: 'interactive' | 'automation'): Promise<AgentDraftResult> =>
+    ipcRenderer.invoke('api:requestAgentDraft', accountId, threadId, requestId, purpose),
+  streamAIChat: (requestId: string, request: AIRequest, preference: AIProviderPreference, overrideModel?: string): Promise<{ text: string; cancelled?: boolean }> =>
+    ipcRenderer.invoke('api:streamAIChat', requestId, request, preference, overrideModel),
+  onAIStream: (callback: (event: AIStreamEvent) => void) => {
+    const listener = (_: unknown, event: AIStreamEvent) => callback(event);
+    ipcRenderer.on('api:aiStream', listener);
+    return () => {
+      ipcRenderer.off('api:aiStream', listener);
+    };
+  },
+  onModelStatusChanged: (callback: (status: ModelStatus) => void) => {
+    const listener = (_: unknown, status: ModelStatus) => callback(status);
+    ipcRenderer.on('api:modelStatusChanged', listener);
+    return () => {
+      ipcRenderer.off('api:modelStatusChanged', listener);
+    };
+  },
+  onThreadDecisionsChanged: (callback: (event: { accountId: string }) => void) => {
+    const listener = (_: unknown, event: { accountId: string }) => callback(event);
+    ipcRenderer.on('api:threadDecisionsChanged', listener);
+    return () => {
+      ipcRenderer.off('api:threadDecisionsChanged', listener);
+    };
+  },
+  onSenderRulesChanged: (callback: (event: SenderRulesChangedEvent) => void) => {
+    const listener = (_: unknown, event: SenderRulesChangedEvent) => callback(event);
+    ipcRenderer.on('api:senderRulesChanged', listener);
+    return () => {
+      ipcRenderer.off('api:senderRulesChanged', listener);
+    };
+  },
+  onAgentDraftReady: (callback: (event: AgentDraftReadyEvent) => void) => {
+    const listener = (_: unknown, event: AgentDraftReadyEvent) => callback(event);
+    ipcRenderer.on('api:agentDraftReady', listener);
+    return () => {
+      ipcRenderer.off('api:agentDraftReady', listener);
+    };
+  },
 });

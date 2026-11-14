@@ -1,8 +1,5 @@
 import type { AIProviderDescriptor, AIProviderPreference } from '../../../shared/types';
-import {
-  getAIProviderConfig,
-  isConfigurableAIProvider,
-} from '../../../shared/aiProviders';
+import { isConfigurableAIProvider } from '../../../shared/aiProviders';
 import type { ConfigurableAIProvider } from '../../../shared/aiProviders';
 
 export function resolveAssistantModelProvider(
@@ -19,7 +16,8 @@ export function resolveAssistantModelSummary(
   providerDesc: AIProviderDescriptor | null,
 ): string {
   if (!modelProvider) return providerDesc?.model || '';
-  return configuredModel || getAIProviderConfig(modelProvider).defaultModel;
+  // No built-in model: what is shown is what the user chose (or what the provider descriptor resolved).
+  return configuredModel || providerDesc?.model || '';
 }
 
 export function shouldFetchAssistantModelCatalog(input: {

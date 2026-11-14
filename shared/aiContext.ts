@@ -8,6 +8,7 @@
 // renderer processes (and be unit-tested directly).
 
 import type { MailMessage, MailThread, AISettings } from './types'
+import { createForwardFinder, createForwardRegexFinder, replaceAngleTags } from './htmlScan'
 
 // ---------------------------------------------------------------------------
 // HTML -> text
@@ -50,14 +51,44 @@ function codePoint(value: number): string {
 export function htmlToText(html: string): string {
   if (!html) return ''
   return decodeEntities(
-    html
-      // drop <script>…</script> and <style>…</style> including their content
-      .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-      // strip every remaining tag (Swift: "<[^>]+>" -> " ")
-      .replace(/<[^>]+>/g, ' '),
+    // strip every remaining tag (Swift: "<[^>]+>" -> " ")
+    replaceAngleTags(dropScriptAndStyleBlocks(html), ' '),
   )
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/**
+ * Drop <script>…</script> and <style>…</style> including their content, with
+ * the exact semantics of `/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi` → ' ',
+ * but linear: that regex rescans to the end of the document from every
+ * unclosed `<style ` (quadratic on hostile mail). Each opener ends at the
+ * first `>` after it and its block at the first matching closer after that.
+ */
+function dropScriptAndStyleBlocks(html: string): string {
+  const opener = /<(script|style)\b/gi
+  const nextGt = createForwardFinder(html, '>')
+  const nextCloser = {
+    script: createForwardRegexFinder(html, '</script>'),
+    style: createForwardRegexFinder(html, '</style>'),
+  }
+  let out = ''
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = opener.exec(html)) !== null) {
+    const start = match.index
+    const name = match[1].toLowerCase() as 'script' | 'style'
+    const gt = nextGt(start + match[0].length)
+    // No `>` left: no later opener can complete either.
+    if (gt === -1) break
+    const closer = nextCloser[name](gt + 1)
+    // Unclosed block: this opener does not match; later ones of the other kind still may.
+    if (closer === -1) continue
+    out += html.slice(last, start) + ' '
+    last = closer + name.length + 3
+    opener.lastIndex = last
+  }
+  return last === 0 ? html : out + html.slice(last)
 }
 
 // ---------------------------------------------------------------------------
@@ -192,5 +223,36 @@ export function buildThreadContext(
     })
   }
 
+  return lines.join('\n')
+}
+
+/** The message fields the metadata-only context reads (no body, no snippet). */
+export type ThreadContextMetadata = Pick<MailMessage, 'senderName' | 'senderEmail' | 'subject' | 'receivedAt' | 'hasAttachments'>
+
+/**
+ * Thread context when the account does not let the model read mail: subjects,
+ * senders and dates only. Built by the main process from its own cache, so a
+ * renderer-supplied context can never carry message text past the setting.
+ */
+export function buildMetadataOnlyThreadContext(
+  thread: Pick<MailThread, 'subject' | 'senderNames' | 'hasAttachments'> | null,
+  messages: readonly ThreadContextMetadata[],
+): string {
+  if (!thread) return 'No thread open.'
+  const lines: string[] = [
+    `Subject: ${thread.subject}`,
+    `Senders: ${thread.senderNames.join(', ')}`,
+    `Has attachments: ${thread.hasAttachments ? 'yes' : 'no'}`,
+    'Message text is not shared with the model for this account.',
+  ]
+  const ordered = [...messages].sort((a, b) => (Date.parse(a.receivedAt) || 0) - (Date.parse(b.receivedAt) || 0))
+  if (ordered.length > 0) {
+    lines.push('Messages:')
+    ordered.forEach((message, index) => {
+      lines.push(`Message ${index + 1} of ${ordered.length} from ${message.senderName || message.senderEmail}:`)
+      lines.push(`Subject: ${message.subject}`)
+      lines.push(`Received: ${message.receivedAt}`)
+    })
+  }
   return lines.join('\n')
 }

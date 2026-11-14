@@ -1,3 +1,4 @@
+import { computeThreadSignals } from './threadSignals';
 import type { MailMessage, MailThread, Recipient } from './types';
 
 function uniqueRecipients(messages: MailMessage[], field: 'to' | 'cc'): Recipient[] {
@@ -24,6 +25,8 @@ export function buildMailThreadFromMessages(
   accountId: string,
   threadId: string,
   messages: MailMessage[],
+  /** Address of the account; account ids are the account email, so it defaults to `accountId`. */
+  accountEmail: string = accountId,
 ): MailThread | null {
   if (messages.length === 0) return null;
 
@@ -41,5 +44,6 @@ export function buildMailThreadFromMessages(
     labelIds: Array.from(new Set(messages.flatMap(message => message.labelIds))),
     hasAttachments: messages.some(message => message.hasAttachments),
     isUnread: messages.some(message => message.isUnread),
+    signals: computeThreadSignals(messages, accountEmail),
   };
 }

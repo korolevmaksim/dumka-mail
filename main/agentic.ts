@@ -11,6 +11,8 @@ import {
 } from './database';
 import { completeAI, createEmbeddings, getAIProviderDescriptor } from './ai';
 import { databaseWorkerClient } from './databaseWorkerClient';
+import { fetchWithSafeRedirects, UnsafeRedirectError } from './safeRedirectFetch';
+import { truncateProviderText } from '../shared/aiErrors';
 import type { EmbeddingCandidate, ThreadSecurityMode } from './mailAnalysisJobs';
 import { GmailSyncService } from './gmail';
 import {
@@ -19,13 +21,14 @@ import {
   shouldGenerateAgentDraft,
 } from '../shared/mailSecurity';
 import { buildThreadContext } from '../shared/aiContext';
-import { resolveAIModelForPurpose } from '../shared/aiModelPurpose';
+import { resolveBackgroundModelRoute } from '../shared/aiModelPurpose';
 import { normalizeDailyBriefingSettings } from '../shared/dailyBriefing';
 import { buildDailyBriefingForAccount } from './dailyBriefingService';
 import { buildEmbeddingIndexKey, normalizeEmbeddingSettings } from '../shared/embeddingProviders';
 import { normalizeEmbeddingText } from '../shared/semantic';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import { SystemLogger } from './systemLogger';
+import { resolveAccountSetting } from '../shared/accountSettings';
 import type {
   AgentDraftSuggestion,
   AgentRulesSettings,
@@ -51,6 +54,8 @@ interface RuntimeAgentSettings {
   provider: AIProviderPreference;
   interactiveModel: string;
   automationModel: string;
+  /** `ai.automationProvider`: '' follows `provider`. */
+  automationProvider: string;
   allowMailBodyContext: boolean;
   proactiveDraftsEnabled: boolean;
   semanticSearchEnabled: boolean;
@@ -116,9 +121,11 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       provider: parsed?.ai?.provider || 'automatic',
       interactiveModel: typeof parsed?.ai?.globalDefaultModel === 'string' ? parsed.ai.globalDefaultModel : '',
       automationModel: typeof parsed?.ai?.automationModel === 'string' ? parsed.ai.automationModel : '',
+      automationProvider: typeof parsed?.ai?.automationProvider === 'string' ? parsed.ai.automationProvider : '',
       allowMailBodyContext: parsed?.ai?.allowMailBodyContext === true,
       proactiveDraftsEnabled: parsed?.ai?.proactiveDraftsEnabled === true,
-      semanticSearchEnabled,
+      // Without an embedding model there is nothing to index or search with.
+      semanticSearchEnabled: semanticSearchEnabled && Boolean(embeddings.model),
       embeddings,
       agentRules: normalizeAgentRules(parsed?.ai?.agentRules),
       dailyBriefing: normalizeDailyBriefingSettings(parsed?.ai?.dailyBriefing),
@@ -133,6 +140,7 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       provider: 'automatic',
       interactiveModel: '',
       automationModel: '',
+      automationProvider: '',
       allowMailBodyContext: true,
       proactiveDraftsEnabled: false,
       semanticSearchEnabled: false,
@@ -145,6 +153,23 @@ function readAgentSettings(accountId?: string): RuntimeAgentSettings {
       replyTone: 'direct',
       personalizationNotes: '',
     };
+  }
+}
+
+function accountAllowsMailText(accountId: string): boolean {
+  try {
+    return resolveAccountSetting(JSON.parse(SettingsRepo.get('appSettings') || '{}'), accountId, 'modelMayReadMail').value === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Unattended model work is opt-in per account (`backgroundSorting`, off by default). */
+function accountAllowsBackgroundModel(accountId: string): boolean {
+  try {
+    return resolveAccountSetting(JSON.parse(SettingsRepo.get('appSettings') || '{}'), accountId, 'backgroundSorting').value === true;
+  } catch {
+    return false;
   }
 }
 
@@ -248,6 +273,12 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
     provider: settings.provider,
     globalDefaultModel: settings.interactiveModel,
     automationModel: settings.automationModel,
+    automationProvider: '',
+    summary: { provider: '', model: '', language: 'auto', instructions: '' },
+    sortingEngine: 'completion',
+    decisionsModel: '',
+    decisionsMinConfidence: 0.8,
+    backgroundSorting: false,
     fallback: { isEnabled: true, orderText: '' },
     providerConfigurations: [],
     promptShortcuts: [],
@@ -268,16 +299,32 @@ function aiSettingsForContext(settings: RuntimeAgentSettings): AISettings {
   };
 }
 
-function automationModelOverride(settings: RuntimeAgentSettings): string | undefined {
-  return resolveAIModelForPurpose('automation', {
-    interactiveModel: settings.interactiveModel,
-    automationModel: settings.automationModel,
-  });
+/**
+ * Whether a draft may be prepared for this account without being asked for.
+ * Read from the stored settings on every call: the checks around the model
+ * request must see a switch that was turned off a moment ago.
+ */
+function backgroundDraftAllowed(accountId: string): boolean {
+  const settings = readAgentSettings(accountId);
+  if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return false;
+  // Per-account "Mail text may be sent to the model" (SPEC §8) also gates this legacy path.
+  return accountAllowsMailText(accountId) && accountAllowsBackgroundModel(accountId);
+}
+
+/** Background draft requests in flight, by account, so a settings change can cancel them. */
+const backgroundDraftRequests = new Map<string, Set<AbortController>>();
+
+/** Cancels background drafts being written for accounts that no longer allow them. */
+function cancelDisallowedBackgroundDrafts(): void {
+  for (const [accountId, controllers] of backgroundDraftRequests) {
+    if (backgroundDraftAllowed(accountId)) continue;
+    for (const controller of controllers) controller.abort();
+  }
 }
 
 async function generateDraftForThread(thread: MailThread, messages: MailMessage[]): Promise<AgentDraftSuggestion | null> {
   const settings = readAgentSettings(thread.accountId);
-  if (!settings.proactiveDraftsEnabled || !settings.suggestDrafts || !settings.allowMailBodyContext) return null;
+  if (!backgroundDraftAllowed(thread.accountId)) return null;
 
   const latest = latestMessage(messages);
   if (!latest) return null;
@@ -288,11 +335,23 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
   const key = `${thread.accountId}:${thread.id}`;
   if (activeDraftThreads.has(key)) return null;
   activeDraftThreads.add(key);
+  const controller = new AbortController();
+  const accountRequests = backgroundDraftRequests.get(thread.accountId) || new Set<AbortController>();
+  accountRequests.add(controller);
+  backgroundDraftRequests.set(thread.accountId, accountRequests);
 
   try {
-    const overrideModel = automationModelOverride(settings);
-    const descriptor = await getAIProviderDescriptor(settings.provider, overrideModel);
+    // The same provider and model as the rest of the background work.
+    const { preference, overrideModel } = resolveBackgroundModelRoute({
+      provider: settings.provider,
+      automationProvider: settings.automationProvider,
+      interactiveModel: settings.interactiveModel,
+      automationModel: settings.automationModel,
+    });
+    const descriptor = await getAIProviderDescriptor(preference, overrideModel);
     if (descriptor.preference === 'disabled') return null;
+    // The lookup above is asynchronous: check again right before mail text leaves the machine.
+    if (controller.signal.aborted || !backgroundDraftAllowed(thread.accountId)) return null;
 
     const tone = settings.replyTone === 'direct'
       ? 'Use a direct, clear tone.'
@@ -317,8 +376,12 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
         'If facts are missing, include a short bracketed placeholder instead of guessing.',
         personalization,
       ].join('\n'),
-    }, settings.provider, overrideModel);
+    }, preference, overrideModel, { signal: controller.signal });
 
+    // Turned off while the model was writing: the answer is not kept.
+    if (controller.signal.aborted || !backgroundDraftAllowed(thread.accountId)) return null;
+    // The newer pipeline may have prepared a draft for this message meanwhile: keep one.
+    if (AgentDraftsRepo.getForMessage(thread.accountId, latest.id)) return null;
     const bodyPlain = cleanDraftText(response.text);
     if (bodyPlain.length < 8) return null;
 
@@ -340,10 +403,13 @@ async function generateDraftForThread(thread: MailThread, messages: MailMessage[
     AgentDraftsRepo.save(draft);
     return draft;
   } catch (err) {
-    SystemLogger.warning('Agentic', 'Proactive draft generation was skipped.', { error: err });
+    // A cancelled request is the expected result of turning the setting off.
+    if (!controller.signal.aborted) SystemLogger.warning('Agentic', 'Proactive draft generation was skipped.', { error: err });
     return null;
   } finally {
     activeDraftThreads.delete(key);
+    accountRequests.delete(controller);
+    if (accountRequests.size === 0 && backgroundDraftRequests.get(thread.accountId) === accountRequests) backgroundDraftRequests.delete(thread.accountId);
   }
 }
 
@@ -525,7 +591,7 @@ async function startEmbeddingReindexForAccount(
 
   const settings = readAgentSettings(accountId);
   if (!settings.semanticSearchEnabled) {
-    throw new Error('Semantic search is disabled. Enable it before indexing mail.');
+    throw new Error('Semantic search is off or has no embedding model. Turn it on and enter a model before indexing mail.');
   }
 
   const embeddingSettings = settings.embeddings;
@@ -617,16 +683,21 @@ function chooseUnsubscribeCandidate(messages: MailMessage[]): UnsubscribeCandida
 
 async function performUnsubscribe(accountId: string, method: UnsubscribeMethod): Promise<string> {
   if (method.kind === 'httpPost') {
-    if (!isSafePublicHttpUrl(method.url)) {
-      throw new Error('Unsubscribe URL rejected: non-public address.');
+    // Every redirect hop passes the same public-http(s) check as the first URL.
+    let res: Response;
+    try {
+      res = await fetchWithSafeRedirects(method.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'List-Unsubscribe=One-Click',
+        signal: AbortSignal.timeout(20_000),
+      }, { isAllowedUrl: isSafePublicHttpUrl, maxRedirects: 3 });
+    } catch (error) {
+      if (error instanceof UnsafeRedirectError) throw new Error(`Unsubscribe ${error.message}`);
+      throw error;
     }
-    const res = await fetch(method.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'List-Unsubscribe=One-Click',
-    });
     if (!res.ok) {
-      throw new Error(`Unsubscribe HTTP ${res.status}: ${await res.text()}`);
+      throw new Error(`Unsubscribe HTTP ${res.status}: ${truncateProviderText(await res.text().catch(() => ''), 200)}`);
     }
     return 'httpPost';
   }
@@ -744,9 +815,15 @@ export const AgenticService = {
     }
   },
 
+  /** Call after settings change: stops background drafts for accounts that no longer allow them. */
+  cancelDisallowedBackgroundDrafts(): void {
+    cancelDisallowedBackgroundDrafts();
+  },
+
   async runBackgroundPass(maxThreadsPerAccount = 8): Promise<void> {
     for (const account of AccountsRepo.list()) {
-      const recentThreads = ThreadsRepo.listRecentInbox(account.email, maxThreadsPerAccount);
+      // Inbox scan on the database worker, not the main event loop.
+      const recentThreads = (await databaseWorkerClient.agentPrepInbox(account.email, maxThreadsPerAccount)).threads;
 
       for (const thread of recentThreads) {
         await processThreadInternal(account.email, thread.id);
@@ -851,7 +928,12 @@ export const AgenticService = {
     };
   },
 
-  async unsubscribeThread(accountId: string, threadId: string, sourceMessageId?: string): Promise<{ method: string; archived: boolean; senderEmail: string | null }> {
+  async unsubscribeThread(
+    accountId: string,
+    threadId: string,
+    sourceMessageId?: string,
+    options: { archive?: boolean } = {},
+  ): Promise<{ method: string; archived: boolean; senderEmail: string | null }> {
     const messages = await databaseWorkerClient.listMessagesForThread(accountId, threadId);
     let candidate: UnsubscribeCandidate | null;
     if (sourceMessageId) {
@@ -877,6 +959,9 @@ export const AgenticService = {
     const senderEmail = (candidate.senderEmail || messages[0]?.senderEmail || '').trim().toLowerCase();
     if (senderEmail) {
       UnsubscribedSendersRepo.mark(accountId, senderEmail, { threadId, method });
+    }
+    if (options.archive === false) {
+      return { method, archived: false, senderEmail: senderEmail || null };
     }
     ThreadsRepo.updateLabels(accountId, threadId, [], ['INBOX']);
     await GmailSyncService.modifyLabels(accountId, threadId, [], ['INBOX']);
