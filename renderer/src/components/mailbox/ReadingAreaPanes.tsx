@@ -11,6 +11,7 @@ import {
 import { buildDoneSummary, doneSummaryLines, hasDoneSummaryActivity } from '../../../../shared/doneSummary';
 import { Kbd, KeyHint } from './SectionRows';
 import { boundSectionKeys, actionKeyHints, type ActionKeyHints } from '../../lib/actionKeyHints';
+import { activeSectionJump } from '../../lib/sectionJumpBridge';
 
 function useActionKeyHints(): ActionKeyHints {
   const store = useAppStore();
@@ -67,8 +68,20 @@ export function PreparedPane() {
         <ul className={cardClass} aria-label="Sections">
           {lines.map(line => (
             <li key={line.decision} data-prepared-line={line.decision} className={cardRowClass}>
-              <span className={countClass}>{line.count}</span>
-              <span className="min-w-0 flex-1 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]">{line.text}</span>
+              {/* The line is a link to its section in the list; the key beside it acts on the section. */}
+              <button
+                type="button"
+                title="Show this section in the list"
+                onClick={(event) => {
+                  activeSectionJump()?.jumpTo(line.decision);
+                  // After a pointer click the keyboard goes back to the list.
+                  if (event.detail > 0) event.currentTarget.blur();
+                }}
+                className="-mx-2 -my-2 flex min-w-0 flex-1 cursor-pointer items-center gap-3 self-stretch rounded-[var(--control-radius)] px-2 py-2 text-left hover:bg-[var(--hover-row)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              >
+                <span className={countClass}>{line.count}</span>
+                <span className="min-w-0 flex-1 text-[calc(12px*var(--font-scale))] text-[var(--text-primary)]">{line.text}</span>
+              </button>
               <KeyHint keys={boundSectionKeys(line.keys, hints)} />
             </li>
           ))}
@@ -87,6 +100,7 @@ export function PreparedPane() {
         </p>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11px*var(--font-scale))] text-[var(--text-tertiary)]">
           <HintItem keys={hints.move.keys}>move</HintItem>
+          <HintItem keys={hints.jumpSection.keys}>previous or next section</HintItem>
           <HintItem keys={hints.archive.keys}>archive</HintItem>
           <HintItem keys={hints.later.keys}>later</HintItem>
           <HintItem keys={hints.archiveClearSection.keys}>archive Clear</HintItem>

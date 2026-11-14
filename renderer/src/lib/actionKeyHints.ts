@@ -28,6 +28,8 @@ export interface ActionKeyHints {
   archiveClearSection: ActionKeyHint;
   remindLaterSection: ActionKeyHint;
   moveToSection: ActionKeyHint;
+  /** `[` / `]`: previous / next inbox section. */
+  jumpSection: ActionKeyHint;
   acceptInvite: ActionKeyHint;
   declineInvite: ActionKeyHint;
 }
@@ -62,6 +64,7 @@ export function actionKeyHints(settings: ShortcutSettings): ActionKeyHints {
     archiveClearSection: sc.singleKey ? { keys: ['⇧', 'E'], aria: 'Shift+E' } : NONE,
     remindLaterSection: sc.singleKey ? { keys: ['⇧', 'H'], aria: 'Shift+H' } : NONE,
     moveToSection: single(sc.singleKey, 'V'),
+    jumpSection: sc.singleKey ? { keys: ['[', ']'], aria: '[ ]' } : NONE,
     acceptInvite: single(sc.singleKey, 'Y'),
     declineInvite: single(sc.singleKey, 'N'),
   };

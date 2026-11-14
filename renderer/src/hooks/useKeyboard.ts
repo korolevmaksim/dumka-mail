@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
-import { deriveShortcuts, physicalKeyChar, resolveInviteKey, resolveSectionKey, resolveSingleKey } from '../../../shared/keyboard';
+import { deriveShortcuts, physicalKeyChar, resolveInviteKey, resolveSectionJumpKey, resolveSectionKey, resolveSingleKey } from '../../../shared/keyboard';
 import { threadNeedsInviteAnswer, type InviteAnswer } from '../../../shared/inviteRsvp';
 import { activeReplyDock } from '../lib/replyDockBridge';
+import { activeSectionJump } from '../lib/sectionJumpBridge';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
 import { composeOrConnectAccount } from '../lib/composeOrConnect';
 import { emitToast } from '../lib/toastBus';
@@ -204,6 +205,16 @@ export function useKeyboard(options: KeyboardOptions) {
         currentOptions.onSearchFocus();
         currentStore.setSettingsOpen(false);
         currentStore.setCleanupOpen(false);
+        return;
+      }
+
+      // ] / [: next / previous inbox section. The list jumps; with a
+      // conversation open it only scrolls and the reader is left alone.
+      const sectionJump = resolveSectionJumpKey(e.key, e.code, e, sc);
+      if (sectionJump !== 'none') {
+        if (isTodayWorkspace || currentStore.settingsOpen || !currentStore.sectioned) return;
+        e.preventDefault();
+        activeSectionJump()?.jumpBy(sectionJump === 'nextSection' ? 1 : -1);
         return;
       }
 

@@ -136,6 +136,12 @@ export const SECTION_LABELS: Record<Decision, string> = {
   automated: 'Automated, not sorted',
 };
 
+/** Section names in the jump bar above the list, where width is short; headers keep the full label. */
+export const SECTION_JUMP_LABELS: Record<Decision, string> = {
+  ...SECTION_LABELS,
+  automated: 'Automated',
+};
+
 /** Sections shown as one collapsed row until opened (SPEC §2). */
 export const COLLAPSED_BY_DEFAULT: readonly Decision[] = ['clear', 'unsubscribe'];
 

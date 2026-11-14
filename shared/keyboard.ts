@@ -192,6 +192,31 @@ export function resolveSectionKey(
   return 'none';
 }
 
+/** `]` / `[`: jump to the next / previous inbox section. */
+export type SectionJumpKeyAction = 'nextSection' | 'prevSection' | 'none';
+
+/**
+ * Resolves the bracket keys by physical position first, so they work on
+ * layouts where those keys type a letter; a bracket character typed from
+ * another key counts too, including with `⌥` where the layout needs it
+ * (German: `⌥5` / `⌥6`). Same gating as other single keys; the caller skips
+ * inputs and editors. `⇧[` / `⇧]` (braces) stay unbound.
+ */
+export function resolveSectionJumpKey(
+  key: string,
+  code: string,
+  modifiers: { shiftKey: boolean; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean },
+  r: ResolvedShortcuts,
+): SectionJumpKeyAction {
+  if (!r.singleKey) return 'none';
+  if (modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey) return 'none';
+  if (!modifiers.altKey && code === 'BracketRight') return 'nextSection';
+  if (!modifiers.altKey && code === 'BracketLeft') return 'prevSection';
+  if (key === ']') return 'nextSection';
+  if (key === '[') return 'prevSection';
+  return 'none';
+}
+
 /** Invitation keys (SPEC §3, §9): `Y` accepts, `N` declines. */
 export type InviteKeyAction = 'acceptInvite' | 'declineInvite' | 'none';
 
