@@ -64,6 +64,8 @@ export const APP_KEY_BINDING_IDS = [
   'archiveClearSection',
   'remindLaterSection',
   'moveToSection',
+  'nextSection',
+  'prevSection',
   'acceptInvite',
   'declineInvite',
 ] as const;
@@ -147,6 +149,9 @@ export function appKeymapBindings(settings: ShortcutSettings): AppKeyBinding[] {
     item('sendDraftAlternate', 'Send, then the opposite of “After sending a reply”', 'Compose', '⌘⇧↩'),
     item('moveScroll', 'Move or scroll', 'Navigation', '↑ / ↓'),
     item('vimNavigation', 'Next or previous conversation', 'Navigation', sc.vim ? 'J/K' : null),
+    // Inbox sections: the list jumps, nothing is filtered.
+    item('nextSection', 'Next section', 'Navigation', sc.singleKey ? ']' : null),
+    item('prevSection', 'Previous section', 'Navigation', sc.singleKey ? '[' : null),
   ].filter((binding): binding is AppKeyBinding => binding !== null);
 }
 

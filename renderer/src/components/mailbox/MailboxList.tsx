@@ -18,6 +18,7 @@ import {
 } from './SectionRows';
 import { densityMetrics } from '../../lib/density';
 import { actionKeyHints } from '../../lib/actionKeyHints';
+import { SectionJumpBar } from './SectionJumpBar';
 import {
   buildItemOffsets,
   calculateVariableVirtualWindow,
@@ -27,8 +28,13 @@ import {
   itemIndexForThread,
   listItemHeight,
   listItemMetrics,
+  resolveCurrentSection,
+  sectionJumpDestination,
+  sectionJumpTargets,
   type MailboxListItem,
+  type SectionJumpAnchor,
 } from '../../lib/inboxListItems';
+import { registerSectionJump } from '../../lib/sectionJumpBridge';
 import { isCollapsibleSection, laterSectionActionLabel, planClearBatch } from '../../../../shared/inboxSections';
 import { mailboxEmptyCopy } from '../../../../shared/mailboxEmptyCopy';
 import { MAILBOX_VIEW_LABELS } from '../../../../shared/mailboxNavigation';
@@ -123,8 +129,12 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
   const layoutRef = useRef({ items, offsets, oneLine: metrics.oneLine, viewportHeight: viewport.height });
   layoutRef.current = { items, offsets, oneLine: metrics.oneLine, viewportHeight: viewport.height };
   const pendingScrollTargetRef = useRef<string | null>(null);
+  // A section jump places the list itself and then focuses the section's first
+  // row; that focus change must not scroll again (it would push the header down).
+  const jumpFocusedThreadRef = useRef<string | null>(null);
   useEffect(() => {
-    pendingScrollTargetRef.current = targetThreadId;
+    pendingScrollTargetRef.current = jumpFocusedThreadRef.current === targetThreadId ? null : targetThreadId;
+    jumpFocusedThreadRef.current = null;
   }, [targetThreadId, store.mailboxView]);
   const layoutReady = !isDrafts && items.length > 0 && viewport.height > 0;
   useEffect(() => {
@@ -168,6 +178,74 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
     setViewport(prev => ({ ...prev, scrollTop: next }));
     // `items` so the scroll runs once the expanded rows are laid out.
   }, [expandedGroups, items]);
+
+  // --- Section jump (the bar above the list, `[` / `]`, the Prepared pane) ------
+  const jumpTargets = useMemo(() => (store.sectioned ? sectionJumpTargets(items) : []), [items, store.sectioned]);
+  // Where the last jump left the list; see `resolveCurrentSection` for how long it counts.
+  const [jumpAnchor, setJumpAnchor] = useState<SectionJumpAnchor | null>(null);
+  const targetItemIndex = useMemo(
+    () => (jumpTargets.length > 0 ? itemIndexForThread(items, targetThreadId) : -1),
+    [items, jumpTargets.length, targetThreadId],
+  );
+  const current = resolveCurrentSection({
+    targets: jumpTargets,
+    offsets,
+    scrollTop: viewport.scrollTop,
+    viewportHeight: viewport.height,
+    headerHeight: metrics.sectionHeader,
+    targetItemIndex,
+    targetThreadId,
+    anchor: jumpAnchor,
+  });
+  // A jump counts only until the list scrolls or the keyboard moves. Forget it
+  // then, so coming back to the same position does not bring it back.
+  const anchorExpired = Boolean(jumpAnchor) && !current.anchored;
+  useEffect(() => {
+    if (anchorExpired) setJumpAnchor(null);
+  }, [anchorExpired]);
+
+  const jumpRef = useRef({
+    jumpTo: (_decision: Decision): boolean => false,
+    jumpBy: (_delta: 1 | -1): boolean => false,
+  });
+  const jumpToSection = (decision: Decision): boolean => {
+    const element = listRef.current;
+    const target = jumpTargets.find(candidate => candidate.decision === decision);
+    // A hidden list (the reader replaces it in a narrow window) has no viewport to move.
+    if (!element || !target || viewport.height <= 0) return false;
+    element.scrollTop = Math.max(0, Math.min(offsets.offsets[target.index] ?? 0, element.scrollHeight - element.clientHeight));
+    const scrollTop = element.scrollTop;
+    setViewport(prev => ({ ...prev, scrollTop }));
+    // With a conversation open the list only scrolls: the reader, its draft and
+    // the opened row stay as they are. Otherwise the keyboard lands on the
+    // section's first row (for a collapsed group, on the group row; it stays collapsed).
+    const focusMoves = !store.openedThread && Boolean(target.firstThreadId);
+    if (focusMoves) {
+      store.setHandledRowFocused(false);
+      if (store.focusedThreadId !== target.firstThreadId) {
+        jumpFocusedThreadRef.current = target.firstThreadId;
+        store.setFocusedThreadId(target.firstThreadId);
+      }
+    }
+    setJumpAnchor({ decision, scrollTop, threadId: focusMoves ? target.firstThreadId : targetThreadId });
+    return true;
+  };
+  const jumpBySection = (delta: 1 | -1): boolean => {
+    if (jumpTargets.length === 0 || viewport.height <= 0) return false;
+    // The keys continue from the section the bar marks as current.
+    const destination = sectionJumpDestination(jumpTargets, current.decision, delta, current.atStart);
+    // At the first / last section the key is handled and nothing moves.
+    return destination ? jumpToSection(destination.decision) : true;
+  };
+  jumpRef.current = { jumpTo: jumpToSection, jumpBy: jumpBySection };
+  const hasJumpTargets = jumpTargets.length > 0;
+  useEffect(() => {
+    if (!hasJumpTargets) return;
+    return registerSectionJump({
+      jumpTo: decision => jumpRef.current.jumpTo(decision),
+      jumpBy: delta => jumpRef.current.jumpBy(delta),
+    });
+  }, [hasJumpTargets]);
 
   const virtualWindow = useMemo(() => calculateVariableVirtualWindow({
     index: offsets,
@@ -405,6 +483,14 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+    {!isDrafts && (
+      <SectionJumpBar
+        targets={jumpTargets}
+        current={current.decision}
+        onJump={decision => void jumpToSection(decision)}
+        keysLabel={hints.jumpSection.keys.join(' ') || undefined}
+      />
+    )}
     {head}
     <div
       ref={listRef}

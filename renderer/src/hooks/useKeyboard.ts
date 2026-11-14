@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../stores/AppStore';
-import { deriveShortcuts, physicalKeyChar, resolveInviteKey, resolveSectionKey, resolveSingleKey } from '../../../shared/keyboard';
+import { deriveShortcuts, physicalKeyChar, resolveInviteKey, resolveSectionJumpKey, resolveSectionKey, resolveSingleKey } from '../../../shared/keyboard';
 import { threadNeedsInviteAnswer, type InviteAnswer } from '../../../shared/inviteRsvp';
 import { activeReplyDock } from '../lib/replyDockBridge';
+import { activeSectionJump } from '../lib/sectionJumpBridge';
+import { escapeLayerCount } from './useEscapeLayer';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
 import { composeOrConnectAccount } from '../lib/composeOrConnect';
 import { emitToast } from '../lib/toastBus';
@@ -21,6 +23,16 @@ interface KeyboardOptions {
   /** `Y` / `N` on a thread whose invitation still needs an answer. */
   onAnswerInvite: (thread: MailThread, answer: InviteAnswer) => void;
   onEscape: () => void;
+}
+
+/**
+ * Something is open over the mailbox: a menu or popover (they register an
+ * Escape layer) or a modal dialog (shortcut guide, command palette, confirm
+ * sheets, the move-to-section popover). Not every one of them takes keyboard
+ * focus or stops key propagation, so keys that move the list ask here.
+ */
+function overlayOpen(): boolean {
+  return escapeLayerCount() > 0 || document.querySelector('[role="dialog"][aria-modal="true"]') !== null;
 }
 
 export function useKeyboard(options: KeyboardOptions) {
@@ -204,6 +216,19 @@ export function useKeyboard(options: KeyboardOptions) {
         currentOptions.onSearchFocus();
         currentStore.setSettingsOpen(false);
         currentStore.setCleanupOpen(false);
+        return;
+      }
+
+      // ] / [: next / previous inbox section. The list jumps; with a
+      // conversation open it only scrolls and the reader is left alone.
+      const sectionJump = resolveSectionJumpKey(e.key, e.code, e, sc);
+      if (sectionJump !== 'none') {
+        if (isTodayWorkspace || currentStore.settingsOpen || !currentStore.sectioned) return;
+        // An open menu, popover or dialog owns the screen: the list must not
+        // move or change its focused row behind it.
+        if (overlayOpen()) return;
+        e.preventDefault();
+        activeSectionJump()?.jumpBy(sectionJump === 'nextSection' ? 1 : -1);
         return;
       }
 

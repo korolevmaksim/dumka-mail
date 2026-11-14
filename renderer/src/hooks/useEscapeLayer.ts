@@ -53,7 +53,7 @@ export function pushEscapeLayer(close: () => void): () => void {
   };
 }
 
-/** Number of open layers (tests). */
+/** Number of open layers. Keys that would move the mailbox behind a menu check it. */
 export function escapeLayerCount(): number {
   return layers.length;
 }

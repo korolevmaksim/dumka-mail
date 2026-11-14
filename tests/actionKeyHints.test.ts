@@ -19,6 +19,7 @@ describe('actionKeyHints', () => {
     expect(hints.later.keys).toEqual(['H']);
     expect(hints.move.keys).toEqual(['J', 'K']);
     expect(hints.archiveClearSection.aria).toBe('Shift+E');
+    expect(hints.jumpSection.keys).toEqual(['[', ']']);
   });
 
   it('falls back to the ⌘ alternative, or no key, when single keys are off (Apple Mail mode)', () => {
@@ -31,6 +32,7 @@ describe('actionKeyHints', () => {
     expect(hints.move.keys).toEqual(['↑', '↓']);
     expect(hints.undo.keys).toEqual([]);
     expect(hints.moveToSection.keys).toEqual([]);
+    expect(hints.jumpSection.keys).toEqual([]);
     expect(hintLabel(hints.reply)).toBeUndefined();
     expect(hintLabel(hints.archive)).toBe('⌘⇧E');
   });

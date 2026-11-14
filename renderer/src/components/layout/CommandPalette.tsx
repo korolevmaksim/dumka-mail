@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useAppStore, UNIFIED_ACCOUNT } from '../../stores/AppStore';
 import { Command, Search, X } from 'lucide-react';
 import { composeOrConnectAccount } from '../../lib/composeOrConnect';
+import { activeSectionJump } from '../../lib/sectionJumpBridge';
+import { emitToast } from '../../lib/toastBus';
 import { keymapShortcut, type AppKeyBindingId } from '../../../../shared/appKeymap';
 import { MAILBOX_VIEW_LABELS, nextMailboxView } from '../../../../shared/mailboxNavigation';
 import {
@@ -205,6 +207,20 @@ export function CommandPalette({ isOpen, onClose, onOpenReminder, onOpenMoveToSe
         store.setCleanupOpen(false);
       },
     },
+    ...([['next-section', 'Next section', 'nextSection', 1], ['previous-section', 'Previous section', 'prevSection', -1]] as const)
+      .map(([id, title, binding, delta]): PaletteCommandWithAction => ({
+        id,
+        group: 'navigation',
+        title,
+        shortcut: shortcut(binding),
+        keywords: ['section', 'jump', 'group', 'people', 'reply', 'read', 'event', 'later', 'clear', 'unsubscribe'],
+        action: () => {
+          const jumped = store.workspaceView === 'mail' && !store.settingsOpen && store.sectioned
+            ? activeSectionJump()?.jumpBy(delta)
+            : false;
+          if (!jumped) emitToast({ type: 'info', message: 'Sections are in the Inbox list.' });
+        },
+      })),
     {
       id: 'undo-last-action',
       group: 'mail',

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   deriveShortcuts,
   physicalKeyChar,
+  resolveSectionJumpKey,
   resolveSingleKey,
   ResolvedShortcuts,
 } from '../shared/keyboard';
@@ -183,5 +184,37 @@ describe('resolveSingleKey', () => {
     expect(resolveSingleKey('e', off)).toBe('none');
     expect(resolveSingleKey('/', off)).toBe('none');
     expect(resolveSingleKey('?', off)).toBe('none');
+  });
+});
+
+describe('resolveSectionJumpKey ([ / ])', () => {
+  const on = deriveShortcuts(defaults);
+  const plain = { shiftKey: false, metaKey: false, ctrlKey: false, altKey: false };
+
+  it('maps ] to the next section and [ to the previous one', () => {
+    expect(resolveSectionJumpKey(']', 'BracketRight', plain, on)).toBe('nextSection');
+    expect(resolveSectionJumpKey('[', 'BracketLeft', plain, on)).toBe('prevSection');
+  });
+
+  it('goes by the physical key on layouts where the brackets type letters', () => {
+    expect(resolveSectionJumpKey('ъ', 'BracketRight', plain, on)).toBe('nextSection');
+    expect(resolveSectionJumpKey('х', 'BracketLeft', plain, on)).toBe('prevSection');
+    // German layout: the brackets are ⌥5 / ⌥6, and the bracket keys type ü / +.
+    expect(resolveSectionJumpKey('[', 'Digit5', { ...plain, altKey: true }, on)).toBe('prevSection');
+    expect(resolveSectionJumpKey(']', 'Digit6', { ...plain, altKey: true }, on)).toBe('nextSection');
+  });
+
+  it('leaves braces and modified brackets alone', () => {
+    expect(resolveSectionJumpKey('{', 'BracketLeft', { ...plain, shiftKey: true }, on)).toBe('none');
+    expect(resolveSectionJumpKey(']', 'BracketRight', { ...plain, metaKey: true }, on)).toBe('none');
+    expect(resolveSectionJumpKey('[', 'BracketLeft', { ...plain, ctrlKey: true }, on)).toBe('none');
+    // ⌥ on the bracket keys types a quote mark on a US layout, not a bracket.
+    expect(resolveSectionJumpKey('‘', 'BracketRight', { ...plain, altKey: true }, on)).toBe('none');
+    expect(resolveSectionJumpKey('e', 'KeyE', plain, on)).toBe('none');
+  });
+
+  it('is unbound when single keys are off', () => {
+    expect(resolveSectionJumpKey(']', 'BracketRight', plain, deriveShortcuts(make({ mode: 'appleMail' })))).toBe('none');
+    expect(resolveSectionJumpKey('[', 'BracketLeft', plain, deriveShortcuts(make({ singleKeyShortcuts: false })))).toBe('none');
   });
 });
