@@ -25,6 +25,16 @@ interface KeyboardOptions {
   onEscape: () => void;
 }
 
+/**
+ * Something is open over the mailbox: a menu or popover (they register an
+ * Escape layer) or a modal dialog (shortcut guide, command palette, confirm
+ * sheets, the move-to-section popover). Not every one of them takes keyboard
+ * focus or stops key propagation, so keys that move the list ask here.
+ */
+function overlayOpen(): boolean {
+  return escapeLayerCount() > 0 || document.querySelector('[role="dialog"][aria-modal="true"]') !== null;
+}
+
 export function useKeyboard(options: KeyboardOptions) {
   const store = useAppStore();
 
@@ -214,9 +224,9 @@ export function useKeyboard(options: KeyboardOptions) {
       const sectionJump = resolveSectionJumpKey(e.key, e.code, e, sc);
       if (sectionJump !== 'none') {
         if (isTodayWorkspace || currentStore.settingsOpen || !currentStore.sectioned) return;
-        // An open menu or popover (row context menu, Later, labels, …) owns the
-        // screen: the list must not move or change its focused row behind it.
-        if (escapeLayerCount() > 0) return;
+        // An open menu, popover or dialog owns the screen: the list must not
+        // move or change its focused row behind it.
+        if (overlayOpen()) return;
         e.preventDefault();
         activeSectionJump()?.jumpBy(sectionJump === 'nextSection' ? 1 : -1);
         return;
