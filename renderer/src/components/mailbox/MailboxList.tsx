@@ -409,6 +409,7 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
     <div
       ref={listRef}
       data-mailbox-list={store.mailboxView}
+      style={{ overflowAnchor: 'none' }}
       className="flex flex-1 flex-col overflow-y-auto"
       role={hasRows ? 'list' : undefined}
       aria-label={hasRows ? listLabel : undefined}

@@ -121,3 +121,23 @@ https://updates.example.com/{platform}/feed/{version}
 ```
 
 Electron's built-in updater supports macOS and Windows. Linux builds should be updated through the package manager or installer channel. macOS automatic updates require a signed distribution build.
+
+
+## Mailbox viewport regression checks
+
+Opening an account or a different mailbox starts at the top of that list.
+The mailbox component is scoped to the account and folder so a deep scroll
+offset cannot leak from one mailbox into another. Ordinary sync and model
+updates keep the same viewport; returning from a thread keeps its current list.
+
+A sectioned inbox initializes keyboard focus in visual section order. The
+chronologically newest thread may be an automated message in a lower section
+and must not be selected first by the mail store. Explicit thread opens
+(including notification navigation) and subsequent keyboard focus still scroll
+the target row into view. Browser scroll anchoring is disabled for the virtual
+list so row replacement and changing section heights cannot move the viewport.
+
+Validate with an inbox whose newest thread belongs to collapsed Clear, scroll
+deeply and switch accounts/folders, return to Inbox, and use keyboard navigation.
+`tests/mailboxFocus.test.ts` covers initial focus and viewport identity;
+`tests/variableVirtualList.test.ts` covers explicit target positioning.

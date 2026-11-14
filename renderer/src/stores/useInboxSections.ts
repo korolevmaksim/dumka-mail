@@ -243,9 +243,8 @@ export function useInboxSections({
     setSelectedThreadIds(new Set(sectioned ? selectableThreadIds(mailboxListItems) : visibleThreads.map(thread => thread.id)));
   }, [mailboxListItems, sectioned, setSelectedThreadIds, visibleThreads]);
 
-  // The mail store focuses the newest thread; in sections the first row is
-  // the top of the People/Reply section, and a thread hidden in a collapsed
-  // group is represented by the group row.
+  // Sections choose the initial focus in visual order, not chronological
+  // order. A hidden thread is represented by its collapsed group row.
   useEffect(() => {
     if (!sectioned || openedThread || listNavigationThreads.length === 0) return;
     if (focusedThreadId && listNavigationThreads.some(thread => thread.id === focusedThreadId)) return;

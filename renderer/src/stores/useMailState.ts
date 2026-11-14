@@ -1,3 +1,4 @@
+import { mailboxFocusAfterListUpdate } from '../lib/mailboxFocus';
 import { startTransition, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem, MailboxDelta, NavigationActivity } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
@@ -923,12 +924,9 @@ export function useMailState({
   const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
     startTransition(() => {
       setVisibleThreads(filtered);
-      setFocusedThreadId(prev => {
-        if (prev && filtered.some(thread => thread.id === prev)) return prev;
-        return filtered.length > 0 ? filtered[0].id : null;
-      });
+      setFocusedThreadId(prev => mailboxFocusAfterListUpdate(prev, filtered, mailboxView, searchQuery));
     });
-  }, []);
+  }, [mailboxView, searchQuery]);
 
   // Visible Threads filtering based on Search Query and Split Tabs
   useEffect(() => {

@@ -1,3 +1,4 @@
+import { mailboxListScopeKey } from './lib/mailboxFocus';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore, AppStoreProvider } from './stores/AppStore';
 import { useKeyboard } from './hooks/useKeyboard';
@@ -561,6 +562,7 @@ function AppContent() {
                     )}
                     <MailboxListHeader onOpenCommandPalette={() => setCommandPaletteOpen(true)} />
                     <MailboxList
+                      key={mailboxListScopeKey(store.activeAccount?.id, store.mailboxView)}
                       onThreadContextMenu={(event, thread) => setContextMenu({ x: event.clientX, y: event.clientY, thread })}
                     />
 
