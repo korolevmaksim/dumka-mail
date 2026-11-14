@@ -4,6 +4,7 @@ import { deriveShortcuts, physicalKeyChar, resolveInviteKey, resolveSectionJumpK
 import { threadNeedsInviteAnswer, type InviteAnswer } from '../../../shared/inviteRsvp';
 import { activeReplyDock } from '../lib/replyDockBridge';
 import { activeSectionJump } from '../lib/sectionJumpBridge';
+import { escapeLayerCount } from './useEscapeLayer';
 import { nextMailboxView } from '../../../shared/mailboxNavigation';
 import { composeOrConnectAccount } from '../lib/composeOrConnect';
 import { emitToast } from '../lib/toastBus';
@@ -213,6 +214,9 @@ export function useKeyboard(options: KeyboardOptions) {
       const sectionJump = resolveSectionJumpKey(e.key, e.code, e, sc);
       if (sectionJump !== 'none') {
         if (isTodayWorkspace || currentStore.settingsOpen || !currentStore.sectioned) return;
+        // An open menu or popover (row context menu, Later, labels, …) owns the
+        // screen: the list must not move or change its focused row behind it.
+        if (escapeLayerCount() > 0) return;
         e.preventDefault();
         activeSectionJump()?.jumpBy(sectionJump === 'nextSection' ? 1 : -1);
         return;

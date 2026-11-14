@@ -195,10 +195,15 @@ describe('resolveCurrentSection (what the jump bar marks)', () => {
   const maxScrollTop = total - viewportHeight;
   const headerTop = (decision: string) => offsets.offsets[targets.find(target => target.decision === decision)!.index];
   const firstRow = (decision: string) => targets.find(target => target.decision === decision)!.firstThreadId;
-  const at = (scrollTop: number, extra: Partial<Parameters<typeof resolveCurrentSection>[0]> = {}) => resolveCurrentSection({
+  const resolve = (scrollTop: number, extra: Partial<Parameters<typeof resolveCurrentSection>[0]> = {}) => resolveCurrentSection({
     targets, offsets, scrollTop, viewportHeight, headerHeight: metrics.sectionHeader,
     targetItemIndex: -1, targetThreadId: null, anchor: null, ...extra,
   });
+  /** Section and `atStart` only; `anchored` is asserted where it matters. */
+  const at = (scrollTop: number, extra: Partial<Parameters<typeof resolveCurrentSection>[0]> = {}) => {
+    const { decision, atStart } = resolve(scrollTop, extra);
+    return { decision, atStart };
+  };
 
   it('names the section at the top of the list when the focused row is off screen', () => {
     expect(at(0)).toEqual({ decision: 'people', atStart: true });
@@ -259,9 +264,26 @@ describe('resolveCurrentSection (what the jump bar marks)', () => {
     expect(resolveCurrentSection({
       targets: [], offsets: buildItemOffsets([]), scrollTop: 0, viewportHeight, headerHeight: 30,
       targetItemIndex: -1, targetThreadId: null, anchor,
-    })).toEqual({ decision: null, atStart: false });
+    })).toEqual({ decision: null, atStart: false, anchored: false });
+  });
+
+  it('reports whether the jump still holds, so the list can forget it for good', () => {
+    // Clear jumped to at the end of the list while an Unsubscribe conversation is open.
+    const opened = firstRow('unsubscribe');
+    const openedIndex = itemIndexForThread(items, opened);
+    const anchor = { decision: 'clear' as const, scrollTop: maxScrollTop, threadId: opened };
+    const held = { anchor, targetThreadId: opened, targetItemIndex: openedIndex };
+    expect(resolve(maxScrollTop, held)).toEqual({ decision: 'clear', atStart: true, anchored: true });
+    // Scrolled away: the anchor no longer holds and the caller drops it.
+    expect(resolve(0, held).anchored).toBe(false);
+    // Back at the same position without the anchor: the opened row decides.
+    expect(resolve(maxScrollTop, { ...held, anchor: null })).toEqual({ decision: 'unsubscribe', atStart: true, anchored: false });
+    // Focus moved away: not anchored either, even though the position is the same.
+    expect(resolve(maxScrollTop, { ...held, targetThreadId: firstRow('clear'), targetItemIndex: itemIndexForThread(items, firstRow('clear')) }).anchored).toBe(false);
+    expect(resolve(0).anchored).toBe(false);
   });
 });
+
 
 describe('flat lists', () => {
   it('adds search headers around the top results', () => {

@@ -328,6 +328,12 @@ export interface CurrentSection {
   decision: Decision | null;
   /** The list is already where a jump to this section would put it, so `[` goes to the previous section. */
   atStart: boolean;
+  /**
+   * The answer comes from the jump anchor. Once this is false the caller must
+   * drop the anchor: scrolling away and back to the same position, or moving
+   * focus away and back, must not bring an old jump back.
+   */
+  anchored: boolean;
 }
 
 /**
@@ -337,13 +343,14 @@ export interface CurrentSection {
  *    header cannot reach the top, so the position alone would name another
  *    section. This holds only while nothing moved: same scroll position, same
  *    focused row, and the header still at the top (or the list at its end).
+ *    The first time it does not hold, the caller forgets the anchor.
  * 2. Else the section of the focused / opened row while that row is on screen.
  * 3. Else the section at the top of the list. A header within its own height
  *    of the top counts, so a sliver of the previous section does not win.
  */
 export function resolveCurrentSection(input: CurrentSectionInput): CurrentSection {
   const { targets, offsets, scrollTop, viewportHeight, anchor } = input;
-  if (targets.length === 0) return { decision: null, atStart: false };
+  if (targets.length === 0) return { decision: null, atStart: false, anchored: false };
   const headerTop = (target: SectionJumpTarget) => offsets.offsets[target.index] ?? 0;
   const maxScrollTop = Math.max(0, totalItemsHeight(offsets) - viewportHeight);
 
@@ -352,7 +359,7 @@ export function resolveCurrentSection(input: CurrentSectionInput): CurrentSectio
     && Math.abs(scrollTop - anchor.scrollTop) < 1
     && anchor.threadId === input.targetThreadId
     && (Math.abs(headerTop(anchorTarget) - scrollTop) < 1 || scrollTop >= maxScrollTop - 1)) {
-    return { decision: anchor.decision, atStart: true };
+    return { decision: anchor.decision, atStart: true, anchored: true };
   }
 
   const index = input.targetItemIndex;
@@ -361,6 +368,6 @@ export function resolveCurrentSection(input: CurrentSectionInput): CurrentSectio
     && offsets.offsets[index + 1] > scrollTop;
   const probe = onScreen ? index : itemIndexAt(offsets, scrollTop + Math.max(0, input.headerHeight - 1));
   const target = targets[sectionPositionAt(targets, probe)];
-  if (!target) return { decision: null, atStart: false };
-  return { decision: target.decision, atStart: Math.abs(Math.min(headerTop(target), maxScrollTop) - scrollTop) < 1 };
+  if (!target) return { decision: null, atStart: false, anchored: false };
+  return { decision: target.decision, atStart: Math.abs(Math.min(headerTop(target), maxScrollTop) - scrollTop) < 1, anchored: false };
 }

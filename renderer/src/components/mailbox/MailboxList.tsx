@@ -197,6 +197,12 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
     targetThreadId,
     anchor: jumpAnchor,
   });
+  // A jump counts only until the list scrolls or the keyboard moves. Forget it
+  // then, so coming back to the same position does not bring it back.
+  const anchorExpired = Boolean(jumpAnchor) && !current.anchored;
+  useEffect(() => {
+    if (anchorExpired) setJumpAnchor(null);
+  }, [anchorExpired]);
 
   const jumpRef = useRef({
     jumpTo: (_decision: Decision): boolean => false,
