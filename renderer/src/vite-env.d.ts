@@ -280,6 +280,11 @@ export interface IElectronAPI {
   /** Main-process history backfill progress (`api:backfillProgress`). */
   onBackfillProgress: (callback: (event: MailboxBackfillProgressEvent) => void) => () => void;
   onActionLogChanged: (callback: () => void) => () => void;
+  /** Scheduled messages held because their time was missed; each is handed over once. */
+  takeHeldScheduledSends: () => Promise<import('../../shared/scheduledSend').HeldScheduledSend[]>;
+  onScheduledSendHeld: (callback: () => void) => () => void;
+  getLoginItemState: () => Promise<import('../../shared/loginItem').LoginItemState>;
+  setLaunchAtLogin: (enabled: boolean) => Promise<import('../../shared/loginItem').LoginItemState>;
   onGoogleAuthStateChanged: (callback: (change: GoogleAuthStateChange) => void) => () => void;
   onAutoUpdateStatus: (callback: (status: AutoUpdateStatus) => void) => () => void;
   getPendingOpenThread: () => Promise<{ accountId: string; threadId: string } | null>;

@@ -16,6 +16,8 @@ import { createSnippetTemplateId } from '../../../../../shared/snippets';
 import { APP_LANGUAGES, createTranslator } from '../../../../../shared/i18n';
 import type { AppLanguage, TranslationKey } from '../../../../../shared/i18n';
 import type { ComposeSignatureSettings, ShortcutSettings, SnippetTemplate } from '../../../../../shared/types';
+import { LOGIN_ITEM_DESCRIPTION, type LoginItemState } from '../../../../../shared/loginItem';
+import { LATE_SCHEDULED_SEND_GRACE_MS } from '../../../../../shared/scheduledSend';
 
 export function AccountsTab() {
   const store = useAppStore();
@@ -183,6 +185,20 @@ export function GeneralTab() {
     pseudo: 'settings.general.language.pseudo',
   };
 
+  const [loginItem, setLoginItem] = useState<LoginItemState | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.getLoginItemState().then(state => {
+      if (!cancelled) setLoginItem(state);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  const toggleLaunchAtLogin = (enabled: boolean) => {
+    void window.electronAPI.setLaunchAtLogin(enabled)
+      .then(setLoginItem)
+      .catch(error => console.error('Failed to change the login item:', error));
+  };
+
   useEffect(() => {
     let cancelled = false;
     void window.electronAPI.getSystemDownloadsPath().then(path => {
@@ -325,6 +341,34 @@ export function GeneralTab() {
             />
           </div>
         ))}
+
+        <div className="flex items-center justify-between gap-3 py-0.5" data-setting="showUnreadBadge">
+          <div className="flex flex-col gap-0.5">
+            <span id="general-unread-badge" className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.showUnreadBadge.title')}</span>
+            <span id="general-unread-badge-desc" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{t('settings.general.showUnreadBadge.description')}</span>
+          </div>
+          <Toggle
+            checked={store.settings.general.showUnreadBadge !== false}
+            onChange={(val) => store.updateSettings(s => { s.general.showUnreadBadge = val; })}
+            ariaLabelledBy="general-unread-badge"
+            ariaDescribedBy="general-unread-badge-desc"
+          />
+        </div>
+
+        {/* The switch shows what the system says, not a stored preference. */}
+        <div className="flex items-center justify-between gap-3 py-0.5" data-setting="launchAtLogin" data-login-item-state={loginItem ? (loginItem.supported ? (loginItem.needsApproval ? 'needs-approval' : loginItem.enabled ? 'on' : 'off') : 'unsupported') : 'loading'}>
+          <div className="flex flex-col gap-0.5">
+            <span id="general-launch-at-login" className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">{t('settings.general.launchAtLogin.title')}</span>
+            <span id="general-launch-at-login-desc" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">{loginItem?.note ?? LOGIN_ITEM_DESCRIPTION}</span>
+          </div>
+          <Toggle
+            checked={Boolean(loginItem?.enabled || loginItem?.needsApproval)}
+            disabled={!loginItem?.supported}
+            onChange={toggleLaunchAtLogin}
+            ariaLabelledBy="general-launch-at-login"
+            ariaDescribedBy="general-launch-at-login-desc"
+          />
+        </div>
       </div>
     </div>
   );
@@ -590,6 +634,25 @@ export function ComposeTab() {
               const val = Math.max(0, Math.min(30, parseInt(e.target.value) || 0));
               store.updateSettings(s => { s.compose.sendUndoDelay = val; });
             }}
+          />
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
+        <div className="flex items-center justify-between gap-3" data-setting="holdLateScheduledSends">
+          <div className="flex flex-col gap-0.5">
+            <span id="compose-hold-late-sends" className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Hold a scheduled message that is late</span>
+            <span id="compose-hold-late-sends-desc" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
+              {store.settings.compose.holdLateScheduledSends !== false
+                ? `On: a message more than ${Math.round(LATE_SCHEDULED_SEND_GRACE_MS / 60000)} minutes past its time (the app was closed or the Mac asleep) returns to Drafts and you decide`
+                : 'Off: a scheduled message is sent as soon as the app can, however late'}
+            </span>
+          </div>
+          <Toggle
+            checked={store.settings.compose.holdLateScheduledSends !== false}
+            onChange={(val) => store.updateSettings(s => { s.compose.holdLateScheduledSends = val; })}
+            ariaLabelledBy="compose-hold-late-sends"
+            ariaDescribedBy="compose-hold-late-sends-desc"
           />
         </div>
 

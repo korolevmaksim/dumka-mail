@@ -953,6 +953,8 @@ export interface GeneralSettings {
   openLinksInBackground: boolean;
   confirmBeforeQuitting: boolean;
   keepDraftsAcrossLaunches: boolean;
+  /** Unread mail you would be notified about, as a number on the app icon. Absent in older settings: on. */
+  showUnreadBadge?: boolean;
   /**
    * Absolute path for attachment downloads. Empty string means the OS Downloads
    * folder (`app.getPath('downloads')` on the main process).
@@ -1193,6 +1195,11 @@ export interface ComposeSettings {
   smartCompose: boolean;
   alwaysReplyAll: boolean;
   sendUndoDelay: number;
+  /**
+   * A scheduled message whose time was missed by more than half an hour goes
+   * back to Drafts instead of out (`shared/scheduledSend.ts`). Absent in older settings: on.
+   */
+  holdLateScheduledSends?: boolean;
   defaultFontSize: 'compact' | 'normal' | 'large';
   /** What `⌘↩` does with a reply's thread once it is sent; `⌘⇧↩` does the opposite. */
   afterSend: ComposeAfterSend;

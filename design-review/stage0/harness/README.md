@@ -25,3 +25,4 @@ node design-review/stage0/harness/measure.mjs my-run 10        # замеры о
 
 Переменные: `DR_OAUTH=0` (без файла OAuth-клиента), `DR_AI=1`, `DR_THEME=dark|light` (иначе тема берётся из системы), `DR_BIG_INBOX=3000`, `DR_WORK_BULK`, `DR_HOME_BULK`.
 Управление на лету: `POST http://127.0.0.1:9334/state` с `{"offline":true}`, `{"failGmailStatus":500}`, `{"aiFail":true}`.
+`POST http://127.0.0.1:9334/badge` возвращает число, которое приложение показало на своём значке (счётчик непрочитанных).

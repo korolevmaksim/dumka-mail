@@ -357,6 +357,92 @@ describe('reconcilePendingActions send-like kinds', () => {
     expect(h.rollbacks).toHaveLength(0);
   });
 
+  // Send later, when the time was missed (shared/scheduledSend.ts). NOW is 12:00.
+  describe('a scheduled message that is late', () => {
+    const draft = { accountId: 'me@example.com', subject: 'Quarterly numbers' };
+    function lateHarness(payload: Record<string, unknown>, hold: boolean | 'notConfigured' = true) {
+      const h = makeDeps({
+        pending: [makeAction({ kind: 'send', draftId: 'd1', payloadJson: JSON.stringify(payload) })],
+        drafts: { d1: draft },
+      });
+      const released: string[] = [];
+      const held: Array<{ id: string; sendAt: string; draft: unknown }> = [];
+      if (hold !== 'notConfigured') h.deps.holdLateScheduledSends = () => hold;
+      h.deps.releaseScheduledDraft = draftId => { released.push(draftId); };
+      h.deps.onScheduledSendHeld = (action, info) => { held.push({ id: action.id, ...info }); };
+      return { ...h, released, held };
+    }
+    const sent = (h: DepsHarness) => h.gmailCalls.filter(call => call.method === 'sendDraft');
+
+    it('is held: nothing is sent, the draft is released and the action says why', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z' });
+      await reconcilePendingActions(h.deps);
+      expect(sent(h)).toHaveLength(0);
+      expect(h.released).toEqual(['d1']);
+      expect(h.draftsDeleted).toEqual([]);
+      const last = h.saved[h.saved.length - 1];
+      expect(last.status).toBe('failed');
+      expect(last.failureMessage).toMatch(/scheduled for 2026-07-04T09:00:00.000Z/);
+      expect(h.held).toEqual([{ id: 'a1', sendAt: '2026-07-04T09:00:00.000Z', draft }]);
+      expect(h.rollbacks).toHaveLength(0);
+    });
+
+    it('still goes out within the grace period', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T11:40:00.000Z' });
+      await reconcilePendingActions(h.deps);
+      expect(sent(h)).toHaveLength(1);
+      expect(h.released).toEqual([]);
+      expect(h.held).toEqual([]);
+      expect(h.saved[h.saved.length - 1].status).toBe('completed');
+    });
+
+    it('is sent however late when holding is switched off or not configured', async () => {
+      for (const hold of [false, 'notConfigured'] as const) {
+        const h = lateHarness({ sendAt: '2026-07-01T09:00:00.000Z' }, hold);
+        await reconcilePendingActions(h.deps);
+        expect(sent(h)).toHaveLength(1);
+        expect(h.held).toEqual([]);
+      }
+    });
+
+    it('never holds a message from the undo-send window or one sent without a time', async () => {
+      for (const payload of [{ sendAt: '2026-07-04T09:00:00.000Z', undoSend: true }, {}]) {
+        const h = lateHarness(payload);
+        await reconcilePendingActions(h.deps);
+        expect(sent(h)).toHaveLength(1);
+        expect(h.held).toEqual([]);
+      }
+    });
+
+    it('is completed, not held, when Gmail already has it', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z', rfcMessageId: '<id@dumka-mail.local>' });
+      h.deps.gmail.findMessageByRfcId = async () => 'gmail-msg-1';
+      await reconcilePendingActions(h.deps);
+      expect(sent(h)).toHaveLength(0);
+      expect(h.held).toEqual([]);
+      expect(h.released).toEqual([]);
+      expect(h.draftsDeleted).toEqual(['d1']);
+      expect(h.saved[h.saved.length - 1].status).toBe('completed');
+    });
+
+    it('waits, neither sent nor held, while Gmail cannot say whether it already went out', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z', rfcMessageId: '<id@dumka-mail.local>' });
+      h.deps.gmail.findMessageByRfcId = async () => { throw NETWORK_ERROR; };
+      await reconcilePendingActions(h.deps);
+      expect(sent(h)).toHaveLength(0);
+      expect(h.held).toEqual([]);
+      expect(h.saved[h.saved.length - 1].status).toBe('pending_sync');
+    });
+
+    it('a failing hook does not undo the hold or stop the pass', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z' });
+      h.deps.onScheduledSendHeld = () => { throw new Error('window gone'); };
+      await expect(reconcilePendingActions(h.deps)).resolves.toBeUndefined();
+      expect(sent(h)).toHaveLength(0);
+      expect(h.saved[h.saved.length - 1].status).toBe('failed');
+    });
+  });
+
   it('skips a send that already landed under the same Message-ID', async () => {
     const draft = { accountId: 'me@example.com', subject: 'hi', rfcMessageId: '<id@dumka-mail.local>' };
     const h = makeDeps({

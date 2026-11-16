@@ -34,6 +34,7 @@ import { UnsubscribeConfirmSheet } from './components/UnsubscribeConfirmSheet';
 import { NARROW_MAIL_LAYOUT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
 import { useInviteRsvp } from './hooks/useInviteRsvp';
 import { useNoReplyReminders } from './hooks/useNoReplyReminders';
+import { useHeldScheduledSends } from './hooks/useHeldScheduledSends';
 import { ThreadReader, type ThreadFindState } from './components/reader/ThreadReader';
 import { CalendarWorkspace } from './calendar/CalendarWorkspace';
 import { emitToast } from './lib/toastBus';
@@ -53,6 +54,7 @@ function AppContent() {
   const store = useAppStore();
   const inviteRsvp = useInviteRsvp();
   useNoReplyReminders();
+  useHeldScheduledSends();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutGuideOpen, setShortcutGuideOpen] = useState(false);
   const [reminderTargetThread, setReminderTargetThread] = useState<MailThread | null>(null);

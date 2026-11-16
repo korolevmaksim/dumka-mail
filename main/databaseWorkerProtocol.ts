@@ -20,6 +20,7 @@ export type DatabaseWorkerPayload =
   | { type: 'saveThreads'; threads: MailThread[] }
   | { type: 'listThreads'; accountIds: string[] }
   | { type: 'countInboxThreads'; accountIds: string[]; nowIso: string }
+  | { type: 'unreadInboxThreads'; accountId: string; nowIso: string; limit: number }
   | { type: 'listMessagesForThread'; accountId: string; threadId: string }
   | { type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
   | { type: 'recentSenderMessages'; accountId: string; senderEmail: string; limit: number }

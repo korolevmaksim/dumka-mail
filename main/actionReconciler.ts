@@ -5,6 +5,7 @@ import type { ActionKind, MailActionLog, MailRuleAction, MailThread } from '../s
 import { createRfcMessageId, resolveActionRfcMessageId } from '../shared/rfcMessageId';
 import { replyDraftPlaceholderValidationMessage } from '../shared/replyPipeline';
 import { isGoogleReauthorizationRequiredError } from './googleAuthState';
+import { heldScheduledSendFailure, lateScheduledSendAt } from '../shared/scheduledSend';
 
 export interface ReconcilerDeps {
   actionLog: {
@@ -40,6 +41,15 @@ export interface ReconcilerDeps {
   validateAgentProposalReplay?: (action: MailActionLog, payload: Record<string, unknown>) => void;
   /** After an action failed permanently and its local change was rolled back. */
   onPermanentFailure?: (action: MailActionLog) => void;
+  /**
+   * True while a scheduled message that is too late must be held instead of
+   * sent (`shared/scheduledSend.ts`). Absent: every due message is sent.
+   */
+  holdLateScheduledSends?: () => boolean;
+  /** Turns a held message back into an ordinary draft (clears its send time). */
+  releaseScheduledDraft?: (draftId: string) => void;
+  /** A scheduled message was held: `sendAt` is the time the person chose. */
+  onScheduledSendHeld?: (action: MailActionLog, held: { sendAt: string; draft: unknown }) => void;
   shouldDeferAccount?: (accountId: string) => boolean;
   onActionLogChanged?: () => void;
   createRfcMessageId?: () => string;
@@ -209,6 +219,25 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
             : null;
           const rfcMessageId = persistActionRfcMessageId(action, payload, deps, draftRfcMessageId);
           if (await completeIfAlreadySent(action, rfcMessageId, deps, now, logger)) continue;
+          // Checked only after Gmail confirmed the message is not there yet: a
+          // scheduled message whose time passed long ago (the app was closed,
+          // the Mac asleep, Gmail unreachable) is not sent behind the person's
+          // back. It returns to Drafts and they decide.
+          const lateSince = deps.holdLateScheduledSends?.() ? lateScheduledSendAt(payload, now()) : null;
+          if (lateSince) {
+            deps.releaseScheduledDraft?.(action.draftId);
+            action.status = 'failed';
+            action.completedAt = now().toISOString();
+            action.failureMessage = heldScheduledSendFailure(lateSince);
+            deps.actionLog.save(action);
+            logger.log(`[Sync Worker] Held scheduled send ${action.id}: it was due ${lateSince}.`);
+            try {
+              deps.onScheduledSendHeld?.(action, { sendAt: lateSince, draft });
+            } catch (hookError) {
+              logger.error('[Sync Worker] Held-send hook failed:', hookError);
+            }
+            continue;
+          }
           await deps.gmail.sendDraft(action.accountId, { ...draft as object, rfcMessageId });
           try {
             deps.onDraftSent?.(action.accountId, action.draftId);

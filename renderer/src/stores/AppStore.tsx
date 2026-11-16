@@ -116,6 +116,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openLinksInBackground: true,
     confirmBeforeQuitting: true,
     keepDraftsAcrossLaunches: true,
+    showUnreadBadge: true,
     attachmentDownloadFolder: '',
   },
   inbox: {
@@ -156,6 +157,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     smartCompose: true,
     alwaysReplyAll: false,
     sendUndoDelay: 10,
+    holdLateScheduledSends: true,
     defaultFontSize: 'normal',
     afterSend: 'archive',
   },

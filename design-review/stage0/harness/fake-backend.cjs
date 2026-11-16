@@ -94,7 +94,9 @@ function createBackend({ logDir, now = Date.now(), workBulk, homeBulk, bigInbox 
 
   const emailForAuth = init => {
     const headers = init?.headers || {};
-    const raw = headers.Authorization || headers.authorization || '';
+    // Interactive Gmail requests (archive, trash, send) pass a `Headers`
+    // object, the rest a plain one.
+    const raw = (typeof headers.get === 'function' ? headers.get('authorization') : headers.Authorization || headers.authorization) || '';
     const token = String(raw).replace(/^Bearer\s+/i, '');
     return tokens.get(token) || null;
   };

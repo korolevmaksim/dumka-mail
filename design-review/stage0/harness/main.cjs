@@ -151,6 +151,8 @@ http.createServer((req, res) => {
       return reply({ ...backend.state, revokeAccounts: Array.from(backend.state.revokeAccounts), blocked: backend.state.blocked.slice(-20) });
     }
     if (url.pathname === '/inject') return reply({ threadIds: backend.injectMail(body.email, body.spec) });
+    // The unread number the app put on its icon (it cannot be read from a screenshot).
+    if (url.pathname === '/badge') return reply({ badge: app.getBadgeCount() });
     if (url.pathname === '/quit') { reply({ ok: true }); setTimeout(() => app.quit(), 100); return undefined; }
     return reply({ ok: false, error: 'unknown control path' });
   });

@@ -46,6 +46,9 @@ export type TranslationKey =
   | 'settings.general.openLinksInBackground.description'
   | 'settings.general.confirmBeforeQuitting.title'
   | 'settings.general.confirmBeforeQuitting.description'
+  | 'settings.general.launchAtLogin.title'
+  | 'settings.general.showUnreadBadge.title'
+  | 'settings.general.showUnreadBadge.description'
   | 'settings.general.keepDraftsAcrossLaunches.title'
   | 'settings.general.keepDraftsAcrossLaunches.description'
   | 'settings.general.attachmentDownloadFolder.title'
@@ -116,6 +119,9 @@ const ENGLISH: Record<TranslationKey, string> = {
   'settings.general.openLinksInBackground.description': 'Prevent browser focus stealing',
   'settings.general.confirmBeforeQuitting.title': 'Confirm Before Quitting',
   'settings.general.confirmBeforeQuitting.description': 'Prompt before closing process',
+  'settings.general.launchAtLogin.title': 'Open at login',
+  'settings.general.showUnreadBadge.title': 'Unread count on the app icon',
+  'settings.general.showUnreadBadge.description': 'Unread mail you would be notified about, following each account’s Notifications setting',
   'settings.general.keepDraftsAcrossLaunches.title': 'Restore Drafts on Launch',
   'settings.general.keepDraftsAcrossLaunches.description': 'Save unsent composer details locally',
   'settings.general.attachmentDownloadFolder.title': 'Attachment Download Folder',
