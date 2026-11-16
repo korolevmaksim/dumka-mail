@@ -30,7 +30,8 @@ import type { DecisionPromptItem, DecisionBatchParseResult } from '../shared/age
 // model is used only when the user asks: a summary, a reply draft, the chat.
 // Failures are logged with provider, status code and a truncated message
 // only — never mail text or keys.
-import { resolveAccountSetting, normalizeAccountId, type AccountSettingsSource } from '../shared/accountSettings';
+import { getSenderSections, resolveAccountSetting, normalizeAccountId, type AccountSettingsSource } from '../shared/accountSettings';
+import type { DecisionContext } from '../shared/decision';
 import { resolveAIModelForPurpose, resolveBackgroundModelRoute, type AIModelPurpose } from '../shared/aiModelPurpose';
 import { isAIProviderPreference } from '../shared/aiProviderPreference';
 import { isConfigurableAIProvider } from '../shared/aiProviders';
@@ -92,6 +93,11 @@ export interface StoredAgentSettings {
   } | null;
   accountDefaults?: AccountSettingsSource['accountDefaults'];
   accountOverrides?: AccountSettingsSource['accountOverrides'];
+}
+
+/** The rule-layer context of an account: its address and the sender sections the person set. */
+function decisionContextFor(settings: StoredAgentSettings, accountId: string): DecisionContext {
+  return { accountEmail: accountId, senderSections: getSenderSections(settings, accountId) };
 }
 
 export interface TextCompletionRequest {
@@ -376,6 +382,11 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
 
   // --- Gate ------------------------------------------------------------------------
 
+  /** Read per pass: a sender section set meanwhile applies to the next batch. */
+  function decisionContext(accountId: string): DecisionContext {
+    return decisionContextFor(deps.readSettings(), accountId);
+  }
+
   function mayReadMail(accountId: string): boolean {
     return modelMayReadMail(deps.readSettings(), accountId);
   }
@@ -530,7 +541,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
 
       const snapshot = await deps.inboxSnapshot(accountId, INBOX_SCAN_LIMIT);
       if (run.controller.signal.aborted) break;
-      const candidates = selectDecisionWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions.filter(record => record.source !== 'model' || sortingCacheMatches(record.model, config))), { accountEmail: accountId }, {
+      const candidates = selectDecisionWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions.filter(record => record.source !== 'model' || sortingCacheMatches(record.model, config))), decisionContext(accountId), {
         limit: DECISION_BATCH_SIZE,
         skip: attemptedDecisions,
       });
@@ -730,7 +741,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     if (run.controller.signal.aborted) return 0;
     const userDraftThreads = deps.userDraftThreadIds(accountId);
     const work = selectDraftWorkList(snapshot.threads, indexDecisionRecords(snapshot.decisions.filter(record => record.source !== 'model'
-      || sortingCacheMatches(record.model, sortingConfig(deps.readSettings().ai)))), { accountEmail: accountId }, {
+      || sortingCacheMatches(record.model, sortingConfig(deps.readSettings().ai)))), decisionContext(accountId), {
       limit: DRAFT_BATCH_SIZE,
       hasPreparedDraft: (_threadId, lastMessageId) => deps.hasAgentDraftForMessage(accountId, lastMessageId),
       hasUserDraft: threadId => userDraftThreads.has(threadId),

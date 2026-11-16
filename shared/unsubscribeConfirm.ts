@@ -2,9 +2,12 @@
 // an external, irreversible action: it only runs after explicit confirmation,
 // and the toast's Undo only reverses the optional archive.
 
-import { decideByRules, isDecisionRecordCurrent } from './decision';
+import { decideByRules, isDecisionRecordCurrent, senderSectionForThread } from './decision';
 import type { ThreadDecisionMap } from './inboxSections';
-import type { MailThread, UnsubscribeCandidate, UnsubscribeMethod } from './types';
+import type { MailThread, SenderSection, UnsubscribeCandidate, UnsubscribeMethod } from './types';
+
+/** The sender sections of an account (`getSenderSections`). */
+export type SenderSectionLookup = (accountId: string) => readonly SenderSection[];
 
 export interface UnsubscribeTarget {
   accountId: string;
@@ -53,12 +56,21 @@ const ARCHIVABLE_AFTER_UNSUBSCRIBE = new Set(['clear', 'unsubscribe']);
 /**
  * Whether "Also archive their messages" may archive this thread: the
  * deterministic decision is `clear` or `unsubscribe` and not protected (never
- * a person, a security notice or an invitation), and no current user
- * correction moved the thread to another section.
+ * a person, a security notice or an invitation), no current user correction
+ * moved the thread to another section, and the person does not always sort
+ * this sender into a section other than Clear.
  */
-export function isArchivableAfterUnsubscribe(thread: MailThread, decisions?: ThreadDecisionMap | null): boolean {
+export function isArchivableAfterUnsubscribe(
+  thread: MailThread,
+  decisions?: ThreadDecisionMap | null,
+  senderSections?: SenderSectionLookup | null,
+): boolean {
   const rule = decideByRules(thread, { accountEmail: thread.accountId });
   if (rule.protected || !ARCHIVABLE_AFTER_UNSUBSCRIBE.has(rule.decision)) return false;
+  const section = senderSections
+    ? senderSectionForThread(thread, { accountEmail: thread.accountId, senderSections: senderSections(thread.accountId) })
+    : null;
+  if (section && section.section !== 'clear') return false;
   const user = decisions?.[thread.accountId]?.[thread.id]?.user;
   if (user) {
     const lastMessageId = thread.signals?.lastMessageId || null;
@@ -84,6 +96,7 @@ export function planArchiveAfterUnsubscribe(
   threads: readonly MailThread[],
   unsubscribed: readonly UnsubscribeTarget[],
   decisions?: ThreadDecisionMap | null,
+  senderSections?: SenderSectionLookup | null,
 ): UnsubscribeArchivePlan {
   const senders = new Set(unsubscribed.map(target => senderKey(target.accountId, target.senderEmail)));
   const sourceThreads = new Set(unsubscribed.map(target => `${target.accountId.trim().toLowerCase()}:${target.threadId}`));
@@ -96,7 +109,7 @@ export function planArchiveAfterUnsubscribe(
     if (seen.has(key)) continue;
     if (!senders.has(senderKey(thread.accountId, thread.senderEmail)) && !sourceThreads.has(key)) continue;
     seen.add(key);
-    if (isArchivableAfterUnsubscribe(thread, decisions)) selected.push(thread);
+    if (isArchivableAfterUnsubscribe(thread, decisions, senderSections)) selected.push(thread);
     else keptInInbox += 1;
   }
   return { threads: selected, keptInInbox };

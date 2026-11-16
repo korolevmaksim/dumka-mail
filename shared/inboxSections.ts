@@ -4,7 +4,7 @@
 // the suggested Later time. No React / Electron imports.
 import {
   applyUserCorrection,
-  decideByRules,
+  decideWithSenderSections,
   isBatchEligible,
   isDecision,
   normalizeDecisionReason,
@@ -62,7 +62,7 @@ export function resolveInboxDecision(
   if (user) {
     if (isDecisionRecordCurrent(user, lastMessageId)) return resolveThreadDecision(thread, context, user);
     if (!user.lastMessageId && !lastMessageId) {
-      return applyUserCorrection(decideByRules(thread, context), user.decision, { laterAt: user.laterAt, reason: user.reason });
+      return applyUserCorrection(decideWithSenderSections(thread, context), user.decision, { laterAt: user.laterAt, reason: user.reason });
     }
   }
   return resolveThreadDecision(thread, context, stored?.model || null);

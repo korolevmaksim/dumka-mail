@@ -5,10 +5,12 @@
 //   none   → never notify for this account
 //   all    → as before (only the global filters apply)
 //   people → only when the rule layer decides `people`, `event`, or a
-//            protected `read` (security notices)
-import { decideByRules, type DecisionThread } from './decision';
+//            protected `read` (security notices). The account's sender
+//            sections count: a sender the person marked as a person notifies,
+//            one they always sort into another section does not.
+import { decideWithSenderSections, type DecisionThread } from './decision';
 import { computeThreadSignals } from './threadSignals';
-import { normalizeAccountId, resolveAccountSetting, type AccountSettingsSource } from './accountSettings';
+import { getSenderSections, normalizeAccountId, resolveAccountSetting, type AccountSettingsSource } from './accountSettings';
 import type { AccountNotificationMode, MailMessage, ThreadDecision } from './types';
 
 export function decisionWarrantsNotification(mode: AccountNotificationMode, decision: Pick<ThreadDecision, 'decision' | 'protected'>): boolean {
@@ -44,5 +46,8 @@ export function shouldNotifyForAccount(message: NotificationMessage, settings: A
   const accountEmail = normalizeAccountId(message.accountId);
   const { value: mode } = resolveAccountSetting(settings, accountEmail, 'notifications');
   if (mode !== 'people') return mode === 'all';
-  return decisionWarrantsNotification(mode, decideByRules(decisionThreadForMessage(message, accountEmail), { accountEmail }));
+  return decisionWarrantsNotification(mode, decideWithSenderSections(
+    decisionThreadForMessage(message, accountEmail),
+    { accountEmail, senderSections: getSenderSections(settings, accountEmail) },
+  ));
 }

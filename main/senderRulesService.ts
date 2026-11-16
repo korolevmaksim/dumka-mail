@@ -17,7 +17,7 @@ import crypto from 'crypto';
 import { ActionLogRepo, SettingsRepo, ThreadsRepo } from './database';
 import { SenderRulesRepo } from './senderRulesRepository';
 import { isRetryableRemoteError } from './actionReconciler';
-import { getSenderRules, normalizeAccountId, normalizeAccountOverrides, resolveAccountSetting, type AccountSettingsSource } from '../shared/accountSettings';
+import { getSenderRules, getSenderSections, normalizeAccountId, normalizeAccountOverrides, resolveAccountSetting, type AccountSettingsSource } from '../shared/accountSettings';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
 import {
   isSenderRuleActionPayload,
@@ -26,6 +26,7 @@ import {
   senderRuleActionPayload,
   senderRuleIdFromPayload,
 } from '../shared/senderRules';
+import { findSenderSection } from '../shared/senderSections';
 import type { MailActionLog, MailMessage, MailThread, SenderRule, SenderRulesChangedEvent } from '../shared/types';
 
 export interface SenderRulesServiceDeps {
@@ -215,6 +216,9 @@ export const SenderRulesService = {
       rules,
       autonomy: resolveAccountSetting(settings, accountId, 'agentAutonomy').value,
       hasUserCorrection: false,
+      // Enforced here as well as in settings (choosing a section switches the
+      // rule off): mail the person sorts into a section is never archived.
+      hasSenderSection: findSenderSection(getSenderSections(settings, accountId), thread.senderEmail) !== null,
       newestArrivalAt,
     };
     // Cheap checks first; the database lookups only run for a candidate.
@@ -359,7 +363,7 @@ export const SenderRulesService = {
       : { ...thread, labelIds: [...thread.labelIds, 'INBOX'] };
     const match = this.ruleFor(asInbox, archive.archivedAt, settings);
     if (!match || match.id !== ruleId) {
-      return 'The conversation no longer qualifies (a person, a protected notice or invitation, a correction, or bring-backs).';
+      return 'The conversation no longer qualifies (a person, a protected notice or invitation, a correction, a sender section, or bring-backs).';
     }
     return null;
   },

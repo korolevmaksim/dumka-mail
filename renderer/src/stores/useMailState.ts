@@ -45,6 +45,7 @@ import {
   isArchivableAfterUnsubscribe,
   planArchiveAfterUnsubscribe,
   unsubscribeOutcomeFeedback,
+  type SenderSectionLookup,
   type UnsubscribeTarget,
 } from '../../../shared/unsubscribeConfirm';
 import type { ThreadDecisionMap } from '../../../shared/inboxSections';
@@ -1789,7 +1790,7 @@ export function useMailState({
   // normal batch path so the toast's Undo restores only the archive.
   const unsubscribeSenders = async (
     targets: UnsubscribeTarget[],
-    options: { archive: boolean; decisions?: ThreadDecisionMap },
+    options: { archive: boolean; decisions?: ThreadDecisionMap; senderSections?: SenderSectionLookup },
   ): Promise<void> => {
     if (targets.length === 0) return;
     const succeeded: UnsubscribeTarget[] = [];
@@ -1817,14 +1818,14 @@ export function useMailState({
     if (options.archive && succeeded.length > 0) {
       // Only clear / unsubscribe threads that are not protected: a person, a
       // security notice or an invitation from the same address stays put.
-      const plan = planArchiveAfterUnsubscribe(threadsRef.current, succeeded, options.decisions);
+      const plan = planArchiveAfterUnsubscribe(threadsRef.current, succeeded, options.decisions, options.senderSections);
       keptInInbox = plan.keptInInbox;
       // Re-checked against the latest cached threads right at the batch boundary.
       const latest = new Map(threadsRef.current.map(thread => [`${thread.accountId}:${thread.id}`, thread]));
       const archiveIds = plan.threads
         .filter(thread => {
           const current = latest.get(`${thread.accountId}:${thread.id}`);
-          return Boolean(current) && isArchivableAfterUnsubscribe(current!, options.decisions);
+          return Boolean(current) && isArchivableAfterUnsubscribe(current!, options.decisions, options.senderSections);
         })
         .map(thread => thread.id);
       keptInInbox += plan.threads.length - archiveIds.length;

@@ -81,7 +81,11 @@ export function ThreadReader({ thread, readerReplacesList, find, onOpenReminder,
     [messages, messagesReady, thread.accountId],
   );
   const decision = store.sectionOfThread(thread)
-    ?? resolveInboxDecision(thread, { accountEmail: thread.accountId }, store.threadDecisions[thread.accountId]?.[thread.id]).decision;
+    ?? resolveInboxDecision(
+      thread,
+      { accountEmail: thread.accountId, senderSections: store.senderSectionsFor(thread.accountId) },
+      store.threadDecisions[thread.accountId]?.[thread.id],
+    ).decision;
 
   useEffect(() => {
     setLabelMenuOpen(false);

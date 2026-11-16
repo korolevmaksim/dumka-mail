@@ -9,14 +9,16 @@ import {
   frozenBatchIsGone,
   planLaterBatch,
   resolveInboxDecision,
+  SECTION_JUMP_LABELS,
   selectUnsubscribeBatch,
   threadEntryKey,
   type StoredDecisions,
   type ThreadDecisionMap,
 } from '../../../shared/inboxSections';
+import { senderSectionChoice, senderSectionOffer, senderSectionAvailability } from '../../../shared/senderSections';
 import { aggregateMailActionResults } from '../../../shared/mailActionFeedback';
 import { parseUnsubscribeCandidate } from '../../../shared/mailSecurity';
-import { unsubscribeTargetFromCandidate, type UnsubscribeTarget } from '../../../shared/unsubscribeConfirm';
+import { unsubscribeTargetFromCandidate, type SenderSectionLookup, type UnsubscribeTarget } from '../../../shared/unsubscribeConfirm';
 import type {
   Account,
   AIProviderDescriptor,
@@ -25,6 +27,8 @@ import type {
   MailActionLog,
   MailboxView,
   MailThread,
+  SenderSection,
+  SenderSectionTarget,
   ThreadDecision,
 } from '../../../shared/types';
 import {
@@ -40,6 +44,7 @@ import {
 import { presentMailActionFeedback } from '../lib/presentMailAction';
 import { emitToast } from '../lib/toastBus';
 import { useModelStatus } from './useAgentPrep';
+import { senderSectionSenderName } from './useSenderSections';
 import { sortingConfig, sortingCacheMatches, type SortingSettingsSource } from '../../../shared/sortingConfig';
 
 type ExecuteMailAction = (
@@ -72,7 +77,16 @@ interface UseInboxSectionsProps {
   executeMailAction: ExecuteMailAction;
   executeBatchMailAction: (kind: 'markDone', threadIds: string[]) => Promise<void>;
   undoMailActionBatch: (batchId: string) => Promise<void>;
-  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean; decisions?: ThreadDecisionMap }) => Promise<void>;
+  unsubscribeSenders: (targets: UnsubscribeTarget[], options: { archive: boolean; decisions?: ThreadDecisionMap; senderSections?: SenderSectionLookup }) => Promise<void>;
+  /** The account's sender sections (stable function; `senderSectionsRevision` changes with them). */
+  senderSectionsFor: (accountId: string) => readonly SenderSection[];
+  senderSectionsRevision: unknown;
+  alwaysSortSender: (thread: MailThread, target: SenderSectionTarget) => Promise<boolean>;
+}
+
+/** `V` options: `always` also makes the choice standing for the thread's sender. */
+export interface MoveToSectionOptions {
+  always?: boolean;
 }
 
 const UNSUBSCRIBE_PROBE_MESSAGES = 5;
@@ -113,6 +127,9 @@ export function useInboxSections({
   executeBatchMailAction,
   undoMailActionBatch,
   unsubscribeSenders,
+  senderSectionsFor,
+  senderSectionsRevision,
+  alwaysSortSender,
 }: UseInboxSectionsProps) {
   const accountIds = useMemo(() => scopeAccountIds(activeAccount, accounts), [accounts, activeAccount]);
   const accountKey = accountIds.join('\u0000');
@@ -213,11 +230,16 @@ export function useInboxSections({
     if (!sectioned) return [];
     const entries: DecisionEntry[] = visibleThreads.map(thread => ({
       thread,
-      decision: resolveInboxDecision(thread, { accountEmail: thread.accountId }, storedForSections(threadDecisions[thread.accountId]?.[thread.id],
-        hasModel && (!allowedAccounts || allowedAccounts.has(thread.accountId.toLowerCase())), sortConfig)),
+      decision: resolveInboxDecision(
+        thread,
+        { accountEmail: thread.accountId, senderSections: senderSectionsFor(thread.accountId) },
+        storedForSections(threadDecisions[thread.accountId]?.[thread.id],
+          hasModel && (!allowedAccounts || allowedAccounts.has(thread.accountId.toLowerCase())), sortConfig),
+      ),
     }));
     return groupThreadsByDecision(entries, hasModel);
-  }, [hasModel, sectioned, threadDecisions, visibleThreads, sortConfig, allowedAccounts]);
+    // senderSectionsRevision: `senderSectionsFor` is stable, the sections it returns are not.
+  }, [hasModel, sectioned, threadDecisions, visibleThreads, sortConfig, allowedAccounts, senderSectionsFor, senderSectionsRevision]);
 
   const decisionByThreadKey = useMemo(() => {
     const map = new Map<string, ThreadDecision>();
@@ -441,13 +463,13 @@ export function useInboxSections({
     if (!targets) return;
     setUnsubscribeReviewBusy(true);
     try {
-      await unsubscribeSenders(targets, { ...options, decisions: threadDecisions });
+      await unsubscribeSenders(targets, { ...options, decisions: threadDecisions, senderSections: senderSectionsFor });
       setUnsubscribeReviewTargets(null);
       toggleSectionGroup('unsubscribe', false);
     } finally {
       setUnsubscribeReviewBusy(false);
     }
-  }, [threadDecisions, toggleSectionGroup, unsubscribeReviewTargets, unsubscribeSenders]);
+  }, [senderSectionsFor, threadDecisions, toggleSectionGroup, unsubscribeReviewTargets, unsubscribeSenders]);
 
   const cancelUnsubscribeReview = useCallback(() => setUnsubscribeReviewTargets(null), []);
 
@@ -455,8 +477,12 @@ export function useInboxSections({
   const threadDecisionsRef = useRef(threadDecisions);
   threadDecisionsRef.current = threadDecisions;
 
-  /** Stores a user correction (`source: 'user'`); the thread moves immediately. */
-  const moveThreadToSection = useCallback(async (thread: MailThread, decision: Decision) => {
+  /**
+   * Stores a user correction (`source: 'user'`); the thread moves immediately.
+   * With `always`, the choice also becomes the sender's section. A plain move
+   * that disagrees with how the rules see the sender offers that in a toast.
+   */
+  const moveThreadToSection = useCallback(async (thread: MailThread, decision: Decision, options: MoveToSectionOptions = {}) => {
     const record = buildUserCorrection(thread, decision);
     const previous = threadDecisionsRef.current[thread.accountId]?.[thread.id];
     const apply = (stored: typeof previous) => setThreadDecisions(current => {
@@ -472,8 +498,37 @@ export function useInboxSections({
       console.error('Failed to save section correction:', error);
       apply(previous);
       emitToast({ type: 'error', message: 'Could not move the conversation.' });
+      return;
     }
-  }, []);
+    const accountEmail = thread.accountId;
+    if (options.always) {
+      const target = senderSectionChoice(thread, accountEmail, decision);
+      if (target) {
+        await alwaysSortSender(thread, target);
+        return;
+      }
+      // Said plainly: the conversation moved, the standing choice was not made.
+      const availability = senderSectionAvailability(thread, accountEmail);
+      emitToast({
+        type: 'info',
+        message: availability === 'fixed'
+          ? 'Moved this conversation only. Invitations and security notices are never sorted by sender.'
+          : availability === 'noSender'
+            ? 'Moved this conversation only. Its last message is yours, so there is no sender to remember.'
+            : `Moved this conversation only. A sender cannot always go to ${SECTION_JUMP_LABELS[decision]}.`,
+      });
+      return;
+    }
+    const offer = senderSectionOffer(thread, accountEmail, decision, senderSectionsFor(accountEmail));
+    if (!offer) return;
+    emitToast({
+      type: 'success',
+      message: `Moved to ${SECTION_JUMP_LABELS[decision]}.`,
+      actionLabel: `Always for ${senderSectionSenderName(thread)}`,
+      duration: 8000,
+      onAction: () => { void alwaysSortSender(thread, offer); },
+    });
+  }, [alwaysSortSender, senderSectionsFor]);
 
   return {
     threadDecisions,

@@ -9,7 +9,7 @@ import { isOwnDomainSender } from './decision';
 // to ignore instructions found inside mail, and every response is validated.
 import { htmlToText, redactSecrets } from './aiContext';
 import { SUMMARY_INSTRUCTIONS_MAX, SUMMARY_LANGUAGES, type SummarySettings } from './summarySettings';
-import { applyModelRefinement, decideByRules, isDecisionRecordCurrent, type DecisionContext } from './decision';
+import { applyModelRefinement, decideWithSenderSections, isDecisionRecordCurrent, type DecisionContext } from './decision';
 import { resolveInboxDecision, type StoredDecisions } from './inboxSections';
 import type { AISettings, Decision, MailMessage, MailThread, ThreadDecision, ThreadDecisionRecord } from './types';
 
@@ -155,8 +155,9 @@ export interface DecisionWorkListOptions {
 
 /**
  * Inbox threads that need a model decision: rule decision `people`,
- * `automated` or `clear`; no current user correction; no current model
- * record; newest first; at most `limit`.
+ * `automated` or `clear` (a sender section in `context` counts as the rule,
+ * and one that fixes the section leaves nothing to decide); no current user
+ * correction; no current model record; newest first; at most `limit`.
  */
 export function selectDecisionWorkList(
   threads: readonly MailThread[],
@@ -174,8 +175,10 @@ export function selectDecisionWorkList(
     const records = stored[thread.id];
     if (records?.user && isDecisionRecordCurrent(records.user, lastMessageId)) continue;
     if (records?.model && isDecisionRecordCurrent(records.model, lastMessageId)) continue;
-    const rule = decideByRules(thread, context);
-    if (!MODEL_REFINABLE_DECISIONS.includes(rule.decision)) continue;
+    const rule = decideWithSenderSections(thread, context);
+    // A sender the person always sorts into a section is their own standing
+    // choice (`source: 'user'`): nothing for a model to refine.
+    if (rule.source !== 'rule' || !MODEL_REFINABLE_DECISIONS.includes(rule.decision)) continue;
     candidates.push({ thread, rule, lastMessageId });
   }
   return newestFirst(candidates).slice(0, Math.max(0, limit));

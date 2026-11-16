@@ -278,6 +278,49 @@ describe('parked sender-rule archives', () => {
     });
   });
 
+  // A sender section is enforced by the main process even when the rule is
+  // still marked enabled in settings (the renderer normally switches it off).
+  repositoryIt('is not replayed once the person sorts the sender into a section', async () => {
+    await withDatabase(async modules => {
+      const parked = await parkRuleArchive(modules);
+      modules.database.SettingsRepo.set('appSettings', JSON.stringify({
+        accountOverrides: { [accountId]: {
+          agentAutonomy: 'prepareAndRules',
+          senderRules: [rule(thread.senderEmail)],
+          senderSections: [{ id: 's1', senderEmail: thread.senderEmail.toUpperCase(), section: 'read', createdAt: '2026-10-10T12:40:00.000Z' }],
+        } },
+      }));
+      await parked.reconcile();
+      expect(parked.gmail.modifyLabels).not.toHaveBeenCalled();
+      expect(statusOf(modules.database, parked.action.id)?.status).toBe('failed');
+      expect(statusOf(modules.database, parked.action.id)?.failureMessage).toMatch(/sender section/);
+      expect(inInbox(modules.database)).toBe(true);
+      expect(modules.repo.SenderRulesRepo.listHandled(accountId)).toEqual([]);
+    });
+  });
+
+  repositoryIt('new mail from a sender with a section is never archived on arrival', async () => {
+    await withDatabase(async ({ database, service }) => {
+      service.SenderRulesService.resetForTests();
+      const remote = vi.fn(async () => undefined);
+      service.SenderRulesService.configure({ runRemoteArchive: remote, publish: () => {}, logError: () => {} });
+      database.SettingsRepo.set('appSettings', JSON.stringify({
+        accountOverrides: { [accountId]: {
+          agentAutonomy: 'prepareAndRules',
+          senderRules: [rule(thread.senderEmail)],
+          senderSections: [{ id: 's1', senderEmail: thread.senderEmail, section: 'people', createdAt: '2026-01-02T00:00:00.000Z' }],
+        } },
+      }));
+      database.MessagesRepo.save(messages);
+      database.ThreadsRepo.save([thread]);
+      expect(service.SenderRulesService.noteArrivals(messages, messages).size).toBe(0);
+      const [kept] = await service.SenderRulesService.applyToPersistedThreads(accountId, [thread]);
+      expect(kept.labelIds).toContain('INBOX');
+      expect(remote).not.toHaveBeenCalled();
+      expect(database.ActionLogRepo.list(accountId)).toEqual([]);
+    });
+  });
+
   repositoryIt('is not replayed once a second bring-back is recorded for the sender', async () => {
     await withDatabase(async modules => {
       const parked = await parkRuleArchive(modules);
