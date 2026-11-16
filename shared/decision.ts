@@ -6,10 +6,14 @@
 //      the allowed transitions; anything else falls back to the rule decision.
 //   3. `applyUserCorrection` — a manual move (`V`) wins over both.
 //
+// Between 1 and 2 sits the person's standing choice for a sender
+// (`decideWithSenderSections`): it replaces the rule decision for that
+// sender's mail, except for invitations and security notices.
+//
 // Pure and dependency-free: shared by the main process and the renderer.
 // `shared/classifier.ts` (split inbox) is independent of this module.
 import { EMPTY_THREAD_SIGNALS } from './threadSignals';
-import type { Decision, MailThread, ThreadDecision, ThreadDecisionRecord, ThreadSignals } from './types';
+import type { Decision, MailThread, SenderSection, SenderSectionTarget, ThreadDecision, ThreadDecisionRecord, ThreadSignals } from './types';
 
 export type { Decision, ThreadDecision, ThreadDecisionRecord, ThreadDecisionSource, ThreadSignals } from './types';
 
@@ -28,6 +32,8 @@ export type DecisionThread = Pick<MailThread, 'subject' | 'senderEmail' | 'sende
 
 export interface DecisionContext {
   accountEmail: string;
+  /** The account's sender sections; absent or empty means the rules alone decide. */
+  senderSections?: readonly SenderSection[] | null;
 }
 
 // --- Sender classification ---------------------------------------------------
@@ -188,15 +194,27 @@ function ruleDecision(decision: Decision, reason: string, isProtected: boolean):
   return { decision, reason, source: 'rule', protected: isProtected, laterAt: null };
 }
 
-/** Deterministic decision; first matching rule wins (SPEC §1, rules 1–7). */
-export function decideByRules(thread: DecisionThread, context: DecisionContext): ThreadDecision {
+/**
+ * SPEC §1 rules 1–2: an invitation that may still need an answer and a
+ * security notice. These hold whoever the sender is: no sender section, model
+ * or sender rule moves them.
+ */
+function fixedRuleDecision(thread: DecisionThread): ThreadDecision | null {
   const signals = thread.signals || EMPTY_THREAD_SIGNALS;
-
   if (signals.inviteNeedsAnswer) return ruleDecision('event', 'Invitation awaiting your answer', true);
   // An invite whose calendar data is not readable yet (a Gmail attachment not
   // fetched) may still need an answer: never sortable into clear / later.
   if (signals.hasCalendarInvite && signals.inviteStateKnown !== true) return ruleDecision('event', 'Calendar invitation', true);
   if (isSecurityNotice(thread)) return ruleDecision('read', 'Security notice', true);
+  return null;
+}
+
+/** Deterministic decision; first matching rule wins (SPEC §1, rules 1–7). */
+export function decideByRules(thread: DecisionThread, context: DecisionContext): ThreadDecision {
+  const signals = thread.signals || EMPTY_THREAD_SIGNALS;
+
+  const fixed = fixedRuleDecision(thread);
+  if (fixed) return fixed;
   if (!isAutomatedThread(thread)) return ruleDecision('people', '', true);
   if (isOwnDomainSender(thread.senderEmail, context.accountEmail)) return ruleDecision('read', 'Internal announcement', false);
   if (hasLabel(thread, 'CATEGORY_PROMOTIONS') && signals.hasOneClickUnsubscribe) {
@@ -204,6 +222,65 @@ export function decideByRules(thread: DecisionThread, context: DecisionContext):
   }
   if (signals.isBulk || signals.hasOneClickUnsubscribe) return ruleDecision('clear', 'Newsletter', false);
   return ruleDecision('automated', '', false);
+}
+
+// --- Sender sections ---------------------------------------------------------
+
+export const SENDER_SECTION_TARGETS: readonly SenderSectionTarget[] = ['people', 'read', 'later', 'automated', 'clear'];
+
+export function isSenderSectionTarget(value: unknown): value is SenderSectionTarget {
+  return typeof value === 'string' && (SENDER_SECTION_TARGETS as readonly string[]).includes(value);
+}
+
+/** Shown on rows a sender section sorted (not for `people`, which reads as ordinary mail from a person). */
+export const SENDER_SECTION_REASON = 'You always sort this sender here';
+
+/** Tolerant of stored JSON: anything that is not a string is no address. */
+function normalizedAddress(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/** The account's section for this thread's sender, else null. Never for the account's own address. */
+export function senderSectionForThread(
+  thread: Pick<DecisionThread, 'senderEmail'>,
+  context: DecisionContext,
+): SenderSection | null {
+  const sections = context.senderSections;
+  if (!sections || sections.length === 0) return null;
+  const sender = normalizedAddress(thread.senderEmail);
+  if (!sender || sender === normalizedAddress(context.accountEmail)) return null;
+  return sections.find(section => (
+    Boolean(section) && normalizedAddress(section.senderEmail) === sender && isSenderSectionTarget(section.section)
+  )) || null;
+}
+
+/** True when the thread's place is fixed by rules 1–2 (invitation, security notice): no sender section applies. */
+export function isFixedRuleThread(thread: DecisionThread): boolean {
+  return fixedRuleDecision(thread) !== null;
+}
+
+/**
+ * The rule decision with the person's sender section applied.
+ *
+ * - `people` teaches the rules that the sender is a person: the result is a
+ *   protected rule decision, which a model may still refine to reply / read.
+ * - Any other target is a standing choice of section (`source: 'user'`): a
+ *   model does not move it. `protected` stays what the rules said, so mail the
+ *   rules call a person's never joins a group action from here either.
+ * - Invitations and security notices keep their rule decision.
+ */
+export function decideWithSenderSections(thread: DecisionThread, context: DecisionContext): ThreadDecision {
+  const rule = decideByRules(thread, context);
+  const section = senderSectionForThread(thread, context);
+  if (!section || isFixedRuleThread(thread)) return rule;
+  if (section.section === 'people') return ruleDecision('people', '', true);
+  return {
+    decision: section.section,
+    reason: SENDER_SECTION_REASON,
+    source: 'user',
+    protected: rule.protected,
+    laterAt: null,
+  };
 }
 
 // --- Layer 2: model ----------------------------------------------------------
@@ -293,16 +370,17 @@ export function isDecisionRecordCurrent(
 }
 
 /**
- * Combines the three layers. `record` is the cached `thread_decisions` row,
+ * Combines the layers. `record` is the cached `thread_decisions` row,
  * ignored when stale. A user record wins; a model record is re-validated
- * against the current rule decision.
+ * against the current rule decision (with the sender section applied, when
+ * the context carries the account's sender sections).
  */
 export function resolveThreadDecision(
   thread: DecisionThread,
   context: DecisionContext,
   record?: Pick<ThreadDecisionRecord, 'lastMessageId' | 'decision' | 'reason' | 'source' | 'laterAt'> | null,
 ): ThreadDecision {
-  const rule = decideByRules(thread, context);
+  const rule = decideWithSenderSections(thread, context);
   if (!record || !isDecisionRecordCurrent(record, thread.signals?.lastMessageId)) return rule;
   if (record.source === 'user') {
     return applyUserCorrection(rule, record.decision, { laterAt: record.laterAt, reason: record.reason });

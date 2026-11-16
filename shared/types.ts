@@ -1450,6 +1450,23 @@ export interface SenderRule {
   autoDisabledAt?: string;
 }
 
+/** Sections a sender can always be sorted into. `event` and `unsubscribe` are never standing choices. */
+export type SenderSectionTarget = 'people' | 'read' | 'later' | 'automated' | 'clear';
+
+/**
+ * "Always sort mail from this sender into …": created only by the user's own
+ * choice (`⇧` in the `V` popover, or the offer after a move). It only changes
+ * the section; it never archives, sends or answers anything.
+ */
+export interface SenderSection {
+  id: string;
+  /** Lowercased sender address. */
+  senderEmail: string;
+  senderName?: string;
+  section: SenderSectionTarget;
+  createdAt: string;
+}
+
 /** Learning counters per account and sender (`sender_rule_stats`, SPEC §7). */
 export interface SenderRuleStats {
   accountId: string;
@@ -1503,6 +1520,8 @@ export interface AccountSettingsOverride {
   backgroundSorting?: boolean;
   /** Per-account only; there is no app default. */
   senderRules?: SenderRule[];
+  /** Per-account only: where mail from a sender is always sorted (`shared/senderSections.ts`). */
+  senderSections?: SenderSection[];
 }
 
 /** App-level defaults for per-account settings that have no older global home. */

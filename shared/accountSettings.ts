@@ -8,7 +8,7 @@
 //   agentAutonomy    ← accountDefaults.agentAutonomy   (default 'prepare')
 //   modelMayReadMail ← ai.allowMailBodyContext
 //   backgroundSorting ← ai.backgroundSorting          (default false)
-// `senderRules` is per-account only.
+// `senderRules` and `senderSections` are per-account only.
 //
 // Pure and dependency-free so the renderer and the main process (which reads
 // raw stored JSON) resolve the same way. Helpers never mutate their input.
@@ -19,9 +19,11 @@ import type {
   AgentAutonomy,
   ComposeAfterSend,
   SenderRule,
+  SenderSection,
+  SenderSectionTarget,
 } from './types';
 
-export type { AccountDefaultsSettings, AccountNotificationMode, AccountSettingsOverride, AgentAutonomy, SenderRule } from './types';
+export type { AccountDefaultsSettings, AccountNotificationMode, AccountSettingsOverride, AgentAutonomy, SenderRule, SenderSection } from './types';
 
 export const ACCOUNT_NOTIFICATION_MODES: readonly AccountNotificationMode[] = ['people', 'all', 'none'];
 export const AGENT_AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['prepare', 'prepareAndRules'];
@@ -151,6 +153,38 @@ function normalizeSenderRules(value: unknown): SenderRule[] | undefined {
   return rules;
 }
 
+const SENDER_SECTION_TARGET_VALUES: readonly SenderSectionTarget[] = ['people', 'read', 'later', 'automated', 'clear'];
+
+export function normalizeSenderSection(value: unknown): SenderSection | null {
+  if (!isPlainRecord(value)) return null;
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  const senderEmail = typeof value.senderEmail === 'string' ? value.senderEmail.trim().toLowerCase() : '';
+  const section = value.section;
+  if (!id || !senderEmail) return null;
+  if (typeof section !== 'string' || !(SENDER_SECTION_TARGET_VALUES as readonly string[]).includes(section)) return null;
+  const entry: SenderSection = {
+    id,
+    senderEmail,
+    section: section as SenderSectionTarget,
+    createdAt: typeof value.createdAt === 'string' && value.createdAt ? value.createdAt : new Date(0).toISOString(),
+  };
+  if (typeof value.senderName === 'string' && value.senderName.trim()) entry.senderName = value.senderName.trim();
+  return entry;
+}
+
+/** One section per sender: a later entry for the same address replaces the earlier one. */
+function normalizeSenderSections(value: unknown): SenderSection[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const bySender = new Map<string, SenderSection>();
+  for (const entry of value) {
+    const section = normalizeSenderSection(entry);
+    if (!section) continue;
+    bySender.delete(section.senderEmail);
+    bySender.set(section.senderEmail, section);
+  }
+  return Array.from(bySender.values());
+}
+
 /**
  * Sanitises one override. Invalid known values are dropped (so they inherit);
  * fields this version does not know are kept for forward compatibility.
@@ -165,6 +199,11 @@ export function normalizeAccountOverride(value: unknown): AccountSettingsOverrid
     const rules = normalizeSenderRules(out.senderRules);
     if (rules) out.senderRules = rules;
     else delete out.senderRules;
+  }
+  if ('senderSections' in out) {
+    const sections = normalizeSenderSections(out.senderSections);
+    if (sections && sections.length > 0) out.senderSections = sections;
+    else delete out.senderSections;
   }
   return out as AccountSettingsOverride;
 }
@@ -244,6 +283,11 @@ export function getSenderRules(settings: AccountSettingsSource, accountId: strin
   return getAccountOverride(settings, accountId)?.senderRules ?? [];
 }
 
+/** Validated on every read: the main process passes stored JSON that was never normalised. */
+export function getSenderSections(settings: AccountSettingsSource, accountId: string): SenderSection[] {
+  return normalizeSenderSections(getAccountOverride(settings, accountId)?.senderSections) ?? [];
+}
+
 // --- Writing (immutable) -----------------------------------------------------
 
 type WithOverrides<S> = S & { accountOverrides: Record<string, AccountSettingsOverride> };
@@ -301,7 +345,18 @@ export function setSenderRules<S extends AccountSettingsSource>(settings: S, acc
   });
 }
 
+/**
+ * Switching a rule on is the newer choice for its sender: a section the
+ * sender was sorted into is removed (a sender has a section or an archive
+ * rule, never both).
+ */
 export function setSenderRuleEnabled<S extends AccountSettingsSource>(settings: S, accountId: string, ruleId: string, enabled: boolean): WithOverrides<S> {
+  const target = getSenderRules(settings, accountId).find(rule => rule.id === ruleId);
+  if (enabled && target) {
+    const sections = getSenderSections(settings, accountId);
+    const kept = sections.filter(section => section.senderEmail !== target.senderEmail.trim().toLowerCase());
+    if (kept.length !== sections.length) settings = setSenderSections(settings, accountId, kept) as unknown as S;
+  }
   const rules = getSenderRules(settings, accountId).map(rule => {
     if (rule.id !== ruleId) return rule;
     // Turning an auto-disabled rule back on starts its bring-back count afresh.
@@ -316,6 +371,16 @@ export function setSenderRuleEnabled<S extends AccountSettingsSource>(settings: 
 
 export function deleteSenderRule<S extends AccountSettingsSource>(settings: S, accountId: string, ruleId: string): WithOverrides<S> {
   return setSenderRules(settings, accountId, getSenderRules(settings, accountId).filter(rule => rule.id !== ruleId));
+}
+
+export function setSenderSections<S extends AccountSettingsSource>(settings: S, accountId: string, sections: readonly SenderSection[]): WithOverrides<S> {
+  return withAccountOverride(settings, accountId, current => {
+    const next = { ...current };
+    const normalized = normalizeSenderSections(sections) ?? [];
+    if (normalized.length > 0) next.senderSections = normalized;
+    else delete next.senderSections;
+    return next;
+  });
 }
 
 /** Removes everything stored for an account (disconnect with cache purge). */

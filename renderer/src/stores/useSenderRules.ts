@@ -4,7 +4,7 @@
 // main process; this hook reads its tables and edits the rules (settings are
 // renderer-owned and saved as one blob).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getSenderRules, normalizeAccountId, setSenderRules } from '../../../shared/accountSettings';
+import { getSenderRules, getSenderSections, normalizeAccountId, setSenderRules } from '../../../shared/accountSettings';
 import {
   applySenderRuleBringBack,
   createSenderRule,
@@ -138,7 +138,8 @@ export function useSenderRules({
 
   const senderRuleOffer = useMemo<SenderRuleConsent | null>(() => {
     if (!inboxSectioned || !accountId || stats.accountId !== accountId) return null;
-    const pick = pickSenderRuleOffer(stats.rows, rules);
+    // A sender the person sorts into a section is not offered for archiving.
+    const pick = pickSenderRuleOffer(stats.rows, rules, getSenderSections(settings, accountId));
     if (!pick) return null;
     return {
       accountId,

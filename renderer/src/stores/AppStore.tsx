@@ -8,6 +8,7 @@ import type { AIRequestFailure } from './useAIState';
 import { useProductivityState, type ProductivityState } from './useProductivityState';
 import { useInboxSections, type InboxSectionsState } from './useInboxSections';
 import { useSenderRules, type SenderRulesState } from './useSenderRules';
+import { useSenderSections, type SenderSectionsState } from './useSenderSections';
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Account,
@@ -409,7 +410,7 @@ interface CalendarFocusRequest {
   eventId: string;
 }
 
-interface AppStoreContextType extends ProductivityState, InboxSectionsState, SenderRulesState {
+interface AppStoreContextType extends ProductivityState, InboxSectionsState, SenderRulesState, SenderSectionsState {
   settingsLoaded: boolean;
   theme: 'light' | 'dark' | 'system';
   setTheme: (t: 'light' | 'dark' | 'system') => void;
@@ -747,7 +748,15 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     && resolveAccountSetting(settingsState.settings, account.email, 'backgroundSorting').value,
   ).map(account => account.email), [mailState.accounts, settingsState.settings]);
 
+  const senderSectionsState = useSenderSections({
+    settings: settingsState.settings,
+    updateSettings: settingsState.updateSettings,
+  });
+
   const inboxSectionsState = useInboxSections({
+    senderSectionsFor: senderSectionsState.senderSectionsFor,
+    senderSectionsRevision: senderSectionsState.senderSectionsRevision,
+    alwaysSortSender: senderSectionsState.alwaysSortSender,
     modelAllowedAccountIds: sortingAllowedAccounts,
     sortingSettings: settingsState.settings.ai,
     decisionsConfigured: Boolean(settingsState.customEnv.OPENAI_API_KEY),
@@ -1096,10 +1105,11 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // corrections the inbox shows, so a thread moved out of Clear stays put.
   const mailUnsubscribeSenders = mailState.unsubscribeSenders;
   const sectionDecisions = inboxSectionsState.threadDecisions;
+  const senderSectionsFor = senderSectionsState.senderSectionsFor;
   const unsubscribeSenders = useCallback(
     (targets: UnsubscribeTarget[], options: { archive: boolean; decisions?: ThreadDecisionMap }) =>
-      mailUnsubscribeSenders(targets, { ...options, decisions: options.decisions ?? sectionDecisions }),
-    [mailUnsubscribeSenders, sectionDecisions],
+      mailUnsubscribeSenders(targets, { ...options, decisions: options.decisions ?? sectionDecisions, senderSections: senderSectionsFor }),
+    [mailUnsubscribeSenders, sectionDecisions, senderSectionsFor],
   );
 
   const storeValue: AppStoreContextType = useMemo(() => ({
@@ -1111,6 +1121,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ...productivityState,
     ...inboxSectionsState,
     ...senderRulesState,
+    ...senderSectionsState,
     unsubscribeSenders,
     googleIntegrationStatus,
     labelDefinitions,
@@ -1162,6 +1173,7 @@ export const AppStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     productivityState,
     inboxSectionsState,
     senderRulesState,
+    senderSectionsState,
     googleIntegrationStatus,
     labelDefinitions,
     contacts,

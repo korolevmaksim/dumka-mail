@@ -13,6 +13,7 @@ import {
   clearAccountOverride,
   deleteSenderRule,
   getSenderRules,
+  getSenderSections,
   normalizeAccountId,
   resolveAccountSettings,
   setAccountOverride,
@@ -23,7 +24,8 @@ import {
 import { backgroundProvider, defaultBackgroundProvider, effectiveBackgroundModel, seedBackgroundProvider } from '../../lib/backgroundModel';
 import { sanitizeGmailSignatureHtml } from '../../../../shared/textNormalizer';
 import { senderRuleStatus, type SenderRuleStatus } from '../../../../shared/senderRules';
-import type { Account, AgentAutonomy, ComposeSignatureSettings, SenderRule, SenderRuleStats } from '../../../../shared/types';
+import { senderSectionDescription, senderSectionsSummary } from '../../../../shared/senderSections';
+import type { Account, AgentAutonomy, ComposeSignatureSettings, SenderRule, SenderRuleStats, SenderSection } from '../../../../shared/types';
 
 const AFTER_SEND_OPTIONS: Array<{ value: AccountSettingValues['afterSend']; label: string; summary: string }> = [
   { value: 'archive', label: 'Archive', summary: 'Archive the conversation' },
@@ -149,6 +151,7 @@ export function AccountSettingsPage({ account }: { account: Account }) {
   const accountId = normalizeAccountId(account.email || account.id);
   const resolved = resolveAccountSettings(store.settings, accountId);
   const senderRules = getSenderRules(store.settings, accountId);
+  const senderSections = getSenderSections(store.settings, accountId);
   const signature = store.settings.compose.signaturesByAccount?.[accountId];
   const needsReconnect = store.googleAuthIssues.some(issue => normalizeAccountId(issue.accountId) === accountId);
   const reconnecting = store.reauthorizingAccountId !== null && normalizeAccountId(store.reauthorizingAccountId) === accountId;
@@ -156,6 +159,7 @@ export function AccountSettingsPage({ account }: { account: Account }) {
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [signatureSyncing, setSignatureSyncing] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [sectionsOpen, setSectionsOpen] = useState(false);
   const [calendarEnabled, setCalendarEnabled] = useState<boolean | null>(null);
   const [ruleStats, setRuleStats] = useState<SenderRuleStats[]>([]);
   const [calendarBusy, setCalendarBusy] = useState(false);
@@ -167,6 +171,7 @@ export function AccountSettingsPage({ account }: { account: Account }) {
     model: useId(), modelDesc: useId(), modelControl: useId(),
     background: useId(), backgroundDesc: useId(), backgroundControl: useId(),
     rules: useId(), rulesDesc: useId(), rulesList: useId(),
+    sections: useId(), sectionsDesc: useId(), sectionsList: useId(),
     calendar: useId(), calendarDesc: useId(),
     heading: useId(),
   };
@@ -282,6 +287,11 @@ export function AccountSettingsPage({ account }: { account: Account }) {
       settings.accountOverrides = deleteSenderRule(settings, accountId, rule.id).accountOverrides;
     });
     emitToast({ type: 'info', message: `Rule for ${rule.senderName || rule.senderEmail} deleted.` });
+  };
+
+  const removeSection = (section: SenderSection) => {
+    void store.removeSenderSection(accountId, section.id);
+    emitToast({ type: 'info', message: `${section.senderName || section.senderEmail} is sorted by the usual rules again.` });
   };
 
   const afterSendOption = AFTER_SEND_OPTIONS.find(option => option.value === resolved.afterSend.value) ?? AFTER_SEND_OPTIONS[0];
@@ -571,6 +581,52 @@ export function AccountSettingsPage({ account }: { account: Account }) {
                         <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                       </button>
                     </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </AccountRow>
+
+        <AccountRow
+          rowKey="senderSections"
+          title="Sorted by sender"
+          titleId={ids.sections}
+          description={senderSectionsSummary(senderSections.length)}
+          descriptionId={ids.sectionsDesc}
+          controls={senderSections.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setSectionsOpen(open => !open)}
+              aria-expanded={sectionsOpen}
+              aria-controls={ids.sectionsList}
+              className={SETTINGS_BUTTON_CLASS}
+            >
+              {sectionsOpen ? 'Hide senders' : 'Review senders'}
+              <ChevronDown aria-hidden="true" className={`h-3 w-3 transition-transform ${sectionsOpen ? 'rotate-180' : ''}`} />
+            </button>
+          ) : undefined}
+        >
+          {sectionsOpen && senderSections.length > 0 && (
+            <ul id={ids.sectionsList} aria-label="Senders with a fixed section" className="flex flex-col divide-y divide-[var(--border)] rounded-[6px] border border-[var(--border)] bg-[var(--panel-bg)]">
+              {senderSections.map(section => {
+                const name = section.senderName || section.senderEmail;
+                return (
+                  <li key={section.id} data-sender-section={section.id} data-sender-section-target={section.section} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="flex min-w-0 flex-col">
+                      <span className="truncate text-[calc(12px*var(--font-scale))] font-medium text-[var(--text-primary)]">{name}</span>
+                      <span className={`${DESC_CLASS} truncate`}>
+                        {section.senderName ? `${section.senderEmail} · ` : ''}{senderSectionDescription(section.section)} · {formatSince(section.createdAt)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeSection(section)}
+                      aria-label={`Stop sorting mail from ${name} by sender`}
+                      className={`${SETTINGS_BUTTON_CLASS} px-2 text-[var(--danger-solid)]`}
+                    >
+                      <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                    </button>
                   </li>
                 );
               })}

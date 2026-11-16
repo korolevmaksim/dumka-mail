@@ -17,7 +17,7 @@ import {
   messageExcerpt,
   parseDecisionBatchResponse,
   parseSummaryBullets,
-  prepAttemptKey,
+  decisionAttemptKey,
   refineDecisionBatch,
   selectDecisionWorkList,
   selectDraftWorkList,
@@ -124,7 +124,7 @@ describe('decision work list', () => {
       // Stale model record: the thread has a newer last message.
       record('redlines', { lastMessageId: 'redlines-old' }),
     ]);
-    const skip = new Set([prepAttemptKey(accountId, intro.id, intro.signals!.lastMessageId!)]);
+    const skip = new Set([decisionAttemptKey(accountId, intro.id, intro.signals!.lastMessageId!, 'people')]);
     const ids = selectDecisionWorkList([pilot, board, redlines, intro, archived], stored, context, { skip }).map(item => item.thread.id);
     expect(ids).toEqual(['redlines']);
   });

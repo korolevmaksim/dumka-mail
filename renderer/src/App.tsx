@@ -27,6 +27,8 @@ import { resolveListWidth, type ListWidthMode } from '../../shared/listLayout';
 import { MailboxListHeader } from './components/mailbox/MailboxListHeader';
 import { ClearGroupPane, DoneSummaryPane, FetchingInboxPane, PreparedPane } from './components/mailbox/ReadingAreaPanes';
 import { MoveToSectionPopover } from './components/mailbox/MoveToSectionPopover';
+import { senderSectionAvailability } from '../../shared/senderSections';
+import { senderSectionSenderName } from './stores/useSenderSections';
 import { SenderRuleConsentDialog } from './components/mailbox/SenderRuleRows';
 import { UnsubscribeConfirmSheet } from './components/UnsubscribeConfirmSheet';
 import { NARROW_MAIL_LAYOUT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
@@ -784,7 +786,10 @@ function AppContent() {
           thread={moveToSectionThread}
           hasModel={store.hasModel}
           currentSection={store.sectionOfThread(moveToSectionThread)}
-          onChoose={(decision) => void store.moveThreadToSection(moveToSectionThread, decision)}
+          alwaysForSender={senderSectionAvailability(moveToSectionThread, moveToSectionThread.accountId) === 'available'
+            ? senderSectionSenderName(moveToSectionThread)
+            : null}
+          onChoose={(decision, options) => void store.moveThreadToSection(moveToSectionThread, decision, options)}
           onClose={closeMoveToSection}
         />
       )}

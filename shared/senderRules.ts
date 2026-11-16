@@ -6,17 +6,22 @@
 // only ever archives (Gmail keeps the mail in All mail), and it never touches
 // a thread the deterministic layer does not call `clear` / `unsubscribe`, a
 // protected thread (people, security notices, invitations), or mail that was
-// already in the inbox before the rule existed.
+// already in the inbox before the rule existed. A sender the person sorts
+// into a section (`shared/senderSections.ts`) is never archived by a rule:
+// agreeing to a rule removes the sender's section, and choosing a section
+// switches the sender's rule off.
 import {
   getSenderRules,
+  getSenderSections,
   normalizeAccountId,
   resolveAccountSetting,
   setAccountOverride,
   setSenderRules,
+  setSenderSections,
   type AccountSettingsSource,
 } from './accountSettings';
 import { decideByRules, type DecisionThread } from './decision';
-import type { AgentAutonomy, SenderRule, SenderRuleStats, ThreadDecision } from './types';
+import type { AgentAutonomy, SenderRule, SenderRuleStats, SenderSection, ThreadDecision } from './types';
 
 /** Confirmations without a bring-back before the offer appears. */
 export const SENDER_RULE_OFFER_THRESHOLD = 3;
@@ -60,18 +65,31 @@ export function isSenderRuleEligible(thread: DecisionThread, accountEmail: strin
 
 // --- Offer ---------------------------------------------------------------------
 
-/** Stats that qualify for the offer: ≥ 3 confirmations, no bring-back, not dismissed, no rule yet. */
-export function isSenderRuleOfferable(stats: SenderRuleStats, rules: readonly SenderRule[]): boolean {
+/**
+ * Stats that qualify for the offer: ≥ 3 confirmations, no bring-back, not
+ * dismissed, no rule yet, and no section the person sorts this sender into
+ * (they chose to keep seeing that mail).
+ */
+export function isSenderRuleOfferable(
+  stats: SenderRuleStats,
+  rules: readonly SenderRule[],
+  sections: readonly SenderSection[] = [],
+): boolean {
   if (stats.confirmations < SENDER_RULE_OFFER_THRESHOLD) return false;
   if (stats.bringBacks > 0) return false;
   if (stats.dismissedAt) return false;
   const sender = normalizeSenderEmail(stats.senderEmail);
+  if (sections.some(section => normalizeSenderEmail(section.senderEmail) === sender)) return false;
   return !rules.some(rule => normalizeSenderEmail(rule.senderEmail) === sender);
 }
 
 /** The one sender to offer now: most confirmations first, then the most recent confirmation. */
-export function pickSenderRuleOffer(stats: readonly SenderRuleStats[], rules: readonly SenderRule[]): SenderRuleStats | null {
-  const candidates = stats.filter(entry => isSenderRuleOfferable(entry, rules));
+export function pickSenderRuleOffer(
+  stats: readonly SenderRuleStats[],
+  rules: readonly SenderRule[],
+  sections: readonly SenderSection[] = [],
+): SenderRuleStats | null {
+  const candidates = stats.filter(entry => isSenderRuleOfferable(entry, rules, sections));
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => (
     b.confirmations - a.confirmations
@@ -112,7 +130,8 @@ export interface CreateSenderRuleInput {
 /**
  * Adds an enabled rule for the sender (replacing an older rule for the same
  * address) and, when the account only prepares, raises it to
- * `prepareAndRules` in the same step.
+ * `prepareAndRules` in the same step. A section the sender was sorted into is
+ * removed: the newer choice is to archive that mail on arrival.
  */
 export function createSenderRule<S extends AccountSettingsSource>(
   settings: S,
@@ -134,6 +153,9 @@ export function createSenderRule<S extends AccountSettingsSource>(
   if (name && name.toLowerCase() !== senderEmail) rule.senderName = name;
   const others = getSenderRules(settings, accountId).filter(existing => normalizeSenderEmail(existing.senderEmail) !== senderEmail);
   let next = setSenderRules(settings, accountId, [...others, rule]);
+  const sections = getSenderSections(next, accountId);
+  const keptSections = sections.filter(section => normalizeSenderEmail(section.senderEmail) !== senderEmail);
+  if (keptSections.length !== sections.length) next = setSenderSections(next, accountId, keptSections);
   const autonomyRaised = senderRuleNeedsAutonomy(next, accountId);
   if (autonomyRaised) next = setAccountOverride(next, accountId, 'agentAutonomy', 'prepareAndRules');
   return { settings: next as S & { accountOverrides: NonNullable<S['accountOverrides']> }, rule, autonomyRaised };
@@ -148,6 +170,8 @@ export interface SenderRuleMatchInput {
   autonomy: AgentAutonomy;
   /** The thread has a manual section move (`V`). */
   hasUserCorrection: boolean;
+  /** The person sorts this sender into a section: its mail stays in the inbox. */
+  hasSenderSection?: boolean;
   /** Newest inbound message of this thread that the current sync stored for the first time; null when none is new. */
   newestArrivalAt: string | null;
   /** A rule archived this thread before and the user brought it back. */
@@ -169,12 +193,13 @@ export function isSenderRuleWornOut(rule: Pick<SenderRule, 'bringBacks'>, stored
  * The enabled rule that archives this newly arrived thread, else null.
  * Gates: autonomy `prepareAndRules`, thread in the inbox, inbound, no
  * calendar invite, new mail received after the rule was created, rule
- * decision `clear` / `unsubscribe` and not protected, no user correction, not
- * brought back from a rule before, fewer than two bring-backs on the rule.
+ * decision `clear` / `unsubscribe` and not protected, no user correction, no
+ * sender section, not brought back from a rule before, fewer than two
+ * bring-backs on the rule.
  */
 export function matchSenderRule(input: SenderRuleMatchInput): SenderRule | null {
   if (input.autonomy !== 'prepareAndRules') return null;
-  if (input.hasUserCorrection || input.broughtBackBefore) return null;
+  if (input.hasUserCorrection || input.hasSenderSection || input.broughtBackBefore) return null;
   const { thread } = input;
   if (!thread.labelIds.some(label => String(label).toUpperCase() === 'INBOX')) return null;
   if (thread.signals?.fromUser) return null;
