@@ -14,7 +14,7 @@ import {
   setSenderSections,
   type AccountSettingsSource,
 } from '../shared/accountSettings';
-import { selectDecisionWorkList, selectDraftWorkList } from '../shared/agentPrompts';
+import { decisionAttemptKey, selectDecisionWorkList, selectDraftWorkList } from '../shared/agentPrompts';
 import {
   SENDER_SECTION_REASON,
   applyModelRefinement,
@@ -414,6 +414,27 @@ describe('sender sections outside the list', () => {
     expect(fixed.map(item => item.thread.id)).toEqual(['receipt']);
     const person = selectDecisionWorkList(threads, {}, context(section(pr.senderEmail, 'people')));
     expect(person.find(item => item.thread.id === 'pr-482')?.rule).toMatchObject({ decision: 'people', protected: true });
+  });
+
+  it('asks again about a conversation whose model answer was for another classification of the sender', () => {
+    // The model answered while the rules called the sender automated.
+    const stored = indexDecisionRecords([modelRecord(pr, 'clear')]);
+    expect(selectDecisionWorkList([pr], stored, { accountEmail })).toEqual([]);
+    // Marked as a person: that answer no longer applies, so the thread is refinable again.
+    const asPerson = context(section(pr.senderEmail, 'people'));
+    expect(selectDecisionWorkList([pr], stored, asPerson).map(item => item.rule.decision)).toEqual(['people']);
+    // An attempt made under the old classification does not block it either,
+    // while an attempt under the new one does.
+    const lastMessageId = pr.signals!.lastMessageId!;
+    const triedAsAutomated = new Set([decisionAttemptKey(accountEmail, pr.id, lastMessageId, 'automated')]);
+    const triedAsPerson = new Set([decisionAttemptKey(accountEmail, pr.id, lastMessageId, 'people')]);
+    expect(selectDecisionWorkList([pr], stored, asPerson, { skip: triedAsAutomated })).toHaveLength(1);
+    expect(selectDecisionWorkList([pr], stored, asPerson, { skip: triedAsPerson })).toEqual([]);
+    // Once the model answers for a person, the thread is settled again.
+    const answered = indexDecisionRecords([modelRecord(pr, 'reply')]);
+    expect(selectDecisionWorkList([pr], answered, asPerson)).toEqual([]);
+    // And the reverse: with the section removed, the answer given for a person lapses.
+    expect(selectDecisionWorkList([pr], answered, { accountEmail }).map(item => item.rule.decision)).toEqual(['automated']);
   });
 
   it('prepares a draft for a marked person the model reads as needing a reply, never for a fixed section', () => {

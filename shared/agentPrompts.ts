@@ -115,6 +115,16 @@ export function prepAttemptKey(accountId: string, threadId: string, lastMessageI
   return `${accountId.trim().toLowerCase()}\u0000${threadId}\u0000${lastMessageId}`;
 }
 
+/**
+ * Attempt key of a decision request. It carries the rule decision the model
+ * was asked to refine: when that changes without new mail (the person marks
+ * the sender as a person, or removes its section), the thread is asked about
+ * again instead of staying skipped.
+ */
+export function decisionAttemptKey(accountId: string, threadId: string, lastMessageId: string, ruleDecision: Decision): string {
+  return `${prepAttemptKey(accountId, threadId, lastMessageId)}\u0000${ruleDecision}`;
+}
+
 /** Cache key of a thread summary: valid while the thread's last message is unchanged. */
 export function summaryCacheKey(accountId: string, threadId: string, lastMessageId: string): string {
   return prepAttemptKey(accountId, threadId, lastMessageId);
@@ -149,7 +159,7 @@ export interface DecisionCandidate {
 
 export interface DecisionWorkListOptions {
   limit?: number;
-  /** `prepAttemptKey`s already tried this session (rejected or empty answers). */
+  /** `decisionAttemptKey`s already tried this session (rejected or empty answers). */
   skip?: ReadonlySet<string>;
 }
 
@@ -157,7 +167,8 @@ export interface DecisionWorkListOptions {
  * Inbox threads that need a model decision: rule decision `people`,
  * `automated` or `clear` (a sender section in `context` counts as the rule,
  * and one that fixes the section leaves nothing to decide); no current user
- * correction; no current model record; newest first; at most `limit`.
+ * correction; no current model record that still answers the present rule
+ * decision; newest first; at most `limit`.
  */
 export function selectDecisionWorkList(
   threads: readonly MailThread[],
@@ -171,14 +182,19 @@ export function selectDecisionWorkList(
     if (!isInbox(thread)) continue;
     const lastMessageId = thread.signals?.lastMessageId;
     if (!lastMessageId) continue;
-    if (options.skip?.has(prepAttemptKey(thread.accountId, thread.id, lastMessageId))) continue;
     const records = stored[thread.id];
     if (records?.user && isDecisionRecordCurrent(records.user, lastMessageId)) continue;
-    if (records?.model && isDecisionRecordCurrent(records.model, lastMessageId)) continue;
     const rule = decideWithSenderSections(thread, context);
     // A sender the person always sorts into a section is their own standing
     // choice (`source: 'user'`): nothing for a model to refine.
     if (rule.source !== 'rule' || !MODEL_REFINABLE_DECISIONS.includes(rule.decision)) continue;
+    if (options.skip?.has(decisionAttemptKey(thread.accountId, thread.id, lastMessageId, rule.decision))) continue;
+    // A current model record settles the thread only while it is still an
+    // answer to the present rule decision. One given for another (the sender
+    // has since been marked as a person, or its section was removed) is
+    // ignored by the inbox, so the thread is asked about again.
+    if (records?.model && isDecisionRecordCurrent(records.model, lastMessageId)
+      && applyModelRefinement(rule, records.model).source === 'model') continue;
     candidates.push({ thread, rule, lastMessageId });
   }
   return newestFirst(candidates).slice(0, Math.max(0, limit));

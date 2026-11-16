@@ -43,6 +43,7 @@ import {
   cleanDraftBody,
   latestMessageOf,
   parseDecisionBatchResponse,
+  decisionAttemptKey,
   prepAttemptKey,
   refineDecisionBatch,
   selectDecisionWorkList,
@@ -520,7 +521,7 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
 
   function rememberDecisionCandidates(accountId: string, candidates: readonly DecisionCandidate[]) {
     for (const candidate of candidates) {
-      remember(attemptedDecisions, prepAttemptKey(accountId, candidate.thread.id, candidate.lastMessageId));
+      remember(attemptedDecisions, decisionAttemptKey(accountId, candidate.thread.id, candidate.lastMessageId, candidate.rule.decision));
     }
   }
 
