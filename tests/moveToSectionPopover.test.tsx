@@ -70,8 +70,10 @@ describe('settleSenderSections', () => {
   const rule: SenderRule = { id: 'r1', senderEmail: sender, action: 'archive', enabled: true, createdAt: '2026-01-01T00:00:00.000Z', confirmations: 3, bringBacks: 0 };
   const NOW = new Date('2026-11-17T10:00:00.000Z');
 
+  /** Choices are made one after another: `s1` first, then `s2`, then `s3`. */
   function pending(id: string, section: SenderSectionTarget): PendingSenderSection {
-    return { accountId, senderName: 'Dispatch', input: { id, senderEmail: sender, section, now: NOW }, outcome: null };
+    const madeAt = new Date(NOW.getTime() + Number(id.slice(1)) * 100);
+    return { accountId, senderName: 'Dispatch', input: { id, senderEmail: sender, section, now: madeAt }, outcome: null };
   }
   /** What the queued updater does once React runs it. */
   function apply(settings: AccountSettingsSource, entry: PendingSenderSection): AccountSettingsSource {
@@ -109,6 +111,35 @@ describe('settleSenderSections', () => {
     expect(getSenderSections(undone, accountId).map(section => [section.id, section.section])).toEqual([['s1', 'read']]);
     // The rule the first choice switched off stays off: archiving is not re-enabled.
     expect(getSenderRules(undone, accountId)[0].enabled).toBe(false);
+  });
+
+  it('a choice that replaces a section keeps waiting while the replaced one is still what is committed', () => {
+    const first = pending('s1', 'read');
+    const committed = apply({ accountOverrides: {} }, first);
+    const second = pending('s2', 'clear');
+    // The updater for the second choice ran (eagerly), but an effect of the
+    // preceding commit still sees the first section.
+    const after = apply(committed, second);
+    expect(second.outcome?.replaced?.id).toBe('s1');
+    const early = settleSenderSections([second], committed, NOW);
+    expect(early).toEqual({ announce: [], waiting: [second] });
+    const settled = settleSenderSections(early.waiting, after, NOW);
+    expect(settled.announce.map(entry => entry.input.id)).toEqual(['s2']);
+    expect(settled.waiting).toEqual([]);
+  });
+
+  it('a third choice supersedes the second even while only the first is committed', () => {
+    const first = pending('s1', 'read');
+    const committed = apply({ accountOverrides: {} }, first);
+    const second = pending('s2', 'clear');
+    const third = pending('s3', 'automated');
+    const after = apply(apply(committed, second), third);
+    // Against the old commit both wait: each one's predecessor chain is not committed yet.
+    expect(settleSenderSections([second, third], committed, NOW).waiting).toEqual([second, third]);
+    const settled = settleSenderSections([second, third], after, NOW);
+    expect(settled.announce.map(entry => entry.input.id)).toEqual(['s3']);
+    expect(settled.waiting).toEqual([]);
+    expect(settled.announce[0].outcome.replaced?.id).toBe('s2');
   });
 
   it('gives up on a choice that never shows up', () => {

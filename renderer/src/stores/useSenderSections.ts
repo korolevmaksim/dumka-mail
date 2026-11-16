@@ -45,7 +45,8 @@ const PENDING_SENDER_SECTION_MAX_AGE_MS = 15_000;
  *   committed yet.
  * A choice that was applied but already replaced (two choices for one sender
  * before a render) is dropped: only the later one is announced, and its
- * outcome names the earlier one as what it replaced.
+ * outcome names the earlier one as what it replaced. An older section still
+ * committed for the sender is a predecessor, not a replacement.
  */
 export function settleSenderSections(
   pending: readonly PendingSenderSection[],
@@ -65,8 +66,13 @@ export function settleSenderSections(
       announce.push(entry as PendingSenderSection & { outcome: SenderSectionOutcome });
       continue;
     }
+    // Not in the committed settings. It was replaced only if the sender's
+    // committed section is a later choice than this one. An earlier section
+    // there is one this choice (or the chain before it) replaced: the update
+    // that applied it simply has not been committed yet.
     const sender = entry.outcome.section.senderEmail;
-    const superseded = sections.some(section => section.senderEmail === sender);
+    const madeAt = entry.input.now.getTime();
+    const superseded = sections.some(section => section.senderEmail === sender && Date.parse(section.createdAt) > madeAt);
     if (!superseded && !expired) waiting.push(entry);
   }
   return { announce, waiting };
