@@ -4,8 +4,10 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MoveToSectionPopover, sectionDigitIndex } from '../renderer/src/components/mailbox/MoveToSectionPopover';
-import { senderSectionSenderName } from '../renderer/src/stores/useSenderSections';
-import type { MailThread } from '../shared/types';
+import { senderSectionSenderName, settleSenderSections, type PendingSenderSection } from '../renderer/src/stores/useSenderSections';
+import { getSenderRules, getSenderSections, setSenderRules, type AccountSettingsSource } from '../shared/accountSettings';
+import { createSenderSection, undoSenderSection } from '../shared/senderSections';
+import type { MailThread, SenderRule, SenderSectionTarget } from '../shared/types';
 
 const thread = {
   id: 't1',
@@ -57,5 +59,65 @@ describe('senderSectionSenderName', () => {
     expect(senderSectionSenderName(thread)).toBe('CodeForge');
     expect(senderSectionSenderName({ senderNames: ['Alex Morgan', 'Sofia Lindqvist'], senderEmail: ' sofia@harborpine.example ' })).toBe('sofia@harborpine.example');
     expect(senderSectionSenderName({ senderNames: [' '], senderEmail: 'a@x.example' })).toBe('a@x.example');
+  });
+});
+
+// The settings update runs later than the call that queued it, so what a
+// choice replaced and switched off is taken from the update that was applied.
+describe('settleSenderSections', () => {
+  const accountId = 'alex.morgan@northwind.example';
+  const sender = 'hello@pragmaticdispatch.example';
+  const rule: SenderRule = { id: 'r1', senderEmail: sender, action: 'archive', enabled: true, createdAt: '2026-01-01T00:00:00.000Z', confirmations: 3, bringBacks: 0 };
+  const NOW = new Date('2026-11-17T10:00:00.000Z');
+
+  function pending(id: string, section: SenderSectionTarget): PendingSenderSection {
+    return { accountId, senderName: 'Dispatch', input: { id, senderEmail: sender, section, now: NOW }, outcome: null };
+  }
+  /** What the queued updater does once React runs it. */
+  function apply(settings: AccountSettingsSource, entry: PendingSenderSection): AccountSettingsSource {
+    const result = createSenderSection(settings, accountId, entry.input);
+    entry.outcome = { section: result.section, replaced: result.replaced, disabledRule: result.disabledRule };
+    return result.settings;
+  }
+
+  it('waits until the update ran and its settings are committed', () => {
+    const start = setSenderRules({ accountOverrides: {} }, accountId, [rule]);
+    const first = pending('s1', 'read');
+    expect(settleSenderSections([first], start, NOW)).toEqual({ announce: [], waiting: [first] });
+    const after = apply(start, first);
+    // Applied in a render that has not committed: still waiting.
+    expect(settleSenderSections([first], start, NOW).waiting).toEqual([first]);
+    const settled = settleSenderSections([first], after, NOW);
+    expect(settled.waiting).toEqual([]);
+    expect(settled.announce[0].outcome.disabledRule?.id).toBe('r1');
+  });
+
+  it('two choices for one sender before a render: only the later one is announced, and its Undo restores the earlier one', () => {
+    const start = setSenderRules({ accountOverrides: {} }, accountId, [rule]);
+    const first = pending('s1', 'read');
+    const second = pending('s2', 'clear');
+    // Both updaters run on the real state, in order, in one render.
+    const after = apply(apply(start, first), second);
+    const settled = settleSenderSections([first, second], after, NOW);
+    expect(settled.announce.map(entry => entry.input.id)).toEqual(['s2']);
+    expect(settled.waiting).toEqual([]);
+    // From the applied transition, not from the settings at the time of the call.
+    expect(settled.announce[0].outcome.replaced?.id).toBe('s1');
+    expect(settled.announce[0].outcome.disabledRule).toBeNull();
+
+    const undone = undoSenderSection(after, accountId, settled.announce[0].outcome);
+    expect(getSenderSections(undone, accountId).map(section => [section.id, section.section])).toEqual([['s1', 'read']]);
+    // The rule the first choice switched off stays off: archiving is not re-enabled.
+    expect(getSenderRules(undone, accountId)[0].enabled).toBe(false);
+  });
+
+  it('gives up on a choice that never shows up', () => {
+    const start: AccountSettingsSource = { accountOverrides: {} };
+    const never = pending('s1', 'read');
+    const late = new Date(NOW.getTime() + 60_000);
+    expect(settleSenderSections([never], start, late)).toEqual({ announce: [], waiting: [] });
+    const applied = pending('s2', 'read');
+    apply(start, applied);
+    expect(settleSenderSections([applied], start, late)).toEqual({ announce: [], waiting: [] });
   });
 });

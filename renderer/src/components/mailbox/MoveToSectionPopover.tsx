@@ -1,5 +1,6 @@
 import { useCallback, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useDialogFocus } from '../../hooks/useDialogFocus';
+import { ownKeyUntilRelease } from '../../lib/heldKeys';
 import { sectionOrder } from '../../../../shared/decision';
 import { SECTION_LABELS } from '../../../../shared/inboxSections';
 import { senderSectionPopoverHint } from '../../../../shared/senderSections';
@@ -61,6 +62,9 @@ export function MoveToSectionPopover({ thread, hasModel, currentSection, alwaysF
     }
     if (event.key === 'Enter') {
       event.preventDefault();
+      // Choosing closes the popover; the held key must not go on to act on
+      // the mailbox behind it (`↩` opens a conversation, `⇧1` is `!`: spam).
+      ownKeyUntilRelease(event.code);
       choose(activeIndex, event.shiftKey);
       return;
     }
@@ -68,6 +72,7 @@ export function MoveToSectionPopover({ thread, hasModel, currentSection, alwaysF
     const digit = sectionDigitIndex(event);
     if (digit !== null) {
       event.preventDefault();
+      ownKeyUntilRelease(event.code);
       choose(digit, event.shiftKey);
     }
   };
