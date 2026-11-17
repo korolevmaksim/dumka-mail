@@ -55,6 +55,8 @@ export interface ReconcilerDeps {
    * such an action is treated as not done and sent again.
    */
   settleLater?: (action: MailActionLog) => void;
+  /** The remote side took the action (its `completed` state is stored or handed to `settleLater`). */
+  onCompleted?: (action: MailActionLog) => void;
   /**
    * True while a scheduled message that is too late must be held instead of
    * sent (`shared/scheduledSend.ts`). Absent: every due message is sent.
@@ -129,6 +131,11 @@ function recordCompleted(action: MailActionLog, deps: ReconcilerDeps): void {
     // A locked database is not a reason to do the action again.
     if (!deps.settleLater || !isSqliteBusyError(error)) throw error;
     deps.settleLater({ ...action });
+  }
+  try {
+    deps.onCompleted?.(action);
+  } catch {
+    // A hook must not turn a completed action into a failed pass.
   }
 }
 

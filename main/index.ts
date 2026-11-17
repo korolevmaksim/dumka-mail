@@ -951,6 +951,8 @@ app.whenReady().then(async () => {
     // Gmail took the action but the database was locked: the record waits
     // for the lock, so the action is not replayed.
     settleLater: log => { void localWrites.settle('reconciler:completed', () => ActionLogRepo.save(log)); },
+    // A parked action kept its rollback plan; Gmail took it, so it is done with.
+    onCompleted: action => LabelRollbacks.forget(action.id),
     drafts: DraftsRepo,
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
@@ -1442,11 +1444,18 @@ registerSecureHandler('db:listActionLog', (_, accountId) => ActionLogRepo.list(a
 // The action journal is written before the remote call of every mail action,
 // so a held database lock must delay it, not fail it: the write waits in the
 // interactive write queue and fails only when the lock outlasts the deadline.
-registerSecureHandler('db:saveActionLog', (_, log) => queuedLocalWrite('db:saveActionLog', () => ActionLogRepo.save(log), {
-  accountId: typeof log?.accountId === 'string' ? log.accountId : null,
-  actionKind: typeof log?.kind === 'string' ? log.kind : null,
-  actionStatus: typeof log?.status === 'string' ? log.status : null,
-}));
+registerSecureHandler('db:saveActionLog', async (_, log) => {
+  await queuedLocalWrite('db:saveActionLog', () => ActionLogRepo.save(log), {
+    accountId: typeof log?.accountId === 'string' ? log.accountId : null,
+    actionKind: typeof log?.kind === 'string' ? log.kind : null,
+    actionStatus: typeof log?.status === 'string' ? log.status : null,
+  });
+  // The window settled the action (completed, or cancelled before it synced):
+  // its rollback plan is done with.
+  if (typeof log?.id === 'string' && (log.status === 'completed' || log.status === 'failed')) {
+    LabelRollbacks.forget(log.id);
+  }
+});
 
 registerSecureHandler('db:listCleanupExclusions', (_, accountIds: string[]) => CleanupExclusionsRepo.list(accountIds));
 registerSecureHandler('db:saveCleanupExclusion', (_, exclusion: CleanupSenderExclusion) => CleanupExclusionsRepo.save(exclusion));

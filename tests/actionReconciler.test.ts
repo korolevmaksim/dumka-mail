@@ -291,6 +291,22 @@ describe('reconcilePendingActions when the database is locked after Gmail took t
     expect(h.rollbacks).toEqual([]);
   });
 
+  it('tells onCompleted about every action Gmail took, stored at once or later', async () => {
+    const h = makeDeps({ pending: [{ ...parked }, { ...parked, id: 'a2' }] });
+    const save = h.deps.actionLog.save;
+    h.deps.actionLog.save = log => {
+      if (log.id === 'a2' && log.status === 'completed') throw busy();
+      save(log);
+    };
+    h.deps.settleLater = () => undefined;
+    const completed: string[] = [];
+    h.deps.onCompleted = action => { completed.push(action.id); };
+
+    await reconcilePendingActions(h.deps);
+
+    expect(completed).toEqual(['a1', 'a2']);
+  });
+
   it('still fails loudly on an error that is not a lock', async () => {
     const h = makeDeps({ pending: [{ ...parked }] });
     const save = h.deps.actionLog.save;

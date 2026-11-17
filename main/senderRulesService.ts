@@ -400,6 +400,8 @@ export const SenderRulesService = {
         }
         if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
       });
+      // Dropped without a rollback: its plan is done with all the same.
+      LabelRollbacks.forget(action.id);
     } catch (error) {
       deps?.logError('Could not drop a parked sender-rule archive.', error, { accountId: action.accountId, threadId: action.threadId });
     }

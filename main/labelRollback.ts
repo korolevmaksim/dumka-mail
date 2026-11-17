@@ -4,7 +4,8 @@
 // An action's optimistic write reports the labels it really changed
 // (`ThreadsRepo.updateLabels`); the opposite of that is its rollback plan. It
 // is kept here, in memory, while the action can still fail: until Gmail
-// accepts it, including while it is parked for the reconciler.
+// accepts it, including while it is parked for the reconciler. Everything that
+// settles an action forgets its plan.
 //
 // When an action is rolled back, a label that a newer, not failed action of
 // the same thread also sets or clears is left alone: that action decides the
@@ -32,8 +33,28 @@ export interface RolledBackAction {
   threadId: string;
 }
 
-const MAX_TRACKED_PLANS = 1000;
+/** Above this many plans, the ones whose action is settled are swept out. */
+const DEFAULT_PLAN_SWEEP_THRESHOLD = 1000;
+const PLAN_SWEEP_STEP = 100;
 const plans = new Map<string, LabelRollbackPlan>();
+let sweepThreshold = DEFAULT_PLAN_SWEEP_THRESHOLD;
+let nextSweepAt = DEFAULT_PLAN_SWEEP_THRESHOLD;
+
+/**
+ * Drops the plans of actions that can no longer fail (the journal says
+ * completed or failed, or has no entry). Every caller forgets its plan when
+ * its action settles; this only catches what slipped through. A plan of an
+ * action that can still fail is never dropped, however many there are: without
+ * it a rejected action would restore the labels of its kind instead of what
+ * it changed, and a handed-over label would be lost.
+ */
+function sweepSettledPlans(): void {
+  for (const actionId of Array.from(plans.keys())) {
+    const status = ActionLogRepo.get(actionId)?.status;
+    if (!status || status === 'completed' || status === 'failed') plans.delete(actionId);
+  }
+  nextSweepAt = Math.max(sweepThreshold, plans.size + PLAN_SWEEP_STEP);
+}
 
 function sameLabel(left: string, right: string): boolean {
   return left.toUpperCase() === right.toUpperCase();
@@ -49,16 +70,10 @@ export const LabelRollbacks = {
     if (!actionId) return;
     plans.delete(actionId);
     plans.set(actionId, { add: [...change.removed], remove: [...change.added] });
-    // Plans of actions that were never settled here (parked ones the
-    // reconciler completed) are dropped oldest first.
-    while (plans.size > MAX_TRACKED_PLANS) {
-      const oldest = plans.keys().next().value;
-      if (oldest === undefined) break;
-      plans.delete(oldest);
-    }
+    if (plans.size > nextSweepAt) sweepSettledPlans();
   },
 
-  /** Gmail accepted the action: it will not be rolled back. */
+  /** The action is settled (Gmail accepted it, or it was cancelled): it will not be rolled back. */
   forget(actionId: string | null | undefined): void {
     if (actionId) plans.delete(actionId);
   },
@@ -107,7 +122,9 @@ export const LabelRollbacks = {
     return plan ? { add: [...plan.add], remove: [...plan.remove] } : null;
   },
 
-  resetForTests(): void {
+  resetForTests(options: { sweepThreshold?: number } = {}): void {
     plans.clear();
+    sweepThreshold = options.sweepThreshold ?? DEFAULT_PLAN_SWEEP_THRESHOLD;
+    nextSweepAt = sweepThreshold;
   },
 };

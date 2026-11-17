@@ -226,6 +226,32 @@ describe('LabelRollbacks', () => {
     expect(labels()).toEqual(['INBOX']);
   });
 
+  sqliteIt('never drops the plan of an action that can still fail, however many plans there are', () => {
+    rollbacks.resetForTests({ sweepThreshold: 3 });
+    database.ThreadsRepo.save([thread(['UNREAD'])]);
+    // A parked archive that found the thread already out of the inbox: its plan is empty.
+    start('parked', 'markDone', 0, [], ['INBOX'], { status: 'pending_sync' });
+    expect(rollbacks.planFor('parked')).toEqual({ add: [], remove: [] });
+
+    // Many later actions, all settled in the journal but never forgotten.
+    for (let index = 1; index <= 12; index += 1) {
+      database.ActionLogRepo.save(action(`settled-${index}`, 'applyLabel', index, {
+        status: index % 2 ? 'completed' : 'failed',
+        threadId: 'thread-2',
+        payloadJson: JSON.stringify({ labelId: 'Label_7' }),
+      }));
+      rollbacks.track(`settled-${index}`, { added: ['Label_7'], removed: [] });
+    }
+
+    // The settled ones were swept out, the parked one was kept.
+    expect(rollbacks.planFor('settled-1')).toBeNull();
+    expect(rollbacks.planFor('parked')).toEqual({ add: [], remove: [] });
+
+    // Rejected on replay: the kind's fallback (add INBOX) must not be used.
+    reject('parked', { add: ['INBOX'], remove: [] });
+    expect(labels()).toEqual(['UNREAD']);
+  });
+
   sqliteIt('rolls back as asked when the action has no journal entry or no id', () => {
     database.ThreadsRepo.save([thread(['INBOX'])]);
     database.ActionLogRepo.save(action('newer', 'markRead', 1, { status: 'completed' }));
