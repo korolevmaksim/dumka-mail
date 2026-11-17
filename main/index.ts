@@ -2493,6 +2493,9 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
       try {
         const scheduledAt = scheduledAtForRetry(err);
         // Gmail did not take the change: parking may wait for the lock too.
+        // It waits in front of the writes already waiting (all newer than
+        // this action's label change), and if it is given up the label
+        // change is undone right there, before any of them has its turn.
         await interactiveWrites.run('api:modifyLabels:park', () => {
           const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
           if (log) {
@@ -2512,10 +2515,12 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
               payloadJson
             });
           }
+        }, {
+          aheadOfQueue: true,
+          // Not parked means it would never sync: undo the local change instead.
+          onRejected: () => rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds),
         });
       } catch (parkError) {
-        // Not parked means it would never sync: undo the local change instead.
-        rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
         throw localSaveFailure('api:modifyLabels', parkError, { accountId: email, actionKind: resolvedKind });
       }
       // Parked actions replay through the reconciler; they are counted once, here.

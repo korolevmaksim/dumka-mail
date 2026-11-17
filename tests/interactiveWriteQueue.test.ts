@@ -254,6 +254,66 @@ describe('createInteractiveWriteQueue', () => {
     db.close();
   });
 
+  sqliteIt('a write asked for ahead of the queue waits in front of the ordinary writes', async () => {
+    const db = new Sqlite!(':memory:');
+    const { queue, resumeAll } = heldQueue(db);
+    const order: string[] = [];
+    let locked = true;
+    const write = (name: string) => () => {
+      if (locked) throw busyError();
+      order.push(name);
+    };
+
+    const writes = [
+      queue.run('newer-1', write('newer-1')),
+      queue.run('newer-2', write('newer-2')),
+    ];
+    await new Promise(resolve => setTimeout(resolve, 0));
+    writes.push(queue.run('park-1', write('park-1'), { aheadOfQueue: true }));
+    writes.push(queue.run('park-2', write('park-2'), { aheadOfQueue: true }));
+
+    locked = false;
+    resumeAll();
+    await Promise.all(writes);
+
+    expect(order).toEqual(['park-1', 'park-2', 'newer-1', 'newer-2']);
+    db.close();
+  });
+
+  sqliteIt('runs onRejected when a write is given up, before the next waiting write has its turn', async () => {
+    const db = new Sqlite!(':memory:');
+    const time = fakeTime();
+    const queue = createInteractiveWriteQueue(() => db, time);
+    const order: string[] = [];
+    let locked = true;
+
+    const newer = queue.run('newer', () => {
+      if (locked) throw busyError();
+      order.push('newer');
+    }, { deadlineMs: 10_000 });
+    const park = queue.run('park', () => { throw busyError(); }, {
+      aheadOfQueue: true,
+      deadlineMs: 100,
+      onRejected: () => {
+        order.push('rollback');
+        // The lock clears at this very moment: the newer write must still come after.
+        locked = false;
+      },
+    });
+
+    await expect(park).rejects.toThrow('database is locked');
+    await newer;
+    expect(order).toEqual(['rollback', 'newer']);
+
+    // Also for an error that is not a lock.
+    const failed = queue.run('park', () => { throw new Error('disk full'); }, { onRejected: () => { order.push('rollback-2'); } });
+    const after = queue.run('after', () => { order.push('after'); });
+    await expect(failed).rejects.toThrow('disk full');
+    await after;
+    expect(order).toEqual(['rollback', 'newer', 'rollback-2', 'after']);
+    db.close();
+  });
+
   sqliteIt('a write queued and followed by a synchronous write in the same tick keeps its place', async () => {
     const db = new Sqlite!(':memory:');
     const queue = createInteractiveWriteQueue(() => db, fakeTime());
@@ -604,6 +664,52 @@ describe('mail action journal under a held database lock', () => {
     for (const next of resume.splice(0)) next();
     await newer;
     // The newer action landed after the rollback: the thread is read.
+    expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
+  });
+
+  sqliteIt('an action that cannot be parked is rolled back before a newer waiting write of the same thread', async () => {
+    const { database, guard, lock, release } = await fixture();
+    const accountId = 'alex.morgan@northwind.example';
+    // The older "mark read" is stored (no UNREAD); its Gmail request is in flight.
+    database.ThreadsRepo.save([{
+      id: 'thread-1',
+      accountId,
+      subject: 'Quarterly plan',
+      snippet: '',
+      lastMessageAt: new Date(Date.UTC(2026, 10, 17)).toISOString(),
+      senderNames: ['Jordan Lee'],
+      senderEmail: 'jordan.lee@northwind.example',
+      to: [],
+      cc: [],
+      labelIds: ['INBOX'],
+      hasAttachments: false,
+      isUnread: false,
+    } as unknown as MailThread]);
+    const resume: Array<() => void> = [];
+    const queue = guard.createInteractiveWriteQueue(database.getDatabase, {
+      attemptBusyTimeoutMs: 20,
+      wait: () => new Promise<void>(resolve => { resume.push(resolve); }),
+    });
+    await lock();
+
+    // Newer: a second "mark read" of the same thread waits for the lock.
+    const newer = queue.run('api:modifyLabels', () => database.ThreadsRepo.updateLabels(accountId, 'thread-1', [], ['UNREAD']));
+    await vi.waitFor(() => expect(resume).toHaveLength(1));
+
+    // The older request fails with a network error and is parked, as
+    // api:modifyLabels does it; the parking write cannot be stored.
+    const park = queue.run('api:modifyLabels:park', () => { throw new Error('disk full'); }, {
+      aheadOfQueue: true,
+      onRejected: () => database.ThreadsRepo.rollbackLabels(accountId, 'thread-1', ['UNREAD'], []),
+    });
+    park.catch(() => undefined);
+
+    await release();
+    for (const next of resume.splice(0)) next();
+    await expect(park).rejects.toThrow('disk full');
+    await newer;
+
+    // Rolled back first, then the newer action: the thread is read.
     expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
   });
 

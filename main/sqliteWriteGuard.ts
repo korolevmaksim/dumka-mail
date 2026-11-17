@@ -247,7 +247,9 @@ export function guardRepositoryWrites<R extends object>(
 // (runWriteTransaction) first lands whatever is waiting here, so an older
 // queued write is never applied on top of a newer synchronous one. A rollback
 // goes the other way (`aheadOfQueue`): it undoes a write that landed before
-// anything now waiting was asked for, so it runs first.
+// anything now waiting was asked for, so it runs first. A queued write whose
+// failure means a rollback (parking an action) waits in front for the same
+// reason and rolls back in `onRejected`, at the moment it is given up.
 
 export interface InteractiveWriteContention {
   label: string;
@@ -278,9 +280,28 @@ export const DEFAULT_INTERACTIVE_WRITE_QUEUE = {
   maxDelayMs: 100,
 } as const;
 
+export interface InteractiveWriteOptions {
+  deadlineMs?: number;
+  /**
+   * For a write that belongs to an action whose optimistic change already
+   * landed (parking it after a network error): wait in front of the writes
+   * already waiting, which are all newer than that change, instead of behind
+   * them. Such writes keep their own order among themselves.
+   */
+  aheadOfQueue?: boolean;
+  /**
+   * Called at once when the write is given up (the deadline passed, or it
+   * failed for another reason), before the queue attempts anything else and
+   * before the returned promise rejects. The place for the rollback of the
+   * optimistic change: done later, in the caller's `catch`, it would run
+   * after the next waiting write had its turn.
+   */
+  onRejected?: () => void;
+}
+
 export interface InteractiveWriteQueue {
   /** Runs `fn` as one write transaction once the writes queued before it settled. */
-  run<T>(label: string, fn: () => T, options?: { deadlineMs?: number }): Promise<T>;
+  run<T>(label: string, fn: () => T, options?: InteractiveWriteOptions): Promise<T>;
   /** Writes waiting or in progress. */
   readonly size: number;
 }
@@ -304,6 +325,8 @@ interface QueuedWrite {
   queuedAt: number;
   deadlineMs: number;
   attempts: number;
+  ahead: boolean;
+  onRejected?: () => void;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
 }
@@ -356,26 +379,39 @@ export function createInteractiveWriteQueue(
     }
   };
 
+  /** Gives up the first waiting write: its `onRejected` runs before anything else is attempted. */
+  const giveUp = (task: QueuedWrite, error: unknown): void => {
+    waiting.shift();
+    try {
+      task.onRejected?.();
+    } catch {
+      // The write is rejected with its own error either way.
+    }
+    task.reject(error);
+  };
+
   /** Runs the first waiting write once. Throws only a busy error; anything else settles the write. */
   const writeFirst = (task: QueuedWrite, run: (db: Database.Database) => unknown): void => {
     task.attempts += 1;
-    let value: unknown;
+    let outcome: { stored: true; value: unknown } | { stored: false; error: unknown };
     writing = true;
     try {
-      value = run(getDb());
+      outcome = { stored: true, value: run(getDb()) };
     } catch (error) {
       if (isSqliteBusyError(error)) throw error;
-      waiting.shift();
-      task.reject(error);
-      return;
+      outcome = { stored: false, error };
     } finally {
       writing = false;
+    }
+    if (!outcome.stored) {
+      giveUp(task, outcome.error);
+      return;
     }
     waiting.shift();
     if (task.attempts > 1) {
       report({ label: task.label, attempts: task.attempts, waitedMs: now() - task.queuedAt, recovered: true });
     }
-    task.resolve(value);
+    task.resolve(outcome.value);
   };
 
   async function pump(): Promise<void> {
@@ -395,9 +431,8 @@ export function createInteractiveWriteQueue(
         } catch (error) {
           const waitedMs = now() - task.queuedAt;
           if (waitedMs >= task.deadlineMs) {
-            waiting.shift();
             report({ label: task.label, attempts: task.attempts, waitedMs, recovered: false });
-            task.reject(error);
+            giveUp(task, error);
             continue;
           }
           // Capped at the time left, so the last attempt lands on the deadline.
@@ -423,9 +458,9 @@ export function createInteractiveWriteQueue(
   });
 
   return {
-    run<T>(label: string, fn: () => T, runOptions: { deadlineMs?: number } = {}): Promise<T> {
+    run<T>(label: string, fn: () => T, runOptions: InteractiveWriteOptions = {}): Promise<T> {
       return new Promise<T>((resolve, reject) => {
-        waiting.push({
+        const task: QueuedWrite = {
           label,
           fn,
           // The deadline counts from here: writes stuck behind a held lock all
@@ -433,9 +468,18 @@ export function createInteractiveWriteQueue(
           queuedAt: now(),
           deadlineMs: runOptions.deadlineMs ?? defaultDeadlineMs,
           attempts: 0,
+          ahead: runOptions.aheadOfQueue === true,
+          onRejected: runOptions.onRejected,
           resolve: value => resolve(value as T),
           reject,
-        });
+        };
+        if (task.ahead) {
+          // In front of the ordinary writes, behind the ones already put there.
+          const firstOrdinary = waiting.findIndex(other => !other.ahead);
+          waiting.splice(firstOrdinary === -1 ? waiting.length : firstOrdinary, 0, task);
+        } else {
+          waiting.push(task);
+        }
         // Not in this tick: the caller's code up to its next await runs first.
         queueMicrotask(() => { void pump(); });
       });
