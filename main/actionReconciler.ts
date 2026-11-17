@@ -42,6 +42,13 @@ export interface ReconcilerDeps {
   /** After an action failed permanently and its local change was rolled back. */
   onPermanentFailure?: (action: MailActionLog) => void;
   /**
+   * Runs the record of a permanent failure and the label rollback as one
+   * write, ahead of the writes waiting for the database: those are newer than
+   * the change being rolled back and must not land before it is undone.
+   * Defaults to calling `fn`.
+   */
+  runRollback?: (fn: () => void) => void;
+  /**
    * True while a scheduled message that is too late must be held instead of
    * sent (`shared/scheduledSend.ts`). Absent: every due message is sent.
    */
@@ -330,41 +337,55 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
         action.status = 'failed';
         action.completedAt = now().toISOString();
         action.failureMessage = err.message;
-        deps.actionLog.save(action);
+        const runRollback = deps.runRollback || ((fn: () => void) => fn());
+        try {
+          runRollback(() => {
+            deps.actionLog.save(action);
 
-        // Roll back local DB changes for labels on permanent failure
-        if (action.threadId) {
-          if (action.kind === 'markDone') {
-            deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
-          } else if (action.kind === 'restoreInbox') {
-            deps.threads.updateLabels(action.accountId, action.threadId, [], ['INBOX']);
-          } else if (action.kind === 'markRead') {
-            deps.threads.updateLabels(action.accountId, action.threadId, ['UNREAD'], []);
-          } else if (action.kind === 'markUnread') {
-            deps.threads.updateLabels(action.accountId, action.threadId, [], ['UNREAD']);
-          } else if (action.kind === 'moveToTrash') {
-            deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['TRASH']);
-          } else if (action.kind === 'restoreFromTrash') {
-            deps.threads.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX']);
-          } else if (action.kind === 'reportSpam') {
-            deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM']);
-          } else if (action.kind === 'restoreFromSpam') {
-            deps.threads.updateLabels(action.accountId, action.threadId, ['SPAM'], ['INBOX']);
-          } else if (action.kind === 'muteThread') {
-            const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-            deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : []);
-          } else if (action.kind === 'unmuteThread') {
-            const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-            deps.threads.updateLabels(action.accountId, action.threadId, typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : [], ['INBOX']);
-          } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel' || action.kind === 'removeLabel') {
-            const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-            const labelId = typeof rollbackPayload.labelId === 'string' ? rollbackPayload.labelId : null;
-            if (labelId && action.kind === 'removeLabel') {
-              deps.threads.updateLabels(action.accountId, action.threadId, [labelId], []);
-            } else if (labelId) {
-              deps.threads.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
+            // Roll back local DB changes for labels on permanent failure
+            if (action.threadId) {
+              if (action.kind === 'markDone') {
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
+              } else if (action.kind === 'restoreInbox') {
+                deps.threads.updateLabels(action.accountId, action.threadId, [], ['INBOX']);
+              } else if (action.kind === 'markRead') {
+                deps.threads.updateLabels(action.accountId, action.threadId, ['UNREAD'], []);
+              } else if (action.kind === 'markUnread') {
+                deps.threads.updateLabels(action.accountId, action.threadId, [], ['UNREAD']);
+              } else if (action.kind === 'moveToTrash') {
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['TRASH']);
+              } else if (action.kind === 'restoreFromTrash') {
+                deps.threads.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX']);
+              } else if (action.kind === 'reportSpam') {
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM']);
+              } else if (action.kind === 'restoreFromSpam') {
+                deps.threads.updateLabels(action.accountId, action.threadId, ['SPAM'], ['INBOX']);
+              } else if (action.kind === 'muteThread') {
+                const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : []);
+              } else if (action.kind === 'unmuteThread') {
+                const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+                deps.threads.updateLabels(action.accountId, action.threadId, typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : [], ['INBOX']);
+              } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel' || action.kind === 'removeLabel') {
+                const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
+                const labelId = typeof rollbackPayload.labelId === 'string' ? rollbackPayload.labelId : null;
+                if (labelId && action.kind === 'removeLabel') {
+                  deps.threads.updateLabels(action.accountId, action.threadId, [labelId], []);
+                } else if (labelId) {
+                  deps.threads.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
+                }
+              }
             }
+          });
+        } catch (rollbackError) {
+          // The rollback could not be written. The failure is still recorded
+          // on its own, as it was before the two became one write.
+          try {
+            deps.actionLog.save(action);
+          } catch {
+            // The action keeps its stored status and is picked up again.
           }
+          throw rollbackError;
         }
         try {
           deps.onPermanentFailure?.(action);

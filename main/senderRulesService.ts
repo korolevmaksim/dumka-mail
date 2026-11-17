@@ -14,7 +14,8 @@
 // settings blob); this module only reads them. Bring-backs are published to
 // the renderer, which updates the rule counters and auto-disables a rule.
 import crypto from 'crypto';
-import { ActionLogRepo, SettingsRepo, ThreadsRepo } from './database';
+import { ActionLogRepo, SettingsRepo, ThreadsRepo, getDatabase } from './database';
+import { runRollbackTransaction } from './sqliteWriteGuard';
 import { SenderRulesRepo } from './senderRulesRepository';
 import { isRetryableRemoteError } from './actionReconciler';
 import { getSenderRules, getSenderSections, normalizeAccountId, normalizeAccountOverrides, resolveAccountSetting, type AccountSettingsSource } from '../shared/accountSettings';
@@ -307,7 +308,7 @@ export const SenderRulesService = {
       });
     } catch (error) {
       // Without a log entry the archive could never sync or be undone: undo it.
-      try { ThreadsRepo.updateLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
+      try { ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
       deps?.logError('Sender rule could not record its archive.', error, { accountId, threadId: thread.id });
       return thread;
     }
@@ -323,7 +324,7 @@ export const SenderRulesService = {
         ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: message });
         return archivedThread;
       }
-      try { ThreadsRepo.updateLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
+      try { ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
       SenderRulesRepo.forgetArchive(actionId);
       ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
       deps?.logError('Sender rule archive was rejected by Gmail and rolled back.', error, { accountId, threadId: thread.id });
@@ -375,12 +376,16 @@ export const SenderRulesService = {
    */
   dropParkedArchive(action: MailActionLog, reason: string, options: { rollbackLocal: boolean; forgetRecord: boolean }) {
     try {
-      const stored = ActionLogRepo.get(action.id) || action;
-      if (stored.status === 'pending_sync' || stored.status === 'queued' || stored.status === 'running') {
-        ActionLogRepo.save({ ...stored, status: 'failed', completedAt: now().toISOString(), failureMessage: `Sender rule archive not sent: ${reason}` });
-      }
-      if (options.rollbackLocal && action.threadId) ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
-      if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
+      // One write, ahead of the writes waiting for the database: saved on its
+      // own first, the failed status would land them before the rollback.
+      runRollbackTransaction(getDatabase(), () => {
+        const stored = ActionLogRepo.get(action.id) || action;
+        if (stored.status === 'pending_sync' || stored.status === 'queued' || stored.status === 'running') {
+          ActionLogRepo.save({ ...stored, status: 'failed', completedAt: now().toISOString(), failureMessage: `Sender rule archive not sent: ${reason}` });
+        }
+        if (options.rollbackLocal && action.threadId) ThreadsRepo.rollbackLabels(action.accountId, action.threadId, ['INBOX'], []);
+        if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
+      });
     } catch (error) {
       deps?.logError('Could not drop a parked sender-rule archive.', error, { accountId: action.accountId, threadId: action.threadId });
     }

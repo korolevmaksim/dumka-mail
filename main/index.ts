@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import {
+  getDatabase,
   initializeDatabase,
   AccountIntegrationsRepo,
   AccountsRepo,
@@ -80,6 +81,7 @@ import { formatDateTime } from '../shared/dateFormat';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
+import { createInteractiveWriteQueue, runRollbackTransaction, withBusyTimeout } from './sqliteWriteGuard';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import {
   applyPendingRestoreIfAny,
@@ -437,7 +439,7 @@ async function runNotificationLabelAction(
       return;
     }
 
-    ThreadsRepo.updateLabels(accountId, threadId, removeLabelIds, addLabelIds);
+    ThreadsRepo.rollbackLabels(accountId, threadId, removeLabelIds, addLabelIds);
     scheduleUnreadBadge();
     ActionLogRepo.save({
       ...log,
@@ -939,7 +941,15 @@ app.whenReady().then(async () => {
   // Start background sync worker loop
   startBackgroundSyncWorker({
     actionLog: ActionLogRepo,
-    threads: ThreadsRepo,
+    threads: {
+      get: (accountId, threadId) => ThreadsRepo.get(accountId, threadId),
+      // The reconciler writes labels only to roll back an action Gmail
+      // rejected for good: ahead of the writes waiting in the queue.
+      updateLabels: (accountId, threadId, add, remove) => ThreadsRepo.rollbackLabels(accountId, threadId, add, remove),
+    },
+    // The failed status and the rollback are one write: saved on its own
+    // first, the status would land the waiting (newer) label writes.
+    runRollback: fn => runRollbackTransaction(getDatabase(), fn),
     drafts: DraftsRepo,
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
@@ -1424,7 +1434,20 @@ registerSecureHandler('db:getSyncState', (_, accountId) => SyncStateRepo.get(acc
 registerSecureHandler('db:saveSyncState', (_, state) => SyncStateRepo.save(state));
 
 registerSecureHandler('db:listActionLog', (_, accountId) => ActionLogRepo.list(accountId));
-registerSecureHandler('db:saveActionLog', (_, log) => ActionLogRepo.save(log));
+// The action journal is written before the remote call of every mail action,
+// so a held database lock must delay it, not fail it: the write waits in the
+// interactive write queue and fails only when the lock outlasts the deadline.
+registerSecureHandler('db:saveActionLog', async (_, log) => {
+  try {
+    await interactiveWrites.run('db:saveActionLog', () => ActionLogRepo.save(log));
+  } catch (localError) {
+    throw localSaveFailure('db:saveActionLog', localError, {
+      accountId: typeof log?.accountId === 'string' ? log.accountId : null,
+      actionKind: typeof log?.kind === 'string' ? log.kind : null,
+      actionStatus: typeof log?.status === 'string' ? log.status : null,
+    });
+  }
+});
 
 registerSecureHandler('db:listCleanupExclusions', (_, accountIds: string[]) => CleanupExclusionsRepo.list(accountIds));
 registerSecureHandler('db:saveCleanupExclusion', (_, exclusion: CleanupSenderExclusion) => CleanupExclusionsRepo.save(exclusion));
@@ -2408,7 +2431,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
       return;
     }
-    ThreadsRepo.updateLabels(thread.accountId, thread.id, mutation.removeLabelIds, mutation.addLabelIds);
+    ThreadsRepo.rollbackLabels(thread.accountId, thread.id, mutation.removeLabelIds, mutation.addLabelIds);
     ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
   }
 }
@@ -2445,10 +2468,11 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
     if (archivesFromInbox) SenderRulesService.noteArchive(email, threadBeforeArchive, actionId, payloadJson);
     if (restoresToInbox) SenderRulesService.noteRestore(email, threadId);
   };
-  // 1. Optimistically write to local SQLite database first for instant persistence
-  //    (immediate transaction + bounded busy retry inside the repository).
+  // 1. Optimistically write to local SQLite database first for instant persistence.
+  //    Nothing reached Gmail yet, so a held database lock is waited out in the
+  //    interactive write queue (bounded) instead of failing the action.
   try {
-    ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
+    await interactiveWrites.run('api:modifyLabels', () => ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds));
   } catch (localError) {
     throw localSaveFailure('api:modifyLabels', localError, { accountId: email, actionKind: resolvedKind });
   }
@@ -2467,28 +2491,36 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
       });
       const parkedId = actionId || crypto.randomUUID();
       try {
-        const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
         const scheduledAt = scheduledAtForRetry(err);
-        if (log) {
-          log.status = 'pending_sync';
-          log.payloadJson = payloadJson || log.payloadJson || null;
-          if (scheduledAt) log.scheduledAt = scheduledAt;
-          ActionLogRepo.save(log);
-        } else {
-          ActionLogRepo.save({
-            id: parkedId,
-            accountId: email,
-            threadId,
-            kind: resolvedKind,
-            status: 'pending_sync',
-            createdAt: new Date().toISOString(),
-            scheduledAt,
-            payloadJson
-          });
-        }
+        // Gmail did not take the change: parking may wait for the lock too.
+        // It waits in front of the writes already waiting (all newer than
+        // this action's label change), and if it is given up the label
+        // change is undone right there, before any of them has its turn.
+        await interactiveWrites.run('api:modifyLabels:park', () => {
+          const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
+          if (log) {
+            log.status = 'pending_sync';
+            log.payloadJson = payloadJson || log.payloadJson || null;
+            if (scheduledAt) log.scheduledAt = scheduledAt;
+            ActionLogRepo.save(log);
+          } else {
+            ActionLogRepo.save({
+              id: parkedId,
+              accountId: email,
+              threadId,
+              kind: resolvedKind,
+              status: 'pending_sync',
+              createdAt: new Date().toISOString(),
+              scheduledAt,
+              payloadJson
+            });
+          }
+        }, {
+          aheadOfQueue: true,
+          // Not parked means it would never sync: undo the local change instead.
+          onRejected: () => rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds),
+        });
       } catch (parkError) {
-        // Not parked means it would never sync: undo the local change instead.
-        rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
         throw localSaveFailure('api:modifyLabels', parkError, { accountId: email, actionKind: resolvedKind });
       }
       // Parked actions replay through the reconciler; they are counted once, here.
@@ -2501,14 +2533,62 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   }
 });
 
+const LOCAL_DATABASE_LOG_BUSY_TIMEOUT_MS = 250;
+
+/**
+ * Writes a system-log entry about the local database. The system log lives in
+ * that same database: while it is still locked the entry is given up quickly
+ * (it stays on the console) instead of freezing the main process for a whole
+ * busy_timeout per entry.
+ */
+function logLocalDatabase(write: () => void): void {
+  let written = false;
+  try {
+    withBusyTimeout(getDatabase(), LOCAL_DATABASE_LOG_BUSY_TIMEOUT_MS, () => {
+      written = true;
+      write();
+    });
+  } catch {
+    // The connection could not be prepared: log the usual way.
+    if (!written) write();
+  }
+}
+
 function localSaveFailure(channel: string, error: unknown, extra: Record<string, unknown>): Error {
-  SystemLogger.error('Local Database', 'A local write failed after retries.', error, { channel, ...extra });
+  logLocalDatabase(() => {
+    SystemLogger.error('Local Database', 'A local write failed after retries.', error, { channel, ...extra });
+  });
   return new Error(localSaveFailedErrorMessage());
 }
 
+// Writes that stand in front of a remote call wait here for the database lock
+// (see the interactive write queue in sqliteWriteGuard.ts).
+const interactiveWrites = createInteractiveWriteQueue(getDatabase, {
+  onContention: ({ label, attempts, waitedMs, recovered }) => {
+    // What the workers were asked to do at that moment names the likely holder.
+    const details = {
+      channel: label,
+      attempts,
+      waitedMs,
+      workerRequests: databaseWorkerClient.pendingRequestTypes().join(', ') || 'none',
+    };
+    if (recovered) {
+      logLocalDatabase(() => {
+        SystemLogger.warning('Local Database', 'A local write waited for the database lock.', details);
+      });
+    } else {
+      console.error('[Local Database] A local write gave up waiting for the database lock.', details);
+    }
+  },
+});
+
+// Not through the interactive write queue, and ahead of what waits in it: a
+// rollback that landed after a newer write to the same thread (one queued
+// behind it, or a synchronous one such as a notification action) would undo
+// part of that write. It runs at once, before anything else can touch the labels.
 function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): void {
   try {
-    ThreadsRepo.updateLabels(email, threadId, removeLabelIds, addLabelIds);
+    ThreadsRepo.rollbackLabels(email, threadId, removeLabelIds, addLabelIds);
   } catch (rollbackError) {
     // The renderer reloads from SQLite after a failure; the next sync repairs labels.
     SystemLogger.error('Local Database', 'Could not roll back a local label change.', rollbackError, { accountId: email, threadId });

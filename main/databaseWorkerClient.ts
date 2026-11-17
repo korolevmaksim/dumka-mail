@@ -29,6 +29,7 @@ export interface AgentPrepInboxSnapshot {
 }
 
 interface PendingRequest {
+  type: DatabaseWorkerPayload['type'];
   resolve: (value: unknown) => void;
   reject: (reason?: unknown) => void;
   timeout: ReturnType<typeof setTimeout>;
@@ -119,6 +120,15 @@ class DatabaseWorkerClient {
     this.pending.clear();
   }
 
+  /**
+   * The request types the worker has not answered yet. Recorded when an
+   * interactive write had to wait for the database lock, to show what the
+   * worker was writing at that moment.
+   */
+  pendingRequestTypes(): string[] {
+    return Array.from(new Set(Array.from(this.pending.values(), pending => pending.type)));
+  }
+
   private request<T>(payload: DatabaseWorkerPayload): Promise<T> {
     const id = this.nextRequestId++;
     const worker = this.getWorker();
@@ -129,6 +139,7 @@ class DatabaseWorkerClient {
         reject(new Error(databaseWorkerTimeoutMessage(payload.type)));
       }, DATABASE_WORKER_REQUEST_TIMEOUT_MS);
       this.pending.set(id, {
+        type: payload.type,
         resolve: value => {
           clearTimeout(timeout);
           resolve(value as T);

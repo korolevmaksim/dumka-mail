@@ -1,4 +1,5 @@
-import { parentPort } from 'worker_threads';
+import { parentPort, workerData } from 'worker_threads';
+import { attachWritePrioritySignal } from './sqliteWriteGuard';
 import { initializeDatabase, MailEmbeddingsRepo } from './database';
 import { runSemanticScan, type SemanticScanOutcome } from './semanticSearchScan';
 
@@ -83,6 +84,7 @@ async function migrateVectorFormats(): Promise<number> {
   }
 }
 
+attachWritePrioritySignal((workerData as { writePrioritySignal?: SharedArrayBuffer } | null)?.writePrioritySignal);
 initializeDatabase();
 
 parentPort?.on('message', (request: WorkerRequest) => {

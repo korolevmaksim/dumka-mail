@@ -262,6 +262,50 @@ describe('reconcilePendingActions network failure', () => {
 });
 
 describe('reconcilePendingActions permanent failure', () => {
+  it('records the failure and rolls back inside runRollback, as one write', async () => {
+    const h = makeDeps({
+      pending: [{
+        id: 'a1',
+        accountId: 'me@example.com',
+        threadId: 't1',
+        kind: 'markRead',
+        status: 'pending_sync',
+        createdAt: NOW.toISOString(),
+      }],
+      gmailError: PERMANENT_ERROR,
+    });
+    const steps: string[] = [];
+    const save = h.deps.actionLog.save;
+    h.deps.actionLog.save = log => { steps.push(`save:${log.status}`); save(log); };
+    const updateLabels = h.deps.threads.updateLabels;
+    h.deps.threads.updateLabels = (...args) => { steps.push('rollback'); updateLabels(...args); };
+    h.deps.runRollback = fn => { steps.push('begin'); fn(); steps.push('end'); };
+
+    await reconcilePendingActions(h.deps);
+
+    expect(steps.slice(steps.indexOf('begin'))).toEqual(['begin', 'save:failed', 'rollback', 'end']);
+    expect(h.rollbacks).toEqual([{ accountId: 'me@example.com', threadId: 't1', add: ['UNREAD'], remove: [] }]);
+  });
+
+  it('still records the failure when the rollback write throws', async () => {
+    const h = makeDeps({
+      pending: [{
+        id: 'a1',
+        accountId: 'me@example.com',
+        threadId: 't1',
+        kind: 'markRead',
+        status: 'pending_sync',
+        createdAt: NOW.toISOString(),
+      }],
+      gmailError: PERMANENT_ERROR,
+    });
+    h.deps.runRollback = () => { throw new Error('rollback write failed'); };
+
+    await expect(reconcilePendingActions(h.deps)).rejects.toThrow('rollback write failed');
+
+    expect(h.saved.at(-1)).toMatchObject({ id: 'a1', status: 'failed', failureMessage: 'HTTP 400: invalid label' });
+  });
+
   const ROLLBACKS: Array<{ kind: MailActionLog['kind']; payloadJson?: string; add: string[]; remove: string[] }> = [
     { kind: 'markDone', add: ['INBOX'], remove: [] },
     { kind: 'restoreInbox', add: [], remove: ['INBOX'] },
