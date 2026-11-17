@@ -289,12 +289,13 @@ export const SenderRulesService = {
       ...thread,
       labelIds: thread.labelIds.filter(label => label.toUpperCase() !== 'INBOX'),
     };
+    let applied: { added: string[]; removed: string[] };
     try {
       // One write that waits for a held database lock: the archive, its log
       // entry and its "Handled for you" record land together or not at all.
       // Without the log entry the archive could never sync or be undone.
-      await localWrites.begin('senderRule', () => {
-        ThreadsRepo.updateLabels(accountId, thread.id, [], ['INBOX']);
+      applied = await localWrites.begin('senderRule', () => {
+        const change = ThreadsRepo.updateLabels(accountId, thread.id, [], ['INBOX']);
         ActionLogRepo.save(log);
         SenderRulesRepo.recordRuleArchive({
           actionId,
@@ -306,6 +307,7 @@ export const SenderRulesService = {
           ruleId: rule.id,
           archivedAt: createdAt,
         });
+        return change;
       });
     } catch (error) {
       deps?.logError('Sender rule could not archive locally.', error, { accountId, threadId: thread.id });
@@ -324,7 +326,7 @@ export const SenderRulesService = {
         return archivedThread;
       }
       await localWrites.rollback('senderRule:rollback', () => {
-        ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []);
+        ThreadsRepo.rollbackLabels(accountId, thread.id, applied.removed, applied.added, { actionId });
         SenderRulesRepo.forgetArchive(actionId);
         ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
       });
@@ -390,7 +392,9 @@ export const SenderRulesService = {
         if (stored.status === 'pending_sync' || stored.status === 'queued' || stored.status === 'running') {
           ActionLogRepo.save({ ...stored, status: 'failed', completedAt: now().toISOString(), failureMessage: `Sender rule archive not sent: ${reason}` });
         }
-        if (options.rollbackLocal && action.threadId) ThreadsRepo.rollbackLabels(action.accountId, action.threadId, ['INBOX'], []);
+        if (options.rollbackLocal && action.threadId) {
+          ThreadsRepo.rollbackLabels(action.accountId, action.threadId, ['INBOX'], [], { actionId: action.id });
+        }
         if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
       });
     } catch (error) {

@@ -63,6 +63,53 @@ export function isReversibleMailActionKind(kind: ActionKind): boolean {
   return reverseMailActionKind(kind) !== null;
 }
 
+export interface ActionLabelChanges {
+  add: string[];
+  remove: string[];
+}
+
+/**
+ * The labels an action of this kind sets and clears on its thread: the same
+ * table as `applyPendingLabelAction` below (a test keeps the two in step).
+ * Used to tell which labels a newer action has taken over when an older one
+ * is rolled back.
+ */
+export function labelChangesOfAction(action: Pick<MailActionLog, 'kind' | 'payloadJson'>): ActionLabelChanges {
+  const { labelId } = mailActionPayloadFields(action.payloadJson);
+  const own = labelId ? [labelId] : [];
+  switch (action.kind) {
+    case 'markDone':
+    case 'unsubscribeSender':
+      return { add: [], remove: ['INBOX'] };
+    case 'restoreInbox':
+      return { add: ['INBOX'], remove: [] };
+    case 'markRead':
+      return { add: [], remove: ['UNREAD'] };
+    case 'markUnread':
+      return { add: ['UNREAD'], remove: [] };
+    case 'moveToTrash':
+      return { add: ['TRASH'], remove: ['INBOX'] };
+    case 'restoreFromTrash':
+      return { add: ['INBOX'], remove: ['TRASH'] };
+    case 'reportSpam':
+      return { add: ['SPAM'], remove: ['INBOX'] };
+    case 'restoreFromSpam':
+      return { add: ['INBOX'], remove: ['SPAM'] };
+    case 'muteThread':
+      return { add: own, remove: ['INBOX'] };
+    case 'unmuteThread':
+      return { add: ['INBOX'], remove: own };
+    case 'applyLabel':
+      return { add: own, remove: [] };
+    case 'removeLabel':
+      return { add: [], remove: own };
+    case 'moveToLabel':
+      return labelId ? { add: own, remove: ['INBOX'] } : { add: [], remove: [] };
+    default:
+      return { add: [], remove: [] };
+  }
+}
+
 export function applyPendingLabelAction(thread: MailThread, action: MailActionLog): MailThread {
   if (action.accountId !== thread.accountId || action.threadId !== thread.id) return thread;
   if (action.status !== 'pending_sync' && action.status !== 'queued' && action.status !== 'running') return thread;

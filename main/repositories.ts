@@ -37,6 +37,7 @@ import {
   ThreadSignals,
 } from '../shared/types';
 import { isDecision } from '../shared/decision';
+import { labelChangesOfAction } from '../shared/mailActions';
 import { parseStoredThreadSignals } from '../shared/threadSignals';
 import { inboxThreadPredicate, inInboxValue, runThreadMaintenanceChunk, type ThreadMaintenanceResult } from './migrations';
 import { chunked, guardRepositoryWrites, runRollbackTransaction, runWriteTransaction } from './sqliteWriteGuard';
@@ -502,21 +503,45 @@ export const ThreadsRepo = {
    * It must be the first write after the failure: when bookkeeping (the
    * action log) has to be written as well, put both in one
    * `runRollbackTransaction`.
+   *
+   * Pass what the action really changed (the `LabelChange` its `updateLabels`
+   * returned, swapped) when it is known, so a label the action found already
+   * in place is left alone. With `actionId`, a label that a newer action of
+   * the thread also sets or clears is left alone too: that action decides it
+   * now, and putting the older state back would undo it.
    */
-  rollbackLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
-    return runRollbackTransaction(getDatabase(), () => ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds));
+  rollbackLabels(
+    accountId: string,
+    threadId: string,
+    addLabelIds: string[],
+    removeLabelIds: string[],
+    options: { actionId?: string | null } = {},
+  ): LabelChange {
+    return runRollbackTransaction(getDatabase(), () => {
+      const takenOver = options.actionId ? labelsTakenOverByNewerActions(options.actionId) : null;
+      const stillOwn = (label: string) => !takenOver?.has(label.toUpperCase());
+      const add = addLabelIds.filter(stillOwn);
+      const remove = removeLabelIds.filter(stillOwn);
+      if (add.length === 0 && remove.length === 0) return { added: [], removed: [] };
+      return ThreadsRepo.updateLabels(accountId, threadId, add, remove);
+    });
   },
 
-  updateLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
+  /** Returns the labels this call really added to and removed from the thread. */
+  updateLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): LabelChange {
     const db = getDatabase();
+    const change: LabelChange = { added: [], removed: [] };
     db.transaction(() => {
       const row = db.prepare('SELECT label_ids_json FROM threads WHERE account_id = ? AND id = ?').get(accountId, threadId) as any;
       if (row) {
-        let labels: string[] = JSON.parse(row.label_ids_json);
+        const before: string[] = JSON.parse(row.label_ids_json);
+        let labels = [...before];
         for (const l of addLabelIds) {
           if (!labels.includes(l)) labels.push(l);
         }
         labels = labels.filter(l => !removeLabelIds.includes(l));
+        change.added = labels.filter(label => !before.includes(label));
+        change.removed = before.filter(label => !labels.includes(label));
         db.prepare('UPDATE threads SET label_ids_json = ?, in_inbox = ? WHERE account_id = ? AND id = ?')
           .run(JSON.stringify(labels), inInboxValue(labels), accountId, threadId);
       }
@@ -532,8 +557,37 @@ export const ThreadsRepo = {
         updateMessage.run(JSON.stringify(labels), labels.includes('UNREAD') ? 1 : 0, accountId, messageRow.id);
       }
     })();
+    return change;
   }
 };
+
+/** The labels one `ThreadsRepo.updateLabels` call really changed on the thread. */
+export interface LabelChange {
+  added: string[];
+  removed: string[];
+}
+
+/**
+ * The labels (upper-cased) that an action of the same thread, newer than
+ * `actionId` and not failed, sets or clears. Empty when the action has no
+ * journal entry.
+ */
+function labelsTakenOverByNewerActions(actionId: string): Set<string> {
+  const db = getDatabase();
+  const taken = new Set<string>();
+  const own = db.prepare('SELECT account_id, thread_id, created_at FROM mail_action_log WHERE id = ?').get(actionId) as
+    { account_id: string; thread_id: string | null; created_at: string } | undefined;
+  if (!own?.thread_id) return taken;
+  const newer = db.prepare(`
+    SELECT kind, payload_json FROM mail_action_log
+    WHERE account_id = ? AND thread_id = ? AND id != ? AND status != 'failed' AND created_at > ?
+  `).all(own.account_id, own.thread_id, actionId, own.created_at) as Array<{ kind: MailActionLog['kind']; payload_json: string | null }>;
+  for (const row of newer) {
+    const changes = labelChangesOfAction({ kind: row.kind, payloadJson: row.payload_json });
+    for (const label of [...changes.add, ...changes.remove]) taken.add(label.toUpperCase());
+  }
+  return taken;
+}
 
 // === Thread Decisions Repository ===
 // Cache of model decisions and user corrections (SPEC §1). Rule decisions are

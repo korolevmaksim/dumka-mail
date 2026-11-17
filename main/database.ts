@@ -40,6 +40,8 @@ export {
   type CalendarMutationRecord,
 } from './calendarRepository';
 
+export type { LabelChange } from './repositories';
+
 // Re-export all repository implementations
 export {
   AccountsRepo,

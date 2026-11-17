@@ -144,6 +144,19 @@ describe('runLocalLabelAction', () => {
     h.db.close();
   });
 
+  sqliteIt('rolls back only what the action changed, and names the action so newer ones are respected', async () => {
+    const h = harness();
+    const rollbacks: unknown[][] = [];
+    // The thread was already out of the inbox: the archive changed nothing.
+    h.deps.threads.updateLabels = () => ({ added: [], removed: [] });
+    h.deps.threads.rollbackLabels = (...args) => { rollbacks.push(args); };
+
+    await expect(runLocalLabelAction(h.deps, archive(async () => { throw PERMANENT_ERROR; }))).resolves.toBe('failed');
+
+    expect(rollbacks).toEqual([['alex.morgan@northwind.example', 'thread-1', [], [], { actionId: 'action-1' }]]);
+    h.db.close();
+  });
+
   sqliteIt('stays completed and never repeats the Gmail call when the outcome cannot be recorded', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const h = harness();
