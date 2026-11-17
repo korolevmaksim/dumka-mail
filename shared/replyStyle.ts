@@ -115,13 +115,14 @@ export function stripSignature(text: string, signaturePlain?: string | null): st
 const QUOTED_LINE = /^\s*>/;
 const SEPARATOR_LINE = /^\s*(?:-{2,}|_{5,})\s*(?:Original Message|Forwarded message|Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение|Ursprüngliche Nachricht|Weitergeleitete Nachricht|Message d'origine|Message transféré|Mensaje original|Mensaje reenviado)?\s*(?:-{2,}|_{5,})?\s*$/i;
 const FORWARD_LINE = /^\s*Begin forwarded message\s*:\s*$/i;
-const HEADER_FROM = /^\s*(?:From|От|Von|De|Da)\s*:\s*\S/i;
-const HEADER_NEXT = /^\s*(?:Sent|Date|To|Subject|Cc|Отправлено|Дата|Кому|Тема|Копия|Gesendet|Datum|An|Betreff|Envoyé|Objet|À|Enviado el|Enviado|Para|Asunto|Inviato|Oggetto)\s*:/i;
+// Outlook writes the quoted headers of rich mail as "*From:* …" in the plain part.
+const HEADER_FROM = /^\s*\*?(?:From|От|Von|De|Da)\s*:\*?\s*\S/i;
+const HEADER_NEXT = /^\s*\*?(?:Sent|Date|To|Subject|Cc|Отправлено|Дата|Кому|Тема|Копия|Gesendet|Datum|An|Betreff|Envoyé|Objet|À|Enviado el|Enviado|Para|Asunto|Inviato|Oggetto)\s*:/i;
 /** "On <date>, <name> wrote:", possibly wrapped over up to three lines. */
 const ON_WROTE = /^\s*On\s[\s\S]{1,400}?\swrote:\s*$/;
 // Mail clients write the attribution in the language of their interface;
 // the verb is not always last ("… schrieb Priya Raman:").
-const ATTRIBUTION_LINE = /(?:\bwrote|пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|napisał(?:\(a\))?|escreveu)[^\n]{0,120}:\s*$/i;
+const ATTRIBUTION_LINE = /(?:\bwrote|\bwrites|пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|napisał(?:\(a\))?|escreveu)[^\n]{0,120}:\s*$/i;
 /** Gmail's attribution in several languages ends with the quoted address and a colon. */
 const ADDRESS_ATTRIBUTION = /<[^<>\s]+@[^<>\s]+>\s*:\s*$/;
 
@@ -159,15 +160,20 @@ const INLINE_QUOTE_HEADERS: readonly RegExp[] = [
   /\bFrom:\s.{1,200}?\s(?:Sent|Date):\s/i,
   /(?:пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|escreveu)[^:\n]{0,120}:/i,
   /<[^<>\s]+@[^<>\s]+>\s*:/,
-  // A quotation mark that follows a sentence: "Thanks! > their words".
-  /(?:^|[.!?…:;])\s+>\s*\S/,
 ];
+/**
+ * A quotation mark inside a line: any `>` that starts a word. In plain text
+ * that is how quoted words are marked, and whether it is a quotation or a
+ * comparison ("3 > 2") cannot be told, so the line ends there either way.
+ * An arrow or a tag (`->`, `=>`, `<b>`) does not start a word and stays.
+ */
+const INLINE_QUOTE_MARK = /\s>/;
 
 function cutInlineQuote(text: string): string {
   let cut = text.length;
-  for (const header of INLINE_QUOTE_HEADERS) {
+  for (const header of [...INLINE_QUOTE_HEADERS, INLINE_QUOTE_MARK]) {
     const match = header.exec(text);
-    if (match && match.index < cut) cut = match.index + (match[0].match(/^[.!?…:;]/) ? 1 : 0);
+    if (match && match.index < cut) cut = match.index;
   }
   return text.slice(0, cut);
 }

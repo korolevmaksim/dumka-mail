@@ -175,8 +175,17 @@ describe('choosing examples of how the person writes', () => {
     for (const bodyPlain of [bottomPosted, `> ${theirs}\n\nOk.`]) {
       expect(select([own(PRIYA, bodyPlain)])).toEqual([]);
     }
-    // A quotation mark that follows a sentence on the same line.
+    // A quotation mark inside a line, with or without punctuation before it.
     expect(replyStyleText({ bodyPlain: `Thanks! > ${theirs}`, bodyHtml: null, snippet: '' })).toBe('Thanks!');
+    expect(replyStyleText({ bodyPlain: `Thanks > ${theirs}`, bodyHtml: null, snippet: '' })).toBe('Thanks');
+    expect(replyStyleText({ bodyPlain: `Thanks >${theirs}`, bodyHtml: null, snippet: '' })).toBe('Thanks');
+    expect(replyStyleText({ bodyPlain: `${mine}\tThanks\t> ${theirs}`, bodyHtml: null, snippet: '' })).not.toContain('CONFIDENTIAL');
+    expect(select([own(PRIYA, `Thanks > ${theirs}`)])).toEqual([]);
+    // What follows on later lines is past the quotation too.
+    expect(replyStyleText({ bodyPlain: `${mine} > ${theirs}\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
+    // Outlook's plain part of rich mail, and other attributions.
+    expect(replyStyleText({ bodyPlain: `${mine}\n\n*From:* Alice <a@x.example>\n*Sent:* Monday\n*Subject:* Plan\n\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
+    expect(replyStyleText({ bodyPlain: `${mine}\n\nAlice <a@x.example> writes:\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
   });
 
   it('takes nothing from a message that has no body, and leaves ordinary text alone', () => {
@@ -190,9 +199,12 @@ describe('choosing examples of how the person writes', () => {
       'From: my side nothing is blocking. Dates and costs are in the sheet.',
       '---',
       'A line of dashes is not a quotation.',
-      'Costs: 3 > 2, so we take the second offer.',
+      'The flow is draft -> review => send, and <b>bold</b> stays too.',
     ].join('\n');
     expect(replyStyleText({ bodyPlain: ordinary, bodyHtml: null, snippet: '' })).toBe(ordinary);
+    // A comparison cannot be told from a quotation mark: the text ends there, on the safe side.
+    expect(replyStyleText({ bodyPlain: 'The second offer is better because 3 > 2 on every count.\nAnd more.', bodyHtml: null, snippet: '' }))
+      .toBe('The second offer is better because 3');
   });
 
   it('cuts quoted mail under a header written in another language, with or without > marks', () => {
