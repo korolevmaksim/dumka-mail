@@ -6,6 +6,7 @@ import {
   encodeEmbeddingVector,
 } from './embeddingVectorCodec';
 import { isValidEmail } from '../shared/compose';
+import type { OwnMessage } from '../shared/replyStyle';
 import {
   Account,
   ContactCard,
@@ -856,6 +857,54 @@ export const MessagesRepo = {
       LIMIT ?
     `).all(accountId, senderEmail, beforeReceivedAt, Math.max(1, Math.min(1000, limit))) as any[];
     return rows.reverse().map(mapMessageRow);
+  },
+
+  /**
+   * The account's own recent messages (sent by its address, or labelled SENT
+   * for a send-as alias), newest first: only the columns the reply-style
+   * selection reads (`shared/replyStyle.ts`). Bounded; run on the database
+   * worker, the bodies never cross to the main thread.
+   */
+  listOwnRecent(accountId: string, limit = 300): OwnMessage[] {
+    const normalizedAccountId = accountId.trim();
+    if (!normalizedAccountId) return [];
+    const db = getDatabase();
+    const bounded = Math.max(1, Math.min(500, Math.floor(limit)));
+    const columns = 'id, thread_id, received_at, label_ids_json, to_recipients_json, cc_recipients_json, body_plain, body_html, snippet';
+    // Two indexed reads instead of one OR: by sender address, and the newest
+    // messages overall for aliases (kept only when labelled SENT).
+    const bySender = db.prepare(`
+      SELECT ${columns} FROM messages
+      WHERE account_id = ? AND sender_email = ? COLLATE NOCASE
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(normalizedAccountId, normalizedAccountId, bounded) as any[];
+    const recent = db.prepare(`
+      SELECT ${columns} FROM messages
+      WHERE account_id = ?
+      ORDER BY received_at DESC
+      LIMIT ?
+    `).all(normalizedAccountId, bounded) as any[];
+    const rows = new Map<string, any>();
+    for (const row of bySender) rows.set(row.id, row);
+    for (const row of recent) {
+      if (rows.has(row.id)) continue;
+      if (/"SENT"/i.test(String(row.label_ids_json || ''))) rows.set(row.id, row);
+    }
+    return Array.from(rows.values())
+      .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)))
+      .slice(0, bounded)
+      .map(row => ({
+        id: row.id,
+        threadId: row.thread_id,
+        receivedAt: row.received_at,
+        labelIds: JSON.parse(row.label_ids_json),
+        to: JSON.parse(row.to_recipients_json || '[]'),
+        cc: JSON.parse(row.cc_recipients_json || '[]'),
+        bodyPlain: row.body_plain,
+        bodyHtml: row.body_html,
+        snippet: row.snippet,
+      }));
   },
 
   listLatestBySender(accountId: string, senderEmail: string, limit = 3): MailMessage[] {

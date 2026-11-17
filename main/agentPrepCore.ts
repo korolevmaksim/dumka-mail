@@ -32,6 +32,7 @@ import type { DecisionPromptItem, DecisionBatchParseResult } from '../shared/age
 // only — never mail text or keys.
 import { getSenderSections, resolveAccountSetting, normalizeAccountId, type AccountSettingsSource } from '../shared/accountSettings';
 import type { DecisionContext } from '../shared/decision';
+import { accountSignaturePlain, replyRecipientEmail, replyStyleEnabled, type ReplyStyleSample } from '../shared/replyStyle';
 import { resolveAIModelForPurpose, resolveBackgroundModelRoute, type AIModelPurpose } from '../shared/aiModelPurpose';
 import { isAIProviderPreference } from '../shared/aiProviderPreference';
 import { isConfigurableAIProvider } from '../shared/aiProviders';
@@ -80,7 +81,8 @@ const RETRY_MAX_MS = 15 * 60_000;
 const ATTEMPT_MEMORY_LIMIT = 20_000;
 
 export interface StoredAgentSettings {
-  compose?: { afterSend?: unknown } | null;
+  compose?: { afterSend?: unknown; defaultSignature?: unknown; defaultSignatureHtml?: unknown; signatureFormat?: unknown; signaturesByAccount?: unknown } | null;
+  profile?: { fullName?: unknown; role?: unknown; company?: unknown; timezone?: unknown } | null;
   ai?: SortingSettingsSource & SummarySettingsSource & {
     allowMailBodyContext?: unknown;
     provider?: unknown;
@@ -91,6 +93,7 @@ export interface StoredAgentSettings {
     proactiveDraftsEnabled?: unknown;
     replyTone?: unknown;
     personalizationNotes?: unknown;
+    replyStyleFromSent?: unknown;
   } | null;
   accountDefaults?: AccountSettingsSource['accountDefaults'];
   accountOverrides?: AccountSettingsSource['accountOverrides'];
@@ -139,6 +142,14 @@ export interface AgentPrepDeps {
   /** Newest inbox threads (≤ limit) and their cached decisions; served by the database worker. */
   inboxSnapshot(accountId: string, limit: number): Promise<{ threads: MailThread[]; decisions: ThreadDecisionRecord[] }>;
   listMessagesForThread(accountId: string, threadId: string): Promise<MailMessage[]>;
+  /**
+   * Short excerpts of the account's own earlier messages for a reply draft
+   * (`shared/replyStyle.ts`). Absent: drafts are written without examples.
+   */
+  replyStyleSamples?(
+    accountId: string,
+    options: { recipientEmail: string; excludeThreadId: string | null; signaturePlain: string },
+  ): Promise<ReplyStyleSample[]>;
   getThread(accountId: string, threadId: string): MailThread | null;
   upsertDecisions(records: ThreadDecisionRecord[]): void;
   getAgentDraftForMessage(accountId: string, messageId: string): Pick<AgentDraftSuggestion, 'status' | 'bodyPlain'> | null;
@@ -260,6 +271,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   const attemptedDecisions = new Set<string>();
   const attemptedDrafts = new Set<string>();
   const draftsInFlight = new Map<string, SharedRequest<AgentDraftResult>>();
+  /** Draft requests in flight that carry the person's earlier messages (`shared/replyStyle.ts`). */
+  const styledDraftRequests = new Set<AbortController>();
   const summariesInFlight = new Map<string, SharedRequest<ThreadSummaryResult>>();
   /** requestId → the caller's own controller (cancelling it leaves any shared request). */
   const requests = new Map<string, { accountId: string | null; controller: AbortController }>();
@@ -650,11 +663,29 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     const existing = deps.getAgentDraftForMessage(accountId, latest.id);
     if (existing?.status === 'ready') return { status: 'ready', bodyPlain: existing.bodyPlain, lastMessageId: latest.id };
 
+    // How the person writes: a few of their own earlier messages, to this
+    // correspondent when there are any. A failure here never costs the draft.
+    let styleSamples: ReplyStyleSample[] = [];
+    if (deps.replyStyleSamples && replyStyleEnabled(gate.settings)) {
+      try {
+        styleSamples = await deps.replyStyleSamples(accountId, {
+          recipientEmail: replyRecipientEmail(messages, accountId),
+          excludeThreadId: threadId,
+          signaturePlain: accountSignaturePlain(gate.settings, accountId),
+        });
+      } catch (error) {
+        deps.logWarning('Agent', 'Could not read earlier messages for the reply style.', { accountId, error: describeModelError(error).error });
+        styleSamples = [];
+      }
+    }
+
     // The reads above are asynchronous: the person may have turned this off
     // meanwhile. Checked again right before mail text leaves the machine.
     if (signal.aborted) return { status: 'cancelled' };
     // Reported as cancelled, not skipped: the thread is tried again once the setting is back on.
     if (!draftStillAllowed(accountId, purpose)) return { status: 'cancelled' };
+    // Switched off while the examples were being read: none are sent.
+    if (!replyStyleEnabled(deps.readSettings())) styleSamples = [];
 
     const account = deps.listAccounts().find(item => normalizeAccountId(item.email) === normalizeAccountId(accountId));
     const prompt = buildDraftPrompt({
@@ -664,14 +695,31 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       accountEmail: accountId,
       tone: replyTone(gate.settings),
       personalizationNotes: stringSetting(gate.settings.ai?.personalizationNotes),
+      styleSamples,
     });
-    const result = await deps.completeText(prompt, {
-      preference: gate.preference,
-      overrideModel: gate.overrideModel,
-      stream,
-      onDelta: stream ? onDelta : undefined,
-      signal,
-    });
+    // A request that carries the person's earlier messages stops the moment
+    // that is switched off (`onConfigChanged`): the provider layer may send
+    // the same prompt again on its own (a stream that falls back to a plain
+    // request), and that second attempt must not go out after consent ended.
+    const styleConsent = styleSamples.length > 0 ? new AbortController() : null;
+    if (styleConsent) styledDraftRequests.add(styleConsent);
+    let result: TextCompletion;
+    try {
+      result = await deps.completeText(prompt, {
+        preference: gate.preference,
+        overrideModel: gate.overrideModel,
+        stream,
+        onDelta: stream ? onDelta : undefined,
+        signal: styleConsent ? AbortSignal.any([signal, styleConsent.signal]) : signal,
+      });
+    } catch (error) {
+      if (styleConsent?.signal.aborted) return { status: 'cancelled' };
+      throw error;
+    } finally {
+      if (styleConsent) styledDraftRequests.delete(styleConsent);
+    }
+    // Withdrawn while the answer was arriving: it is not kept.
+    if (styleConsent?.signal.aborted) return { status: 'cancelled' };
     const bodyPlain = cleanDraftBody(result.text);
     if (bodyPlain.length < 8) throw new ModelRequestError('empty', String(result.provider), 'Draft answer was empty.');
     if (signal.aborted || !accountExists(accountId)) return { status: 'cancelled' };
@@ -891,6 +939,12 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     /** AI configuration or app settings changed; acts only when relevant fields did. */
     onConfigChanged(force = false) {
       const settings = deps.readSettings();
+      // Checked on every settings change, whatever else changed: once the
+      // person stops sharing their earlier messages, no request carrying
+      // them may still be sent or sent again.
+      if (!replyStyleEnabled(settings)) {
+        for (const request of styledDraftRequests) request.abort();
+      }
       const next = fingerprint(settings);
       if (!force && next === settingsFingerprint) return;
       settingsFingerprint = next;

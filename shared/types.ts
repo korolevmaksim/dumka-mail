@@ -1369,6 +1369,12 @@ export interface AISettings {
   suggestLabels: boolean;
   translationEnabled: boolean;
   personalizationNotes: string;
+  /**
+   * A reply draft is given a few short excerpts of the person's own earlier
+   * messages, so it is written the way they write (`shared/replyStyle.ts`).
+   * Absent in older settings: on.
+   */
+  replyStyleFromSent?: boolean;
   embeddingsByAccount?: Record<string, AIEmbeddingSettings>;
   semanticSearchEnabledByAccount?: Record<string, boolean>;
 }

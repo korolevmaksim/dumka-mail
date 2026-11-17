@@ -754,6 +754,158 @@ describe('agent prep: shared requests', () => {
   });
 });
 
+describe('agent prep: reply drafts in the person\'s own style', () => {
+  const sample = { to: 'person0@lumenlabs.example', date: '2026-10-01T09:00:00.000Z', text: 'Hi,\n\nHappy to. Thursday works for me.\n\nAlex', match: 'recipient' as const };
+  function styleHarness() {
+    const thread = personThread(0);
+    const h = harness([thread]);
+    h.setAI({});
+    const asked: Array<{ accountId: string; recipientEmail: string; excludeThreadId: string | null; signaturePlain: string }> = [];
+    h.deps.replyStyleSamples = async (accountId, options) => { asked.push({ accountId, ...options }); return [sample]; };
+    h.setCompletion(async () => ({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' }));
+    return { h, thread, asked };
+  }
+  const draftPrompt = (h: Harness) => h.completions[h.completions.length - 1].prompt;
+
+  it('hands the model the person\'s earlier messages to the correspondent being answered', async () => {
+    const { h, thread, asked } = styleHarness();
+    const result = await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    expect(result).toMatchObject({ status: 'ready' });
+    expect(asked).toEqual([{ accountId: ACCOUNT, recipientEmail: thread.senderEmail, excludeThreadId: thread.id, signaturePlain: '' }]);
+    expect(draftPrompt(h).user).toContain('yourEarlierMessages');
+    expect(draftPrompt(h).user).toContain('Thursday works for me.');
+    expect(draftPrompt(h).system).toContain('"yourEarlierMessages"');
+  });
+
+  it('reads nothing and sends no examples when the setting is off', async () => {
+    const { h, thread, asked } = styleHarness();
+    h.setAI({ replyStyleFromSent: false });
+    await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    expect(asked).toEqual([]);
+    expect(draftPrompt(h).user).not.toContain('yourEarlierMessages');
+  });
+
+  it('reads nothing when the account keeps mail text from the model', async () => {
+    const { h, thread, asked } = styleHarness();
+    h.setMayReadMail(false);
+    const result = await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    expect(result.status).not.toBe('ready');
+    expect(asked).toEqual([]);
+    expect(h.completions).toEqual([]);
+  });
+
+  it('sends no examples when the setting is switched off while they are being read', async () => {
+    const { h, thread } = styleHarness();
+    const read = deferred<void>();
+    h.deps.replyStyleSamples = async () => { await read.promise; return [sample]; };
+    const request = service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    h.setAI({ replyStyleFromSent: false });
+    read.resolve();
+    await request;
+    expect(h.completions).toHaveLength(1);
+    expect(draftPrompt(h).user).not.toContain('yourEarlierMessages');
+  });
+
+  it('sends nothing at all when mail access is withdrawn while the examples are being read', async () => {
+    const { h, thread } = styleHarness();
+    const read = deferred<void>();
+    h.deps.replyStyleSamples = async () => { await read.promise; return [sample]; };
+    const request = service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    h.setMayReadMail(false);
+    read.resolve();
+    const result = await request;
+    expect(result.status).not.toBe('ready');
+    expect(h.completions).toEqual([]);
+  });
+
+  it('stops a request that carries examples the moment the setting is switched off', async () => {
+    const { h, thread } = styleHarness();
+    const signals: AbortSignal[] = [];
+    h.setCompletion((_prompt, options) => new Promise((_resolve, reject) => {
+      signals.push(options.signal!);
+      options.signal!.addEventListener('abort', () => reject(abortError()));
+    }));
+    const prep = service(h);
+    const request = prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0].aborted).toBe(false);
+    // Another settings change leaves it running.
+    h.setAI({ replyTone: 'warm' });
+    prep.onConfigChanged();
+    expect(signals[0].aborted).toBe(false);
+    // Only this switch changes: nothing else in the configuration would cancel the request.
+    h.setAI({ replyStyleFromSent: false });
+    prep.onConfigChanged();
+    // The provider layer can no longer send, or send again, with this signal.
+    expect(signals[0].aborted).toBe(true);
+    expect(await request).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('keeps nothing from an answer that arrives after the setting was switched off', async () => {
+    const { h, thread } = styleHarness();
+    const answer = deferred<{ text: string; model: string; provider: string }>();
+    const saved: unknown[] = [];
+    h.deps.saveAgentDraft = draft => { saved.push(draft); };
+    // A provider that ignores cancellation and answers anyway.
+    h.setCompletion(() => answer.promise);
+    const prep = service(h);
+    const request = prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    h.setAI({ replyStyleFromSent: false });
+    prep.onConfigChanged();
+    answer.resolve({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' });
+    expect(await request).toMatchObject({ status: 'cancelled' });
+    expect(saved).toEqual([]);
+  });
+
+  it('does not stop a draft request without examples when the setting is switched off', async () => {
+    const { h, thread } = styleHarness();
+    h.deps.replyStyleSamples = async () => [];
+    const answer = deferred<{ text: string; model: string; provider: string }>();
+    const signals: AbortSignal[] = [];
+    h.setCompletion((_prompt, options) => { signals.push(options.signal!); return answer.promise; });
+    const prep = service(h);
+    const request = prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    h.setAI({ replyStyleFromSent: false });
+    prep.onConfigChanged();
+    expect(signals[0].aborted).toBe(false);
+    answer.resolve({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' });
+    expect(await request).toMatchObject({ status: 'ready' });
+  });
+
+  it('still writes the draft when the earlier messages cannot be read', async () => {
+    const { h, thread } = styleHarness();
+    h.deps.replyStyleSamples = async () => { throw new Error('worker gone'); };
+    const result = await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    expect(result).toMatchObject({ status: 'ready' });
+    expect(draftPrompt(h).user).not.toContain('yourEarlierMessages');
+  });
+
+  it('uses the account signature to cut signatures from the examples', async () => {
+    const { h, thread, asked } = styleHarness();
+    const readSettings = h.deps.readSettings;
+    h.deps.readSettings = () => ({
+      ...readSettings(),
+      profile: { fullName: 'Alex Morgan', company: 'Northwind' },
+      compose: { signaturesByAccount: { [ACCOUNT]: { signaturePlain: '{full_name}\n{company}' } } },
+    });
+    await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    // As the composer renders it: the profile tokens are filled in.
+    expect(asked[0].signaturePlain).toBe('Alex Morgan\nNorthwind');
+  });
+
+  it('works without the dependency (drafts as before)', async () => {
+    const { h, thread } = styleHarness();
+    delete h.deps.replyStyleSamples;
+    const result = await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    expect(result).toMatchObject({ status: 'ready' });
+    expect(draftPrompt(h).user).not.toContain('yourEarlierMessages');
+  });
+});
+
 describe('agent prep: reconnect', () => {
   it('forgets what a removed account attempted, so a reconnect prepares again', async () => {
     const h = harness();

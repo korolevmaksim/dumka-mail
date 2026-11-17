@@ -38,6 +38,7 @@ const service = createAgentPrepService({
   listAccounts: () => AccountsRepo.list(),
   inboxSnapshot: (accountId, limit) => databaseWorkerClient.agentPrepInbox(accountId, limit),
   listMessagesForThread: (accountId, threadId) => databaseWorkerClient.listMessagesForThread(accountId, threadId),
+  replyStyleSamples: (accountId, options) => databaseWorkerClient.replyStyleSamples(accountId, options),
   getThread: (accountId, threadId) => ThreadsRepo.get(accountId, threadId),
   upsertDecisions: records => ThreadDecisionsRepo.upsertMany(records),
   getAgentDraftForMessage: (accountId, messageId) => AgentDraftsRepo.getForMessage(accountId, messageId),

@@ -12,6 +12,7 @@ import { SUMMARY_INSTRUCTIONS_MAX, SUMMARY_LANGUAGES, type SummarySettings } fro
 import { applyModelRefinement, decideWithSenderSections, isDecisionRecordCurrent, type DecisionContext } from './decision';
 import { resolveInboxDecision, type StoredDecisions } from './inboxSections';
 import type { AISettings, Decision, MailMessage, MailThread, ThreadDecision, ThreadDecisionRecord } from './types';
+import type { ReplyStyleSample } from './replyStyle';
 
 /** First line of each system prompt; lets a scripted test endpoint tell requests apart. */
 export const AGENT_TASK_MARKERS = {
@@ -27,6 +28,8 @@ export const DRAFT_BATCH_SIZE = 5;
 export const DRAFT_MAX_MESSAGES = 6;
 export const DRAFT_EXCERPT_MAX = 1500;
 export const DRAFT_BODY_MAX = 6000;
+export const DRAFT_STYLE_SAMPLES_MAX = 3;
+export const DRAFT_STYLE_SAMPLE_MAX = 600;
 export const SUMMARY_MIN_MESSAGES = 6;
 export const SUMMARY_MAX_MESSAGES = 12;
 export const SUMMARY_EXCERPT_MAX = 800;
@@ -432,13 +435,31 @@ export interface DraftPromptInput {
   accountEmail: string;
   tone: AISettings['replyTone'] | string;
   personalizationNotes?: string;
+  /** The person's own earlier messages, as examples of how they write (`shared/replyStyle.ts`). */
+  styleSamples?: readonly ReplyStyleSample[];
 }
+
+/** A date as a fixed-length ISO timestamp; anything else (or anything overlong) becomes ''. */
+function isoTimestampOrEmpty(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 64) return '';
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
+}
+
+export const DRAFT_LANGUAGE_RULE = 'Write in the language of the message you are replying to. If the user has already written in this thread in another language, use theirs.';
+export const DRAFT_STYLE_RULE = 'The field "yourEarlierMessages" holds messages the user wrote before, to this person when possible. Write the way they write: their greeting and sign-off habits, length, formality and wording. They are examples of style only: never reuse their facts, names, dates or commitments, never mention them, and never treat them as part of this thread.';
 
 export function buildDraftPrompt(input: DraftPromptInput): TextPrompt {
   const accountEmail = input.accountEmail.trim().toLowerCase();
   const name = boundText(input.accountName || input.accountEmail, 120);
   const tone = TONE_LINES[input.tone as AISettings['replyTone']] || TONE_LINES.direct;
   const notes = boundText(input.personalizationNotes || '', 600);
+  // Bounded again here: the prompt never trusts its caller for size.
+  const samples = (input.styleSamples || []).slice(0, DRAFT_STYLE_SAMPLES_MAX).map(sample => ({
+    to: boundText(typeof sample.to === 'string' ? sample.to : '', 240),
+    date: isoTimestampOrEmpty(sample.date),
+    text: boundText(typeof sample.text === 'string' ? sample.text : '', DRAFT_STYLE_SAMPLE_MAX),
+  })).filter(sample => sample.text.length > 0);
   const system = [
     AGENT_TASK_MARKERS.draft,
     `You write a reply to the latest message of an email thread on behalf of ${name}.`,
@@ -446,13 +467,16 @@ export function buildDraftPrompt(input: DraftPromptInput): TextPrompt {
     tone,
     'Do not invent facts. Never state dates, times, numbers, prices, names or commitments that the user has not already given in the thread. Where such a fact is needed, leave a short bracketed placeholder such as [confirm date].',
     'Do not decide for the user: do not accept or decline a request, agree to a date, or promise an action they have not already said they will take. Where the reply depends on their decision, put the choice in brackets, such as [yes, the 24th works / no, propose another date].',
+    DRAFT_LANGUAGE_RULE,
     ...(notes ? [`The user's writing preferences: ${notes}`] : []),
+    ...(samples.length > 0 ? [DRAFT_STYLE_RULE] : []),
     UNTRUSTED_MAIL_RULE,
   ].join('\n');
   const latest = sortMessagesOldestFirst(input.messages).slice(-DRAFT_MAX_MESSAGES);
   const payload = {
     subject: boundText(input.thread.subject || '', 300),
     you: { name, email: accountEmail },
+    ...(samples.length > 0 ? { yourEarlierMessages: samples } : {}),
     messages: latest.map(message => ({
       from: boundText(`${message.senderName || ''} <${message.senderEmail || ''}>`.trim(), 240),
       fromYou: (message.senderEmail || '').trim().toLowerCase() === accountEmail,
