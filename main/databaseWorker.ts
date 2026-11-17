@@ -139,6 +139,11 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
       return;
     }
 
+    if (request.type === 'unreadInboxThreads') {
+      send({ id: request.id, ok: true, result: ThreadsRepo.listUnreadInbox(request.accountId, request.nowIso, request.limit) });
+      return;
+    }
+
     if (request.type === 'agentPrepInbox') {
       // Agent prep reads: the newest inbox threads (indexed, bounded) and only
       // their cached decisions, off the Electron main event loop.

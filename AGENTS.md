@@ -60,6 +60,10 @@ Mailbox mutations are optimistic and reconciled by a worker — understand this 
 
 So `ActionKind` / `ActionStatus` in `shared/types.ts`, the action-log repo, and this worker are a single mechanism — changing one usually means changing all three.
 
+Send later is a `send` action parked with `scheduledAt` and `payload.sendAt`; this app sends it, Gmail does not. The reconciler holds one that is more than `LATE_SCHEDULED_SEND_GRACE_MS` past its time (`shared/scheduledSend.ts`, on unless `compose.holdLateScheduledSends` is false): after Gmail confirmed the message is not there yet, one transaction (`main/heldScheduledSends.ts`) clears the draft's send time, fails the action with the reason and records a notice; the person is then told by a notification and a toast. Such a message is never marked `running`, so a crash before the hold is stored leaves it `pending_sync` to be held on the next start. A notice stays stored until a window acknowledges having shown it (`api:listHeldScheduledSends`, `api:acknowledgeHeldScheduledSends`, event `api:scheduledSendHeld`). Undo-send and offline-parked sends are never held.
+
+The unread number on the app icon is computed in the main process (`main/unreadBadge.ts`, rules in `shared/unreadBadge.ts`), so it stays current with the window closed. It reads bounded unread inbox rows through the database worker and is refreshed after a mailbox delta, the IPC channels listed in `UNREAD_BADGE_CHANNELS`, a due reminder and on a one-minute timer; add a channel to that set when a new handler changes what is unread or in the inbox. `Open at login` (`main/loginItem.ts`) is the operating system's setting, read from and written to the OS and never stored in app settings; it only registers an installed build.
+
 Actions the main process takes on its own use the same path and say so in the payload: sender-rule archives (`main/senderRulesService.ts`) write SQLite first, log a `markDone` with `{ auto: true, provenance: { origin: 'senderRule', ruleId } }`, call Gmail, and park or roll back like `E`. `auto` keeps them out of `Z`, which undoes the user's own actions.
 
 ### Gmail sync (`main/gmail.ts`)

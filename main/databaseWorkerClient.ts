@@ -182,6 +182,11 @@ class DatabaseWorkerClient {
     return this.request<Record<string, number>>({ type: 'countInboxThreads', accountIds, nowIso: new Date().toISOString() });
   }
 
+  /** Unread inbox threads of one account (not postponed with Later), newest first, for the unread badge. */
+  unreadInboxThreads(accountId: string, limit: number, nowIso: string = new Date().toISOString()): Promise<MailThread[]> {
+    return this.request<MailThread[]>({ type: 'unreadInboxThreads', accountId, nowIso, limit });
+  }
+
   agentPrepInbox(accountId: string, limit: number): Promise<AgentPrepInboxSnapshot> {
     return this.request<AgentPrepInboxSnapshot>({ type: 'agentPrepInbox', accountId, limit });
   }

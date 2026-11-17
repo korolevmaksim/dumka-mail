@@ -320,6 +320,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.off('api:backfillProgress', listener);
     };
   },
+  listHeldScheduledSends: () => ipcRenderer.invoke('api:listHeldScheduledSends'),
+  acknowledgeHeldScheduledSends: (actionIds: string[]) => ipcRenderer.invoke('api:acknowledgeHeldScheduledSends', actionIds),
+  onScheduledSendHeld: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('api:scheduledSendHeld', listener);
+    return () => {
+      ipcRenderer.off('api:scheduledSendHeld', listener);
+    };
+  },
+  getLoginItemState: () => ipcRenderer.invoke('api:getLoginItemState'),
+  setLaunchAtLogin: (enabled: boolean) => ipcRenderer.invoke('api:setLaunchAtLogin', enabled),
   onActionLogChanged: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('api:actionLogChanged', listener);

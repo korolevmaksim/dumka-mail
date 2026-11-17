@@ -99,6 +99,30 @@ describe('mailbox repository hot paths', () => {
     });
   });
 
+  repositoryIt('lists unread inbox threads for the badge, without postponed, read or archived ones', async () => {
+    await withDatabase(async ({ ThreadsRepo, RemindersRepo }) => {
+      const unread = (id: string, labels: string[], minute: number) => ({ ...thread(id, 'a@example.com', labels, minute), isUnread: true });
+      ThreadsRepo.save([
+        unread('new-1', ['INBOX', 'UNREAD'], 5),
+        unread('new-2', ['INBOX', 'UNREAD'], 9),
+        unread('postponed', ['INBOX', 'UNREAD'], 7),
+        unread('due-again', ['INBOX', 'UNREAD'], 3),
+        unread('archived', ['UNREAD'], 8),
+        thread('read', 'a@example.com', ['INBOX'], 6),
+        { ...thread('other', 'b@example.com', ['INBOX', 'UNREAD'], 4), isUnread: true },
+      ]);
+      const now = '2026-07-10T12:00:00.000Z';
+      RemindersRepo.save('a@example.com', 'postponed', '2026-07-11T09:00:00.000Z');
+      RemindersRepo.save('a@example.com', 'due-again', '2026-07-10T11:00:00.000Z');
+
+      expect(ThreadsRepo.listUnreadInbox('a@example.com', now).map(item => item.id)).toEqual(['new-2', 'new-1', 'due-again']);
+      expect(ThreadsRepo.listUnreadInbox('a@example.com', now, 1).map(item => item.id)).toEqual(['new-2']);
+      expect(ThreadsRepo.listUnreadInbox('b@example.com', now).map(item => item.id)).toEqual(['other']);
+      // Once the reminder's time has come the conversation counts again.
+      expect(ThreadsRepo.listUnreadInbox('a@example.com', '2026-07-11T09:00:00.000Z').map(item => item.id)).toContain('postponed');
+    });
+  });
+
   repositoryIt('matches sender history case-insensitively on the indexed columns', async () => {
     await withDatabase(({ MessagesRepo }) => {
       MessagesRepo.save([message('m1', 'a@example.com', 1), message('m2', 'a@example.com', 2)]);

@@ -388,6 +388,28 @@ export const ThreadsRepo = {
     return rows.map(mapThreadRow);
   },
 
+  /**
+   * Unread inbox threads of an account, newest first, without the ones
+   * postponed with Later (a reminder still in the future). For the unread
+   * badge; bounded, and read on the database worker.
+   */
+  listUnreadInbox(accountId: string, nowIso: string = new Date().toISOString(), limit = 500): MailThread[] {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT t.*, r.reminder_at
+      FROM threads t
+      LEFT JOIN thread_reminders r ON t.account_id = r.account_id AND t.id = r.thread_id
+      WHERE t.account_id = ?
+        AND t.is_unread = 1
+        AND ${inboxThreadPredicate(db, 't')}
+        AND (r.reminder_at IS NULL OR r.reminder_at <= ?)
+      ORDER BY t.last_message_at DESC
+      LIMIT ?
+    `).all(accountId, nowIso, Math.max(1, Math.min(1000, Math.floor(limit)))) as any[];
+
+    return rows.map(mapThreadRow);
+  },
+
   /** One committed chunk of the resumable `in_inbox` / signals maintenance pass (database worker only). */
   runMaintenanceChunk(chunkSize?: number): ThreadMaintenanceResult {
     const db = getDatabase();

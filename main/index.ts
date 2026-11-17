@@ -1,5 +1,5 @@
 import { ProductivityRepo } from './productivityRepository';
-import { app, BrowserWindow, Menu, ipcMain, dialog, Notification, screen, shell, type NotificationAction } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, Notification, powerMonitor, screen, shell, type NotificationAction } from 'electron';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -72,6 +72,11 @@ import { executeMailboxSearchTool } from './mailboxSearchTool';
 import { executeCalendarAssistantTool } from './calendarAssistantTools';
 import { prepareAppSettingsForStorage, resolveAppSettingsSecrets, resolveMCPServerConfigSecrets } from './mcpSettings';
 import { parseStoredAppSettings, settingsAffectMCPRuntime, settingsAffectSearchBodyIndexing } from './settingsSideEffects';
+import { createUnreadBadgeService, type UnreadBadgeService } from './unreadBadge';
+import { acknowledgeHeldScheduledSends, heldNoticeFor, readHeldScheduledSends, storeScheduledSendHold } from './heldScheduledSends';
+import { readLoginItemState, setLaunchAtLogin } from './loginItem';
+import { heldScheduledSendMessage, heldScheduledSendTitle, holdsLateScheduledSends } from '../shared/scheduledSend';
+import { formatDateTime } from '../shared/dateFormat';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
@@ -101,6 +106,7 @@ import type {
   ActionKind,
   AgentPlanItem,
   AppSettings,
+  MailActionLog,
   AttachmentMetadata,
   AttachmentOpenBlocked,
   AttachmentOpenResult,
@@ -397,6 +403,7 @@ function notificationButtonActions(kind: MailNotificationKind): NotificationActi
 
 function refreshRemindersDue(accountId: string, threadId: string) {
   mainWindow?.webContents.send('api:remindersDue', [{ accountId, threadId }]);
+  scheduleUnreadBadge();
 }
 
 async function runNotificationLabelAction(
@@ -419,6 +426,7 @@ async function runNotificationLabelAction(
 
   ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds);
   ActionLogRepo.save(log);
+  scheduleUnreadBadge();
 
   try {
     await runRemoteLabelAction(accountId, threadId, addLabelIds, removeLabelIds, kind);
@@ -430,6 +438,7 @@ async function runNotificationLabelAction(
     }
 
     ThreadsRepo.updateLabels(accountId, threadId, removeLabelIds, addLabelIds);
+    scheduleUnreadBadge();
     ActionLogRepo.save({
       ...log,
       status: 'failed',
@@ -981,10 +990,18 @@ app.whenReady().then(async () => {
     },
     onActionLogChanged: () => {
       mainWindow?.webContents.send('api:actionLogChanged');
+      scheduleUnreadBadge();
     },
+    // Send later (`shared/scheduledSend.ts`): a message whose time was missed
+    // by more than the grace period goes back to Drafts instead of out.
+    holdLateScheduledSends: () => holdsLateScheduledSends(parseStoredAppSettings(SettingsRepo.get('appSettings'))),
+    holdScheduledSend: storeScheduledSendHold,
+    onScheduledSendHeld: announceScheduledSendHeld,
     logger: SystemLogger.console('Action Sync'),
   });
   startReminderNotificationWorker();
+  startUnreadBadge();
+  powerMonitor.on('resume', catchUpAfterResume);
   startCalendarMutationWorker(() => mainWindow);
   startCalendarNotificationWorker(() => mainWindow);
   // Sender rules (SPEC §7): archive on arrival through the same remote path as `E`.
@@ -1156,11 +1173,111 @@ async function saveMessagesToDatabase(messages: MailMessage[], options?: { notif
 }
 
 // === Bind IPC Database Channels ===
+/** Renderer requests after which the unread badge may be out of date. */
+const UNREAD_BADGE_CHANNELS: ReadonlySet<string> = new Set([
+  'api:modifyLabels', 'api:sendDraft', 'api:unsubscribeThread',
+  'db:saveReminder', 'db:deleteReminder',
+  'db:saveThreads', 'db:saveMessages', 'db:deleteThread',
+  'db:setSetting', 'db:saveAccount', 'db:deleteAccount', 'api:onboardAccount', 'api:disconnectAccount',
+]);
+
 function registerSecureHandler(channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any) {
+  const refreshesBadge = UNREAD_BADGE_CHANNELS.has(channel);
   ipcMain.handle(channel, (event, ...args) => {
     assertTrustedSender(event.senderFrame);
-    return listener(event, ...args);
+    const result = listener(event, ...args);
+    if (refreshesBadge) {
+      // After the handler settled, whatever its outcome; its result is returned untouched.
+      void Promise.resolve(result).then(scheduleUnreadBadge, scheduleUnreadBadge);
+    }
+    return result;
   });
+}
+
+// --- Unread badge on the app icon ---------------------------------------------
+
+let unreadBadge: UnreadBadgeService | null = null;
+
+function scheduleUnreadBadge() {
+  unreadBadge?.schedule();
+}
+
+function startUnreadBadge() {
+  unreadBadge = createUnreadBadgeService({
+    listAccountIds: () => AccountsRepo.list().map(account => account.email).filter(Boolean),
+    readSettings: () => {
+      const parsed = parseStoredAppSettings(SettingsRepo.get('appSettings')) as Record<string, any> | null;
+      return {
+        general: parsed?.general ?? null,
+        accountDefaults: parsed?.accountDefaults ?? null,
+        accountOverrides: normalizeAccountOverrides(parsed?.accountOverrides),
+      };
+    },
+    unreadInboxThreads: (accountId, limit, nowIso) => databaseWorkerClient.unreadInboxThreads(accountId, limit, nowIso),
+    setBadge: count => { app.setBadgeCount(count); },
+    logError: (message, error) => SystemLogger.error('Unread Badge', message, error),
+  });
+  void unreadBadge.refresh();
+  // A safety net: a postponed conversation returns to the inbox on its own
+  // when its time comes, without any event passing through here.
+  setInterval(scheduleUnreadBadge, 60_000);
+}
+
+// --- Scheduled messages held because their time was missed ----------------------
+
+/** After the hold was stored: tell the person now. The stored notice also reaches the next window that opens. */
+function announceScheduledSendHeld(action: MailActionLog, held: { sendAt: string; draft: unknown }) {
+  const entry = heldNoticeFor(action, held);
+  if (!entry) return;
+  SystemLogger.warning('Scheduled Send', 'A scheduled message was held: its time had passed.', {
+    accountId: entry.accountId,
+    scheduledFor: entry.sendAt,
+  });
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('api:scheduledSendHeld');
+  }
+  try {
+    const settings = readNotificationSettings();
+    if (!settings.desktopNotifications || !Notification.isSupported()) return;
+    const notification = new Notification({
+      title: heldScheduledSendTitle(),
+      body: heldScheduledSendMessage(entry.subject, formatDateTime(entry.sendAt)),
+      silent: !settings.sound,
+      icon: getNotificationIconPath(),
+    });
+    activeNotifications.add(notification);
+    notification.on('click', () => {
+      activeNotifications.delete(notification);
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
+    notification.on('close', () => activeNotifications.delete(notification));
+    notification.show();
+  } catch (error) {
+    SystemLogger.error('Scheduled Send', 'Could not show the held-message notification.', error);
+  }
+}
+
+// --- After sleep ---------------------------------------------------------------
+
+let syncAllMailboxesNow: (() => Promise<void>) | null = null;
+let resumeTimer: NodeJS.Timeout | null = null;
+/** The network is rarely back the instant the Mac wakes. */
+const RESUME_SYNC_DELAY_MS = 4000;
+
+/**
+ * Timers do not advance while the Mac sleeps, so the next scheduled sync can
+ * be most of a minute away after waking. Check mail right away instead.
+ */
+function catchUpAfterResume() {
+  if (resumeTimer) clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null;
+    SystemLogger.info('Application', 'Woke from sleep: checking mail now.');
+    void syncAllMailboxesNow?.().catch(() => undefined);
+    scheduleUnreadBadge();
+  }, RESUME_SYNC_DELAY_MS);
 }
 
 function requireCalendarText(value: unknown, field: string, maxLength = 512): string {
@@ -1325,6 +1442,16 @@ registerSecureHandler('db:deleteConversation', (_, id) => AIConversationsRepo.de
 registerSecureHandler('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
 
 registerSecureHandler('db:getSetting', (_, key) => SettingsRepo.get(key));
+// Messages held because their send time was missed. A notice stays stored
+// until the window says it has shown it: asking for the list is not showing it
+// (the window may close or reload before the answer arrives).
+registerSecureHandler('api:listHeldScheduledSends', () => readHeldScheduledSends());
+registerSecureHandler('api:acknowledgeHeldScheduledSends', (_, actionIds: unknown) => acknowledgeHeldScheduledSends(actionIds));
+
+// Open at login is the system's setting, not ours: read from and written to the OS.
+registerSecureHandler('api:getLoginItemState', () => readLoginItemState());
+registerSecureHandler('api:setLaunchAtLogin', (_, enabled: unknown) => setLaunchAtLogin(enabled === true));
+
 registerSecureHandler('db:setSetting', async (_, key, value) => {
   if (key !== 'appSettings') {
     return SettingsRepo.set(key, value);
@@ -2676,6 +2803,7 @@ function publishMailboxDelta(
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
     mainWindow.webContents.send('api:mailboxDelta', delta);
   }
+  scheduleUnreadBadge();
   return delta;
 }
 
@@ -2698,6 +2826,7 @@ function startReminderNotificationWorker() {
       }
 
       notifyOfDueReminders(dueThreads);
+      scheduleUnreadBadge();
       mainWindow?.webContents.send('api:remindersDue', dueThreads.map(thread => ({
         accountId: thread.accountId,
         threadId: thread.id
@@ -3145,6 +3274,8 @@ function startBackgroundMailboxSyncWorker() {
       mailboxSyncWorkerActive = false;
     }
   };
+
+  syncAllMailboxesNow = run;
 
   setTimeout(() => {
     void run();
