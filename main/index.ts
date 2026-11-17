@@ -439,7 +439,7 @@ async function runNotificationLabelAction(
       return;
     }
 
-    ThreadsRepo.updateLabels(accountId, threadId, removeLabelIds, addLabelIds);
+    ThreadsRepo.rollbackLabels(accountId, threadId, removeLabelIds, addLabelIds);
     scheduleUnreadBadge();
     ActionLogRepo.save({
       ...log,
@@ -941,7 +941,12 @@ app.whenReady().then(async () => {
   // Start background sync worker loop
   startBackgroundSyncWorker({
     actionLog: ActionLogRepo,
-    threads: ThreadsRepo,
+    threads: {
+      get: (accountId, threadId) => ThreadsRepo.get(accountId, threadId),
+      // The reconciler writes labels only to roll back an action Gmail
+      // rejected for good: ahead of the writes waiting in the queue.
+      updateLabels: (accountId, threadId, add, remove) => ThreadsRepo.rollbackLabels(accountId, threadId, add, remove),
+    },
     drafts: DraftsRepo,
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
@@ -2423,7 +2428,7 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
       return;
     }
-    ThreadsRepo.updateLabels(thread.accountId, thread.id, mutation.removeLabelIds, mutation.addLabelIds);
+    ThreadsRepo.rollbackLabels(thread.accountId, thread.id, mutation.removeLabelIds, mutation.addLabelIds);
     ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
   }
 }
@@ -2569,13 +2574,13 @@ const interactiveWrites = createInteractiveWriteQueue(getDatabase, {
   },
 });
 
-// Not through the interactive write queue: a rollback that waited there could
-// land after a newer write to the same thread (one queued behind it, or a
-// synchronous one such as a notification action) and undo part of it. It runs
-// at once, before anything else on this thread can touch the labels.
+// Not through the interactive write queue, and ahead of what waits in it: a
+// rollback that landed after a newer write to the same thread (one queued
+// behind it, or a synchronous one such as a notification action) would undo
+// part of that write. It runs at once, before anything else can touch the labels.
 function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): void {
   try {
-    ThreadsRepo.updateLabels(email, threadId, removeLabelIds, addLabelIds);
+    ThreadsRepo.rollbackLabels(email, threadId, removeLabelIds, addLabelIds);
   } catch (rollbackError) {
     // The renderer reloads from SQLite after a failure; the next sync repairs labels.
     SystemLogger.error('Local Database', 'Could not roll back a local label change.', rollbackError, { accountId: email, threadId });

@@ -153,6 +153,13 @@ export interface WriteTransactionOptions {
   /** Bulk chunk (worker): yield to interactive writers first. Defaults to "not on the main thread". */
   bulk?: boolean;
   retry?: SqliteBusyRetryOptions;
+  /**
+   * For a rollback of a write that already landed: run before the writes
+   * waiting in the interactive write queue instead of after them. Everything
+   * still waiting there was asked for after the write being undone, so landing
+   * it first would let the rollback undo part of a newer change.
+   */
+  aheadOfQueue?: boolean;
 }
 
 /**
@@ -168,8 +175,9 @@ export function runWriteTransaction<T>(db: Database.Database, fn: () => T, optio
     return retryOnSqliteBusy(() => db.transaction(fn).immediate(), options.retry);
   }
   // A synchronous write never overtakes one that is waiting in the interactive
-  // write queue: the queued writes land first, in their order.
-  flushQueuedInteractiveWrites(db);
+  // write queue: the queued writes land first, in their order. A rollback is
+  // the exception (see `aheadOfQueue`).
+  if (!options.aheadOfQueue) flushQueuedInteractiveWrites(db);
   const done = announceInteractiveWrite();
   try {
     return retryOnSqliteBusy(() => db.transaction(fn).immediate(), options.retry);
@@ -227,7 +235,9 @@ export function guardRepositoryWrites<R extends object>(
 // transaction, so a failed attempt left nothing behind.
 // The queue is also the order of the main thread's writes: a synchronous write
 // (runWriteTransaction) first lands whatever is waiting here, so an older
-// queued write is never applied on top of a newer synchronous one.
+// queued write is never applied on top of a newer synchronous one. A rollback
+// goes the other way (`aheadOfQueue`): it undoes a write that landed before
+// anything now waiting was asked for, so it runs first.
 
 export interface InteractiveWriteContention {
   label: string;

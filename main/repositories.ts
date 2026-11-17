@@ -494,6 +494,20 @@ export const ThreadsRepo = {
     })();
   },
 
+  /**
+   * Undoes an earlier `updateLabels` (pass the labels swapped). Use this, not
+   * `updateLabels`, wherever an optimistic label change is rolled back: it runs
+   * ahead of the writes waiting in the interactive write queue, which are all
+   * newer than the change being undone (see `aheadOfQueue` in sqliteWriteGuard.ts).
+   */
+  rollbackLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
+    return runWriteTransaction(
+      getDatabase(),
+      () => ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds),
+      { aheadOfQueue: true },
+    );
+  },
+
   updateLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
     const db = getDatabase();
     db.transaction(() => {

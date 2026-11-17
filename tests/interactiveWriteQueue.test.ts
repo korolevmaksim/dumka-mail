@@ -231,6 +231,29 @@ describe('createInteractiveWriteQueue', () => {
     db.close();
   });
 
+  sqliteIt('a rollback runs ahead of the waiting writes instead of landing them first', async () => {
+    const db = new Sqlite!(':memory:');
+    const { queue, resumeAll } = heldQueue(db);
+    const order: string[] = [];
+    let locked = true;
+
+    const newer = queue.run('newer', () => {
+      if (locked) throw busyError();
+      order.push('newer');
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    locked = false;
+    runWriteTransaction(db, () => { order.push('rollback of an older write'); }, { bulk: false, aheadOfQueue: true });
+    expect(order).toEqual(['rollback of an older write']);
+    expect(queue.size).toBe(1);
+
+    resumeAll();
+    await newer;
+    expect(order).toEqual(['rollback of an older write', 'newer']);
+    db.close();
+  });
+
   sqliteIt('a write queued and followed by a synchronous write in the same tick keeps its place', async () => {
     const db = new Sqlite!(':memory:');
     const queue = createInteractiveWriteQueue(() => db, fakeTime());
@@ -469,6 +492,47 @@ describe('mail action journal under a held database lock', () => {
     await older;
 
     // The person's latest choice stands.
+    expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
+  });
+
+  sqliteIt('the rollback of an older action does not undo a newer one that was waiting for the lock', async () => {
+    const { database, guard, lock, release } = await fixture();
+    const accountId = 'alex.morgan@northwind.example';
+    // The older "mark read" is already stored (no UNREAD); Gmail has not answered yet.
+    database.ThreadsRepo.save([{
+      id: 'thread-1',
+      accountId,
+      subject: 'Quarterly plan',
+      snippet: '',
+      lastMessageAt: new Date(Date.UTC(2026, 10, 17)).toISOString(),
+      senderNames: ['Jordan Lee'],
+      senderEmail: 'jordan.lee@northwind.example',
+      to: [],
+      cc: [],
+      labelIds: ['INBOX'],
+      hasAttachments: false,
+      isUnread: false,
+    } as unknown as MailThread]);
+    const resume: Array<() => void> = [];
+    const queue = guard.createInteractiveWriteQueue(database.getDatabase, {
+      attemptBusyTimeoutMs: 20,
+      wait: () => new Promise<void>(resolve => { resume.push(resolve); }),
+    });
+    await lock();
+
+    // Newer: a second "mark read" of the same thread, waiting for the lock.
+    const newer = queue.run('api:modifyLabels', () => database.ThreadsRepo.updateLabels(accountId, 'thread-1', [], ['UNREAD']));
+    await vi.waitFor(() => expect(resume).toHaveLength(1));
+
+    // The lock clears and Gmail rejects the older action: its rollback puts
+    // UNREAD back, as rollbackLocalLabels in main/index.ts does.
+    await release();
+    database.ThreadsRepo.rollbackLabels(accountId, 'thread-1', ['UNREAD'], []);
+    expect(queue.size).toBe(1);
+    for (const next of resume.splice(0)) next();
+    await newer;
+
+    // The newer action was applied after the rollback, so the thread is read.
     expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
   });
 

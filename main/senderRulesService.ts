@@ -307,7 +307,7 @@ export const SenderRulesService = {
       });
     } catch (error) {
       // Without a log entry the archive could never sync or be undone: undo it.
-      try { ThreadsRepo.updateLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
+      try { ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
       deps?.logError('Sender rule could not record its archive.', error, { accountId, threadId: thread.id });
       return thread;
     }
@@ -323,7 +323,7 @@ export const SenderRulesService = {
         ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: message });
         return archivedThread;
       }
-      try { ThreadsRepo.updateLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
+      try { ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
       SenderRulesRepo.forgetArchive(actionId);
       ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
       deps?.logError('Sender rule archive was rejected by Gmail and rolled back.', error, { accountId, threadId: thread.id });
@@ -379,7 +379,7 @@ export const SenderRulesService = {
       if (stored.status === 'pending_sync' || stored.status === 'queued' || stored.status === 'running') {
         ActionLogRepo.save({ ...stored, status: 'failed', completedAt: now().toISOString(), failureMessage: `Sender rule archive not sent: ${reason}` });
       }
-      if (options.rollbackLocal && action.threadId) ThreadsRepo.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
+      if (options.rollbackLocal && action.threadId) ThreadsRepo.rollbackLabels(action.accountId, action.threadId, ['INBOX'], []);
       if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
     } catch (error) {
       deps?.logError('Could not drop a parked sender-rule archive.', error, { accountId: action.accountId, threadId: action.threadId });
