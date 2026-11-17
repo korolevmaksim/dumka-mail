@@ -13,7 +13,7 @@ export interface MailboxListStatusInput {
   activeScopeKey: string | null;
   /** The scope whose conversations were last read from the local cache. */
   loadedScopeKey: string | null;
-  /** The scope whose last read failed. */
+  /** The scope that was never read and whose last read failed. */
   failedScopeKey: string | null;
   mailboxView: MailboxView;
   hasSearchQuery: boolean;
@@ -33,6 +33,8 @@ export function mailboxListStatus(input: MailboxListStatusInput): MailboxListSta
   if (input.loadedScopeKey !== input.activeScopeKey) {
     return input.failedScopeKey === input.activeScopeKey ? 'failed' : 'loading';
   }
+  // From here the scope has been read. A later refresh that fails does not
+  // undo that read: sync deltas keep it current, so what it says still holds.
   // Rows on screen are never replaced by placeholders, and a scope without
   // any cached conversation has nothing left to wait for.
   if (input.visibleCount > 0 || input.threadCount === 0) return 'ready';

@@ -155,7 +155,10 @@ export function useMailState({
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [mailboxIndex, setMailboxIndex] = useState<MailboxIndex | null>(null);
   const [loadedThreadScopeKey, setLoadedThreadScopeKey] = useState<string | null>(null);
+  /** The scope that has never been read and whose last read failed. */
   const [failedThreadScopeKey, setFailedThreadScopeKey] = useState<string | null>(null);
+  const loadedThreadScopeKeyRef = useRef<string | null>(loadedThreadScopeKey);
+  loadedThreadScopeKeyRef.current = loadedThreadScopeKey;
   const [navigationActivity, setNavigationActivity] = useState<NavigationActivity>(IDLE_NAVIGATION_ACTIVITY);
   const [visibleThreads, setVisibleThreads] = useState<MailThread[]>([]);
   const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
@@ -424,33 +427,40 @@ export function useMailState({
 
   // `view`: the mailbox the caller switches to in the same update (defaults to the one on screen).
   const setActiveAccount = useCallback((account: Account | null, view: MailboxView = mailboxViewRef.current) => {
-    mailboxLoadGenerationRef.current += 1;
     const nextScopeKey = accountScopeKey(account, accounts);
     const cachedCandidate = nextScopeKey ? mailboxSnapshotCacheRef.current.get(nextScopeKey) : null;
     const cached = cachedCandidate?.indexConfigKey === mailboxIndexConfigKey ? cachedCandidate : null;
     setActiveAccountState(account);
-    setThreads(cached?.threads || []);
-    setMailboxIndex(cached?.index || null);
-    setLoadedThreadScopeKey(cached ? nextScopeKey : null);
-    setFailedThreadScopeKey(null);
-    // A cached scope shows its rows in the same render; otherwise the list
-    // would be empty until the filtering effect publishes them.
-    setVisibleThreads(cached ? threadsForMailboxIndex(cached.index, view, null) : []);
-    if (cached) {
-      setSplitCounts(cached.index.splitCounts);
-      setSplitUnreadCounts(cached.index.splitUnreadCounts);
-      setMailboxCounts(cached.index.mailboxCounts);
-      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
-    } else {
-      setSplitCounts({});
-      setSplitUnreadCounts({});
-      setMailboxCounts(emptyMailboxCounts());
-      setNavigationActivity(account ? {
-        phase: 'loadingAccount',
-        label: 'Loading account…',
-        scopeKey: nextScopeKey,
-        startedAt: performance.now(),
-      } : IDLE_NAVIGATION_ACTIVITY);
+    // Choosing the scope that is already on screen before it has a snapshot
+    // (its read is running, failed, or its index is being built) starts no new
+    // read: the same account object reruns no effect. Its load state must then
+    // stay as it is, or the list would wait for ever for a read nobody started.
+    const keepLoadState = !cached && Boolean(nextScopeKey) && nextScopeKey === activeScopeKeyRef.current;
+    if (!keepLoadState) {
+      mailboxLoadGenerationRef.current += 1;
+      setThreads(cached?.threads || []);
+      setMailboxIndex(cached?.index || null);
+      setLoadedThreadScopeKey(cached ? nextScopeKey : null);
+      setFailedThreadScopeKey(null);
+      // A cached scope shows its rows in the same render; otherwise the list
+      // would be empty until the filtering effect publishes them.
+      setVisibleThreads(cached ? threadsForMailboxIndex(cached.index, view, null) : []);
+      if (cached) {
+        setSplitCounts(cached.index.splitCounts);
+        setSplitUnreadCounts(cached.index.splitUnreadCounts);
+        setMailboxCounts(cached.index.mailboxCounts);
+        setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+      } else {
+        setSplitCounts({});
+        setSplitUnreadCounts({});
+        setMailboxCounts(emptyMailboxCounts());
+        setNavigationActivity(account ? {
+          phase: 'loadingAccount',
+          label: 'Loading account…',
+          scopeKey: nextScopeKey,
+          startedAt: performance.now(),
+        } : IDLE_NAVIGATION_ACTIVITY);
+      }
     }
     setOpenedThread(null);
     resetOpenedThreadMessages();
@@ -574,11 +584,14 @@ export function useMailState({
     } catch (error) {
       if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
       console.error('Failed to load mailbox threads:', error);
-      setFailedThreadScopeKey(scopeKey);
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
-      // Without rows the list itself reports the failure and offers to try
-      // again; a toast is for a refresh that failed behind rows that stay.
-      if (cached) {
+      // A scope that was never read has nothing to show: the list reports the
+      // failure itself and offers to try again. A failed refresh of a scope
+      // that was read keeps that read (its rows, or its empty mailbox, kept
+      // current by sync deltas), so only a toast reports it.
+      if (loadedThreadScopeKeyRef.current !== scopeKey) {
+        setFailedThreadScopeKey(scopeKey);
+      } else {
         emitToast({
           type: 'error',
           message: error instanceof Error ? error.message : 'Could not load the mailbox.',

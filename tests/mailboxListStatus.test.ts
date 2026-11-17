@@ -34,8 +34,10 @@ describe('mailboxListStatus', () => {
     expect(status({ loadedScopeKey: null, failedScopeKey: 'work@example.com', threadCount: 0, visibleCount: 0 })).toBe('failed');
     // A failure of another scope says nothing about this one.
     expect(status({ loadedScopeKey: null, failedScopeKey: 'home@example.com', threadCount: 0, visibleCount: 0 })).toBe('loading');
-    // A failed refresh keeps the rows that were already read.
+    // A failed refresh does not undo the read before it: its rows stay, and
+    // a mailbox it found empty is still empty.
     expect(status({ failedScopeKey: 'work@example.com' })).toBe('ready');
+    expect(status({ failedScopeKey: 'work@example.com', mailboxView: 'trash', visibleCount: 0, expectedCount: 0 })).toBe('ready');
   });
 
   it('is loading while the mailbox index is built and until its rows are published', () => {
