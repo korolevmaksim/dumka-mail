@@ -165,6 +165,24 @@ describe('LabelRollbacks', () => {
     }
   });
 
+  sqliteIt('restores the label itself when the newer action is journaled but has not written its labels yet', () => {
+    database.ThreadsRepo.save([thread(['INBOX'])]);
+    start('older', 'markDone', 0, [], ['INBOX']);
+    // The newer archive has its journal entry; its label write is still to come.
+    database.ActionLogRepo.save(action('newer', 'markDone', 1, { status: 'running' }));
+
+    reject('older');
+    expect(labels()).toEqual(['INBOX']);
+
+    // Its write lands on the restored state, so it knows what it changed.
+    rollbacks.track('newer', database.ThreadsRepo.updateLabels(accountId, 'thread-1', [], ['INBOX']));
+    expect(labels()).toEqual([]);
+    expect(rollbacks.planFor('newer')).toEqual({ add: ['INBOX'], remove: [] });
+
+    reject('newer');
+    expect(labels()).toEqual(['INBOX']);
+  });
+
   sqliteIt('hands over what it found even when the newer action changed that label itself', () => {
     database.ThreadsRepo.save([thread(['INBOX'])]);
     // Archive, then "restore to inbox" before Gmail answered the archive.

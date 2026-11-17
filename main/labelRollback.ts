@@ -8,7 +8,7 @@
 // settles an action forgets its plan.
 //
 // When an action is rolled back, a label that a newer, not failed action of
-// the same thread also sets or clears is left alone: that action decides the
+// the same thread also sets or clears, and has already written, is left alone: that action decides the
 // label now, and putting the older state back would undo it. The
 // responsibility moves with it: the newer action's plan takes over what the
 // failed one would have restored, so if it fails too the label goes back to
@@ -94,9 +94,17 @@ export const LabelRollbacks = {
 
     const add: string[] = [];
     const remove: string[] = [];
+    // Only an action whose own label write has landed can have taken a label
+    // over: it has a plan here, or the journal shows it past that write
+    // (parked or completed). One that is journaled but has not written yet
+    // (`queued` / `running` without a plan) will write on top of whatever
+    // this rollback leaves, and record that as its own change.
+    const hasLanded = (other: { id: string; status: string }) => (
+      plans.has(other.id) || other.status === 'pending_sync' || other.status === 'completed'
+    );
     const decide = (label: string, direction: 'add' | 'remove') => {
       // The oldest of the newer actions is the one that built on this state.
-      const owner = newer.find(other => touches(other, label));
+      const owner = newer.find(other => hasLanded(other) && touches(other, label));
       if (!owner) {
         (direction === 'add' ? add : remove).push(label);
         return;
