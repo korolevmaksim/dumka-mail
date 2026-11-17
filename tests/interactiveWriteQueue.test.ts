@@ -536,6 +536,77 @@ describe('mail action journal under a held database lock', () => {
     expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
   });
 
+  sqliteIt('a replayed action that Gmail rejects is failed and rolled back ahead of a newer waiting write', async () => {
+    const { database, guard, lock, release } = await fixture();
+    const { reconcilePendingActions } = await import('../main/actionReconciler');
+    const accountId = 'alex.morgan@northwind.example';
+    // A parked "mark read": stored locally (no UNREAD), not yet in Gmail.
+    database.ThreadsRepo.save([{
+      id: 'thread-1',
+      accountId,
+      subject: 'Quarterly plan',
+      snippet: '',
+      lastMessageAt: new Date(Date.UTC(2026, 10, 17)).toISOString(),
+      senderNames: ['Jordan Lee'],
+      senderEmail: 'jordan.lee@northwind.example',
+      to: [],
+      cc: [],
+      labelIds: ['INBOX'],
+      hasAttachments: false,
+      isUnread: false,
+    } as unknown as MailThread]);
+    database.ActionLogRepo.save({
+      id: 'parked',
+      accountId,
+      threadId: 'thread-1',
+      kind: 'markRead',
+      status: 'pending_sync',
+      createdAt: new Date().toISOString(),
+      payloadJson: null,
+    });
+    const resume: Array<() => void> = [];
+    const queue = guard.createInteractiveWriteQueue(database.getDatabase, {
+      attemptBusyTimeoutMs: 20,
+      wait: () => new Promise<void>(resolve => { resume.push(resolve); }),
+    });
+    let rejectGmail: (error: Error) => void = () => undefined;
+    const gmailAnswer = new Promise<never>((_resolve, reject) => { rejectGmail = reject; });
+    const unused = async () => ({});
+
+    // The reconciler as main/index.ts wires it.
+    const replay = reconcilePendingActions({
+      actionLog: database.ActionLogRepo,
+      threads: {
+        get: (account, threadId) => database.ThreadsRepo.get(account, threadId),
+        updateLabels: (account, threadId, add, remove) => database.ThreadsRepo.rollbackLabels(account, threadId, add, remove),
+      },
+      runRollback: fn => guard.runRollbackTransaction(database.getDatabase(), fn),
+      drafts: { get: () => null, delete: () => undefined },
+      gmail: { modifyLabels: () => gmailAnswer, trashThread: unused, untrashThread: unused, sendDraft: unused },
+      buildForwardDraft: () => ({}),
+      buildAutoReplyDraft: () => ({}),
+      logger: { log: () => undefined, error: () => undefined },
+    });
+    await vi.waitFor(() => expect(database.ActionLogRepo.get('parked')?.status).toBe('running'));
+
+    // While Gmail has not answered, a newer "mark read" of the thread waits for the lock.
+    await lock();
+    const newer = queue.run('api:modifyLabels', () => database.ThreadsRepo.updateLabels(accountId, 'thread-1', [], ['UNREAD']));
+    await vi.waitFor(() => expect(resume).toHaveLength(1));
+    await release();
+
+    // Gmail rejects the parked action for good.
+    rejectGmail(new Error('HTTP 400: invalid label'));
+    await replay;
+    expect(database.ActionLogRepo.get('parked')).toMatchObject({ status: 'failed', failureMessage: 'HTTP 400: invalid label' });
+    expect(queue.size).toBe(1);
+
+    for (const next of resume.splice(0)) next();
+    await newer;
+    // The newer action landed after the rollback: the thread is read.
+    expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
+  });
+
   sqliteIt('a lock that outlasts the bounded wait fails the action before Gmail and is recorded afterwards', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { database, guard, lock, release } = await fixture();

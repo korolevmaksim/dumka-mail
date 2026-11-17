@@ -186,6 +186,16 @@ export function runWriteTransaction<T>(db: Database.Database, fn: () => T, optio
   }
 }
 
+/**
+ * Runs `fn` as one write transaction ahead of the interactive write queue: for
+ * the rollback of an optimistic change together with the bookkeeping that
+ * belongs to it. Any guarded write made first would land the waiting (newer)
+ * writes, and the rollback would then undo part of them.
+ */
+export function runRollbackTransaction<T>(db: Database.Database, fn: () => T): T {
+  return runWriteTransaction(db, fn, { aheadOfQueue: true });
+}
+
 /** Splits `items` into consecutive chunks of `size`. */
 export function chunked<T>(items: readonly T[], size: number): T[][] {
   const step = Math.max(1, Math.floor(size));

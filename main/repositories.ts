@@ -39,7 +39,7 @@ import {
 import { isDecision } from '../shared/decision';
 import { parseStoredThreadSignals } from '../shared/threadSignals';
 import { inboxThreadPredicate, inInboxValue, runThreadMaintenanceChunk, type ThreadMaintenanceResult } from './migrations';
-import { chunked, guardRepositoryWrites, runWriteTransaction } from './sqliteWriteGuard';
+import { chunked, guardRepositoryWrites, runRollbackTransaction, runWriteTransaction } from './sqliteWriteGuard';
 
 // Bulk writers commit in chunks this size so the write lock is held briefly
 // and an interactive write on the other connection can get in between.
@@ -499,13 +499,12 @@ export const ThreadsRepo = {
    * `updateLabels`, wherever an optimistic label change is rolled back: it runs
    * ahead of the writes waiting in the interactive write queue, which are all
    * newer than the change being undone (see `aheadOfQueue` in sqliteWriteGuard.ts).
+   * It must be the first write after the failure: when bookkeeping (the
+   * action log) has to be written as well, put both in one
+   * `runRollbackTransaction`.
    */
   rollbackLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
-    return runWriteTransaction(
-      getDatabase(),
-      () => ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds),
-      { aheadOfQueue: true },
-    );
+    return runRollbackTransaction(getDatabase(), () => ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds));
   },
 
   updateLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {

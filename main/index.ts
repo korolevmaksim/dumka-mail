@@ -81,7 +81,7 @@ import { formatDateTime } from '../shared/dateFormat';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
-import { createInteractiveWriteQueue, withBusyTimeout } from './sqliteWriteGuard';
+import { createInteractiveWriteQueue, runRollbackTransaction, withBusyTimeout } from './sqliteWriteGuard';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import {
   applyPendingRestoreIfAny,
@@ -947,6 +947,9 @@ app.whenReady().then(async () => {
       // rejected for good: ahead of the writes waiting in the queue.
       updateLabels: (accountId, threadId, add, remove) => ThreadsRepo.rollbackLabels(accountId, threadId, add, remove),
     },
+    // The failed status and the rollback are one write: saved on its own
+    // first, the status would land the waiting (newer) label writes.
+    runRollback: fn => runRollbackTransaction(getDatabase(), fn),
     drafts: DraftsRepo,
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
