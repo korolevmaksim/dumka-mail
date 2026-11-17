@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MailActionLog } from '../shared/types';
+import type { MailThread } from '../shared/types';
 import {
   createInteractiveWriteQueue,
+  runWriteTransaction,
   withBusyTimeout,
   type InteractiveWriteContention,
 } from '../main/sqliteWriteGuard';
@@ -160,6 +162,85 @@ describe('createInteractiveWriteQueue', () => {
 
     expect(calls).toBe(1);
     expect(time.state.waits).toEqual([]);
+    db.close();
+  });
+
+  /** A queue whose waits between attempts end only when the test says so. */
+  function heldQueue(db: SqliteDatabase) {
+    const resume: Array<() => void> = [];
+    const queue = createInteractiveWriteQueue(() => db, {
+      wait: () => new Promise<void>(resolve => { resume.push(resolve); }),
+    });
+    return { queue, resumeAll: () => { for (const next of resume.splice(0)) next(); } };
+  }
+
+  sqliteIt('a synchronous write lands the waiting writes first, so an older queued write is never applied on top of it', async () => {
+    const db = new Sqlite!(':memory:');
+    const { queue, resumeAll } = heldQueue(db);
+    const order: string[] = [];
+    let locked = true;
+    const queued = (name: string) => () => {
+      if (locked) throw busyError();
+      order.push(name);
+      return name;
+    };
+
+    const first = queue.run('older-1', queued('older-1'));
+    const second = queue.run('older-2', queued('older-2'));
+    // The first write tried, found the lock and is now between attempts.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(queue.size).toBe(2);
+
+    // The lock clears and a synchronous writer (a notification action, a
+    // sender-rule archive) runs before the queue's next attempt.
+    locked = false;
+    runWriteTransaction(db, () => { order.push('newer'); }, { bulk: false });
+
+    expect(order).toEqual(['older-1', 'older-2', 'newer']);
+    expect(queue.size).toBe(0);
+    await expect(first).resolves.toBe('older-1');
+    await expect(second).resolves.toBe('older-2');
+
+    // The queue's own next attempt finds nothing left and writes nothing twice.
+    resumeAll();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(order).toEqual(['older-1', 'older-2', 'newer']);
+    db.close();
+  });
+
+  sqliteIt('a synchronous write fails with the busy error instead of overtaking while the lock is still held', async () => {
+    const db = new Sqlite!(':memory:');
+    const { queue, resumeAll } = heldQueue(db);
+    const order: string[] = [];
+    let locked = true;
+
+    const older = queue.run('older', () => {
+      if (locked) throw busyError();
+      order.push('older');
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(() => runWriteTransaction(db, () => { order.push('newer'); }, { bulk: false })).toThrow('database is locked');
+    expect(order).toEqual([]);
+    expect(queue.size).toBe(1);
+
+    locked = false;
+    resumeAll();
+    await older;
+    expect(order).toEqual(['older']);
+    db.close();
+  });
+
+  sqliteIt('a write queued and followed by a synchronous write in the same tick keeps its place', async () => {
+    const db = new Sqlite!(':memory:');
+    const queue = createInteractiveWriteQueue(() => db, fakeTime());
+    const order: string[] = [];
+
+    const queuedWrite = queue.run('queued', () => { order.push('queued'); });
+    runWriteTransaction(db, () => { order.push('synchronous'); }, { bulk: false });
+    await queuedWrite;
+
+    expect(order).toEqual(['queued', 'synchronous']);
     db.close();
   });
 
@@ -343,6 +424,52 @@ describe('mail action journal under a held database lock', () => {
     for (const id of ['a', 'b', 'c', 'd']) {
       expect(database.ActionLogRepo.get(id)?.status).toBe('completed');
     }
+  });
+
+  sqliteIt('a newer synchronous label write is not undone by an older one that was waiting for the lock', async () => {
+    const { database, guard, lock, release } = await fixture();
+    const accountId = 'alex.morgan@northwind.example';
+    database.ThreadsRepo.save([{
+      id: 'thread-1',
+      accountId,
+      subject: 'Quarterly plan',
+      snippet: '',
+      lastMessageAt: new Date(Date.UTC(2026, 10, 17)).toISOString(),
+      senderNames: ['Jordan Lee'],
+      senderEmail: 'jordan.lee@northwind.example',
+      to: [],
+      cc: [],
+      labelIds: ['INBOX'],
+      hasAttachments: false,
+      isUnread: false,
+    } as unknown as MailThread]);
+    // The queue stays between two attempts until the test lets it go on, so
+    // the order below does not depend on timers.
+    const resume: Array<() => void> = [];
+    const queue = guard.createInteractiveWriteQueue(database.getDatabase, {
+      attemptBusyTimeoutMs: 20,
+      wait: () => new Promise<void>(resolve => { resume.push(resolve); }),
+    });
+    await lock();
+
+    // Older: "mark unread" from the window, as api:modifyLabels queues it.
+    const older = queue.run('api:modifyLabels', () => database.ThreadsRepo.updateLabels(accountId, 'thread-1', ['UNREAD'], []));
+    await vi.waitFor(() => expect(resume).toHaveLength(1));
+    expect(queue.size).toBe(1);
+
+    // The lock clears; before the queue's next attempt a notification's
+    // "Mark read" writes the same thread synchronously.
+    await release();
+    guard.runWriteTransaction(
+      database.getDatabase(),
+      () => database.ThreadsRepo.updateLabels(accountId, 'thread-1', [], ['UNREAD']),
+      { bulk: false },
+    );
+    for (const next of resume.splice(0)) next();
+    await older;
+
+    // The person's latest choice stands.
+    expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
   });
 
   sqliteIt('a lock that outlasts the bounded wait fails the action before Gmail and is recorded afterwards', async () => {

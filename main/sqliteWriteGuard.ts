@@ -167,6 +167,9 @@ export function runWriteTransaction<T>(db: Database.Database, fn: () => T, optio
     yieldToInteractiveWriters();
     return retryOnSqliteBusy(() => db.transaction(fn).immediate(), options.retry);
   }
+  // A synchronous write never overtakes one that is waiting in the interactive
+  // write queue: the queued writes land first, in their order.
+  flushQueuedInteractiveWrites(db);
   const done = announceInteractiveWrite();
   try {
     return retryOnSqliteBusy(() => db.transaction(fn).immediate(), options.retry);
@@ -222,6 +225,9 @@ export function guardRepositoryWrites<R extends object>(
 //     behind a held lock drains without blocking the thread again.
 // Only SQLITE_BUSY / SQLITE_LOCKED is retried; each attempt is one IMMEDIATE
 // transaction, so a failed attempt left nothing behind.
+// The queue is also the order of the main thread's writes: a synchronous write
+// (runWriteTransaction) first lands whatever is waiting here, so an older
+// queued write is never applied on top of a newer synchronous one.
 
 export interface InteractiveWriteContention {
   label: string;
@@ -272,6 +278,38 @@ export function withBusyTimeout<T>(db: Database.Database, ms: number, fn: () => 
   }
 }
 
+interface QueuedWrite {
+  label: string;
+  fn: () => unknown;
+  queuedAt: number;
+  deadlineMs: number;
+  attempts: number;
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+}
+
+interface RegisteredWriteQueue {
+  getDb: () => Database.Database;
+  hasWaiting: () => boolean;
+  flushSync: () => void;
+}
+
+const registeredWriteQueues = new Set<RegisteredWriteQueue>();
+
+/**
+ * Lands the writes waiting in the interactive write queue of `db`, in order,
+ * before a synchronous write on the same connection. Without this a
+ * synchronous writer (a notification action, a sender-rule archive, the
+ * reconciler) could run while an older queued write is between attempts, and
+ * the older write would then be applied on top of the newer one. If the lock
+ * is still held this throws the busy error, as the caller's own write would.
+ */
+function flushQueuedInteractiveWrites(db: Database.Database): void {
+  for (const queue of registeredWriteQueues) {
+    if (queue.hasWaiting() && queue.getDb() === db) queue.flushSync();
+  }
+}
+
 export function createInteractiveWriteQueue(
   getDb: () => Database.Database,
   options: InteractiveWriteQueueOptions = {},
@@ -284,8 +322,11 @@ export function createInteractiveWriteQueue(
   };
   const now = options.now ?? Date.now;
   const wait = options.wait ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
-  let tail: Promise<unknown> = Promise.resolve();
-  let size = 0;
+  const waiting: QueuedWrite[] = [];
+  let pumping = false;
+  // True while this queue itself runs a write, so the synchronous flush in
+  // runWriteTransaction does not re-enter it.
+  let writing = false;
 
   const report = (contention: InteractiveWriteContention) => {
     try {
@@ -295,52 +336,92 @@ export function createInteractiveWriteQueue(
     }
   };
 
-  const attempt = <T>(fn: () => T, busyTimeoutMs: number): T => {
-    const db = getDb();
-    return withBusyTimeout(db, busyTimeoutMs, () => (
-      runWriteTransaction(db, fn, { bulk: false, retry: { attempts: 1 } })
-    ));
+  /** Runs the first waiting write once. Throws only a busy error; anything else settles the write. */
+  const writeFirst = (task: QueuedWrite, run: (db: Database.Database) => unknown): void => {
+    task.attempts += 1;
+    let value: unknown;
+    writing = true;
+    try {
+      value = run(getDb());
+    } catch (error) {
+      if (isSqliteBusyError(error)) throw error;
+      waiting.shift();
+      task.reject(error);
+      return;
+    } finally {
+      writing = false;
+    }
+    waiting.shift();
+    if (task.attempts > 1) {
+      report({ label: task.label, attempts: task.attempts, waitedMs: now() - task.queuedAt, recovered: true });
+    }
+    task.resolve(value);
   };
 
-  async function settle<T>(label: string, fn: () => T, queuedAt: number, deadlineMs: number): Promise<T> {
+  async function pump(): Promise<void> {
+    if (pumping) return;
+    pumping = true;
     const done = announceInteractiveWrite();
     try {
-      for (let attempts = 1; ; attempts += 1) {
+      while (waiting.length > 0) {
+        // Read again after every wait: a synchronous flush may have landed it.
+        const task = waiting[0];
         try {
-          const remainingMs = deadlineMs - (now() - queuedAt);
-          const value = attempt(fn, Math.max(0, Math.min(attemptBusyTimeoutMs, remainingMs)));
-          if (attempts > 1) report({ label, attempts, waitedMs: now() - queuedAt, recovered: true });
-          return value;
+          const remainingMs = task.deadlineMs - (now() - task.queuedAt);
+          const busyTimeoutMs = Math.max(0, Math.min(attemptBusyTimeoutMs, remainingMs));
+          writeFirst(task, db => withBusyTimeout(db, busyTimeoutMs, () => (
+            runWriteTransaction(db, task.fn, { bulk: false, retry: { attempts: 1 } })
+          )));
         } catch (error) {
-          if (!isSqliteBusyError(error)) throw error;
-          const waitedMs = now() - queuedAt;
-          if (waitedMs >= deadlineMs) {
-            report({ label, attempts, waitedMs, recovered: false });
-            throw error;
+          const waitedMs = now() - task.queuedAt;
+          if (waitedMs >= task.deadlineMs) {
+            waiting.shift();
+            report({ label: task.label, attempts: task.attempts, waitedMs, recovered: false });
+            task.reject(error);
+            continue;
           }
           // Capped at the time left, so the last attempt lands on the deadline.
-          await wait(Math.max(1, Math.min(sqliteBusyRetryDelay(attempts, delays), deadlineMs - waitedMs)));
+          await wait(Math.max(1, Math.min(sqliteBusyRetryDelay(task.attempts, delays), task.deadlineMs - waitedMs)));
         }
       }
     } finally {
+      pumping = false;
       done();
     }
   }
 
+  registeredWriteQueues.add({
+    getDb,
+    hasWaiting: () => waiting.length > 0 && !writing,
+    flushSync() {
+      // With the caller's own patience (the synchronous guard's retry). A busy
+      // error leaves the remaining writes waiting and goes to the caller.
+      while (waiting.length > 0) {
+        writeFirst(waiting[0], db => runWriteTransaction(db, waiting[0].fn, { bulk: false }));
+      }
+    },
+  });
+
   return {
     run<T>(label: string, fn: () => T, runOptions: { deadlineMs?: number } = {}): Promise<T> {
-      // The deadline counts from here: writes stuck behind a held lock all
-      // give up on time instead of each waiting a full deadline in turn.
-      const queuedAt = now();
-      const deadlineMs = runOptions.deadlineMs ?? defaultDeadlineMs;
-      size += 1;
-      const task = tail.then(() => settle(label, fn, queuedAt, deadlineMs));
-      const finished = task.finally(() => { size -= 1; });
-      tail = finished.then(() => undefined, () => undefined);
-      return finished;
+      return new Promise<T>((resolve, reject) => {
+        waiting.push({
+          label,
+          fn,
+          // The deadline counts from here: writes stuck behind a held lock all
+          // give up on time instead of each waiting a full deadline in turn.
+          queuedAt: now(),
+          deadlineMs: runOptions.deadlineMs ?? defaultDeadlineMs,
+          attempts: 0,
+          resolve: value => resolve(value as T),
+          reject,
+        });
+        // Not in this tick: the caller's code up to its next await runs first.
+        queueMicrotask(() => { void pump(); });
+      });
     },
     get size() {
-      return size;
+      return waiting.length;
     },
   };
 }
