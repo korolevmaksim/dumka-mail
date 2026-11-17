@@ -4,8 +4,10 @@
 // An action's optimistic write reports the labels it really changed
 // (`ThreadsRepo.updateLabels`); the opposite of that is its rollback plan. It
 // is kept here, in memory, while the action can still fail: until Gmail
-// accepts it, including while it is parked for the reconciler. Everything that
-// settles an action forgets its plan.
+// accepts it, including while it is parked for the reconciler. Once Gmail
+// accepted it the plan is emptied but the entry stays (`accept`) until the
+// journal holds the final state (`forget`): in between, the journal still
+// says `running`, and the entry is what shows that the action's labels landed.
 //
 // When an action is rolled back, a label that a newer, not failed action of
 // the same thread also sets or clears, and has already written, is left alone: that action decides the
@@ -27,6 +29,15 @@ export interface LabelRollbackPlan {
   remove: string[];
 }
 
+interface TrackedAction extends LabelRollbackPlan {
+  /**
+   * Gmail accepted the action: nothing is put back any more. The entry stays
+   * until the journal says so too, because until then the journal still shows
+   * the action as `running` and nothing else tells that its labels landed.
+   */
+  accepted?: boolean;
+}
+
 export interface RolledBackAction {
   id?: string | null;
   accountId: string;
@@ -36,7 +47,7 @@ export interface RolledBackAction {
 /** Above this many plans, the ones whose action is settled are swept out. */
 const DEFAULT_PLAN_SWEEP_THRESHOLD = 1000;
 const PLAN_SWEEP_STEP = 100;
-const plans = new Map<string, LabelRollbackPlan>();
+const plans = new Map<string, TrackedAction>();
 let sweepThreshold = DEFAULT_PLAN_SWEEP_THRESHOLD;
 let nextSweepAt = DEFAULT_PLAN_SWEEP_THRESHOLD;
 
@@ -73,7 +84,23 @@ export const LabelRollbacks = {
     if (plans.size > nextSweepAt) sweepSettledPlans();
   },
 
-  /** The action is settled (Gmail accepted it, or it was cancelled): it will not be rolled back. */
+  /**
+   * Gmail accepted the action: it will not be rolled back, but it keeps the
+   * labels it took over. Call `forget` once its `completed` state is stored.
+   */
+  accept(actionId: string | null | undefined): void {
+    if (!actionId) return;
+    // Also for an action without a plan (replayed after a restart): the marker
+    // is what counts, until its `completed` state is stored.
+    plans.delete(actionId);
+    plans.set(actionId, { add: [], remove: [], accepted: true });
+    if (plans.size > nextSweepAt) sweepSettledPlans();
+  },
+
+  /**
+   * The journal holds the action's final state (completed, failed, cancelled):
+   * nothing here is needed any more. Before that, use `accept`.
+   */
   forget(actionId: string | null | undefined): void {
     if (actionId) plans.delete(actionId);
   },
@@ -84,8 +111,11 @@ export const LabelRollbacks = {
    * is used when no plan is known (no action id, or a restart since).
    */
   rollback(action: RolledBackAction, fallback: LabelRollbackPlan): LabelChange {
-    const plan = (action.id ? plans.get(action.id) : null) || fallback;
+    const tracked = action.id ? plans.get(action.id) : null;
     if (action.id) plans.delete(action.id);
+    // Accepted by Gmail: there is nothing to put back.
+    if (tracked?.accepted) return { added: [], removed: [] };
+    const plan = tracked || fallback;
     const newer = action.id ? ActionLogRepo.listNewerLabelActions(action.id) : [];
     const touches = (other: { kind: Parameters<typeof labelChangesOfAction>[0]['kind']; payloadJson?: string | null }, label: string) => {
       const changes = labelChangesOfAction(other);
@@ -95,8 +125,9 @@ export const LabelRollbacks = {
     const add: string[] = [];
     const remove: string[] = [];
     // Only an action whose own label write has landed can have taken a label
-    // over: it has a plan here, or the journal shows it past that write
-    // (parked or completed). One that is journaled but has not written yet
+    // over: it is tracked here (with a plan, or accepted by Gmail and waiting
+    // for its `completed` state to be stored), or the journal shows it past
+    // that write (parked or completed). One that is journaled but has not written yet
     // (`queued` / `running` without a plan) will write on top of whatever
     // this rollback leaves, and record that as its own change.
     const hasLanded = (other: { id: string; status: string }) => (
@@ -112,7 +143,7 @@ export const LabelRollbacks = {
       // It decides the label now. Should it fail as well, it restores what
       // this action found, whatever it changed itself.
       const ownerPlan = plans.get(owner.id);
-      if (!ownerPlan) return;
+      if (!ownerPlan || ownerPlan.accepted) return;
       ownerPlan.add = without(ownerPlan.add, label);
       ownerPlan.remove = without(ownerPlan.remove, label);
       ownerPlan[direction].push(label);
@@ -124,10 +155,15 @@ export const LabelRollbacks = {
     return ThreadsRepo.rollbackLabels(action.accountId, action.threadId, add, remove);
   },
 
-  /** The plan currently held for an action (tests, diagnostics). */
+  /** The plan currently held for an action that can still fail (tests, diagnostics). */
   planFor(actionId: string): LabelRollbackPlan | null {
     const plan = plans.get(actionId);
-    return plan ? { add: [...plan.add], remove: [...plan.remove] } : null;
+    return plan && !plan.accepted ? { add: [...plan.add], remove: [...plan.remove] } : null;
+  },
+
+  /** Whether the action is known here at all, with a plan or as accepted. */
+  isTracked(actionId: string): boolean {
+    return plans.has(actionId);
   },
 
   resetForTests(options: { sweepThreshold?: number } = {}): void {

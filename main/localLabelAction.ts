@@ -17,6 +17,7 @@ export interface LocalLabelActionDeps {
   /** What the action must put back if it fails (see labelRollback.ts). */
   rollbacks: {
     track(actionId: string, change: { added: string[]; removed: string[] }): void;
+    accept(actionId: string): void;
     forget(actionId: string): void;
     rollback(action: { id: string; accountId: string; threadId: string }, fallback: { add: string[]; remove: string[] }): unknown;
   };
@@ -81,9 +82,12 @@ export async function runLocalLabelAction(deps: LocalLabelActionDeps, action: Lo
     return 'failed';
   }
 
-  deps.rollbacks.forget(log.id);
-  await deps.writes.settle(`${action.label}:completed`, () => {
+  // Accepted, but the journal still says `running` until the write below is
+  // stored: until then the action keeps the labels it took over.
+  deps.rollbacks.accept(log.id);
+  const stored = await deps.writes.settle(`${action.label}:completed`, () => {
     deps.actionLog.save({ ...log, status: 'completed', completedAt: now().toISOString() });
   });
+  if (stored) deps.rollbacks.forget(log.id);
   return 'completed';
 }

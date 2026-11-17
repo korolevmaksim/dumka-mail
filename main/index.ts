@@ -951,8 +951,9 @@ app.whenReady().then(async () => {
     // Gmail took the action but the database was locked: the record waits
     // for the lock, so the action is not replayed.
     settleLater: log => { void localWrites.settle('reconciler:completed', () => ActionLogRepo.save(log)); },
-    // A parked action kept its rollback plan; Gmail took it, so it is done with.
-    onCompleted: action => LabelRollbacks.forget(action.id),
+    // A parked action kept its rollback plan; Gmail took it. Its `completed`
+    // state may still be waiting for the database, so it is not forgotten yet.
+    onCompleted: action => LabelRollbacks.accept(action.id),
     drafts: DraftsRepo,
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
@@ -2492,7 +2493,9 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   try {
     // 2. Perform the actual remote Gmail API sync
     await runRemoteLabelAction(email, threadId, addLabelIds, removeLabelIds, resolvedKind);
-    LabelRollbacks.forget(actionId);
+    // Not forgotten yet: the journal says `running` until the window's
+    // `completed` write is stored (db:saveActionLog forgets it then).
+    LabelRollbacks.accept(actionId);
     noteSenderRuleLearning();
     return { offline: false };
   } catch (err: any) {

@@ -148,6 +148,37 @@ describe('LabelRollbacks', () => {
     expect(labels()).toEqual(['INBOX']);
   });
 
+  sqliteIt('keeps a label for a newer action Gmail accepted whose completed state is not stored yet', () => {
+    database.ThreadsRepo.save([thread(['INBOX'])]);
+    start('older', 'markDone', 0, [], ['INBOX']);
+    start('newer', 'markDone', 1, [], ['INBOX']);
+    // Gmail accepted the newer archive; its journal entry still says `running`.
+    rollbacks.accept('newer');
+    expect(database.ActionLogRepo.get('newer')?.status).toBe('running');
+    expect(rollbacks.planFor('newer')).toBeNull();
+    expect(rollbacks.isTracked('newer')).toBe(true);
+
+    // The older archive is rejected in that moment.
+    reject('older');
+    expect(labels()).toEqual([]);
+
+    // Its completed state arrives; nothing is left to remember.
+    database.ActionLogRepo.save(action('newer', 'markDone', 1, { status: 'completed' }));
+    rollbacks.forget('newer');
+    expect(rollbacks.isTracked('newer')).toBe(false);
+    expect(labels()).toEqual([]);
+  });
+
+  sqliteIt('puts nothing back for an action Gmail accepted, even if a rollback is asked for', () => {
+    database.ThreadsRepo.save([thread(['INBOX'])]);
+    start('archive', 'markDone', 0, [], ['INBOX']);
+    rollbacks.accept('archive');
+
+    reject('archive', { add: ['INBOX'], remove: [] });
+
+    expect(labels()).toEqual([]);
+  });
+
   sqliteIt('restores the label when both overlapping actions are rejected, whichever fails first', () => {
     for (const order of [['older', 'newer'], ['newer', 'older']]) {
       rollbacks.resetForTests();

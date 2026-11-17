@@ -65,6 +65,7 @@ function harness(options: { heldWaits?: boolean } = {}) {
     },
     rollbacks: {
       track: (actionId, change) => { steps.push(`track ${actionId} +[${change.added}] -[${change.removed}]`); },
+      accept: actionId => { steps.push(`accept ${actionId}`); },
       forget: actionId => { steps.push(`forget ${actionId}`); },
       rollback: (action, plan) => { guard(); steps.push(`rollback ${action.id} +[${plan.add}] -[${plan.remove}]`); },
     },
@@ -98,7 +99,8 @@ describe('runLocalLabelAction', () => {
 
     expect(h.steps).toEqual([
       'labels +[] -[INBOX]', 'journal:running', 'track action-1 +[] -[INBOX]',
-      'gmail', 'forget action-1', 'journal:completed',
+      // Accepted when Gmail answers, forgotten only once `completed` is stored.
+      'gmail', 'accept action-1', 'journal:completed', 'forget action-1',
     ]);
     expect(gmail).toHaveBeenCalledTimes(1);
     expect(changed).toHaveBeenCalledTimes(1);
@@ -118,7 +120,7 @@ describe('runLocalLabelAction', () => {
     h.resume();
 
     await expect(running).resolves.toBe('completed');
-    expect(h.steps.filter(step => !/^(track|forget) /.test(step))).toEqual(['labels +[] -[INBOX]', 'journal:running', 'gmail', 'journal:completed']);
+    expect(h.steps.filter(step => !/^(track|accept|forget) /.test(step))).toEqual(['labels +[] -[INBOX]', 'journal:running', 'gmail', 'journal:completed']);
     expect(h.queue.size).toBe(0);
     h.db.close();
   });
@@ -185,6 +187,10 @@ describe('runLocalLabelAction', () => {
     expect(h.clock.now).toBeGreaterThanOrEqual(SETTLE_DEADLINE_MS);
     expect(h.failures.map(failure => [failure.kind, failure.label, failure.retrying])).toEqual([['settle', 'notification:completed', true]]);
     expect(h.steps).not.toContain('journal:completed');
+    // Still marked as accepted: the journal says `running`, so this entry is
+    // all that shows the action's labels landed and Gmail took them.
+    expect(h.steps).toContain('accept action-1');
+    expect(h.steps).not.toContain('forget action-1');
 
     // The outcome was not dropped: once the database can be written again it
     // is stored, so the row does not stay `running` and get replayed.

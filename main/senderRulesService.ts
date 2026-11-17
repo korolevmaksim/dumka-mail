@@ -337,10 +337,11 @@ export const SenderRulesService = {
     }
     // Gmail archived it. Recording that waits for the database and is not
     // part of the attempt: a failed write here must not undo the archive.
-    LabelRollbacks.forget(actionId);
-    await localWrites.settle('senderRule:completed', () => {
+    LabelRollbacks.accept(actionId);
+    const stored = await localWrites.settle('senderRule:completed', () => {
       ActionLogRepo.save({ ...log, status: 'completed', completedAt: now().toISOString() });
     });
+    if (stored) LabelRollbacks.forget(actionId);
     return archivedThread;
   },
 
