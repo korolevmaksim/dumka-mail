@@ -49,6 +49,12 @@ export interface ReconcilerDeps {
    */
   runRollback?: (fn: () => void) => void;
   /**
+   * Records, as soon as the database lets it, an action the remote side
+   * already took whose `completed` state hit a locked database. Without it
+   * such an action is treated as not done and sent again.
+   */
+  settleLater?: (action: MailActionLog) => void;
+  /**
    * True while a scheduled message that is too late must be held instead of
    * sent (`shared/scheduledSend.ts`). Absent: every due message is sent.
    */
@@ -114,6 +120,17 @@ function persistActionRfcMessageId(
   return resolved.rfcMessageId;
 }
 
+/** Stores `completed` for an action the remote side already took. */
+function recordCompleted(action: MailActionLog, deps: ReconcilerDeps): void {
+  try {
+    deps.actionLog.save(action);
+  } catch (error) {
+    // A locked database is not a reason to do the action again.
+    if (!deps.settleLater || !isSqliteBusyError(error)) throw error;
+    deps.settleLater({ ...action });
+  }
+}
+
 async function completeIfAlreadySent(
   action: MailActionLog,
   rfcMessageId: string,
@@ -134,7 +151,7 @@ async function completeIfAlreadySent(
   }
   action.status = 'completed';
   action.completedAt = now().toISOString();
-  deps.actionLog.save(action);
+  recordCompleted(action, deps);
   return true;
 }
 
@@ -310,7 +327,7 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
 
       action.status = 'completed';
       action.completedAt = now().toISOString();
-      deps.actionLog.save(action);
+      recordCompleted(action, deps);
       logger.log(`[Sync Worker] Successfully synced action ${action.id} of kind ${action.kind}`);
     } catch (err: any) {
       if (isSqliteBusyError(err)) {

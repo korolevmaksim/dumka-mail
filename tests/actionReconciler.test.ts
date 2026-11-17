@@ -261,6 +261,52 @@ describe('reconcilePendingActions network failure', () => {
   });
 });
 
+describe('reconcilePendingActions when the database is locked after Gmail took the action', () => {
+  const busy = () => Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+  const parked: MailActionLog = {
+    id: 'a1',
+    accountId: 'me@example.com',
+    threadId: 't1',
+    kind: 'markRead',
+    status: 'pending_sync',
+    createdAt: NOW.toISOString(),
+  };
+
+  it('hands the completed state to settleLater instead of putting the action back for another replay', async () => {
+    const h = makeDeps({ pending: [{ ...parked }] });
+    const save = h.deps.actionLog.save;
+    h.deps.actionLog.save = log => {
+      if (log.status === 'completed') throw busy();
+      save(log);
+    };
+    const settled: MailActionLog[] = [];
+    h.deps.settleLater = log => { settled.push(log); };
+
+    await reconcilePendingActions(h.deps);
+
+    expect(h.gmailCalls).toHaveLength(1);
+    expect(settled).toEqual([expect.objectContaining({ id: 'a1', status: 'completed' })]);
+    // Not parked again: that would send the action to Gmail a second time.
+    expect(h.saved.some(log => log.status === 'pending_sync')).toBe(false);
+    expect(h.rollbacks).toEqual([]);
+  });
+
+  it('still fails loudly on an error that is not a lock', async () => {
+    const h = makeDeps({ pending: [{ ...parked }] });
+    const save = h.deps.actionLog.save;
+    h.deps.actionLog.save = log => {
+      if (log.status === 'completed') throw new Error('disk full');
+      save(log);
+    };
+    const settleLater = vi.fn();
+    h.deps.settleLater = settleLater;
+
+    await reconcilePendingActions(h.deps).catch(() => undefined);
+
+    expect(settleLater).not.toHaveBeenCalled();
+  });
+});
+
 describe('reconcilePendingActions permanent failure', () => {
   it('records the failure and rolls back inside runRollback, as one write', async () => {
     const h = makeDeps({

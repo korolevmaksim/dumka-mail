@@ -16,6 +16,7 @@
 import crypto from 'crypto';
 import { ActionLogRepo, SettingsRepo, ThreadsRepo, getDatabase } from './database';
 import { runRollbackTransaction } from './sqliteWriteGuard';
+import { localWrites } from './localWrites';
 import { SenderRulesRepo } from './senderRulesRepository';
 import { isRetryableRemoteError } from './actionReconciler';
 import { getSenderRules, getSenderSections, normalizeAccountId, normalizeAccountOverrides, resolveAccountSetting, type AccountSettingsSource } from '../shared/accountSettings';
@@ -289,47 +290,53 @@ export const SenderRulesService = {
       labelIds: thread.labelIds.filter(label => label.toUpperCase() !== 'INBOX'),
     };
     try {
-      ThreadsRepo.updateLabels(accountId, thread.id, [], ['INBOX']);
-    } catch (error) {
-      deps?.logError('Sender rule could not archive locally.', error, { accountId, threadId: thread.id });
-      return thread;
-    }
-    try {
-      ActionLogRepo.save(log);
-      SenderRulesRepo.recordRuleArchive({
-        actionId,
-        accountId,
-        threadId: thread.id,
-        senderEmail: thread.senderEmail,
-        senderName: senderNameOf(thread),
-        subject: thread.subject,
-        ruleId: rule.id,
-        archivedAt: createdAt,
+      // One write that waits for a held database lock: the archive, its log
+      // entry and its "Handled for you" record land together or not at all.
+      // Without the log entry the archive could never sync or be undone.
+      await localWrites.begin('senderRule', () => {
+        ThreadsRepo.updateLabels(accountId, thread.id, [], ['INBOX']);
+        ActionLogRepo.save(log);
+        SenderRulesRepo.recordRuleArchive({
+          actionId,
+          accountId,
+          threadId: thread.id,
+          senderEmail: thread.senderEmail,
+          senderName: senderNameOf(thread),
+          subject: thread.subject,
+          ruleId: rule.id,
+          archivedAt: createdAt,
+        });
       });
     } catch (error) {
-      // Without a log entry the archive could never sync or be undone: undo it.
-      try { ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
-      deps?.logError('Sender rule could not record its archive.', error, { accountId, threadId: thread.id });
+      deps?.logError('Sender rule could not archive locally.', error, { accountId, threadId: thread.id });
       return thread;
     }
 
     try {
       await deps?.runRemoteArchive(accountId, thread.id);
-      ActionLogRepo.save({ ...log, status: 'completed', completedAt: now().toISOString() });
-      return archivedThread;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isRetryableRemoteError(error)) {
         // Parked like an offline `E`; the reconciler replays it.
-        ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: message });
+        await localWrites.settle('senderRule:park', () => {
+          ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: message });
+        });
         return archivedThread;
       }
-      try { ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []); } catch { /* next sync repairs */ }
-      SenderRulesRepo.forgetArchive(actionId);
-      ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
+      await localWrites.rollback('senderRule:rollback', () => {
+        ThreadsRepo.rollbackLabels(accountId, thread.id, ['INBOX'], []);
+        SenderRulesRepo.forgetArchive(actionId);
+        ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
+      });
       deps?.logError('Sender rule archive was rejected by Gmail and rolled back.', error, { accountId, threadId: thread.id });
       return thread;
     }
+    // Gmail archived it. Recording that waits for the database and is not
+    // part of the attempt: a failed write here must not undo the archive.
+    await localWrites.settle('senderRule:completed', () => {
+      ActionLogRepo.save({ ...log, status: 'completed', completedAt: now().toISOString() });
+    });
+    return archivedThread;
   },
 
   // --- Parked rule archives ------------------------------------------------------

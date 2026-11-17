@@ -216,6 +216,67 @@ describe('SenderRulesService', () => {
     });
   });
 
+  repositoryIt('waits for a locked database instead of skipping the archive, and calls Gmail once', async () => {
+    await withDatabase(async ({ database, repo, service }) => {
+      const remote = vi.fn(async () => {});
+      configure(service, remote);
+      const { thread, messages } = fixture('dispatch-212');
+      storeSettings(database, [rule(thread.senderEmail)]);
+      database.ThreadsRepo.save([thread]);
+      // The first two attempts of the archive's write find the database locked.
+      const save = database.ActionLogRepo.save.bind(database.ActionLogRepo);
+      let lockedAttempts = 2;
+      const spy = vi.spyOn(database.ActionLogRepo, 'save').mockImplementation(log => {
+        if (log.status === 'running' && lockedAttempts > 0) {
+          lockedAttempts -= 1;
+          throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+        }
+        save(log);
+      });
+
+      service.SenderRulesService.noteArrivals(messages, messages);
+      const [result] = await service.SenderRulesService.applyToPersistedThreads(accountId, [thread]);
+      spy.mockRestore();
+
+      expect(lockedAttempts).toBe(0);
+      expect(result.labelIds).not.toContain('INBOX');
+      expect(remote).toHaveBeenCalledTimes(1);
+      expect(database.ThreadsRepo.get(accountId, thread.id)?.labelIds).not.toContain('INBOX');
+      expect(database.ActionLogRepo.list(accountId).map(log => log.status)).toEqual(['completed']);
+      expect(repo.SenderRulesRepo.listHandled(accountId).map(item => item.threadId)).toEqual([thread.id]);
+    });
+  });
+
+  repositoryIt('keeps an archive Gmail accepted when recording it hits a locked database', async () => {
+    await withDatabase(async ({ database, service }) => {
+      const remote = vi.fn(async () => {});
+      configure(service, remote);
+      const { thread, messages } = fixture('dispatch-212');
+      storeSettings(database, [rule(thread.senderEmail)]);
+      database.ThreadsRepo.save([thread]);
+      const save = database.ActionLogRepo.save.bind(database.ActionLogRepo);
+      let lockedAttempts = 2;
+      const spy = vi.spyOn(database.ActionLogRepo, 'save').mockImplementation(log => {
+        if (log.status === 'completed' && lockedAttempts > 0) {
+          lockedAttempts -= 1;
+          throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+        }
+        save(log);
+      });
+
+      service.SenderRulesService.noteArrivals(messages, messages);
+      const [result] = await service.SenderRulesService.applyToPersistedThreads(accountId, [thread]);
+      spy.mockRestore();
+
+      // Not rolled back and not marked failed: Gmail has the archive.
+      expect(lockedAttempts).toBe(0);
+      expect(result.labelIds).not.toContain('INBOX');
+      expect(remote).toHaveBeenCalledTimes(1);
+      expect(database.ThreadsRepo.get(accountId, thread.id)?.labelIds).not.toContain('INBOX');
+      expect(database.ActionLogRepo.list(accountId).map(log => log.status)).toEqual(['completed']);
+    });
+  });
+
   repositoryIt('parks the archive offline and rolls back on a permanent Gmail failure', async () => {
     await withDatabase(async ({ database, repo, service }) => {
       const { thread, messages } = fixture('dispatch-212');

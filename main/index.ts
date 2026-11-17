@@ -81,7 +81,9 @@ import { formatDateTime } from '../shared/dateFormat';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
 import { databaseWorkerClient } from './databaseWorkerClient';
-import { createInteractiveWriteQueue, runRollbackTransaction, withBusyTimeout } from './sqliteWriteGuard';
+import { runRollbackTransaction, withBusyTimeout } from './sqliteWriteGuard';
+import { localWrites } from './localWrites';
+import { runLocalLabelAction, type LocalLabelActionDeps } from './localLabelAction';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import {
   applyPendingRestoreIfAny,
@@ -426,28 +428,16 @@ async function runNotificationLabelAction(
     payloadJson: JSON.stringify({ source: 'notification' }),
   };
 
-  ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds);
-  ActionLogRepo.save(log);
-  scheduleUnreadBadge();
-
-  try {
-    await runRemoteLabelAction(accountId, threadId, addLabelIds, removeLabelIds, kind);
-    ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
-  } catch (err: any) {
-    if (isRetryableRemoteError(err)) {
-      ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
-      return;
-    }
-
-    ThreadsRepo.rollbackLabels(accountId, threadId, removeLabelIds, addLabelIds);
-    scheduleUnreadBadge();
-    ActionLogRepo.save({
-      ...log,
-      status: 'failed',
-      completedAt: new Date().toISOString(),
-      failureMessage: err?.message || String(err),
-    });
-  }
+  // Waits for a held database lock instead of dropping the click; rejects
+  // only when the first write could not be stored (nothing was sent then).
+  await runLocalLabelAction(localLabelActionDeps, {
+    label: 'notification',
+    log,
+    addLabelIds,
+    removeLabelIds,
+    runRemote: () => runRemoteLabelAction(accountId, threadId, addLabelIds, removeLabelIds, kind),
+    onLocalChange: scheduleUnreadBadge,
+  });
 }
 
 async function handleNotificationAction(
@@ -475,16 +465,18 @@ async function handleNotificationAction(
   }
 
   if (action.id === 'clearReminder') {
-    RemindersRepo.delete(accountId, threadId);
-    ActionLogRepo.save({
-      id: crypto.randomUUID(),
-      accountId,
-      threadId,
-      kind: 'clearReminder',
-      status: 'completed',
-      createdAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      payloadJson: JSON.stringify({ source: 'notification' }),
+    await localWrites.begin('notification:clearReminder', () => {
+      RemindersRepo.delete(accountId, threadId);
+      ActionLogRepo.save({
+        id: crypto.randomUUID(),
+        accountId,
+        threadId,
+        kind: 'clearReminder',
+        status: 'completed',
+        createdAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        payloadJson: JSON.stringify({ source: 'notification' }),
+      });
     });
     refreshRemindersDue(accountId, threadId);
     return;
@@ -492,16 +484,18 @@ async function handleNotificationAction(
 
   if (action.id === 'snoozeTomorrow') {
     const reminderAt = nextMorningIso();
-    RemindersRepo.save(accountId, threadId, reminderAt);
-    ActionLogRepo.save({
-      id: crypto.randomUUID(),
-      accountId,
-      threadId,
-      kind: 'setReminder',
-      status: 'completed',
-      createdAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      payloadJson: JSON.stringify({ source: 'notification', reminderAt }),
+    await localWrites.begin('notification:snooze', () => {
+      RemindersRepo.save(accountId, threadId, reminderAt);
+      ActionLogRepo.save({
+        id: crypto.randomUUID(),
+        accountId,
+        threadId,
+        kind: 'setReminder',
+        status: 'completed',
+        createdAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        payloadJson: JSON.stringify({ source: 'notification', reminderAt }),
+      });
     });
     refreshRemindersDue(accountId, threadId);
   }
@@ -950,6 +944,9 @@ app.whenReady().then(async () => {
     // The failed status and the rollback are one write: saved on its own
     // first, the status would land the waiting (newer) label writes.
     runRollback: fn => runRollbackTransaction(getDatabase(), fn),
+    // Gmail took the action but the database was locked: the record waits
+    // for the lock, so the action is not replayed.
+    settleLater: log => { void localWrites.settle('reconciler:completed', () => ActionLogRepo.save(log)); },
     drafts: DraftsRepo,
     gmail: GmailSyncService,
     buildForwardDraft: buildForwardDraftFromThread,
@@ -1401,8 +1398,10 @@ registerSecureHandler('api:resolveReplyPipelineItem', (_, accountId: string, thr
 
 registerSecureHandler('db:listDrafts', (_, accountId) => DraftsRepo.list(accountId));
 registerSecureHandler('db:getDraft', (_, id) => DraftsRepo.get(id));
-registerSecureHandler('db:saveDraft', (_, draft) => {
-  DraftsRepo.save(draft);
+// Drafts and reminders are written as part of an action (send, snooze): like
+// the action journal they wait for a held database lock instead of failing.
+registerSecureHandler('db:saveDraft', async (_, draft) => {
+  await queuedLocalWrite('db:saveDraft', () => DraftsRepo.save(draft));
   if (typeof draft?.accountId === 'string' && typeof draft?.id === 'string') {
     const state = ReplyPipelineService.refreshDraftPlaceholdersBestEffort(
       draft.accountId,
@@ -1413,7 +1412,7 @@ registerSecureHandler('db:saveDraft', (_, draft) => {
     if (state) notifyReplyPipelineUpdated(state.accountId, state.threadId);
   }
 });
-registerSecureHandler('db:deleteDraft', (_, id) => DraftsRepo.delete(id));
+registerSecureHandler('db:deleteDraft', (_, id) => queuedLocalWrite('db:deleteDraft', () => DraftsRepo.delete(id)));
 
 registerSecureHandler('db:getReminder', (_, accountId, threadId) => RemindersRepo.get(accountId, threadId));
 registerSecureHandler('db:saveReminder', (_, accountId, threadId, reminderAt, proposalItem?: AgentPlanItem) => {
@@ -1426,9 +1425,11 @@ registerSecureHandler('db:saveReminder', (_, accountId, threadId, reminderAt, pr
       reminderAt,
     });
   }
-  return RemindersRepo.save(accountId, threadId, reminderAt);
+  return queuedLocalWrite('db:saveReminder', () => RemindersRepo.save(accountId, threadId, reminderAt));
 });
-registerSecureHandler('db:deleteReminder', (_, accountId, threadId) => RemindersRepo.delete(accountId, threadId));
+registerSecureHandler('db:deleteReminder', (_, accountId, threadId) => (
+  queuedLocalWrite('db:deleteReminder', () => RemindersRepo.delete(accountId, threadId))
+));
 
 registerSecureHandler('db:getSyncState', (_, accountId) => SyncStateRepo.get(accountId));
 registerSecureHandler('db:saveSyncState', (_, state) => SyncStateRepo.save(state));
@@ -1437,17 +1438,11 @@ registerSecureHandler('db:listActionLog', (_, accountId) => ActionLogRepo.list(a
 // The action journal is written before the remote call of every mail action,
 // so a held database lock must delay it, not fail it: the write waits in the
 // interactive write queue and fails only when the lock outlasts the deadline.
-registerSecureHandler('db:saveActionLog', async (_, log) => {
-  try {
-    await interactiveWrites.run('db:saveActionLog', () => ActionLogRepo.save(log));
-  } catch (localError) {
-    throw localSaveFailure('db:saveActionLog', localError, {
-      accountId: typeof log?.accountId === 'string' ? log.accountId : null,
-      actionKind: typeof log?.kind === 'string' ? log.kind : null,
-      actionStatus: typeof log?.status === 'string' ? log.status : null,
-    });
-  }
-});
+registerSecureHandler('db:saveActionLog', (_, log) => queuedLocalWrite('db:saveActionLog', () => ActionLogRepo.save(log), {
+  accountId: typeof log?.accountId === 'string' ? log.accountId : null,
+  actionKind: typeof log?.kind === 'string' ? log.kind : null,
+  actionStatus: typeof log?.status === 'string' ? log.status : null,
+}));
 
 registerSecureHandler('db:listCleanupExclusions', (_, accountIds: string[]) => CleanupExclusionsRepo.list(accountIds));
 registerSecureHandler('db:saveCleanupExclusion', (_, exclusion: CleanupSenderExclusion) => CleanupExclusionsRepo.save(exclusion));
@@ -2359,21 +2354,24 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       createdAt: now,
       payloadJson: mergeActionPayload(payloadJson, { rfcMessageId }),
     };
-    ActionLogRepo.save(log);
+    // Not sent unless the journal holds it; the outcome is then always recorded.
+    await localWrites.begin('mailRule:forwardThread', () => ActionLogRepo.save(log));
 
     try {
       await GmailSyncService.sendDraft(
         thread.accountId,
         { ...buildForwardDraftFromThread(thread.accountId, thread, effect.action.forwardTo), rfcMessageId },
       );
-      ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
     } catch (err: any) {
-      if (isRetryableRemoteError(err)) {
-        ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
-        return;
-      }
-      ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
+      const outcome = isRetryableRemoteError(err)
+        ? { ...log, status: 'pending_sync' as const, failureMessage: err?.message || String(err) }
+        : { ...log, status: 'failed' as const, completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) };
+      await localWrites.settle('mailRule:forwardThread:outcome', () => ActionLogRepo.save(outcome));
+      return;
     }
+    await localWrites.settle('mailRule:forwardThread:completed', () => {
+      ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
+    });
     return;
   }
 
@@ -2390,50 +2388,45 @@ async function applyMailRuleEffect(thread: MailThread, effect: MailRuleEffect) {
       createdAt: now,
       payloadJson: mergeActionPayload(payloadJson, { rfcMessageId }),
     };
-    ActionLogRepo.save(log);
+    // Not sent unless the journal holds it; the outcome is then always recorded.
+    await localWrites.begin('mailRule:autoReply', () => ActionLogRepo.save(log));
 
     try {
       await GmailSyncService.sendDraft(
         thread.accountId,
         { ...buildAutoReplyDraftFromRule(thread.accountId, thread.id, replyBody), rfcMessageId },
       );
-      ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
     } catch (err: any) {
-      if (isRetryableRemoteError(err)) {
-        ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
-        return;
-      }
-      ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
+      const outcome = isRetryableRemoteError(err)
+        ? { ...log, status: 'pending_sync' as const, failureMessage: err?.message || String(err) }
+        : { ...log, status: 'failed' as const, completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) };
+      await localWrites.settle('mailRule:autoReply:outcome', () => ActionLogRepo.save(outcome));
+      return;
     }
+    await localWrites.settle('mailRule:autoReply:completed', () => {
+      ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
+    });
     return;
   }
 
   const mutation = labelMutationForRuleAction(effect.action);
   if (!mutation) return;
 
-  ThreadsRepo.updateLabels(thread.accountId, thread.id, mutation.addLabelIds, mutation.removeLabelIds);
-  const log = {
-    id: effect.actionId,
-    accountId: thread.accountId,
-    threadId: thread.id,
-    kind: mutation.kind,
-    status: 'running' as const,
-    createdAt: now,
-    payloadJson,
-  };
-  ActionLogRepo.save(log);
-
-  try {
-    await runRemoteLabelAction(thread.accountId, thread.id, mutation.addLabelIds, mutation.removeLabelIds, mutation.kind);
-    ActionLogRepo.save({ ...log, status: 'completed', completedAt: new Date().toISOString() });
-  } catch (err: any) {
-    if (isRetryableRemoteError(err)) {
-      ActionLogRepo.save({ ...log, status: 'pending_sync', failureMessage: err?.message || String(err) });
-      return;
-    }
-    ThreadsRepo.rollbackLabels(thread.accountId, thread.id, mutation.removeLabelIds, mutation.addLabelIds);
-    ActionLogRepo.save({ ...log, status: 'failed', completedAt: new Date().toISOString(), failureMessage: err?.message || String(err) });
-  }
+  await runLocalLabelAction(localLabelActionDeps, {
+    label: 'mailRule',
+    log: {
+      id: effect.actionId,
+      accountId: thread.accountId,
+      threadId: thread.id,
+      kind: mutation.kind,
+      status: 'running',
+      createdAt: now,
+      payloadJson,
+    },
+    addLabelIds: mutation.addLabelIds,
+    removeLabelIds: mutation.removeLabelIds,
+    runRemote: () => runRemoteLabelAction(thread.accountId, thread.id, mutation.addLabelIds, mutation.removeLabelIds, mutation.kind),
+  });
 }
 
 async function runMailRulesForThreads(threads: MailThread[]) {
@@ -2472,7 +2465,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   //    Nothing reached Gmail yet, so a held database lock is waited out in the
   //    interactive write queue (bounded) instead of failing the action.
   try {
-    await interactiveWrites.run('api:modifyLabels', () => ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds));
+    await localWrites.begin('api:modifyLabels', () => ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds));
   } catch (localError) {
     throw localSaveFailure('api:modifyLabels', localError, { accountId: email, actionKind: resolvedKind });
   }
@@ -2490,13 +2483,14 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         error: err,
       });
       const parkedId = actionId || crypto.randomUUID();
+      let rollback: Promise<boolean> | null = null;
       try {
         const scheduledAt = scheduledAtForRetry(err);
         // Gmail did not take the change: parking may wait for the lock too.
         // It waits in front of the writes already waiting (all newer than
         // this action's label change), and if it is given up the label
         // change is undone right there, before any of them has its turn.
-        await interactiveWrites.run('api:modifyLabels:park', () => {
+        await localWrites.begin('api:modifyLabels:park', () => {
           const log = ActionLogRepo.list(email).find(l => l.id === parkedId);
           if (log) {
             log.status = 'pending_sync';
@@ -2518,9 +2512,11 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         }, {
           aheadOfQueue: true,
           // Not parked means it would never sync: undo the local change instead.
-          onRejected: () => rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds),
+          onRejected: () => { rollback = rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds); },
         });
       } catch (parkError) {
+        // The renderer reloads from SQLite when this rejects: after the rollback.
+        await rollback;
         throw localSaveFailure('api:modifyLabels', parkError, { accountId: email, actionKind: resolvedKind });
       }
       // Parked actions replay through the reconciler; they are counted once, here.
@@ -2528,10 +2524,23 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
       return { offline: true };
     }
     // 3. Roll back local database state on remote network/API failure
-    rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
+    await rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
     throw err;
   }
 });
+
+/**
+ * A window's local write that waits for the database lock (bounded). When it
+ * still cannot be stored the renderer gets the marked local-save error, never
+ * the raw SQLite text.
+ */
+async function queuedLocalWrite<T>(channel: string, write: () => T, extra: Record<string, unknown> = {}): Promise<T> {
+  try {
+    return await localWrites.begin(channel, write);
+  } catch (localError) {
+    throw localSaveFailure(channel, localError, extra);
+  }
+}
 
 const LOCAL_DATABASE_LOG_BUSY_TIMEOUT_MS = 250;
 
@@ -2561,9 +2570,9 @@ function localSaveFailure(channel: string, error: unknown, extra: Record<string,
   return new Error(localSaveFailedErrorMessage());
 }
 
-// Writes that stand in front of a remote call wait here for the database lock
-// (see the interactive write queue in sqliteWriteGuard.ts).
-const interactiveWrites = createInteractiveWriteQueue(getDatabase, {
+// The local writes around a remote call wait for the database lock in
+// localWrites.ts; this is where their waits and failures are recorded.
+localWrites.setListeners({
   onContention: ({ label, attempts, waitedMs, recovered }) => {
     // What the workers were asked to do at that moment names the likely holder.
     const details = {
@@ -2580,19 +2589,33 @@ const interactiveWrites = createInteractiveWriteQueue(getDatabase, {
       console.error('[Local Database] A local write gave up waiting for the database lock.', details);
     }
   },
+  onFailure: ({ kind, label, error }) => {
+    logLocalDatabase(() => {
+      SystemLogger.error('Local Database', kind === 'rollback'
+        ? 'A local change could not be rolled back.'
+        : 'The outcome of an action could not be recorded.', error, { channel: label });
+    });
+  },
 });
 
-// Not through the interactive write queue, and ahead of what waits in it: a
-// rollback that landed after a newer write to the same thread (one queued
-// behind it, or a synchronous one such as a notification action) would undo
-// part of that write. It runs at once, before anything else can touch the labels.
-function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): void {
-  try {
+/** What a label action run by the main process itself needs (see localLabelAction.ts). */
+const localLabelActionDeps: LocalLabelActionDeps = {
+  writes: localWrites,
+  threads: ThreadsRepo,
+  actionLog: ActionLogRepo,
+  isRetryableRemoteError,
+};
+
+// In front of the writes waiting in the queue, never behind them: a rollback
+// that landed after a newer write to the same thread would undo part of that
+// write. Asked for at once when the failure is handled, it cannot be passed by
+// a queued write or by a synchronous one (which lands the queue first), and it
+// waits for a held lock instead of leaving the optimistic change in place.
+// Never rejects; if it could not be stored the next sync repairs the labels.
+function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): Promise<boolean> {
+  return localWrites.rollback('api:modifyLabels:rollback', () => {
     ThreadsRepo.rollbackLabels(email, threadId, removeLabelIds, addLabelIds);
-  } catch (rollbackError) {
-    // The renderer reloads from SQLite after a failure; the next sync repairs labels.
-    SystemLogger.error('Local Database', 'Could not roll back a local label change.', rollbackError, { accountId: email, threadId });
-  }
+  });
 }
 registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string) => {
   if (!draft || typeof draft.accountId !== 'string'
@@ -2610,7 +2633,7 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
     const existing = DraftsRepo.get(draft.id);
     if (existing && existing.rfcMessageId !== rfcMessageId) {
       try {
-        DraftsRepo.save({ ...existing, rfcMessageId });
+        await localWrites.begin('api:sendDraft', () => DraftsRepo.save({ ...existing, rfcMessageId }));
       } catch (localError) {
         // Nothing was sent yet; the renderer keeps the draft and offers Retry.
         throw localSaveFailure('api:sendDraft', localError, { accountId: email });
@@ -2632,27 +2655,30 @@ registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string
       });
       if (actionId) {
         try {
-          const log = ActionLogRepo.list(email).find(l => l.id === actionId);
           const scheduledAt = scheduledAtForRetry(err);
-          const payloadJson = mergeActionPayload(log?.payloadJson, { rfcMessageId });
-          if (log) {
-            log.status = 'pending_sync';
-            log.payloadJson = payloadJson;
-            if (scheduledAt) log.scheduledAt = scheduledAt;
-            ActionLogRepo.save(log);
-          } else {
-            ActionLogRepo.save({
-              id: actionId,
-              accountId: email,
-              draftId: draft.id,
-              threadId: draft.threadId,
-              kind: 'send',
-              status: 'pending_sync',
-              createdAt: new Date().toISOString(),
-              scheduledAt,
-              payloadJson,
-            });
-          }
+          // Nothing was sent: parking waits for a held database lock too.
+          await localWrites.begin('api:sendDraft:park', () => {
+            const log = ActionLogRepo.list(email).find(l => l.id === actionId);
+            const payloadJson = mergeActionPayload(log?.payloadJson, { rfcMessageId });
+            if (log) {
+              log.status = 'pending_sync';
+              log.payloadJson = payloadJson;
+              if (scheduledAt) log.scheduledAt = scheduledAt;
+              ActionLogRepo.save(log);
+            } else {
+              ActionLogRepo.save({
+                id: actionId,
+                accountId: email,
+                draftId: draft.id,
+                threadId: draft.threadId,
+                kind: 'send',
+                status: 'pending_sync',
+                createdAt: new Date().toISOString(),
+                scheduledAt,
+                payloadJson,
+              });
+            }
+          });
         } catch (parkError) {
           // Not queued and not sent: surface it so the draft is restored.
           throw localSaveFailure('api:sendDraft', parkError, { accountId: email });
