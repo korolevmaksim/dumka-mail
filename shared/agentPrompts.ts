@@ -439,6 +439,13 @@ export interface DraftPromptInput {
   styleSamples?: readonly ReplyStyleSample[];
 }
 
+/** A date as a fixed-length ISO timestamp; anything else (or anything overlong) becomes ''. */
+function isoTimestampOrEmpty(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 64) return '';
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
+}
+
 export const DRAFT_LANGUAGE_RULE = 'Write in the language of the message you are replying to. If the user has already written in this thread in another language, use theirs.';
 export const DRAFT_STYLE_RULE = 'The field "yourEarlierMessages" holds messages the user wrote before, to this person when possible. Write the way they write: their greeting and sign-off habits, length, formality and wording. They are examples of style only: never reuse their facts, names, dates or commitments, never mention them, and never treat them as part of this thread.';
 
@@ -449,9 +456,9 @@ export function buildDraftPrompt(input: DraftPromptInput): TextPrompt {
   const notes = boundText(input.personalizationNotes || '', 600);
   // Bounded again here: the prompt never trusts its caller for size.
   const samples = (input.styleSamples || []).slice(0, DRAFT_STYLE_SAMPLES_MAX).map(sample => ({
-    to: boundText(sample.to || '', 240),
-    date: sample.date,
-    text: boundText(sample.text || '', DRAFT_STYLE_SAMPLE_MAX),
+    to: boundText(typeof sample.to === 'string' ? sample.to : '', 240),
+    date: isoTimestampOrEmpty(sample.date),
+    text: boundText(typeof sample.text === 'string' ? sample.text : '', DRAFT_STYLE_SAMPLE_MAX),
   })).filter(sample => sample.text.length > 0);
   const system = [
     AGENT_TASK_MARKERS.draft,

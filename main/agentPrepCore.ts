@@ -270,6 +270,8 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
   const attemptedDecisions = new Set<string>();
   const attemptedDrafts = new Set<string>();
   const draftsInFlight = new Map<string, SharedRequest<AgentDraftResult>>();
+  /** Draft requests in flight that carry the person's earlier messages (`shared/replyStyle.ts`). */
+  const styledDraftRequests = new Set<AbortController>();
   const summariesInFlight = new Map<string, SharedRequest<ThreadSummaryResult>>();
   /** requestId → the caller's own controller (cancelling it leaves any shared request). */
   const requests = new Map<string, { accountId: string | null; controller: AbortController }>();
@@ -694,13 +696,29 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
       personalizationNotes: stringSetting(gate.settings.ai?.personalizationNotes),
       styleSamples,
     });
-    const result = await deps.completeText(prompt, {
-      preference: gate.preference,
-      overrideModel: gate.overrideModel,
-      stream,
-      onDelta: stream ? onDelta : undefined,
-      signal,
-    });
+    // A request that carries the person's earlier messages stops the moment
+    // that is switched off (`onConfigChanged`): the provider layer may send
+    // the same prompt again on its own (a stream that falls back to a plain
+    // request), and that second attempt must not go out after consent ended.
+    const styleConsent = styleSamples.length > 0 ? new AbortController() : null;
+    if (styleConsent) styledDraftRequests.add(styleConsent);
+    let result: TextCompletion;
+    try {
+      result = await deps.completeText(prompt, {
+        preference: gate.preference,
+        overrideModel: gate.overrideModel,
+        stream,
+        onDelta: stream ? onDelta : undefined,
+        signal: styleConsent ? AbortSignal.any([signal, styleConsent.signal]) : signal,
+      });
+    } catch (error) {
+      if (styleConsent?.signal.aborted) return { status: 'cancelled' };
+      throw error;
+    } finally {
+      if (styleConsent) styledDraftRequests.delete(styleConsent);
+    }
+    // Withdrawn while the answer was arriving: it is not kept.
+    if (styleConsent?.signal.aborted) return { status: 'cancelled' };
     const bodyPlain = cleanDraftBody(result.text);
     if (bodyPlain.length < 8) throw new ModelRequestError('empty', String(result.provider), 'Draft answer was empty.');
     if (signal.aborted || !accountExists(accountId)) return { status: 'cancelled' };
@@ -920,6 +938,12 @@ export function createAgentPrepService(deps: AgentPrepDeps) {
     /** AI configuration or app settings changed; acts only when relevant fields did. */
     onConfigChanged(force = false) {
       const settings = deps.readSettings();
+      // Checked on every settings change, whatever else changed: once the
+      // person stops sharing their earlier messages, no request carrying
+      // them may still be sent or sent again.
+      if (!replyStyleEnabled(settings)) {
+        for (const request of styledDraftRequests) request.abort();
+      }
       const next = fingerprint(settings);
       if (!force && next === settingsFingerprint) return;
       settingsFingerprint = next;

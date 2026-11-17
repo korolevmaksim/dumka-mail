@@ -6,10 +6,12 @@ import {
   REPLY_STYLE_MAX_SAMPLES,
   REPLY_STYLE_SAMPLE_MAX,
   accountSignaturePlain,
+  ownAuthoredText,
   replyRecipientEmail,
   replyStyleEnabled,
   replyStyleText,
   selectReplyStyleSamples,
+  stripQuotedHtml,
   stripSignature,
   type OwnMessage,
   type ReplyStyleSample,
@@ -35,6 +37,11 @@ function own(to: string | string[], text: string, partial: Partial<OwnMessage> &
     snippet: text.slice(0, 80),
     ...rest,
   };
+}
+
+/** An HTML-only own message to Priya. */
+function own_(_label: string, bodyHtml: string): OwnMessage {
+  return own(PRIYA, '', { bodyPlain: null, bodyHtml, snippet: '' });
 }
 
 const LONG = 'Hi there,\n\nThanks for sending this over. I read it last night and have two small comments on the timeline.\n\nBest,\nAlex';
@@ -120,6 +127,68 @@ describe('choosing examples of how the person writes', () => {
     expect(long[0].text.length).toBeLessThanOrEqual(REPLY_STYLE_SAMPLE_MAX);
   });
 
+  it('never lets quoted mail from an HTML-only message in', () => {
+    const own = 'Thanks, that works for me and I will confirm the room on Monday.';
+    const theirs = 'CONFIDENTIAL figures from the other party that must never be sent with another draft';
+    const htmlBodies = [
+      // Gmail
+      `<div dir="ltr">${own}</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Mon, Nov 9, 2026 at 10:00 Priya Raman wrote:<br></div><blockquote class="gmail_quote">${theirs}</blockquote></div>`,
+      // Apple Mail
+      `<div>${own}</div><br><blockquote type="cite"><div>On 9 Nov 2026, at 10:00, Priya Raman wrote:</div><div>${theirs}</div></blockquote>`,
+      // Outlook
+      `<div>${own}</div><div id="appendonsend"></div><hr><div id="divRplyFwdMsg"><b>From:</b> Priya Raman<br><b>Sent:</b> Monday<br></div><div>${theirs}</div>`,
+      `<p>${own}</p><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p><b>From:</b> Priya <b>Sent:</b> Monday</p></div><p>${theirs}</p>`,
+      // No quotation markup at all, only the header line left in the flattened text.
+      `<div>${own}</div><div>On Mon, Nov 9, 2026 at 10:00 Priya Raman &lt;priya@x.example&gt; wrote:</div><div>${theirs}</div>`,
+      `<div>${own}</div><div>-----Original Message-----</div><div>${theirs}</div>`,
+    ];
+    for (const bodyHtml of htmlBodies) {
+      const text = replyStyleText({ bodyPlain: null, bodyHtml, snippet: '' });
+      expect(text).toContain('I will confirm the room on Monday.');
+      expect(text).not.toContain('CONFIDENTIAL');
+      expect(text).not.toContain('wrote:');
+    }
+    // A short answer above a long quotation teaches nothing, and is not padded out by the quotation.
+    const short = selectReplyStyleSamples([
+      own_('Thanks!', `<div>Thanks!</div><blockquote>${theirs} ${theirs}</blockquote>`),
+    ], { accountEmail: ME, recipientEmail: PRIYA });
+    expect(short).toEqual([]);
+    // The plain body is used when there is one, and its quotation is cut line by line.
+    expect(replyStyleText({ bodyPlain: `${own}\n\nOn Mon, Nov 9, 2026 Priya wrote:\n> ${theirs}`, bodyHtml: `<blockquote>${theirs}</blockquote>`, snippet: '' })).toBe(own);
+    // A plain body that only repeats the snippet is a placeholder for the HTML one.
+    expect(replyStyleText({ bodyPlain: 'Thanks, that works', bodyHtml: `<div>${own}</div><blockquote>${theirs}</blockquote>`, snippet: 'Thanks, that works' })).toBe(own);
+    expect(stripQuotedHtml(`<p>${own}</p>`)).toBe(`<p>${own}</p>`);
+    expect(ownAuthoredText({ bodyPlain: null, bodyHtml: null, snippet: `${own} On Mon Priya wrote: ${theirs}` })).toBe(own);
+  });
+
+  it('cuts quoted mail under a header written in another language, with or without > marks', () => {
+    const own = 'Спасибо, меня это устраивает. В понедельник подтвержу переговорную.';
+    const theirs = 'КОНФИДЕНЦИАЛЬНО: цифры другой стороны';
+    const plainBodies = [
+      // Gmail, Russian interface.
+      `${own}\n\nпн, 9 нояб. 2026 г. в 10:00, Priya Raman <priya.raman@lumenlabs.example>:\n> ${theirs}`,
+      `${own}\n\n9 ноября 2026 г., 10:00 Прия Раман написал(а):\n> ${theirs}`,
+      `${own}\n\nПрия Раман пишет:\n${theirs}`,
+      // Outlook quotes without > marks.
+      `${own}\n\nОт: Прия Раман\nОтправлено: понедельник, 9 ноября 2026 г. 10:00\nКому: Алекс\nТема: Пилот\n\n${theirs}`,
+      `${own}\n\n-----Исходное сообщение-----\n${theirs}`,
+      `${own}\n\nAm 09.11.2026 um 10:00 schrieb Priya Raman:\n${theirs}`,
+      `${own}\n\nLe 9 nov. 2026 à 10:00, Priya Raman a écrit :\n${theirs}`,
+    ];
+    for (const bodyPlain of plainBodies) {
+      const text = replyStyleText({ bodyPlain, bodyHtml: null, snippet: '' });
+      expect(text).toContain('подтвержу переговорную.');
+      expect(text).not.toContain('КОНФИДЕНЦИАЛЬНО');
+    }
+    // The same in flattened HTML that carries no quotation markup.
+    const flat = replyStyleText({ bodyPlain: null, bodyHtml: `<div>${own}</div><div>9 ноября 2026 г., 10:00 Прия Раман написал(а):</div><div>${theirs}</div>`, snippet: '' });
+    expect(flat).toContain('подтвержу переговорную.');
+    expect(flat).not.toContain('КОНФИДЕНЦИАЛЬНО');
+    // Ordinary sentences are not headers: a colon in the person's own text stays.
+    const ordinary = 'Коллеги, план такой: сначала пилот, потом раскатка.\nОт: себя добавлю, что сроки реальные.';
+    expect(replyStyleText({ bodyPlain: ordinary, bodyHtml: null, snippet: '' })).toBe(ordinary);
+  });
+
   it('reads an HTML-only message and honours the limit', () => {
     const html = own(PRIYA, '', { bodyPlain: null, bodyHtml: `<p>Hi Priya,</p><p>${'This is the part I wrote myself. '.repeat(3)}</p>`, snippet: '' });
     expect(select([html])[0].text).toContain('This is the part I wrote myself.');
@@ -150,10 +219,20 @@ describe('who a reply is for', () => {
     senderEmail, receivedAt: `2026-11-17T10:${String(minute).padStart(2, '0')}:00.000Z`, labelIds: ['INBOX'], to: [{ name: '', email: ME }], ...extra,
   });
 
-  it('is the sender of the newest message that is not the account\'s own', () => {
-    expect(replyRecipientEmail([message(PRIYA, 1), message('Daniel@Northwind.example', 5), message(ME, 9, { labelIds: ['SENT'] })], ME)).toBe('daniel@northwind.example');
-    // A send-as alias is the account's own message too.
-    expect(replyRecipientEmail([message(PRIYA, 1), message('alias@northwind.example', 5, { labelIds: ['SENT'] })], ME)).toBe(PRIYA);
+  it('is the sender of the newest message when that one is inbound', () => {
+    expect(replyRecipientEmail([message(PRIYA, 1), message('Daniel@Northwind.example', 5)], ME)).toBe('daniel@northwind.example');
+    expect(replyRecipientEmail([message(ME, 1, { labelIds: ['SENT'], to: [{ name: '', email: PRIYA }] }), message('daniel@northwind.example', 5)], ME)).toBe('daniel@northwind.example');
+  });
+
+  it('is who the newest own message was addressed to, as the reply editor resolves a follow-up', () => {
+    // Alice wrote, then the person addressed Bob in the same thread: the follow-up goes to Bob.
+    const toBob = { labelIds: ['SENT'], to: [{ name: 'Bob', email: 'Bob@Elsewhere.example' }] };
+    expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, toBob)], ME)).toBe('bob@elsewhere.example');
+    // The same for a send-as alias, which is the account's own message too.
+    expect(replyRecipientEmail([message(PRIYA, 1), message('alias@northwind.example', 9, toBob)], ME)).toBe('bob@elsewhere.example');
+    // An own message that names nobody else: the newest inbound sender stands in.
+    expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: ME }] })], ME)).toBe(PRIYA);
+    expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, { labelIds: ['SENT'], to: [] })], ME)).toBe(PRIYA);
   });
 
   it('is the first recipient when every message is the account\'s own', () => {
@@ -215,6 +294,16 @@ describe('the draft prompt', () => {
     const payload = JSON.parse(prompt.user.slice(prompt.user.indexOf('{'), prompt.user.lastIndexOf('}') + 1));
     expect(payload.yourEarlierMessages).toHaveLength(3);
     for (const entry of payload.yourEarlierMessages) expect(entry.text.length).toBeLessThanOrEqual(DRAFT_STYLE_SAMPLE_MAX);
+    // Metadata is bounded too: a date is a fixed-length timestamp or nothing.
+    const hostile = buildDraftPrompt({ ...base, styleSamples: [
+      { ...sample, date: 'x'.repeat(100_000), to: 'y'.repeat(100_000) },
+      { ...sample, date: 'Nov 10, 2026 09:00 UTC' },
+      { ...sample, date: 5 as unknown as string, to: null as unknown as string, text: 7 as unknown as string },
+    ] });
+    expect(hostile.user.length).toBeLessThan(3000);
+    const hostilePayload = JSON.parse(hostile.user.slice(hostile.user.indexOf('{'), hostile.user.lastIndexOf('}') + 1));
+    expect(hostilePayload.yourEarlierMessages.map((entry: { date: string }) => entry.date)).toEqual(['', '2026-11-10T09:00:00.000Z']);
+    expect(hostilePayload.yourEarlierMessages[0].to.length).toBeLessThanOrEqual(240);
     // Only empty examples: no field and no rule.
     const empty = buildDraftPrompt({ ...base, styleSamples: [{ ...sample, text: '' }] });
     expect(empty.user).not.toContain('yourEarlierMessages');

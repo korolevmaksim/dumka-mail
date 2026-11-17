@@ -820,6 +820,62 @@ describe('agent prep: reply drafts in the person\'s own style', () => {
     expect(h.completions).toEqual([]);
   });
 
+  it('stops a request that carries examples the moment the setting is switched off', async () => {
+    const { h, thread } = styleHarness();
+    const signals: AbortSignal[] = [];
+    h.setCompletion((_prompt, options) => new Promise((_resolve, reject) => {
+      signals.push(options.signal!);
+      options.signal!.addEventListener('abort', () => reject(abortError()));
+    }));
+    const prep = service(h);
+    const request = prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0].aborted).toBe(false);
+    // Another settings change leaves it running.
+    h.setAI({ replyTone: 'warm' });
+    prep.onConfigChanged();
+    expect(signals[0].aborted).toBe(false);
+    // Only this switch changes: nothing else in the configuration would cancel the request.
+    h.setAI({ replyStyleFromSent: false });
+    prep.onConfigChanged();
+    // The provider layer can no longer send, or send again, with this signal.
+    expect(signals[0].aborted).toBe(true);
+    expect(await request).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('keeps nothing from an answer that arrives after the setting was switched off', async () => {
+    const { h, thread } = styleHarness();
+    const answer = deferred<{ text: string; model: string; provider: string }>();
+    const saved: unknown[] = [];
+    h.deps.saveAgentDraft = draft => { saved.push(draft); };
+    // A provider that ignores cancellation and answers anyway.
+    h.setCompletion(() => answer.promise);
+    const prep = service(h);
+    const request = prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    h.setAI({ replyStyleFromSent: false });
+    prep.onConfigChanged();
+    answer.resolve({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' });
+    expect(await request).toMatchObject({ status: 'cancelled' });
+    expect(saved).toEqual([]);
+  });
+
+  it('does not stop a draft request without examples when the setting is switched off', async () => {
+    const { h, thread } = styleHarness();
+    h.deps.replyStyleSamples = async () => [];
+    const answer = deferred<{ text: string; model: string; provider: string }>();
+    const signals: AbortSignal[] = [];
+    h.setCompletion((_prompt, options) => { signals.push(options.signal!); return answer.promise; });
+    const prep = service(h);
+    const request = prep.requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    h.setAI({ replyStyleFromSent: false });
+    prep.onConfigChanged();
+    expect(signals[0].aborted).toBe(false);
+    answer.resolve({ text: 'Thanks, the 24th works for me.', model: 'test-model', provider: 'openAI' });
+    expect(await request).toMatchObject({ status: 'ready' });
+  });
+
   it('still writes the draft when the earlier messages cannot be read', async () => {
     const { h, thread } = styleHarness();
     h.deps.replyStyleSamples = async () => { throw new Error('worker gone'); };
