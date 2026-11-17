@@ -115,8 +115,11 @@ describe('createInteractiveWriteQueue', () => {
     });
     let locked = true;
     let calls = 0;
+    // How long each attempt was allowed to block waiting for the lock.
+    const lockWaits: number[] = [];
     const write = () => {
       calls += 1;
+      lockWaits.push(Number(db.pragma('busy_timeout', { simple: true })));
       if (locked) throw busyError();
       return 'stored';
     };
@@ -127,8 +130,12 @@ describe('createInteractiveWriteQueue', () => {
     await expect(first).rejects.toThrow('database is locked');
     // The waits add up to the deadline exactly; the last attempt lands on it.
     expect(time.state.waits.reduce((sum, ms) => sum + ms, 0)).toBe(500);
-    // Queued at the same moment, so its deadline passed too: one attempt, no further wait.
     await expect(second).rejects.toThrow('database is locked');
+    // No attempt may block past the deadline: the lock wait shrinks to the
+    // time left and the attempt on the deadline does not wait at all. The
+    // second write was queued at the same moment, so it had expired when its
+    // turn came: one attempt that does not block (the last 0), no further wait.
+    expect(lockWaits).toEqual([150, 150, 150, 150, 150, 150, 60, 0, 0]);
     expect(time.state.waits.reduce((sum, ms) => sum + ms, 0)).toBe(500);
     expect(reports.map(report => [report.label, report.recovered])).toEqual([['first', false], ['second', false]]);
 

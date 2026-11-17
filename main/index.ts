@@ -2507,7 +2507,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         });
       } catch (parkError) {
         // Not parked means it would never sync: undo the local change instead.
-        await rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
+        rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
         throw localSaveFailure('api:modifyLabels', parkError, { accountId: email, actionKind: resolvedKind });
       }
       // Parked actions replay through the reconciler; they are counted once, here.
@@ -2515,7 +2515,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
       return { offline: true };
     }
     // 3. Roll back local database state on remote network/API failure
-    await rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
+    rollbackLocalLabels(email, threadId, addLabelIds, removeLabelIds);
     throw err;
   }
 });
@@ -2569,9 +2569,13 @@ const interactiveWrites = createInteractiveWriteQueue(getDatabase, {
   },
 });
 
-async function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): Promise<void> {
+// Not through the interactive write queue: a rollback that waited there could
+// land after a newer write to the same thread (one queued behind it, or a
+// synchronous one such as a notification action) and undo part of it. It runs
+// at once, before anything else on this thread can touch the labels.
+function rollbackLocalLabels(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): void {
   try {
-    await interactiveWrites.run('api:modifyLabels:rollback', () => ThreadsRepo.updateLabels(email, threadId, removeLabelIds, addLabelIds));
+    ThreadsRepo.updateLabels(email, threadId, removeLabelIds, addLabelIds);
   } catch (rollbackError) {
     // The renderer reloads from SQLite after a failure; the next sync repairs labels.
     SystemLogger.error('Local Database', 'Could not roll back a local label change.', rollbackError, { accountId: email, threadId });

@@ -216,7 +216,10 @@ export function guardRepositoryWrites<R extends object>(
 //   - bulk writers see the announcement for the whole wait and pause between
 //     their chunks,
 //   - the wait is bounded: past the deadline the busy error is returned and the
-//     caller reports the failed save.
+//     caller reports the failed save. No attempt blocks past the deadline: its
+//     lock wait is capped at the time left, and a write that reaches the front
+//     already expired gets one attempt that does not wait at all, so a backlog
+//     behind a held lock drains without blocking the thread again.
 // Only SQLITE_BUSY / SQLITE_LOCKED is retried; each attempt is one IMMEDIATE
 // transaction, so a failed attempt left nothing behind.
 
@@ -292,9 +295,9 @@ export function createInteractiveWriteQueue(
     }
   };
 
-  const attempt = <T>(fn: () => T): T => {
+  const attempt = <T>(fn: () => T, busyTimeoutMs: number): T => {
     const db = getDb();
-    return withBusyTimeout(db, attemptBusyTimeoutMs, () => (
+    return withBusyTimeout(db, busyTimeoutMs, () => (
       runWriteTransaction(db, fn, { bulk: false, retry: { attempts: 1 } })
     ));
   };
@@ -304,7 +307,8 @@ export function createInteractiveWriteQueue(
     try {
       for (let attempts = 1; ; attempts += 1) {
         try {
-          const value = attempt(fn);
+          const remainingMs = deadlineMs - (now() - queuedAt);
+          const value = attempt(fn, Math.max(0, Math.min(attemptBusyTimeoutMs, remainingMs)));
           if (attempts > 1) report({ label, attempts, waitedMs: now() - queuedAt, recovered: true });
           return value;
         } catch (error) {
