@@ -1,4 +1,5 @@
 import { mailboxFocusAfterListUpdate } from '../lib/mailboxFocus';
+import { mailboxListStatus as resolveMailboxListStatus } from '../lib/mailboxListStatus';
 import { startTransition, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem, MailboxDelta, NavigationActivity } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
@@ -154,6 +155,7 @@ export function useMailState({
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [mailboxIndex, setMailboxIndex] = useState<MailboxIndex | null>(null);
   const [loadedThreadScopeKey, setLoadedThreadScopeKey] = useState<string | null>(null);
+  const [failedThreadScopeKey, setFailedThreadScopeKey] = useState<string | null>(null);
   const [navigationActivity, setNavigationActivity] = useState<NavigationActivity>(IDLE_NAVIGATION_ACTIVITY);
   const [visibleThreads, setVisibleThreads] = useState<MailThread[]>([]);
   const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
@@ -193,6 +195,8 @@ export function useMailState({
   const navigationOrderRef = useRef<MailThread[] | null>(null);
   const actionLogRef = useRef<MailActionLog[]>([]);
   const waitingThreadsRef = useRef<MailThread[]>([]);
+  const mailboxViewRef = useRef<MailboxView>(mailboxView);
+  mailboxViewRef.current = mailboxView;
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
   const activeScopeKey = accountScopeKey(activeAccount, accounts);
   const mailboxIndexConfigKey = JSON.stringify({
@@ -418,7 +422,8 @@ export function useMailState({
     loadAccounts();
   }, [loadAccounts]);
 
-  const setActiveAccount = useCallback((account: Account | null) => {
+  // `view`: the mailbox the caller switches to in the same update (defaults to the one on screen).
+  const setActiveAccount = useCallback((account: Account | null, view: MailboxView = mailboxViewRef.current) => {
     mailboxLoadGenerationRef.current += 1;
     const nextScopeKey = accountScopeKey(account, accounts);
     const cachedCandidate = nextScopeKey ? mailboxSnapshotCacheRef.current.get(nextScopeKey) : null;
@@ -427,7 +432,10 @@ export function useMailState({
     setThreads(cached?.threads || []);
     setMailboxIndex(cached?.index || null);
     setLoadedThreadScopeKey(cached ? nextScopeKey : null);
-    setVisibleThreads([]);
+    setFailedThreadScopeKey(null);
+    // A cached scope shows its rows in the same render; otherwise the list
+    // would be empty until the filtering effect publishes them.
+    setVisibleThreads(cached ? threadsForMailboxIndex(cached.index, view, null) : []);
     if (cached) {
       setSplitCounts(cached.index.splitCounts);
       setSplitUnreadCounts(cached.index.splitUnreadCounts);
@@ -470,7 +478,7 @@ export function useMailState({
       if (!acc) return;
 
       prepareNotificationThreadNavigation();
-      setActiveAccount(acc);
+      setActiveAccount(acc, 'inbox');
       setMailboxViewState('inbox');
       resetOpenedThreadMessages();
 
@@ -547,6 +555,7 @@ export function useMailState({
 
     const generation = ++mailboxLoadGenerationRef.current;
     const start = performance.now();
+    setFailedThreadScopeKey(null);
     setNavigationActivity({
       phase: cached ? 'refreshing' : 'loadingAccount',
       label: cached ? 'Refreshing…' : 'Loading account…',
@@ -565,11 +574,16 @@ export function useMailState({
     } catch (error) {
       if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
       console.error('Failed to load mailbox threads:', error);
+      setFailedThreadScopeKey(scopeKey);
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
-      emitToast({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Could not load the mailbox.',
-      });
+      // Without rows the list itself reports the failure and offers to try
+      // again; a toast is for a refresh that failed behind rows that stay.
+      if (cached) {
+        emitToast({
+          type: 'error',
+          message: error instanceof Error ? error.message : 'Could not load the mailbox.',
+        });
+      }
       return;
     }
     
@@ -586,6 +600,10 @@ export function useMailState({
 
   useEffect(() => {
     loadThreadsFromDB();
+  }, [loadThreadsFromDB]);
+
+  const retryMailboxLoad = useCallback(() => {
+    void loadThreadsFromDB(true);
   }, [loadThreadsFromDB]);
 
   useEffect(() => {
@@ -921,6 +939,21 @@ export function useMailState({
     () => ({ ...mailboxCounts, waiting: waitingThreads.length }),
     [mailboxCounts, waitingThreads.length],
   );
+  // An empty list is "nothing here" only once the rows are read, indexed and published.
+  const mailboxListStatus = resolveMailboxListStatus({
+    activeScopeKey: activeAccount ? activeScopeKey : null,
+    loadedScopeKey: loadedThreadScopeKey,
+    failedScopeKey: failedThreadScopeKey,
+    mailboxView,
+    hasSearchQuery: Boolean(searchQuery.trim()),
+    searchRunning: searchStatus.phase === 'searching',
+    threadCount: threads.length,
+    visibleCount: visibleThreads.length,
+    indexed: Boolean(mailboxIndex),
+    expectedCount: mailboxView === 'waiting'
+      ? waitingThreads.length
+      : mailboxIndex ? threadsForMailboxIndex(mailboxIndex, mailboxView, null).length : 0,
+  });
 
   const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
     startTransition(() => {
@@ -1879,6 +1912,8 @@ export function useMailState({
     navigationOrderRef,
     undoMailActionBatch,
     navigationActivity,
+    mailboxListStatus,
+    retryMailboxLoad,
     activeSplit,
     setActiveSplit,
     splitCounts,

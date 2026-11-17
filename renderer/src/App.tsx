@@ -513,7 +513,10 @@ function AppContent() {
     ? '100%'
     : listWidthPreview !== null ? `${listWidthPreview}px` : resolveListWidth(storedListWidth, listWidthMode, sharedWidth);
   const inboxHome = store.mailboxView === 'inbox' && !store.searchQuery.trim() && store.accounts.length > 0;
-  const idleReadingPane = !inboxHome ? null
+  // While the list is not known yet, the reading area must not call the inbox
+  // clear; it stays blank until the list says what is there.
+  const idleReadingPane = !inboxHome || store.mailboxListStatus === 'failed' ? null
+    : store.mailboxListStatus === 'loading' ? <div data-reading-pane-pending aria-hidden="true" className="flex-1 bg-[var(--panel-bg)]" />
     : store.groupViewStates.clear?.expanded ? <ClearGroupPane />
     : store.fetchingInbox ? <FetchingInboxPane />
     : store.visibleThreads.length > 0 ? <PreparedPane />

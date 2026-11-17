@@ -7,6 +7,7 @@ import { threadNeedsInviteAnswer } from '../../../../shared/inviteRsvp';
 import { ThreadRow } from '../ThreadRow';
 import { MailboxEmptyState } from '../MailboxEmptyState';
 import { DraftRow } from './DraftRow';
+import { MailboxListSkeleton } from './MailboxListSkeleton';
 import { HandledForYouRow, SenderRuleOfferRow } from './SenderRuleRows';
 import {
   CollapsedGroupRow,
@@ -445,7 +446,7 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
     store.mailboxView,
     isDrafts ? '' : store.searchQuery,
     store.settings.shortcuts,
-    { fetchingInbox: store.fetchingInbox && !isDrafts },
+    { fetchingInbox: store.fetchingInbox && !isDrafts, loadFailed: store.mailboxListStatus === 'failed' && !isDrafts },
   );
   const EmptyIcon = MAILBOX_ICONS[store.mailboxView];
   const rowCount = isDrafts ? store.draftsList.length : threadRowCount;
@@ -515,7 +516,22 @@ export function MailboxList({ onThreadContextMenu }: MailboxListProps) {
           ))
         )
       ) : items.length === 0 ? (
-        <MailboxEmptyState icon={EmptyIcon} copy={emptyCopy} onClearSearch={() => store.setSearchQuery('')} />
+        // An empty list says "nothing here" only once its rows are known.
+        store.mailboxListStatus === 'loading' ? (
+          <MailboxListSkeleton
+            sectioned={store.sectioned}
+            metrics={metrics}
+            viewportHeight={viewport.height}
+            showAvatars={showAvatars}
+          />
+        ) : (
+          <MailboxEmptyState
+            icon={EmptyIcon}
+            copy={emptyCopy}
+            onClearSearch={() => store.setSearchQuery('')}
+            onRetryLoad={store.retryMailboxLoad}
+          />
+        )
       ) : (
         <div role="presentation" className="relative shrink-0" style={{ height: `${virtualWindow.totalHeight}px` }}>
           <div

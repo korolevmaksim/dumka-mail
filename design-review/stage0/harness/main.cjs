@@ -120,6 +120,18 @@ shell.openExternal = async target => {
   }, signInDelayMs);
 };
 
+// --- slow or failing IPC (to look at loading and failed states) ---------------
+// POST /state {"ipcDelay":{"db:listThreadsForAccounts":3000}} or {"ipcFail":["db:listThreadsForAccounts"]}
+const { ipcMain } = require('electron');
+const ipcControl = { delay: {}, fail: [] };
+const realIpcHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => realIpcHandle(channel, async (...args) => {
+  const wait = Number(ipcControl.delay[channel] || 0);
+  if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+  if (ipcControl.fail.includes(channel)) throw new Error(`[design-review] ${channel} failed on request`);
+  return listener(...args);
+});
+
 // --- keep the desktop quiet ---------------------------------------------------
 try { Notification.prototype.show = function show() {}; } catch { /* ignore */ }
 dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false });
@@ -146,6 +158,8 @@ http.createServer((req, res) => {
       Object.entries(body).forEach(([key, value]) => {
         if (key === 'revoke') backend.state.revokeAccounts = new Set(value);
         else if (key === 'signInDelayMs') signInDelayMs = Number(value);
+        else if (key === 'ipcDelay') ipcControl.delay = value && typeof value === 'object' ? value : {};
+        else if (key === 'ipcFail') ipcControl.fail = Array.isArray(value) ? value : [];
         else if (key in backend.state) backend.state[key] = value;
       });
       return reply({ ...backend.state, revokeAccounts: Array.from(backend.state.revokeAccounts), blocked: backend.state.blocked.slice(-20) });

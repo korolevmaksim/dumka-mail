@@ -4,7 +4,7 @@ import type { MailboxView, ShortcutSettings } from './types';
 export interface MailboxEmptyCopy {
   title: string;
   body: string;
-  action: 'none' | 'clearSearch';
+  action: 'none' | 'clearSearch' | 'retryLoad';
   /** True while the first sync of an account in scope is still running. */
   busy?: boolean;
 }
@@ -14,6 +14,13 @@ export const FETCHING_INBOX_EMPTY_COPY: MailboxEmptyCopy = {
   body: 'Your newest conversations appear here as they arrive from Gmail.',
   action: 'none',
   busy: true,
+};
+
+/** The local cache did not answer: say so instead of claiming an empty mailbox. */
+export const MAILBOX_LOAD_FAILED_COPY: MailboxEmptyCopy = {
+  title: 'Could not load this mailbox',
+  body: 'The mail stored on this computer did not open. Nothing changed in Gmail.',
+  action: 'retryLoad',
 };
 
 const MAILBOX_EMPTY: Record<MailboxView, { title: string; body: string }> = {
@@ -59,8 +66,9 @@ export function mailboxEmptyCopy(
   mailboxId: MailboxView,
   searchQuery: string,
   settings?: ShortcutSettings,
-  options: { fetchingInbox?: boolean } = {},
+  options: { fetchingInbox?: boolean; loadFailed?: boolean } = {},
 ): MailboxEmptyCopy {
+  if (options.loadFailed) return { ...MAILBOX_LOAD_FAILED_COPY };
   // Never claim an empty ("Inbox is clear") mailbox before the first sync.
   if (options.fetchingInbox && !searchQuery.trim()) {
     return { ...FETCHING_INBOX_EMPTY_COPY };
