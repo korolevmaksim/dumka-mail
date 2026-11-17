@@ -41,7 +41,8 @@ import {
   type MailboxIndex,
 } from './mailboxIndex';
 import { applyDeltaToThreads } from './mailboxDelta';
-import { mailActionFailureMessage } from '../../../shared/mailActionErrors';
+import { LOCAL_SAVE_FAILED_MESSAGE, mailActionFailureMessage } from '../../../shared/mailActionErrors';
+import { runJournaledMailAction } from '../lib/mailActionJournal';
 import {
   isArchivableAfterUnsubscribe,
   planArchiveAfterUnsubscribe,
@@ -1401,97 +1402,93 @@ export function useMailState({
     }
 
     const result = await (async (): Promise<MailActionExecutionResult> => {
-      try {
-        await window.electronAPI.saveActionLog(log);
-        log.status = 'running';
-        await window.electronAPI.saveActionLog(log);
+      // Journal, mutation, journal: see lib/mailActionJournal.ts for what a
+      // failed journal write means before and after the mutation.
+      const outcome = await runJournaledMailAction({
+        log,
+        saveActionLog: entry => window.electronAPI.saveActionLog(entry),
+        onJournalSettled: loadActionLog,
+        mutate: async () => {
+          let res: any = null;
+          if (customAction) {
+            res = await customAction(actionId);
+          } else {
+            if (!targetThreadId && kind !== 'send') {
+              throw new Error('No target thread.');
+            }
 
-        let res: any = null;
-        if (customAction) {
-          res = await customAction(actionId);
-        } else {
-          if (!targetThreadId && kind !== 'send') {
-            return { accepted: false, offline: false, actionId, errorMessage: 'No target thread.' };
+            if (kind === 'markDone' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'restoreInbox' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], [], actionId);
+              loadThreadsFromDB(true);
+            } else if (kind === 'markRead' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
+            } else if (kind === 'markUnread' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
+            } else if (kind === 'moveToTrash' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['TRASH'], ['INBOX'], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'restoreFromTrash' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['TRASH'], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'reportSpam' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['SPAM'], ['INBOX'], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'restoreFromSpam' && targetThreadId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['SPAM'], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'muteThread' && targetThreadId) {
+              const addLabels = payloadLabelId ? [payloadLabelId] : [];
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, addLabels, ['INBOX'], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'unmuteThread' && targetThreadId) {
+              const removeLabels = payloadLabelId ? [payloadLabelId] : [];
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], removeLabels, actionId, kind, payloadJson || undefined);
+            } else if ((kind === 'applyLabel' || kind === 'moveToLabel') && targetThreadId && payloadLabelId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [payloadLabelId], kind === 'moveToLabel' ? ['INBOX'] : [], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'removeLabel' && targetThreadId && payloadLabelId) {
+              res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], [payloadLabelId], actionId, kind, payloadJson || undefined);
+            } else if (kind === 'setReminder' && targetThreadId) {
+              const fallbackReminder = new Date();
+              fallbackReminder.setDate(fallbackReminder.getDate() + 1);
+              fallbackReminder.setHours(9, 0, 0, 0);
+              const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
+              await window.electronAPI.saveReminder(
+                targetAccountId,
+                targetThreadId,
+                reminderAt,
+                payload.proposalValidationItem,
+              );
+            } else if (kind === 'clearReminder' && targetThreadId) {
+              await window.electronAPI.deleteReminder(targetAccountId, targetThreadId);
+            }
           }
+          return res;
+        },
+      });
 
-          if (kind === 'markDone' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'restoreInbox' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], [], actionId);
-            loadThreadsFromDB(true);
-          } else if (kind === 'markRead' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
-          } else if (kind === 'markUnread' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
-          } else if (kind === 'moveToTrash' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['TRASH'], ['INBOX'], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'restoreFromTrash' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['TRASH'], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'reportSpam' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['SPAM'], ['INBOX'], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'restoreFromSpam' && targetThreadId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['SPAM'], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'muteThread' && targetThreadId) {
-            const addLabels = payloadLabelId ? [payloadLabelId] : [];
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, addLabels, ['INBOX'], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'unmuteThread' && targetThreadId) {
-            const removeLabels = payloadLabelId ? [payloadLabelId] : [];
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], removeLabels, actionId, kind, payloadJson || undefined);
-          } else if ((kind === 'applyLabel' || kind === 'moveToLabel') && targetThreadId && payloadLabelId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [payloadLabelId], kind === 'moveToLabel' ? ['INBOX'] : [], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'removeLabel' && targetThreadId && payloadLabelId) {
-            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], [payloadLabelId], actionId, kind, payloadJson || undefined);
-          } else if (kind === 'setReminder' && targetThreadId) {
-            const fallbackReminder = new Date();
-            fallbackReminder.setDate(fallbackReminder.getDate() + 1);
-            fallbackReminder.setHours(9, 0, 0, 0);
-            const reminderAt = typeof payload.reminderAt === 'string' ? payload.reminderAt : fallbackReminder.toISOString();
-            await window.electronAPI.saveReminder(
-              targetAccountId,
-              targetThreadId,
-              reminderAt,
-              payload.proposalValidationItem,
-            );
-          } else if (kind === 'clearReminder' && targetThreadId) {
-            await window.electronAPI.deleteReminder(targetAccountId, targetThreadId);
-          }
-        }
-
-        if (res && res.offline) {
-          log.status = 'pending_sync';
-          loadActionLog();
-          return { accepted: true, offline: true, actionId };
-        } else {
-          log.status = 'completed';
-          log.completedAt = new Date().toISOString();
-          // The action already happened (for a send: Gmail accepted the
-          // message). Failing to record that is bookkeeping, not a failed
-          // action: reporting it as one would roll back and invite a repeat.
-          try {
-            await window.electronAPI.saveActionLog(log);
-          } catch (logError) {
-            console.error('Could not record the completed mail action:', logError);
-          }
-          loadActionLog();
-          return { accepted: true, offline: false, actionId };
-        }
-      } catch (err: any) {
-        console.error('Background mail action failed:', err);
-        log.status = 'failed';
-        // Raw detail stays in the action log; the toast gets a human sentence.
-        log.failureMessage = err?.message || String(err);
-        try {
-          await window.electronAPI.saveActionLog(log);
-        } catch (logError) {
-          console.error('Could not record the failed mail action:', logError);
-        }
+      if (outcome.status === 'parked') {
         loadActionLog();
-
-        // Roll back the optimistic change from what SQLite actually holds.
-        loadThreadsFromDB(true);
-        if (propagateReviewedFailure) throw err;
-        return { accepted: false, offline: false, actionId, errorMessage: mailActionFailureMessage(err, kind) };
+        return { accepted: true, offline: true, actionId };
       }
+      if (outcome.status === 'completed') {
+        loadActionLog();
+        return { accepted: true, offline: false, actionId };
+      }
+
+      if (outcome.status === 'notSaved') {
+        // The journal stayed locked past the main process's bounded wait, so
+        // the action never reached Gmail. Put the list back first.
+        console.error('Mail action was not saved locally:', outcome.error);
+        loadThreadsFromDB(true);
+        loadActionLog();
+        if (propagateReviewedFailure) throw outcome.error;
+        return { accepted: false, offline: false, actionId, errorMessage: LOCAL_SAVE_FAILED_MESSAGE };
+      }
+
+      console.error('Background mail action failed:', outcome.error);
+      loadActionLog();
+
+      // Roll back the optimistic change from what SQLite actually holds.
+      loadThreadsFromDB(true);
+      if (propagateReviewedFailure) throw outcome.error;
+      return { accepted: false, offline: false, actionId, errorMessage: mailActionFailureMessage(outcome.error, kind) };
     })();
 
     return presentMailActionFeedback({
@@ -1762,47 +1759,43 @@ export function useMailState({
         payloadJson,
       };
 
-      try {
-        await window.electronAPI.saveActionLog(log);
-        log.status = 'running';
-        await window.electronAPI.saveActionLog(log);
+      const outcome = await runJournaledMailAction({
+        log,
+        saveActionLog: entry => window.electronAPI.saveActionLog(entry),
+        onJournalSettled: loadActionLog,
+        mutate: async () => {
+          let res: any = null;
+          if (kind === 'markDone') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId);
+          } else if (kind === 'markRead') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
+          } else if (kind === 'markUnread') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
+          } else if (kind === 'moveToTrash') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['TRASH'], ['INBOX'], actionId, kind);
+          } else if (kind === 'restoreFromTrash') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['TRASH'], actionId, kind);
+          } else if (kind === 'reportSpam') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['SPAM'], ['INBOX'], actionId, kind);
+          } else if (kind === 'restoreFromSpam') {
+            res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['SPAM'], actionId, kind);
+          }
+          return res;
+        },
+      });
 
-        let res: any = null;
-        if (kind === 'markDone') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['INBOX'], actionId);
-        } else if (kind === 'markRead') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, [], ['UNREAD'], actionId);
-        } else if (kind === 'markUnread') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['UNREAD'], [], actionId);
-        } else if (kind === 'moveToTrash') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['TRASH'], ['INBOX'], actionId, kind);
-        } else if (kind === 'restoreFromTrash') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['TRASH'], actionId, kind);
-        } else if (kind === 'reportSpam') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['SPAM'], ['INBOX'], actionId, kind);
-        } else if (kind === 'restoreFromSpam') {
-          res = await window.electronAPI.modifyLabels(targetAccountId, targetThreadId, ['INBOX'], ['SPAM'], actionId, kind);
-        }
-
-        if (res && res.offline) {
-          log.status = 'pending_sync';
-          results.push({ accepted: true, offline: true, actionId });
-        } else {
-          log.status = 'completed';
-          log.completedAt = new Date().toISOString();
-          await window.electronAPI.saveActionLog(log);
-          results.push({ accepted: true, offline: false, actionId });
-        }
-      } catch (err: any) {
-        console.error(`Batch action item failed for thread ${targetThreadId}:`, err);
-        log.status = 'failed';
-        log.failureMessage = err?.message || String(err);
-        try {
-          await window.electronAPI.saveActionLog(log);
-        } catch (saveErr) {
-          console.error(`Failed to persist batch action failure for ${targetThreadId}:`, saveErr);
-        }
-        results.push({ accepted: false, offline: false, actionId, errorMessage: mailActionFailureMessage(err, kind) });
+      if (outcome.status === 'parked') {
+        results.push({ accepted: true, offline: true, actionId });
+      } else if (outcome.status === 'completed') {
+        results.push({ accepted: true, offline: false, actionId });
+      } else {
+        console.error(`Batch action item failed for thread ${targetThreadId}:`, outcome.error);
+        results.push({
+          accepted: false,
+          offline: false,
+          actionId,
+          errorMessage: outcome.status === 'notSaved' ? LOCAL_SAVE_FAILED_MESSAGE : mailActionFailureMessage(outcome.error, kind),
+        });
       }
       logs.push(log);
     });

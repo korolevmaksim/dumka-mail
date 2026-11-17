@@ -1,7 +1,8 @@
-// Write coordination between the two better-sqlite3 connections that share the
-// WAL database: the Electron main thread (interactive writes: labels, action
-// log, drafts, reminders, settings, decisions) and the database worker thread
-// (bulk writes: sync/backfill pages, FTS, embeddings).
+// Write coordination between the better-sqlite3 connections that share the WAL
+// database: the Electron main thread (interactive writes: labels, action log,
+// drafts, reminders, settings, decisions), the database worker thread (bulk
+// writes: sync/backfill pages, FTS, embeddings) and the semantic search worker
+// (the one-time embedding vector migration).
 //
 // Why this exists: a deferred transaction that has already read and then tries
 // to write after the other connection committed fails with SQLITE_BUSY_SNAPSHOT
@@ -11,7 +12,10 @@
 //      front, never upgrades a stale snapshot),
 //   2. a small bounded retry absorbs the remaining SQLITE_BUSY / LOCKED cases,
 //   3. bulk writers commit in small chunks and, between chunks, yield to an
-//      interactive writer that announced itself through a shared counter.
+//      interactive writer that announced itself through a shared counter,
+//   4. a write that stands in front of a remote call (the action journal, the
+//      optimistic label change) waits in the interactive write queue at the
+//      end of this file instead of failing when 1-3 were not enough.
 
 import { isMainThread } from 'worker_threads';
 import type Database from 'better-sqlite3';
@@ -102,8 +106,12 @@ export function retryOnSqliteBusy<T>(fn: () => T, options: SqliteBusyRetryOption
 
 let prioritySignal: Int32Array | null = null;
 
-/** Main thread: create the shared counter and pass it to the worker via workerData. */
+/**
+ * Main thread: the shared counter, created once and passed to every worker
+ * that writes (via workerData), so they all yield to the same announcements.
+ */
 export function createWritePrioritySignal(): SharedArrayBuffer {
+  if (prioritySignal) return prioritySignal.buffer as SharedArrayBuffer;
   const buffer = new SharedArrayBuffer(4);
   prioritySignal = new Int32Array(buffer);
   return buffer;
@@ -192,4 +200,143 @@ export function guardRepositoryWrites<R extends object>(
     };
   }
   return repo;
+}
+
+// === Interactive write queue (asynchronous, main thread) ===
+//
+// The synchronous guard can only wait by blocking its thread, so it is bounded
+// tightly: when the lock is held past busy_timeout its first attempt has
+// already used the whole time budget and the write fails with "database is
+// locked". For a write that stands in front of a remote call that failure
+// drops the person's action. Such writes wait here instead:
+//   - one at a time, in the order they were asked for, so a later action never
+//     overtakes an earlier one and waiting writes do not compete with each other,
+//   - each attempt blocks the thread only briefly, and between attempts the
+//     event loop runs, so the window stays responsive while the lock is held,
+//   - bulk writers see the announcement for the whole wait and pause between
+//     their chunks,
+//   - the wait is bounded: past the deadline the busy error is returned and the
+//     caller reports the failed save.
+// Only SQLITE_BUSY / SQLITE_LOCKED is retried; each attempt is one IMMEDIATE
+// transaction, so a failed attempt left nothing behind.
+
+export interface InteractiveWriteContention {
+  label: string;
+  attempts: number;
+  waitedMs: number;
+  /** False when the deadline passed and the busy error was returned. */
+  recovered: boolean;
+}
+
+export interface InteractiveWriteQueueOptions {
+  /** Give up once a write has waited this long since it was queued. */
+  deadlineMs?: number;
+  /** How long one attempt may block the thread waiting for the lock. */
+  attemptBusyTimeoutMs?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  now?: () => number;
+  wait?: (ms: number) => Promise<void>;
+  /** Called once for every write that needed more than one attempt. */
+  onContention?: (report: InteractiveWriteContention) => void;
+}
+
+export const DEFAULT_INTERACTIVE_WRITE_QUEUE = {
+  deadlineMs: 15_000,
+  attemptBusyTimeoutMs: 150,
+  baseDelayMs: 20,
+  // Below the 250 ms a bulk writer pauses for an announced interactive write.
+  maxDelayMs: 100,
+} as const;
+
+export interface InteractiveWriteQueue {
+  /** Runs `fn` as one write transaction once the writes queued before it settled. */
+  run<T>(label: string, fn: () => T, options?: { deadlineMs?: number }): Promise<T>;
+  /** Writes waiting or in progress. */
+  readonly size: number;
+}
+
+/** Runs `fn` with the connection's busy_timeout set to `ms`, then restores it. */
+export function withBusyTimeout<T>(db: Database.Database, ms: number, fn: () => T): T {
+  const previous = Number(db.pragma('busy_timeout', { simple: true }));
+  const next = Math.max(0, Math.floor(ms));
+  if (!Number.isFinite(previous) || previous === next) return fn();
+  db.pragma(`busy_timeout = ${next}`);
+  try {
+    return fn();
+  } finally {
+    db.pragma(`busy_timeout = ${previous}`);
+  }
+}
+
+export function createInteractiveWriteQueue(
+  getDb: () => Database.Database,
+  options: InteractiveWriteQueueOptions = {},
+): InteractiveWriteQueue {
+  const defaultDeadlineMs = options.deadlineMs ?? DEFAULT_INTERACTIVE_WRITE_QUEUE.deadlineMs;
+  const attemptBusyTimeoutMs = options.attemptBusyTimeoutMs ?? DEFAULT_INTERACTIVE_WRITE_QUEUE.attemptBusyTimeoutMs;
+  const delays: SqliteBusyRetryOptions = {
+    baseDelayMs: options.baseDelayMs ?? DEFAULT_INTERACTIVE_WRITE_QUEUE.baseDelayMs,
+    maxDelayMs: options.maxDelayMs ?? DEFAULT_INTERACTIVE_WRITE_QUEUE.maxDelayMs,
+  };
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  let tail: Promise<unknown> = Promise.resolve();
+  let size = 0;
+
+  const report = (contention: InteractiveWriteContention) => {
+    try {
+      options.onContention?.(contention);
+    } catch {
+      // Reporting must never fail the write it describes.
+    }
+  };
+
+  const attempt = <T>(fn: () => T): T => {
+    const db = getDb();
+    return withBusyTimeout(db, attemptBusyTimeoutMs, () => (
+      runWriteTransaction(db, fn, { bulk: false, retry: { attempts: 1 } })
+    ));
+  };
+
+  async function settle<T>(label: string, fn: () => T, queuedAt: number, deadlineMs: number): Promise<T> {
+    const done = announceInteractiveWrite();
+    try {
+      for (let attempts = 1; ; attempts += 1) {
+        try {
+          const value = attempt(fn);
+          if (attempts > 1) report({ label, attempts, waitedMs: now() - queuedAt, recovered: true });
+          return value;
+        } catch (error) {
+          if (!isSqliteBusyError(error)) throw error;
+          const waitedMs = now() - queuedAt;
+          if (waitedMs >= deadlineMs) {
+            report({ label, attempts, waitedMs, recovered: false });
+            throw error;
+          }
+          // Capped at the time left, so the last attempt lands on the deadline.
+          await wait(Math.max(1, Math.min(sqliteBusyRetryDelay(attempts, delays), deadlineMs - waitedMs)));
+        }
+      }
+    } finally {
+      done();
+    }
+  }
+
+  return {
+    run<T>(label: string, fn: () => T, runOptions: { deadlineMs?: number } = {}): Promise<T> {
+      // The deadline counts from here: writes stuck behind a held lock all
+      // give up on time instead of each waiting a full deadline in turn.
+      const queuedAt = now();
+      const deadlineMs = runOptions.deadlineMs ?? defaultDeadlineMs;
+      size += 1;
+      const task = tail.then(() => settle(label, fn, queuedAt, deadlineMs));
+      const finished = task.finally(() => { size -= 1; });
+      tail = finished.then(() => undefined, () => undefined);
+      return finished;
+    },
+    get size() {
+      return size;
+    },
+  };
 }

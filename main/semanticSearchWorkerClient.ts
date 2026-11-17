@@ -1,5 +1,6 @@
 import path from 'path';
 import { Worker } from 'worker_threads';
+import { createWritePrioritySignal } from './sqliteWriteGuard';
 import type { SemanticSearchResult } from '../shared/types';
 
 type WorkerPayload =
@@ -38,7 +39,11 @@ class SemanticSearchWorkerClient {
   private getWorker(): Worker {
     if (this.worker) return this.worker;
 
-    const worker = new Worker(path.join(__dirname, 'semanticSearchWorker.js'));
+    // The vector migration writes in batches; with the shared counter it pauses
+    // between them while the main thread waits to write (see sqliteWriteGuard.ts).
+    const worker = new Worker(path.join(__dirname, 'semanticSearchWorker.js'), {
+      workerData: { writePrioritySignal: createWritePrioritySignal() },
+    });
     this.worker = worker;
     this.shuttingDown = false;
 
