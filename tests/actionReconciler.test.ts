@@ -365,12 +365,14 @@ describe('reconcilePendingActions send-like kinds', () => {
         pending: [makeAction({ kind: 'send', draftId: 'd1', payloadJson: JSON.stringify(payload) })],
         drafts: { d1: draft },
       });
+      // `released`: the holds stored (draft released, action failed and notice, as one write).
       const released: string[] = [];
+      const stored: MailActionLog[] = [];
       const held: Array<{ id: string; sendAt: string; draft: unknown }> = [];
       if (hold !== 'notConfigured') h.deps.holdLateScheduledSends = () => hold;
-      h.deps.releaseScheduledDraft = draftId => { released.push(draftId); };
+      h.deps.holdScheduledSend = action => { released.push(action.draftId!); stored.push({ ...action }); h.saved.push({ ...action }); };
       h.deps.onScheduledSendHeld = (action, info) => { held.push({ id: action.id, ...info }); };
-      return { ...h, released, held };
+      return { ...h, released, stored, held };
     }
     const sent = (h: DepsHarness) => h.gmailCalls.filter(call => call.method === 'sendDraft');
 
@@ -432,6 +434,44 @@ describe('reconcilePendingActions send-like kinds', () => {
       expect(sent(h)).toHaveLength(0);
       expect(h.held).toEqual([]);
       expect(h.saved[h.saved.length - 1].status).toBe('pending_sync');
+    });
+
+    it('is never marked running, so a crash before the hold is stored leaves it to be held next time', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z', rfcMessageId: '<id@dumka-mail.local>' });
+      const statuses: string[] = [];
+      h.deps.gmail.findMessageByRfcId = async () => { statuses.push(...h.saved.map(saved => saved.status)); return null; };
+      await reconcilePendingActions(h.deps);
+      // While Gmail was being asked, nothing had been written as `running`.
+      expect(statuses).not.toContain('running');
+      expect(h.saved.map(saved => saved.status)).toEqual(['failed']);
+      expect(h.stored).toHaveLength(1);
+      // An ordinary send in the same pass still goes through `running`.
+      const plain = makeDeps({ pending: [makeAction({ kind: 'send', draftId: 'd1' })], drafts: { d1: draft } });
+      plain.deps.holdLateScheduledSends = () => true;
+      await reconcilePendingActions(plain.deps);
+      expect(plain.saved[0].status).toBe('running');
+    });
+
+    it('a hold that cannot be stored is retried, and nothing is announced or sent', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z' });
+      h.deps.holdScheduledSend = () => { throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }); };
+      await reconcilePendingActions(h.deps);
+      expect(sent(h)).toHaveLength(0);
+      expect(h.held).toEqual([]);
+      const last = h.saved[h.saved.length - 1];
+      expect(last.status).toBe('pending_sync');
+      // The reason belongs to a stored hold only.
+      expect(last.failureMessage).toBeNull();
+      expect(last.completedAt).toBeNull();
+    });
+
+    it('without a transactional store the action alone is saved', async () => {
+      const h = lateHarness({ sendAt: '2026-07-04T09:00:00.000Z' });
+      delete h.deps.holdScheduledSend;
+      await reconcilePendingActions(h.deps);
+      expect(sent(h)).toHaveLength(0);
+      expect(h.saved[h.saved.length - 1].status).toBe('failed');
+      expect(h.held).toHaveLength(1);
     });
 
     it('a failing hook does not undo the hold or stop the pass', async () => {

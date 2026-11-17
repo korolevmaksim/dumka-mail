@@ -86,3 +86,12 @@ export function heldScheduledSendMessage(subject: string, when: string): string 
   const name = subject.trim() ? `“${subject.trim()}”` : 'A message';
   return `${name} was scheduled for ${when} and could not be sent then. It is in Drafts: send it or change the time.`;
 }
+
+/**
+ * The notices this window has not shown yet. `announced` holds the action ids
+ * already shown here (a module-level set in the renderer, so a remounted
+ * component or a repeated request never shows one twice).
+ */
+export function heldScheduledSendsToAnnounce(listed: readonly HeldScheduledSend[], announced: ReadonlySet<string>): HeldScheduledSend[] {
+  return listed.filter(item => !announced.has(item.actionId));
+}

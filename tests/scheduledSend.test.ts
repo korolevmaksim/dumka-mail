@@ -7,6 +7,7 @@ import {
   heldScheduledSendMessage,
   holdsLateScheduledSends,
   lateScheduledSendAt,
+  heldScheduledSendsToAnnounce,
   normalizeHeldScheduledSends,
 } from '../shared/scheduledSend';
 
@@ -59,6 +60,20 @@ describe('a scheduled message that is late', () => {
     const loose = normalizeHeldScheduledSends([{ ...good, heldAt: undefined, subject: 'x'.repeat(900) }])[0];
     expect(loose.heldAt).toBe(good.sendAt);
     expect(loose.subject).toHaveLength(300);
+  });
+});
+
+describe('held notices in a window', () => {
+  const notice = (actionId: string) => ({ actionId, accountId: 'me@x.example', draftId: `d-${actionId}`, subject: 'Hi', sendAt: '2026-11-17T09:00:00.000Z', heldAt: '2026-11-17T14:00:00.000Z' });
+
+  it('shows each notice once, however often the list is read', () => {
+    const announced = new Set<string>();
+    const first = heldScheduledSendsToAnnounce([notice('a1'), notice('a2')], announced);
+    expect(first.map(item => item.actionId)).toEqual(['a1', 'a2']);
+    for (const item of first) announced.add(item.actionId);
+    // The acknowledgement has not reached the main process yet: the same list comes back.
+    expect(heldScheduledSendsToAnnounce([notice('a1'), notice('a2')], announced)).toEqual([]);
+    expect(heldScheduledSendsToAnnounce([notice('a2'), notice('a3')], announced).map(item => item.actionId)).toEqual(['a3']);
   });
 });
 

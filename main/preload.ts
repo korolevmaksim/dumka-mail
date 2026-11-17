@@ -320,7 +320,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.off('api:backfillProgress', listener);
     };
   },
-  takeHeldScheduledSends: () => ipcRenderer.invoke('api:takeHeldScheduledSends'),
+  listHeldScheduledSends: () => ipcRenderer.invoke('api:listHeldScheduledSends'),
+  acknowledgeHeldScheduledSends: (actionIds: string[]) => ipcRenderer.invoke('api:acknowledgeHeldScheduledSends', actionIds),
   onScheduledSendHeld: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('api:scheduledSendHeld', listener);

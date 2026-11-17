@@ -46,9 +46,14 @@ export interface ReconcilerDeps {
    * sent (`shared/scheduledSend.ts`). Absent: every due message is sent.
    */
   holdLateScheduledSends?: () => boolean;
-  /** Turns a held message back into an ordinary draft (clears its send time). */
-  releaseScheduledDraft?: (draftId: string) => void;
-  /** A scheduled message was held: `sendAt` is the time the person chose. */
+  /**
+   * Stores a hold in one transaction: the draft loses its send time, `action`
+   * (already marked failed, with the reason) is saved, and the notice for the
+   * person is recorded. All three or none: a crash can never leave a held
+   * message without its notice. Absent: only the action is saved.
+   */
+  holdScheduledSend?: (action: MailActionLog, held: { sendAt: string; draft: unknown }) => void;
+  /** After a hold was stored: tell the person now (notification, window). Must not write the hold itself. */
   onScheduledSendHeld?: (action: MailActionLog, held: { sendAt: string; draft: unknown }) => void;
   shouldDeferAccount?: (accountId: string) => boolean;
   onActionLogChanged?: () => void;
@@ -126,6 +131,19 @@ async function completeIfAlreadySent(
   return true;
 }
 
+/**
+ * The chosen time of a pending `send` that must be held instead of sent
+ * (`shared/scheduledSend.ts`), else null.
+ */
+function lateSendCandidate(action: MailActionLog, deps: ReconcilerDeps, now: Date): string | null {
+  if (action.kind !== 'send' || !action.draftId || !deps.holdLateScheduledSends?.()) return null;
+  try {
+    return lateScheduledSendAt(action.payloadJson ? JSON.parse(action.payloadJson) : null, now);
+  } catch {
+    return null;
+  }
+}
+
 // One reconciliation pass: replay every pending_sync action against Gmail.
 // Moved verbatim from main/index.ts startBackgroundSyncWorker; semantics are
 // pinned by tests/actionReconciler.test.ts — change them deliberately or not at all.
@@ -154,8 +172,16 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
       const stored = deps.actionLog.get(action.id);
       if (!stored || stored.status !== 'pending_sync') continue;
     }
-    action.status = 'running';
-    deps.actionLog.save(action);
+    // A scheduled message that is too late is held, not sent (decided once,
+    // here). It is never marked `running`: until the hold is stored it stays
+    // `pending_sync`, so a crash at any point leaves it to be held on the
+    // next start instead of being failed by the stale-`running` recovery
+    // without a word to the person. Nothing is sent on this path.
+    const lateSince = lateSendCandidate(action, deps, now());
+    if (!lateSince) {
+      action.status = 'running';
+      deps.actionLog.save(action);
+    }
 
     try {
       const payload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
@@ -219,17 +245,21 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
             : null;
           const rfcMessageId = persistActionRfcMessageId(action, payload, deps, draftRfcMessageId);
           if (await completeIfAlreadySent(action, rfcMessageId, deps, now, logger)) continue;
-          // Checked only after Gmail confirmed the message is not there yet: a
+          // Only after Gmail confirmed the message is not there yet: a
           // scheduled message whose time passed long ago (the app was closed,
           // the Mac asleep, Gmail unreachable) is not sent behind the person's
           // back. It returns to Drafts and they decide.
-          const lateSince = deps.holdLateScheduledSends?.() ? lateScheduledSendAt(payload, now()) : null;
           if (lateSince) {
-            deps.releaseScheduledDraft?.(action.draftId);
-            action.status = 'failed';
-            action.completedAt = now().toISOString();
-            action.failureMessage = heldScheduledSendFailure(lateSince);
-            deps.actionLog.save(action);
+            const held: MailActionLog = {
+              ...action,
+              status: 'failed',
+              completedAt: now().toISOString(),
+              failureMessage: heldScheduledSendFailure(lateSince),
+            };
+            // One transaction; a busy database throws and the action is retried.
+            if (deps.holdScheduledSend) deps.holdScheduledSend(held, { sendAt: lateSince, draft });
+            else deps.actionLog.save(held);
+            Object.assign(action, held);
             logger.log(`[Sync Worker] Held scheduled send ${action.id}: it was due ${lateSince}.`);
             try {
               deps.onScheduledSendHeld?.(action, { sendAt: lateSince, draft });

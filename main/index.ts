@@ -73,15 +73,9 @@ import { executeCalendarAssistantTool } from './calendarAssistantTools';
 import { prepareAppSettingsForStorage, resolveAppSettingsSecrets, resolveMCPServerConfigSecrets } from './mcpSettings';
 import { parseStoredAppSettings, settingsAffectMCPRuntime, settingsAffectSearchBodyIndexing } from './settingsSideEffects';
 import { createUnreadBadgeService, type UnreadBadgeService } from './unreadBadge';
+import { acknowledgeHeldScheduledSends, heldNoticeFor, readHeldScheduledSends, storeScheduledSendHold } from './heldScheduledSends';
 import { readLoginItemState, setLaunchAtLogin } from './loginItem';
-import {
-  HELD_SCHEDULED_SENDS_MAX,
-  heldScheduledSendMessage,
-  heldScheduledSendTitle,
-  holdsLateScheduledSends,
-  normalizeHeldScheduledSends,
-  type HeldScheduledSend,
-} from '../shared/scheduledSend';
+import { heldScheduledSendMessage, heldScheduledSendTitle, holdsLateScheduledSends } from '../shared/scheduledSend';
 import { formatDateTime } from '../shared/dateFormat';
 import { installApplicationMenu, updateApplicationMenuCommandState } from './menu';
 import { buildOnboardedAccount, normalizeOAuthEmail } from './accountOnboarding';
@@ -1001,11 +995,8 @@ app.whenReady().then(async () => {
     // Send later (`shared/scheduledSend.ts`): a message whose time was missed
     // by more than the grace period goes back to Drafts instead of out.
     holdLateScheduledSends: () => holdsLateScheduledSends(parseStoredAppSettings(SettingsRepo.get('appSettings'))),
-    releaseScheduledDraft: draftId => {
-      const draft = DraftsRepo.get(draftId);
-      if (draft) DraftsRepo.save({ ...draft, sendAt: null, updatedAt: new Date().toISOString() });
-    },
-    onScheduledSendHeld: noteScheduledSendHeld,
+    holdScheduledSend: storeScheduledSendHold,
+    onScheduledSendHeld: announceScheduledSendHeld,
     logger: SystemLogger.console('Action Sync'),
   });
   startReminderNotificationWorker();
@@ -1234,34 +1225,10 @@ function startUnreadBadge() {
 
 // --- Scheduled messages held because their time was missed ----------------------
 
-const HELD_SCHEDULED_SENDS_KEY = 'heldScheduledSends';
-
-function readHeldScheduledSends(): HeldScheduledSend[] {
-  try {
-    return normalizeHeldScheduledSends(JSON.parse(SettingsRepo.get(HELD_SCHEDULED_SENDS_KEY) || '[]'));
-  } catch {
-    return [];
-  }
-}
-
-/** Remembers the held message until a window has shown it, and tells the person now. */
-function noteScheduledSendHeld(action: MailActionLog, held: { sendAt: string; draft: unknown }) {
-  const draft = (held.draft && typeof held.draft === 'object' ? held.draft : {}) as { subject?: unknown };
-  const entry: HeldScheduledSend = {
-    actionId: action.id,
-    accountId: action.accountId,
-    draftId: action.draftId || '',
-    subject: typeof draft.subject === 'string' ? draft.subject : '',
-    sendAt: held.sendAt,
-    heldAt: new Date().toISOString(),
-  };
-  if (!entry.draftId) return;
-  try {
-    const next = [...readHeldScheduledSends().filter(item => item.actionId !== entry.actionId), entry].slice(-HELD_SCHEDULED_SENDS_MAX);
-    SettingsRepo.set(HELD_SCHEDULED_SENDS_KEY, JSON.stringify(next));
-  } catch (error) {
-    SystemLogger.error('Scheduled Send', 'Could not record a held scheduled message.', error);
-  }
+/** After the hold was stored: tell the person now. The stored notice also reaches the next window that opens. */
+function announceScheduledSendHeld(action: MailActionLog, held: { sendAt: string; draft: unknown }) {
+  const entry = heldNoticeFor(action, held);
+  if (!entry) return;
   SystemLogger.warning('Scheduled Send', 'A scheduled message was held: its time had passed.', {
     accountId: entry.accountId,
     scheduledFor: entry.sendAt,
@@ -1475,12 +1442,11 @@ registerSecureHandler('db:deleteConversation', (_, id) => AIConversationsRepo.de
 registerSecureHandler('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
 
 registerSecureHandler('db:getSetting', (_, key) => SettingsRepo.get(key));
-// Messages held because their send time was missed: handed to the window once.
-registerSecureHandler('api:takeHeldScheduledSends', () => {
-  const held = readHeldScheduledSends();
-  if (held.length > 0) SettingsRepo.set(HELD_SCHEDULED_SENDS_KEY, '[]');
-  return held;
-});
+// Messages held because their send time was missed. A notice stays stored
+// until the window says it has shown it: asking for the list is not showing it
+// (the window may close or reload before the answer arrives).
+registerSecureHandler('api:listHeldScheduledSends', () => readHeldScheduledSends());
+registerSecureHandler('api:acknowledgeHeldScheduledSends', (_, actionIds: unknown) => acknowledgeHeldScheduledSends(actionIds));
 
 // Open at login is the system's setting, not ours: read from and written to the OS.
 registerSecureHandler('api:getLoginItemState', () => readLoginItemState());
