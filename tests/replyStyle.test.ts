@@ -16,6 +16,7 @@ import {
   type OwnMessage,
   type ReplyStyleSample,
 } from '../shared/replyStyle';
+import { replyRecipients } from '../shared/compose';
 import type { MailMessage } from '../shared/types';
 
 const ME = 'alex.morgan@northwind.example';
@@ -158,7 +159,52 @@ describe('choosing examples of how the person writes', () => {
     // A plain body that only repeats the snippet is a placeholder for the HTML one.
     expect(replyStyleText({ bodyPlain: 'Thanks, that works', bodyHtml: `<div>${own}</div><blockquote>${theirs}</blockquote>`, snippet: 'Thanks, that works' })).toBe(own);
     expect(stripQuotedHtml(`<p>${own}</p>`)).toBe(`<p>${own}</p>`);
-    expect(ownAuthoredText({ bodyPlain: null, bodyHtml: null, snippet: `${own} On Mon Priya wrote: ${theirs}` })).toBe(own);
+    expect(ownAuthoredText({ bodyPlain: null, bodyHtml: `<span>${own} On Mon Priya wrote: ${theirs}</span>`, snippet: '' })).toBe(own);
+  });
+
+  it('never lets a quotation in that carries no markup: > lines in HTML, a header at the very top, wrapped headers', () => {
+    const theirs = 'CONFIDENTIAL figures from the other party that must never be sent with another draft';
+    const mine = 'I agree with the plan and will send the signed copy back tomorrow morning.';
+    // HTML that quotes with literal ">" lines and no quotation markup.
+    expect(replyStyleText({ bodyPlain: null, bodyHtml: `<div>Thanks!</div><div>&gt; ${theirs}</div>`, snippet: '' })).toBe('Thanks!');
+    expect(replyStyleText({ bodyPlain: null, bodyHtml: `<p>${mine}</p><p>&gt; ${theirs}<br>&gt; ${theirs}</p>`, snippet: '' })).toBe(mine);
+    expect(replyStyleText({ bodyPlain: null, bodyHtml: `Thanks!<br>&gt; ${theirs}`, snippet: '' })).toBe('Thanks!');
+    // One block, no line break at all: the mark after the sentence is still a quotation.
+    expect(replyStyleText({ bodyPlain: null, bodyHtml: `<span>Thanks! &gt; ${theirs}</span>`, snippet: '' })).toBe('Thanks!');
+    // A bottom-posted reply: the quoted headers open the message, so nothing of it is an example.
+    const bottomPosted = `From: Alice\nSent: Monday\nTo: Me\n\n${theirs}\n\n${mine}`;
+    expect(replyStyleText({ bodyPlain: bottomPosted, bodyHtml: null, snippet: '' })).toBe('');
+    expect(replyStyleText({ bodyPlain: `> ${theirs}\n\n${mine}`, bodyHtml: null, snippet: '' })).toBe('');
+    expect(replyStyleText({ bodyPlain: `On Mon, Nov 9, 2026 at 10:00 Alice wrote:\n${theirs}\n\n${mine}`, bodyHtml: null, snippet: '' })).toBe('');
+    expect(replyStyleText({ bodyPlain: `-----Original Message-----\nFrom: Alice\n\n${theirs}`, bodyHtml: null, snippet: '' })).toBe('');
+    expect(replyStyleText({ bodyPlain: `Begin forwarded message:\n\n${theirs}`, bodyHtml: null, snippet: '' })).toBe('');
+    // Outlook: a rule of underscores, then the quoted headers, no > marks.
+    expect(replyStyleText({ bodyPlain: `${mine}\n\n________________________________\nFrom: Alice <a@x.example>\nSent: Monday\nSubject: Plan\n\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
+    // The attribution wrapped by the mail client over two or three lines.
+    expect(replyStyleText({ bodyPlain: `${mine}\n\nOn Mon, Nov 9, 2026 at 10:00 AM Priya Raman <priya.raman@lumenlabs.example>\nwrote:\n\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
+    expect(replyStyleText({ bodyPlain: `${mine}\n\nOn Mon, Nov 9, 2026 at 10:00 AM\nPriya Raman <priya.raman@lumenlabs.example>\nwrote:\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
+    expect(replyStyleText({ bodyPlain: `${mine}\n\nпн, 9 нояб. 2026 г. в 10:00, Priya Raman\n<priya.raman@lumenlabs.example>:\n\n${theirs}`, bodyHtml: null, snippet: '' })).toBe(mine);
+    // None of these can become an example through the selection either.
+    for (const bodyPlain of [bottomPosted, `> ${theirs}\n\nOk.`]) {
+      expect(select([own(PRIYA, bodyPlain)])).toEqual([]);
+    }
+    expect(select([own(PRIYA, '', { bodyPlain: null, bodyHtml: `<div>Thanks!</div><div>&gt; ${theirs}</div>`, snippet: '' })])).toEqual([]);
+  });
+
+  it('takes nothing from a message that has no body, and leaves ordinary text alone', () => {
+    // A snippet cannot be told apart from what it quotes.
+    expect(replyStyleText({ bodyPlain: null, bodyHtml: null, snippet: 'Thanks, that works for me and I will confirm the room on Monday.' })).toBe('');
+    expect(select([own(PRIYA, '', { bodyPlain: null, bodyHtml: null, snippet: LONG })])).toEqual([]);
+    const ordinary = [
+      'Hi Priya,',
+      '',
+      'On Monday we should talk about the plan: I wrote down three points.',
+      'From: my side nothing is blocking. Dates and costs are in the sheet.',
+      '---',
+      'A line of dashes is not a quotation.',
+      'Costs: 3 > 2, so we take the second offer.',
+    ].join('\n');
+    expect(replyStyleText({ bodyPlain: ordinary, bodyHtml: null, snippet: '' })).toBe(ordinary);
   });
 
   it('cuts quoted mail under a header written in another language, with or without > marks', () => {
@@ -216,8 +262,10 @@ describe('stripSignature', () => {
 
 describe('who a reply is for', () => {
   const message = (senderEmail: string, minute: number, extra: Partial<MailMessage> = {}) => ({
-    senderEmail, receivedAt: `2026-11-17T10:${String(minute).padStart(2, '0')}:00.000Z`, labelIds: ['INBOX'], to: [{ name: '', email: ME }], ...extra,
+    senderEmail, senderName: '', receivedAt: `2026-11-17T10:${String(minute).padStart(2, '0')}:00.000Z`, labelIds: ['INBOX'], to: [{ name: '', email: ME }], cc: [], ...extra,
   });
+  /** What the reply editor itself would address the reply to. */
+  const editorTarget = (last: ReturnType<typeof message>) => replyRecipients(last, ME, true).to[0]?.email.toLowerCase() || '';
 
   it('is the sender of the newest message when that one is inbound', () => {
     expect(replyRecipientEmail([message(PRIYA, 1), message('Daniel@Northwind.example', 5)], ME)).toBe('daniel@northwind.example');
@@ -230,15 +278,30 @@ describe('who a reply is for', () => {
     expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, toBob)], ME)).toBe('bob@elsewhere.example');
     // The same for a send-as alias, which is the account's own message too.
     expect(replyRecipientEmail([message(PRIYA, 1), message('alias@northwind.example', 9, toBob)], ME)).toBe('bob@elsewhere.example');
-    // An own message that names nobody else: the newest inbound sender stands in.
-    expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: ME }] })], ME)).toBe(PRIYA);
-    expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, { labelIds: ['SENT'], to: [] })], ME)).toBe(PRIYA);
   });
 
-  it('is the first recipient when every message is the account\'s own', () => {
-    expect(replyRecipientEmail([message(ME, 1, { labelIds: ['SENT'], to: [{ name: '', email: ME }, { name: 'Priya', email: PRIYA }] })], ME)).toBe(PRIYA);
+  it('promotes a Cc recipient when the own message is addressed only to the account', () => {
+    const onlyCc = message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: ME }], cc: [{ name: 'Bob', email: 'bob@elsewhere.example' }] });
+    expect(replyRecipientEmail([message(PRIYA, 1), onlyCc], ME)).toBe('bob@elsewhere.example');
+  });
+
+  it('never disagrees with the reply editor, whatever the shape of the newest message', () => {
+    const shapes = [
+      message(PRIYA, 9),
+      message(PRIYA, 9, { to: [], cc: [] }),
+      message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: PRIYA }, { name: '', email: 'bob@elsewhere.example' }] }),
+      message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: ME }], cc: [{ name: '', email: 'bob@elsewhere.example' }] }),
+      message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: ME }] }),
+      message(ME, 9, { labelIds: ['SENT'], to: [], cc: [] }),
+      message('alias@northwind.example', 9, { labelIds: ['SENT'], to: [{ name: '', email: PRIYA }] }),
+      message(PRIYA, 9, { to: [{ name: '', email: 'list@x.example' }], cc: [{ name: '', email: ME }] }),
+    ];
+    for (const last of shapes) {
+      expect(replyRecipientEmail([message('older@x.example', 1), last], ME)).toBe(editorTarget(last));
+    }
     expect(replyRecipientEmail([], ME)).toBe('');
-    expect(replyRecipientEmail([message(ME, 1, { labelIds: ['SENT'], to: [] })], ME)).toBe('');
+    // An own message that names nobody else: the editor has no recipient, and neither do we.
+    expect(replyRecipientEmail([message(PRIYA, 1), message(ME, 9, { labelIds: ['SENT'], to: [{ name: '', email: ME }] })], ME)).toBe('');
   });
 });
 

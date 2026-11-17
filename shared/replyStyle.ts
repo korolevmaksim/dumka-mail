@@ -17,8 +17,9 @@
 // recognise every private detail). They leave the machine only with a draft
 // request that the account already allows to carry mail text.
 // Pure and dependency-free.
-import { boundText, stripQuotedHistory } from './agentPrompts';
+import { boundText } from './agentPrompts';
 import { htmlToText, redactSecrets } from './aiContext';
+import { replyRecipients, type ReplyRecipientSource } from './compose';
 import { isFreeMailDomain, registrableDomain } from './decision';
 import type { MailMessage, Recipient } from './types';
 
@@ -58,41 +59,22 @@ function normalize(value: string | null | undefined): string {
   return (value || '').trim().toLowerCase();
 }
 
-type RecipientMessage = Pick<MailMessage, 'senderEmail' | 'receivedAt'> & {
-  labelIds?: readonly string[] | null;
-  to?: readonly Recipient[] | null;
-};
-
-function isOwn(message: RecipientMessage, account: string): boolean {
-  if (normalize(message.senderEmail) === account) return true;
-  // Send-as aliases do not match the account address but are labelled SENT.
-  return (message.labelIds || []).some(label => String(label).toUpperCase() === 'SENT');
-}
-
 /**
- * Who a reply to this conversation is written to, as the reply editor
- * resolves it: the newest message decides. An inbound one is answered to its
- * sender; the account's own one (a follow-up) goes to the people it was
- * addressed to. Only when that own message names nobody else does the newest
- * inbound sender stand in. '' when unknown.
+ * Who a reply to this conversation is written to: exactly what the reply
+ * editor resolves (`replyRecipients` in `shared/compose.ts`, reply-all, for
+ * the newest message), so the examples are chosen for the reply's real
+ * audience. An inbound message is answered to its sender; the account's own
+ * one (a follow-up, including a send-as message) goes to the people it was
+ * addressed to, a Cc recipient when To names nobody else. '' when the editor
+ * would have no recipient either.
  */
-export function replyRecipientEmail(messages: readonly RecipientMessage[], accountEmail: string): string {
-  const account = normalize(accountEmail);
-  const ordered = [...messages].sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
-  const last = ordered[ordered.length - 1];
-  if (!last) return '';
-  if (!isOwn(last, account)) {
-    const sender = normalize(last.senderEmail);
-    if (sender) return sender;
-  } else {
-    const recipient = (last.to || []).map(entry => normalize(entry.email)).find(email => email && email !== account);
-    if (recipient) return recipient;
-  }
-  for (let index = ordered.length - 2; index >= 0; index -= 1) {
-    const sender = normalize(ordered[index].senderEmail);
-    if (sender && !isOwn(ordered[index], account)) return sender;
-  }
-  return '';
+export function replyRecipientEmail(
+  messages: ReadonlyArray<ReplyRecipientSource & Pick<MailMessage, 'receivedAt'>>,
+  accountEmail: string,
+): string {
+  if (messages.length === 0) return '';
+  const last = [...messages].sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))[messages.length - 1];
+  return normalize(replyRecipients(last, accountEmail, true).to[0]?.email);
 }
 
 const SIGNATURE_DELIMITER = /^--\s*$/;
@@ -137,69 +119,111 @@ export function stripQuotedHtml(html: string): string {
   return html.slice(0, cut);
 }
 
-// Flattened text has no lines left, so the quote headers that
-// `stripQuotedHistory` recognises at the start of a line are looked for
-// anywhere. Everything from the first one on is dropped.
-const FLAT_QUOTE_HEADERS: readonly RegExp[] = [
-  // Case-sensitive: the header opens with a capital "On"; an ordinary "on
-  // Monday" earlier in the person's own sentence must not start the cut.
-  /\bOn\s.{1,300}?\swrote:/,
-  /-{2,}\s*Original Message\s*-{2,}/i,
-  /-{2,}\s*Forwarded message\s*-{2,}/i,
-  /\bFrom:\s.{1,200}?\s(?:Sent|Date):\s/i,
-];
+// --- Where the person's own text ends ---------------------------------------------
+//
+// Both kinds of body are reduced to lines, and everything from the first
+// line that announces or carries quoted mail is dropped, wherever that line
+// is: at the very top the result is empty, and the message is simply not an
+// example. A reply written under or between quotations loses what follows
+// the first one. Losing the person's own text is acceptable here; passing on
+// somebody else's as theirs is not.
 
-// `stripQuotedHistory` knows the English quote headers. Mail clients write
-// them in the language of their interface, and Outlook quotes without `>`
-// marks, so everything below such a header is somebody else's text.
-// The verb is not always last ("… schrieb Priya Raman:"), so the line only has to end with a colon.
-const QUOTE_ATTRIBUTION = /(?:пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|napisał(?:\(a\))?|escreveu)[^\n]{0,120}:\s*$/i;
-/** Gmail's header in several languages ends with the quoted address and a colon. */
-const ADDRESS_ATTRIBUTION = /<[^<>\s]+@[^<>\s]+>\s*:\s*$/;
-const LOCAL_SEPARATOR = /^\s*-{2,}\s*(?:Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение|Ursprüngliche Nachricht|Message d'origine|Mensaje original)\s*-{2,}\s*$/i;
-const LOCAL_FROM = /^\s*(?:От|Von|De|Da)\s*:\s*\S/i;
-const LOCAL_SENT = /^\s*(?:Отправлено|Дата|Gesendet|Envoyé|Enviado el|Enviado|Inviato)\s*:/i;
+const BLOCK_END = /<\s*(?:br\b[^>]*|hr\b[^>]*|\/\s*(?:div|p|li|tr|td|th|h[1-6]|pre|table|ul|ol|blockquote|section|article)\s*)>/gi;
+/** Survives `htmlToText` (it is not whitespace) and marks where a block ended. */
+const LINE_MARK = '\u0001';
 
-/** A plain body up to the first quote header written in another language than English. */
-function cutAtLocalQuoteHeader(text: string): string {
-  const lines = text.split('\n');
-  const cut = lines.findIndex((line, index) => (
-    QUOTE_ATTRIBUTION.test(line)
-    || ADDRESS_ATTRIBUTION.test(line)
-    || LOCAL_SEPARATOR.test(line)
-    || (LOCAL_FROM.test(line) && LOCAL_SENT.test(lines[index + 1] || ''))
-  ));
-  return (cut >= 0 ? lines.slice(0, cut) : lines).join('\n').trimEnd();
+/** An HTML body as text that keeps one line per block, which flattening alone destroys. */
+function htmlToLines(html: string): string {
+  return htmlToText(html.split(LINE_MARK).join(' ').replace(BLOCK_END, tag => `${tag}${LINE_MARK}`))
+    .split(LINE_MARK)
+    .map(line => line.trim())
+    .join('\n');
 }
 
-/** The same attributions inside flattened text, where no line ends remain. */
-const FLAT_LOCAL_ATTRIBUTION = /(?:пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|escreveu)[^:]{0,120}:|<[^<>\s]+@[^<>\s]+>\s*:|-{2,}\s*(?:Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение)\s*-{2,}/i;
+const QUOTED_LINE = /^\s*>/;
+const SEPARATOR_LINE = /^\s*(?:-{2,}|_{5,})\s*(?:Original Message|Forwarded message|Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение|Ursprüngliche Nachricht|Weitergeleitete Nachricht|Message d'origine|Message transféré|Mensaje original|Mensaje reenviado)?\s*(?:-{2,}|_{5,})?\s*$/i;
+const FORWARD_LINE = /^\s*Begin forwarded message\s*:\s*$/i;
+const HEADER_FROM = /^\s*(?:From|От|Von|De|Da)\s*:\s*\S/i;
+const HEADER_NEXT = /^\s*(?:Sent|Date|To|Subject|Cc|Отправлено|Дата|Кому|Тема|Копия|Gesendet|Datum|An|Betreff|Envoyé|Objet|À|Enviado el|Enviado|Para|Asunto|Inviato|Oggetto)\s*:/i;
+/** "On <date>, <name> wrote:", possibly wrapped over up to three lines. */
+const ON_WROTE = /^\s*On\s[\s\S]{1,400}?\swrote:\s*$/;
+// Mail clients write the attribution in the language of their interface;
+// the verb is not always last ("… schrieb Priya Raman:").
+const ATTRIBUTION_LINE = /(?:\bwrote|пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|napisał(?:\(a\))?|escreveu)[^\n]{0,120}:\s*$/i;
+/** Gmail's attribution in several languages ends with the quoted address and a colon. */
+const ADDRESS_ATTRIBUTION = /<[^<>\s]+@[^<>\s]+>\s*:\s*$/;
 
-function stripFlattenedQuote(text: string): string {
-  let cut = text.length;
-  for (const header of [...FLAT_QUOTE_HEADERS, FLAT_LOCAL_ATTRIBUTION]) {
-    const match = header.exec(text);
-    if (match && match.index < cut) cut = match.index;
+/** The index of the first line that is, or announces, quoted mail; -1 when there is none. */
+function firstQuoteLine(lines: readonly string[]): number {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    if (QUOTED_LINE.test(line) || FORWARD_LINE.test(line)) return index;
+    // A bare run of dashes is a signature or a rule, not necessarily a quotation;
+    // only a named separator, or one followed by quoted headers, counts.
+    if (SEPARATOR_LINE.test(line) && (/[A-Za-zА-Яа-я]/.test(line) || HEADER_FROM.test(lines[index + 1] || ''))) return index;
+    if (HEADER_FROM.test(line) && lines.slice(index + 1, index + 5).some(next => HEADER_NEXT.test(next))) return index;
+    if (/^\s*On\s/.test(line)) {
+      for (let span = 1; span <= 3; span += 1) {
+        if (ON_WROTE.test(lines.slice(index, index + span).join(' '))) return index;
+      }
+    }
+    if (ATTRIBUTION_LINE.test(line) || ADDRESS_ATTRIBUTION.test(line)) {
+      // A wrapped attribution: its first part sits on the lines just above,
+      // in the same paragraph. Dropped with it (at most two lines).
+      let cut = index;
+      while (cut > 0 && index - cut < 2 && lines[cut - 1].trim()) cut -= 1;
+      // Not when that would swallow the opening line of the message itself.
+      return cut === 0 && index > 0 ? index : cut;
+    }
   }
-  return text.slice(0, cut).trimEnd();
+  return -1;
+}
+
+/** The same headers inside one line, for a body whose blocks could not be told apart. */
+const INLINE_QUOTE_HEADERS: readonly RegExp[] = [
+  /\bOn\s.{1,300}?\swrote:/,
+  /-{2,}\s*(?:Original Message|Forwarded message|Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение)\s*-{2,}/i,
+  /\bFrom:\s.{1,200}?\s(?:Sent|Date):\s/i,
+  /(?:пишет|написала?|написал\(а\)|schrieb|a écrit|escribió|ha scritto|escreveu)[^:\n]{0,120}:/i,
+  /<[^<>\s]+@[^<>\s]+>\s*:/,
+  // A quotation mark that follows a sentence: "Thanks! > their words".
+  /(?:^|[.!?…:;])\s+>\s*\S/,
+];
+
+function cutInlineQuote(text: string): string {
+  let cut = text.length;
+  for (const header of INLINE_QUOTE_HEADERS) {
+    const match = header.exec(text);
+    if (match && match.index < cut) cut = match.index + (match[0].match(/^[.!?…:;]/) ? 1 : 0);
+  }
+  return text.slice(0, cut);
+}
+
+/** Text with its line structure, up to where quoted mail starts. */
+function cutAtQuotedMail(text: string): string {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const cut = firstQuoteLine(lines);
+  const kept = (cut >= 0 ? lines.slice(0, cut) : lines).map(cutInlineQuote);
+  // An inline cut ends the text there as well: what follows that line is past the quotation.
+  const inlineCut = kept.findIndex((line, index) => line.length < (cut >= 0 ? lines.slice(0, cut) : lines)[index].length);
+  return (inlineCut >= 0 ? kept.slice(0, inlineCut + 1) : kept).join('\n').trimEnd();
 }
 
 /**
- * What the person wrote in a message, without the mail it quotes. The plain
- * body keeps its lines, so quoted history is cut there line by line. An
- * HTML-only body is cut where its quotation markup starts, before it is
- * flattened to text (afterwards a quotation is no longer distinguishable),
- * and then once more at a quote header left in the text.
+ * What the person wrote in a message, without the mail it quotes. A plain
+ * body is used when there is a real one (one that only repeats the snippet is
+ * a placeholder for the HTML body); an HTML body is first cut where its
+ * quotation markup starts and then turned into lines. A message with no body
+ * at all yields nothing: a snippet cannot be told apart from what it quotes.
  */
 export function ownAuthoredText(message: Pick<MailMessage, 'bodyPlain' | 'bodyHtml' | 'snippet'>): string {
   const plain = (message.bodyPlain ?? '').trim();
   const html = (message.bodyHtml ?? '').trim();
   const snippet = (message.snippet ?? '').trim();
-  // The same choice of body as `messagePlainText`: a plain body that only
-  // repeats the snippet is a placeholder for the HTML one.
-  if (plain && !(html && plain === snippet)) return cutAtLocalQuoteHeader(stripQuotedHistory(plain));
-  if (html) return stripFlattenedQuote(htmlToText(stripQuotedHtml(html)));
-  return stripFlattenedQuote(cutAtLocalQuoteHeader(stripQuotedHistory(plain || snippet)));
+  if (plain && !(html && plain === snippet)) return cutAtQuotedMail(plain);
+  if (html) return cutAtQuotedMail(htmlToLines(stripQuotedHtml(html)));
+  return '';
 }
 
 /** The person's own words in a message: no quoted history, no signature, keys and tokens redacted, bounded. */

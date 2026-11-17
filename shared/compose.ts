@@ -234,7 +234,7 @@ export function filterEmailSuggestions(
     .map(item => item.suggestion)
 }
 
-function senderRecipient(message: MailMessage): Recipient {
+function senderRecipient(message: Pick<MailMessage, 'senderName' | 'senderEmail'>): Recipient {
   return { name: (message.senderName ?? '').trim(), email: message.senderEmail }
 }
 
@@ -325,10 +325,21 @@ function forwardBody(message: MailMessage): string {
  * - `replyAll` additionally carries Cc = (original To + Cc) minus me and minus
  *   the resolved To set.
  */
-export function startReply(message: MailMessage, selfEmail: string, replyAll = false): DraftSeed {
+/** The fields of a message that decide who a reply to it is addressed to. */
+export type ReplyRecipientSource = Pick<MailMessage, 'labelIds' | 'senderEmail' | 'senderName'> & {
+  to?: MailMessage['to'] | null
+  cc?: MailMessage['cc'] | null
+}
+
+/**
+ * Who a reply to `message` is addressed to. The single place this is
+ * decided: the reply editor (`startReply`) and anything that needs to know
+ * the reply's audience without building a draft both use it.
+ */
+export function replyRecipients(message: ReplyRecipientSource, selfEmail: string, replyAll = false): { to: Recipient[]; cc: Recipient[] } {
   const self = selfEmail.trim().toLowerCase()
   const selfSet = self ? new Set([self]) : new Set<string>()
-  const hasSentLabel = message.labelIds.some(label => label.toUpperCase() === 'SENT')
+  const hasSentLabel = (message.labelIds || []).some(label => label.toUpperCase() === 'SENT')
   const sentByMe = hasSentLabel || (self !== '' && message.senderEmail.trim().toLowerCase() === self)
   const sender = senderRecipient(message)
   const messageTo = message.to ?? []
@@ -364,6 +375,11 @@ export function startReply(message: MailMessage, selfEmail: string, replyAll = f
       cc = []
     }
   }
+  return { to, cc }
+}
+
+export function startReply(message: MailMessage, selfEmail: string, replyAll = false): DraftSeed {
+  const { to, cc } = replyRecipients(message, selfEmail, replyAll)
 
   const { replyMessageId, replyReferences } = replyThreading(message)
   return {
