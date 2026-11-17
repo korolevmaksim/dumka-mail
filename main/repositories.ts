@@ -502,21 +502,30 @@ export const ThreadsRepo = {
    * It must be the first write after the failure: when bookkeeping (the
    * action log) has to be written as well, put both in one
    * `runRollbackTransaction`.
+   *
+   * This is the plain write. An action's rollback goes through
+   * `LabelRollbacks.rollback` (labelRollback.ts), which decides what is put
+   * back: only what the action changed, and not what a newer action took over.
    */
-  rollbackLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
+  rollbackLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): LabelChange {
     return runRollbackTransaction(getDatabase(), () => ThreadsRepo.updateLabels(accountId, threadId, addLabelIds, removeLabelIds));
   },
 
-  updateLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]) {
+  /** Returns the labels this call really added to and removed from the thread. */
+  updateLabels(accountId: string, threadId: string, addLabelIds: string[], removeLabelIds: string[]): LabelChange {
     const db = getDatabase();
+    const change: LabelChange = { added: [], removed: [] };
     db.transaction(() => {
       const row = db.prepare('SELECT label_ids_json FROM threads WHERE account_id = ? AND id = ?').get(accountId, threadId) as any;
       if (row) {
-        let labels: string[] = JSON.parse(row.label_ids_json);
+        const before: string[] = JSON.parse(row.label_ids_json);
+        let labels = [...before];
         for (const l of addLabelIds) {
           if (!labels.includes(l)) labels.push(l);
         }
         labels = labels.filter(l => !removeLabelIds.includes(l));
+        change.added = labels.filter(label => !before.includes(label));
+        change.removed = before.filter(label => !labels.includes(label));
         db.prepare('UPDATE threads SET label_ids_json = ?, in_inbox = ? WHERE account_id = ? AND id = ?')
           .run(JSON.stringify(labels), inInboxValue(labels), accountId, threadId);
       }
@@ -532,8 +541,16 @@ export const ThreadsRepo = {
         updateMessage.run(JSON.stringify(labels), labels.includes('UNREAD') ? 1 : 0, accountId, messageRow.id);
       }
     })();
+    return change;
   }
 };
+
+/** The labels one `ThreadsRepo.updateLabels` call really changed on the thread. */
+export interface LabelChange {
+  added: string[];
+  removed: string[];
+}
+
 
 // === Thread Decisions Repository ===
 // Cache of model decisions and user corrections (SPEC §1). Rule decisions are
@@ -2491,6 +2508,24 @@ export const ActionLogRepo = {
       failureMessage: r.failure_message,
       payloadJson: r.payload_json
     }));
+  },
+
+  /**
+   * The actions of the same thread that are newer than `actionId` (by
+   * `created_at`) and not failed, oldest first. Empty when the action has no
+   * journal entry. Used to decide which labels a rollback may still touch.
+   */
+  listNewerLabelActions(actionId: string): Array<Pick<MailActionLog, 'id' | 'kind' | 'status' | 'createdAt' | 'payloadJson'>> {
+    const db = getDatabase();
+    const own = db.prepare('SELECT account_id, thread_id, created_at FROM mail_action_log WHERE id = ?').get(actionId) as
+      { account_id: string; thread_id: string | null; created_at: string } | undefined;
+    if (!own?.thread_id) return [];
+    const rows = db.prepare(`
+      SELECT id, kind, status, created_at, payload_json FROM mail_action_log
+      WHERE account_id = ? AND thread_id = ? AND id != ? AND status != 'failed' AND created_at > ?
+      ORDER BY created_at ASC
+    `).all(own.account_id, own.thread_id, actionId, own.created_at) as any[];
+    return rows.map(r => ({ id: r.id, kind: r.kind, status: r.status, createdAt: r.created_at, payloadJson: r.payload_json }));
   },
 
   listPending(nowIso = new Date().toISOString()): MailActionLog[] {

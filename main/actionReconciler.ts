@@ -17,7 +17,8 @@ export interface ReconcilerDeps {
   };
   threads: {
     get(accountId: string, threadId: string): MailThread | null;
-    updateLabels(accountId: string, threadId: string, add: string[], remove: string[]): void;
+    /** Called only to roll back `actionId`, the action that failed for good. */
+    updateLabels(accountId: string, threadId: string, add: string[], remove: string[], actionId?: string): void;
   };
   drafts: {
     get(draftId: string): unknown;
@@ -48,6 +49,14 @@ export interface ReconcilerDeps {
    * Defaults to calling `fn`.
    */
   runRollback?: (fn: () => void) => void;
+  /**
+   * Records, as soon as the database lets it, an action the remote side
+   * already took whose `completed` state hit a locked database. Without it
+   * such an action is treated as not done and sent again.
+   */
+  settleLater?: (action: MailActionLog) => void;
+  /** The remote side took the action (its `completed` state is stored or handed to `settleLater`). */
+  onCompleted?: (action: MailActionLog) => void;
   /**
    * True while a scheduled message that is too late must be held instead of
    * sent (`shared/scheduledSend.ts`). Absent: every due message is sent.
@@ -114,6 +123,22 @@ function persistActionRfcMessageId(
   return resolved.rfcMessageId;
 }
 
+/** Stores `completed` for an action the remote side already took. */
+function recordCompleted(action: MailActionLog, deps: ReconcilerDeps): void {
+  try {
+    deps.actionLog.save(action);
+  } catch (error) {
+    // A locked database is not a reason to do the action again.
+    if (!deps.settleLater || !isSqliteBusyError(error)) throw error;
+    deps.settleLater({ ...action });
+  }
+  try {
+    deps.onCompleted?.(action);
+  } catch {
+    // A hook must not turn a completed action into a failed pass.
+  }
+}
+
 async function completeIfAlreadySent(
   action: MailActionLog,
   rfcMessageId: string,
@@ -134,7 +159,7 @@ async function completeIfAlreadySent(
   }
   action.status = 'completed';
   action.completedAt = now().toISOString();
-  deps.actionLog.save(action);
+  recordCompleted(action, deps);
   return true;
 }
 
@@ -310,7 +335,7 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
 
       action.status = 'completed';
       action.completedAt = now().toISOString();
-      deps.actionLog.save(action);
+      recordCompleted(action, deps);
       logger.log(`[Sync Worker] Successfully synced action ${action.id} of kind ${action.kind}`);
     } catch (err: any) {
       if (isSqliteBusyError(err)) {
@@ -345,34 +370,34 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
             // Roll back local DB changes for labels on permanent failure
             if (action.threadId) {
               if (action.kind === 'markDone') {
-                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], []);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], [], action.id);
               } else if (action.kind === 'restoreInbox') {
-                deps.threads.updateLabels(action.accountId, action.threadId, [], ['INBOX']);
+                deps.threads.updateLabels(action.accountId, action.threadId, [], ['INBOX'], action.id);
               } else if (action.kind === 'markRead') {
-                deps.threads.updateLabels(action.accountId, action.threadId, ['UNREAD'], []);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['UNREAD'], [], action.id);
               } else if (action.kind === 'markUnread') {
-                deps.threads.updateLabels(action.accountId, action.threadId, [], ['UNREAD']);
+                deps.threads.updateLabels(action.accountId, action.threadId, [], ['UNREAD'], action.id);
               } else if (action.kind === 'moveToTrash') {
-                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['TRASH']);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['TRASH'], action.id);
               } else if (action.kind === 'restoreFromTrash') {
-                deps.threads.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX']);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['TRASH'], ['INBOX'], action.id);
               } else if (action.kind === 'reportSpam') {
-                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM']);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], ['SPAM'], action.id);
               } else if (action.kind === 'restoreFromSpam') {
-                deps.threads.updateLabels(action.accountId, action.threadId, ['SPAM'], ['INBOX']);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['SPAM'], ['INBOX'], action.id);
               } else if (action.kind === 'muteThread') {
                 const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : []);
+                deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : [], action.id);
               } else if (action.kind === 'unmuteThread') {
                 const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
-                deps.threads.updateLabels(action.accountId, action.threadId, typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : [], ['INBOX']);
+                deps.threads.updateLabels(action.accountId, action.threadId, typeof rollbackPayload.labelId === 'string' ? [rollbackPayload.labelId] : [], ['INBOX'], action.id);
               } else if (action.kind === 'applyLabel' || action.kind === 'moveToLabel' || action.kind === 'removeLabel') {
                 const rollbackPayload = action.payloadJson ? JSON.parse(action.payloadJson) : {};
                 const labelId = typeof rollbackPayload.labelId === 'string' ? rollbackPayload.labelId : null;
                 if (labelId && action.kind === 'removeLabel') {
-                  deps.threads.updateLabels(action.accountId, action.threadId, [labelId], []);
+                  deps.threads.updateLabels(action.accountId, action.threadId, [labelId], [], action.id);
                 } else if (labelId) {
-                  deps.threads.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId]);
+                  deps.threads.updateLabels(action.accountId, action.threadId, action.kind === 'moveToLabel' ? ['INBOX'] : [], [labelId], action.id);
                 }
               }
             }

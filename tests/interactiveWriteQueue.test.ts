@@ -713,6 +713,64 @@ describe('mail action journal under a held database lock', () => {
     expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['INBOX']);
   });
 
+  sqliteIt('a notification action waits for the lock and then archives the thread, calling Gmail once', async () => {
+    const { database, guard, lock, release } = await fixture();
+    const { createLocalWrites } = await import('../main/localWrites');
+    const { runLocalLabelAction } = await import('../main/localLabelAction');
+    const { LabelRollbacks } = await import('../main/labelRollback');
+    const accountId = 'alex.morgan@northwind.example';
+    database.ThreadsRepo.save([{
+      id: 'thread-1',
+      accountId,
+      subject: 'Quarterly plan',
+      snippet: '',
+      lastMessageAt: new Date(Date.UTC(2026, 10, 17)).toISOString(),
+      senderNames: ['Jordan Lee'],
+      senderEmail: 'jordan.lee@northwind.example',
+      to: [],
+      cc: [],
+      labelIds: ['INBOX', 'UNREAD'],
+      hasAttachments: false,
+      isUnread: true,
+    } as unknown as MailThread]);
+    const writes = createLocalWrites(guard.createInteractiveWriteQueue(database.getDatabase, { attemptBusyTimeoutMs: 20 }));
+    const gmail = vi.fn(async () => undefined);
+    await lock();
+
+    // The "Archive" button of a notification, as main/index.ts runs it.
+    const action = runLocalLabelAction({
+      writes,
+      threads: database.ThreadsRepo,
+      rollbacks: LabelRollbacks,
+      actionLog: database.ActionLogRepo,
+      isRetryableRemoteError: () => false,
+    }, {
+      label: 'notification',
+      log: {
+        id: 'from-notification',
+        accountId,
+        threadId: 'thread-1',
+        kind: 'markDone',
+        status: 'running',
+        createdAt: new Date().toISOString(),
+        payloadJson: JSON.stringify({ source: 'notification' }),
+      },
+      addLabelIds: [],
+      removeLabelIds: ['INBOX'],
+      runRemote: gmail,
+    });
+    await new Promise(resolve => setTimeout(resolve, 400));
+    expect(gmail).not.toHaveBeenCalled();
+    expect(database.ActionLogRepo.get('from-notification')).toBeNull();
+
+    await release();
+
+    await expect(action).resolves.toBe('completed');
+    expect(gmail).toHaveBeenCalledTimes(1);
+    expect(database.ThreadsRepo.get(accountId, 'thread-1')?.labelIds).toEqual(['UNREAD']);
+    expect(database.ActionLogRepo.get('from-notification')).toMatchObject({ status: 'completed', kind: 'markDone' });
+  });
+
   sqliteIt('a lock that outlasts the bounded wait fails the action before Gmail and is recorded afterwards', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { database, guard, lock, release } = await fixture();
