@@ -123,6 +123,33 @@ describe('mailbox repository hot paths', () => {
     });
   });
 
+  repositoryIt('lists the account\'s own recent messages for the reply style, newest first and bounded', async () => {
+    await withDatabase(async ({ MessagesRepo }) => {
+      const sent = (id: string, minute: number, extra: Partial<MailMessage> = {}): MailMessage => ({
+        ...message(id, 'a@example.com', minute),
+        senderEmail: 'A@Example.com',
+        labelIds: ['SENT'],
+        to: [{ name: 'Priya', email: 'priya@lumenlabs.example' }],
+        bodyPlain: `Body of ${id}`,
+        ...extra,
+      });
+      MessagesRepo.save([
+        sent('own-1', 1),
+        sent('own-2', 5),
+        // A send-as alias: another address, labelled SENT.
+        sent('alias', 3, { senderEmail: 'alias@example.com' }),
+        // Someone else's message, and another account's own message.
+        { ...message('inbound', 'a@example.com', 4), senderEmail: 'priya@lumenlabs.example', labelIds: ['INBOX'] },
+        { ...sent('other-account', 6), accountId: 'b@example.com', senderEmail: 'b@example.com' },
+      ]);
+      const own = MessagesRepo.listOwnRecent('a@example.com');
+      expect(own.map(item => item.id)).toEqual(['own-2', 'alias', 'own-1']);
+      expect(own[0]).toMatchObject({ threadId: expect.any(String), labelIds: ['SENT'], bodyPlain: 'Body of own-2', to: [{ name: 'Priya', email: 'priya@lumenlabs.example' }] });
+      expect(MessagesRepo.listOwnRecent('a@example.com', 1).map(item => item.id)).toEqual(['own-2']);
+      expect(MessagesRepo.listOwnRecent(' ')).toEqual([]);
+    });
+  });
+
   repositoryIt('matches sender history case-insensitively on the indexed columns', async () => {
     await withDatabase(({ MessagesRepo }) => {
       MessagesRepo.save([message('m1', 'a@example.com', 1), message('m2', 'a@example.com', 2)]);

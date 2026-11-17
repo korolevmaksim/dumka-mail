@@ -24,6 +24,7 @@ export type DatabaseWorkerPayload =
   | { type: 'listMessagesForThread'; accountId: string; threadId: string }
   | { type: 'listMessageMetadataForThread'; accountId: string; threadId: string }
   | { type: 'recentSenderMessages'; accountId: string; senderEmail: string; limit: number }
+  | { type: 'replyStyleSamples'; accountId: string; recipientEmail: string; excludeThreadId: string | null; signaturePlain: string }
   | { type: 'senderCleanupStats'; accountId: string }
   | {
       type: 'threadSecurityInsights';

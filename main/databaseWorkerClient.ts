@@ -19,6 +19,7 @@ import {
   databaseWorkerTimeoutMessage,
 } from '../shared/databaseWorkerTimeout';
 import type { ThreadMaintenanceResult } from './migrations';
+import type { ReplyStyleSample } from '../shared/replyStyle';
 import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat, ThreadDecisionRecord } from '../shared/types';
 
 /** What one agent-prep pass reads: the newest inbox threads and their cached decisions. */
@@ -210,6 +211,14 @@ class DatabaseWorkerClient {
 
   listMessageMetadataForThread(accountId: string, threadId: string): Promise<MailMessage[]> {
     return this.request<MailMessage[]>({ type: 'listMessageMetadataForThread', accountId, threadId });
+  }
+
+  /** A few short excerpts of the account's own earlier messages, best match for `recipientEmail` first (`shared/replyStyle.ts`). */
+  replyStyleSamples(
+    accountId: string,
+    options: { recipientEmail: string; excludeThreadId: string | null; signaturePlain: string },
+  ): Promise<ReplyStyleSample[]> {
+    return this.request<ReplyStyleSample[]>({ type: 'replyStyleSamples', accountId, ...options });
   }
 
   recentSenderMessages(accountId: string, senderEmail: string, limit = 3): Promise<MailMessage[]> {

@@ -367,6 +367,25 @@ export function AISettingsTab() {
 
         <div className="w-full h-[1px] bg-[var(--border)]" />
 
+        <div className="flex items-center justify-between gap-3" data-setting="replyStyleFromSent">
+          <div className="flex flex-col gap-0.5">
+            <span id="ai-reply-style" className="text-[calc(11px*var(--font-scale))] font-medium text-[var(--text-primary)]">Write reply drafts the way I write</span>
+            <span id="ai-reply-style-desc" className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-normal">
+              {store.settings.ai.replyStyleFromSent !== false
+                ? 'On: a draft request also carries up to three short excerpts of messages you sent before, to the same person when there are any'
+                : 'Off: drafts use only the conversation, the tone and the notes below'}
+            </span>
+          </div>
+          <Toggle
+            checked={store.settings.ai.replyStyleFromSent !== false}
+            onChange={(val) => store.updateSettings(s => { s.ai.replyStyleFromSent = val; })}
+            ariaLabelledBy="ai-reply-style"
+            ariaDescribedBy="ai-reply-style-desc"
+          />
+        </div>
+
+        <div className="w-full h-[1px] bg-[var(--border)]" />
+
         <div className="flex flex-col gap-1">
           <span className="text-[calc(11px*var(--font-scale))] text-[var(--text-secondary)] font-semibold">Personalization Notes:</span>
           <textarea

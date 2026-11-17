@@ -279,6 +279,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     suggestLabels: true,
     translationEnabled: true,
     personalizationNotes: '',
+    replyStyleFromSent: true,
     embeddingsByAccount: {},
     semanticSearchEnabledByAccount: {}
   },

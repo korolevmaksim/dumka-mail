@@ -10,6 +10,7 @@ import {
 } from './mailAnalysisJobs';
 import type { DatabaseWorkerRequest, DatabaseWorkerResponse } from './databaseWorkerProtocol';
 import type { MailMessage } from '../shared/types';
+import { REPLY_STYLE_SCAN_LIMIT, selectReplyStyleSamples } from '../shared/replyStyle';
 
 function serializeError(error: unknown): { name: string; message: string; stack?: string } {
   if (error instanceof Error) {
@@ -70,6 +71,22 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
         id: request.id,
         ok: true,
         result: MessagesRepo.listForThread(request.accountId, request.threadId),
+      });
+      return;
+    }
+
+    if (request.type === 'replyStyleSamples') {
+      // The person's own recent messages are read and reduced to a few short
+      // excerpts here; only those cross back to the main thread.
+      send({
+        id: request.id,
+        ok: true,
+        result: selectReplyStyleSamples(MessagesRepo.listOwnRecent(request.accountId, REPLY_STYLE_SCAN_LIMIT), {
+          accountEmail: request.accountId,
+          recipientEmail: request.recipientEmail,
+          excludeThreadId: request.excludeThreadId,
+          signaturePlain: request.signaturePlain,
+        }),
       });
       return;
     }
