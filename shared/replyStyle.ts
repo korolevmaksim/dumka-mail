@@ -18,7 +18,7 @@
 // request that the account already allows to carry mail text.
 // Pure and dependency-free.
 import { boundText } from './agentPrompts';
-import { htmlToText, redactSecrets } from './aiContext';
+import { redactSecrets } from './aiContext';
 import { replyRecipients, type ReplyRecipientSource } from './compose';
 import { isFreeMailDomain, registrableDomain } from './decision';
 import type { MailMessage, Recipient } from './types';
@@ -96,49 +96,21 @@ export function stripSignature(text: string, signaturePlain?: string | null): st
   return (cut >= 0 ? lines.slice(0, cut) : lines).join('\n').trimEnd();
 }
 
-// Where quoted mail starts in an HTML body. Everything from the earliest of
-// these on is somebody else's text (or the person's older text): a reply
-// written above the quotation keeps its own part, an interleaved reply loses
-// what follows the first quotation, which is the safe side.
-const HTML_QUOTE_MARKERS: readonly RegExp[] = [
-  /<blockquote\b/i,
-  /<div\b[^>]*\bclass\s*=\s*["'][^"']*\b(?:gmail_quote|gmail_extra|gmail_attr|yahoo_quoted|moz-cite-prefix|protonmail_quote)\b/i,
-  /<div\b[^>]*\bid\s*=\s*["'](?:divRplyFwdMsg|appendonsend|mail-editor-reference-message-container)["']/i,
-  // Outlook's separator line above the quoted headers.
-  /<div\b[^>]*\bstyle\s*=\s*["'][^"']*border-top\s*:\s*solid\s+#[0-9a-f]{6}/i,
-  /<hr\b[^>]*\bid\s*=\s*["']stopSpelling["']/i,
-];
-
-/** An HTML body up to where quoted mail starts. */
-export function stripQuotedHtml(html: string): string {
-  let cut = html.length;
-  for (const marker of HTML_QUOTE_MARKERS) {
-    const match = marker.exec(html);
-    if (match && match.index < cut) cut = match.index;
-  }
-  return html.slice(0, cut);
-}
-
 // --- Where the person's own text ends ---------------------------------------------
 //
-// Both kinds of body are reduced to lines, and everything from the first
-// line that announces or carries quoted mail is dropped, wherever that line
-// is: at the very top the result is empty, and the message is simply not an
-// example. A reply written under or between quotations loses what follows
-// the first one. Losing the person's own text is acceptable here; passing on
-// somebody else's as theirs is not.
-
-const BLOCK_END = /<\s*(?:br\b[^>]*|hr\b[^>]*|\/\s*(?:div|p|li|tr|td|th|h[1-6]|pre|table|ul|ol|blockquote|section|article)\s*)>/gi;
-/** Survives `htmlToText` (it is not whitespace) and marks where a block ended. */
-const LINE_MARK = '\u0001';
-
-/** An HTML body as text that keeps one line per block, which flattening alone destroys. */
-function htmlToLines(html: string): string {
-  return htmlToText(html.split(LINE_MARK).join(' ').replace(BLOCK_END, tag => `${tag}${LINE_MARK}`))
-    .split(LINE_MARK)
-    .map(line => line.trim())
-    .join('\n');
-}
+// An example is taken only from a plain-text body, whose lines are real:
+// everything from the first line that announces or carries quoted mail is
+// dropped, wherever that line is. At the very top the result is empty, and
+// the message is simply not an example. A reply written under or between
+// quotations loses what follows the first one.
+//
+// A message that has only an HTML body is never an example. Turning HTML
+// into text loses the line and block structure that separates what the
+// person wrote from what they quoted (nested blocks, preformatted text,
+// inline runs), and no amount of pattern matching makes that reliable.
+// Mail sent through Gmail, and mail sent from this app, carries a plain-text
+// part, so little is lost. Losing the person's own text is acceptable here;
+// passing on somebody else's as theirs is not.
 
 const QUOTED_LINE = /^\s*>/;
 const SEPARATOR_LINE = /^\s*(?:-{2,}|_{5,})\s*(?:Original Message|Forwarded message|Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение|Ursprüngliche Nachricht|Weitergeleitete Nachricht|Message d'origine|Message transféré|Mensaje original|Mensaje reenviado)?\s*(?:-{2,}|_{5,})?\s*$/i;
@@ -180,7 +152,7 @@ function firstQuoteLine(lines: readonly string[]): number {
   return -1;
 }
 
-/** The same headers inside one line, for a body whose blocks could not be told apart. */
+/** The same headers when they share a line with the person's own text. */
 const INLINE_QUOTE_HEADERS: readonly RegExp[] = [
   /\bOn\s.{1,300}?\swrote:/,
   /-{2,}\s*(?:Original Message|Forwarded message|Исходное сообщение|Пересылаемое сообщение|Пересланное сообщение)\s*-{2,}/i,
@@ -211,19 +183,17 @@ function cutAtQuotedMail(text: string): string {
 }
 
 /**
- * What the person wrote in a message, without the mail it quotes. A plain
- * body is used when there is a real one (one that only repeats the snippet is
- * a placeholder for the HTML body); an HTML body is first cut where its
- * quotation markup starts and then turned into lines. A message with no body
- * at all yields nothing: a snippet cannot be told apart from what it quotes.
+ * What the person wrote in a message, without the mail it quotes: only from
+ * a real plain-text body. A plain body that merely repeats the snippet is a
+ * placeholder for an HTML-only message, and like any message without a
+ * plain body it yields nothing.
  */
 export function ownAuthoredText(message: Pick<MailMessage, 'bodyPlain' | 'bodyHtml' | 'snippet'>): string {
   const plain = (message.bodyPlain ?? '').trim();
   const html = (message.bodyHtml ?? '').trim();
   const snippet = (message.snippet ?? '').trim();
-  if (plain && !(html && plain === snippet)) return cutAtQuotedMail(plain);
-  if (html) return cutAtQuotedMail(htmlToLines(stripQuotedHtml(html)));
-  return '';
+  if (!plain || (html && plain === snippet)) return '';
+  return cutAtQuotedMail(plain);
 }
 
 /** The person's own words in a message: no quoted history, no signature, keys and tokens redacted, bounded. */

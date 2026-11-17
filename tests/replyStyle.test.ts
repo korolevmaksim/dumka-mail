@@ -11,7 +11,6 @@ import {
   replyStyleEnabled,
   replyStyleText,
   selectReplyStyleSamples,
-  stripQuotedHtml,
   stripSignature,
   type OwnMessage,
   type ReplyStyleSample,
@@ -128,49 +127,37 @@ describe('choosing examples of how the person writes', () => {
     expect(long[0].text.length).toBeLessThanOrEqual(REPLY_STYLE_SAMPLE_MAX);
   });
 
-  it('never lets quoted mail from an HTML-only message in', () => {
+  it('never takes an example from a message that has only an HTML body', () => {
     const own = 'Thanks, that works for me and I will confirm the room on Monday.';
     const theirs = 'CONFIDENTIAL figures from the other party that must never be sent with another draft';
     const htmlBodies = [
-      // Gmail
-      `<div dir="ltr">${own}</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Mon, Nov 9, 2026 at 10:00 Priya Raman wrote:<br></div><blockquote class="gmail_quote">${theirs}</blockquote></div>`,
-      // Apple Mail
-      `<div>${own}</div><br><blockquote type="cite"><div>On 9 Nov 2026, at 10:00, Priya Raman wrote:</div><div>${theirs}</div></blockquote>`,
-      // Outlook
-      `<div>${own}</div><div id="appendonsend"></div><hr><div id="divRplyFwdMsg"><b>From:</b> Priya Raman<br><b>Sent:</b> Monday<br></div><div>${theirs}</div>`,
-      `<p>${own}</p><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p><b>From:</b> Priya <b>Sent:</b> Monday</p></div><p>${theirs}</p>`,
-      // No quotation markup at all, only the header line left in the flattened text.
-      `<div>${own}</div><div>On Mon, Nov 9, 2026 at 10:00 Priya Raman &lt;priya@x.example&gt; wrote:</div><div>${theirs}</div>`,
-      `<div>${own}</div><div>-----Original Message-----</div><div>${theirs}</div>`,
+      `<div dir="ltr">${own}</div><br><div class="gmail_quote"><blockquote class="gmail_quote">${theirs}</blockquote></div>`,
+      `<div>${own}</div><blockquote type="cite"><div>${theirs}</div></blockquote>`,
+      `<div>${own}</div><div id="divRplyFwdMsg"><b>From:</b> Priya<br><b>Sent:</b> Monday</div><div>${theirs}</div>`,
+      // Quotations no markup rule can find: sibling and nested blocks, preformatted text, inline runs.
+      `<div>Thanks!</div><div>&gt; ${theirs}</div>`,
+      `<div>Thanks<div>&gt; ${theirs}</div></div>`,
+      `<pre>Thanks\n&gt; ${theirs}</pre>`,
+      `<span>Thanks</span> <span>&gt; ${theirs}</span>`,
+      `<div>${own} ${theirs}</div>`,
+      // Even one that quotes nothing: HTML alone is never read.
+      `<p>${own}</p>`,
     ];
     for (const bodyHtml of htmlBodies) {
-      const text = replyStyleText({ bodyPlain: null, bodyHtml, snippet: '' });
-      expect(text).toContain('I will confirm the room on Monday.');
-      expect(text).not.toContain('CONFIDENTIAL');
-      expect(text).not.toContain('wrote:');
+      expect(replyStyleText({ bodyPlain: null, bodyHtml, snippet: '' })).toBe('');
+      expect(replyStyleText({ bodyPlain: '', bodyHtml, snippet: own.slice(0, 40) })).toBe('');
+      // A plain body that only repeats the snippet is a placeholder for the HTML one.
+      expect(replyStyleText({ bodyPlain: 'Thanks, that works', bodyHtml, snippet: 'Thanks, that works' })).toBe('');
+      expect(select([own_('html only', bodyHtml)])).toEqual([]);
     }
-    // A short answer above a long quotation teaches nothing, and is not padded out by the quotation.
-    const short = selectReplyStyleSamples([
-      own_('Thanks!', `<div>Thanks!</div><blockquote>${theirs} ${theirs}</blockquote>`),
-    ], { accountEmail: ME, recipientEmail: PRIYA });
-    expect(short).toEqual([]);
-    // The plain body is used when there is one, and its quotation is cut line by line.
+    // With a real plain body the plain body is read, whatever the HTML holds.
     expect(replyStyleText({ bodyPlain: `${own}\n\nOn Mon, Nov 9, 2026 Priya wrote:\n> ${theirs}`, bodyHtml: `<blockquote>${theirs}</blockquote>`, snippet: '' })).toBe(own);
-    // A plain body that only repeats the snippet is a placeholder for the HTML one.
-    expect(replyStyleText({ bodyPlain: 'Thanks, that works', bodyHtml: `<div>${own}</div><blockquote>${theirs}</blockquote>`, snippet: 'Thanks, that works' })).toBe(own);
-    expect(stripQuotedHtml(`<p>${own}</p>`)).toBe(`<p>${own}</p>`);
-    expect(ownAuthoredText({ bodyPlain: null, bodyHtml: `<span>${own} On Mon Priya wrote: ${theirs}</span>`, snippet: '' })).toBe(own);
+    expect(ownAuthoredText({ bodyPlain: own, bodyHtml: `<div>${theirs}</div>`, snippet: 'Thanks, that works' })).toBe(own);
   });
 
-  it('never lets a quotation in that carries no markup: > lines in HTML, a header at the very top, wrapped headers', () => {
+  it('never lets a quotation in: a header or a quoted line at the very top, wrapped headers, unmarked quotations', () => {
     const theirs = 'CONFIDENTIAL figures from the other party that must never be sent with another draft';
     const mine = 'I agree with the plan and will send the signed copy back tomorrow morning.';
-    // HTML that quotes with literal ">" lines and no quotation markup.
-    expect(replyStyleText({ bodyPlain: null, bodyHtml: `<div>Thanks!</div><div>&gt; ${theirs}</div>`, snippet: '' })).toBe('Thanks!');
-    expect(replyStyleText({ bodyPlain: null, bodyHtml: `<p>${mine}</p><p>&gt; ${theirs}<br>&gt; ${theirs}</p>`, snippet: '' })).toBe(mine);
-    expect(replyStyleText({ bodyPlain: null, bodyHtml: `Thanks!<br>&gt; ${theirs}`, snippet: '' })).toBe('Thanks!');
-    // One block, no line break at all: the mark after the sentence is still a quotation.
-    expect(replyStyleText({ bodyPlain: null, bodyHtml: `<span>Thanks! &gt; ${theirs}</span>`, snippet: '' })).toBe('Thanks!');
     // A bottom-posted reply: the quoted headers open the message, so nothing of it is an example.
     const bottomPosted = `From: Alice\nSent: Monday\nTo: Me\n\n${theirs}\n\n${mine}`;
     expect(replyStyleText({ bodyPlain: bottomPosted, bodyHtml: null, snippet: '' })).toBe('');
@@ -188,7 +175,8 @@ describe('choosing examples of how the person writes', () => {
     for (const bodyPlain of [bottomPosted, `> ${theirs}\n\nOk.`]) {
       expect(select([own(PRIYA, bodyPlain)])).toEqual([]);
     }
-    expect(select([own(PRIYA, '', { bodyPlain: null, bodyHtml: `<div>Thanks!</div><div>&gt; ${theirs}</div>`, snippet: '' })])).toEqual([]);
+    // A quotation mark that follows a sentence on the same line.
+    expect(replyStyleText({ bodyPlain: `Thanks! > ${theirs}`, bodyHtml: null, snippet: '' })).toBe('Thanks!');
   });
 
   it('takes nothing from a message that has no body, and leaves ordinary text alone', () => {
@@ -226,18 +214,12 @@ describe('choosing examples of how the person writes', () => {
       expect(text).toContain('подтвержу переговорную.');
       expect(text).not.toContain('КОНФИДЕНЦИАЛЬНО');
     }
-    // The same in flattened HTML that carries no quotation markup.
-    const flat = replyStyleText({ bodyPlain: null, bodyHtml: `<div>${own}</div><div>9 ноября 2026 г., 10:00 Прия Раман написал(а):</div><div>${theirs}</div>`, snippet: '' });
-    expect(flat).toContain('подтвержу переговорную.');
-    expect(flat).not.toContain('КОНФИДЕНЦИАЛЬНО');
     // Ordinary sentences are not headers: a colon in the person's own text stays.
     const ordinary = 'Коллеги, план такой: сначала пилот, потом раскатка.\nОт: себя добавлю, что сроки реальные.';
     expect(replyStyleText({ bodyPlain: ordinary, bodyHtml: null, snippet: '' })).toBe(ordinary);
   });
 
-  it('reads an HTML-only message and honours the limit', () => {
-    const html = own(PRIYA, '', { bodyPlain: null, bodyHtml: `<p>Hi Priya,</p><p>${'This is the part I wrote myself. '.repeat(3)}</p>`, snippet: '' });
-    expect(select([html])[0].text).toContain('This is the part I wrote myself.');
+  it('honours the limit', () => {
     const many = Array.from({ length: 8 }, (_, index) => own(PRIYA, `${LONG} number ${index}`));
     expect(select(many)).toHaveLength(REPLY_STYLE_MAX_SAMPLES);
     expect(select(many, PRIYA, { limit: 1 })).toHaveLength(1);
