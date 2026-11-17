@@ -10,7 +10,9 @@
 //              nothing was sent, the caller reports the failed save.
 //   settle   - after it. The remote side already has (or refused) the change,
 //              so the outcome must reach the journal: it waits much longer and
-//              never throws. A row left `running` is replayed on the next launch.
+//              never throws. A row left `running` is replayed on the next
+//              launch, so an outcome that still could not be stored is kept
+//              and written in the background for as long as the app runs.
 //   rollback - undoes an optimistic change together with its bookkeeping. It
 //              waits in front of the writes already waiting, which are all
 //              newer than the change it undoes, and never throws.
@@ -18,18 +20,28 @@
 import { getDatabase } from './database';
 import {
   createInteractiveWriteQueue,
+  isSqliteBusyError,
   type InteractiveWriteContention,
   type InteractiveWriteOptions,
   type InteractiveWriteQueue,
 } from './sqliteWriteGuard';
 
-/** How long the outcome of a remote call keeps waiting for the lock. */
+/** How long the outcome of a remote call keeps the caller waiting for the lock. */
 export const SETTLE_DEADLINE_MS = 120_000;
+/** The pause before an outcome that was not stored in that time is tried again. */
+export const SETTLE_RETRY_DELAY_MS = 30_000;
 
 export interface LocalWriteFailure {
   kind: 'settle' | 'rollback';
   label: string;
   error: unknown;
+  /** The outcome is kept and will be written in the background. */
+  retrying: boolean;
+}
+
+export interface LocalWritesOptions {
+  settleRetryDelayMs?: number;
+  pause?: (ms: number) => Promise<void>;
 }
 
 export interface LocalWriteListeners {
@@ -50,11 +62,20 @@ export interface LocalWrites {
   setListeners(listeners: LocalWriteListeners): void;
 }
 
-export function createLocalWrites(queue: InteractiveWriteQueue, initial: LocalWriteListeners = {}): LocalWrites {
+export function createLocalWrites(
+  queue: InteractiveWriteQueue,
+  initial: LocalWriteListeners = {},
+  options: LocalWritesOptions = {},
+): LocalWrites {
   let listeners = initial;
+  const settleRetryDelayMs = options.settleRetryDelayMs ?? SETTLE_RETRY_DELAY_MS;
+  const pause = options.pause ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
   const failed = (failure: LocalWriteFailure): false => {
-    console.error(`[Local Database] A ${failure.kind} write could not be stored (${failure.label}).`, failure.error);
+    console.error(
+      `[Local Database] A ${failure.kind} write could not be stored (${failure.label})${failure.retrying ? '; it will be tried again' : ''}.`,
+      failure.error,
+    );
     try {
       listeners.onFailure?.(failure);
     } catch {
@@ -63,13 +84,32 @@ export function createLocalWrites(queue: InteractiveWriteQueue, initial: LocalWr
     return false;
   };
 
+  /** Writes an outcome that outlasted the settle deadline, however long the lock is held. */
+  async function keepSettling(label: string, fn: () => void): Promise<void> {
+    for (;;) {
+      await pause(settleRetryDelayMs);
+      try {
+        await queue.run(label, fn, { deadlineMs: SETTLE_DEADLINE_MS });
+        return;
+      } catch (error) {
+        if (isSqliteBusyError(error)) continue;
+        failed({ kind: 'settle', label, error, retrying: false });
+        return;
+      }
+    }
+  }
+
   return {
     queue,
     begin: (label, fn, options) => queue.run(label, fn, options),
-    settle: (label, fn) => queue.run(label, fn, { deadlineMs: SETTLE_DEADLINE_MS })
-      .then(() => true, error => failed({ kind: 'settle', label, error })),
+    settle: (label, fn) => queue.run(label, fn, { deadlineMs: SETTLE_DEADLINE_MS }).then(() => true, error => {
+      // Still locked: the caller goes on, the outcome stays here until it is stored.
+      const retrying = isSqliteBusyError(error);
+      if (retrying) void keepSettling(label, fn);
+      return failed({ kind: 'settle', label, error, retrying });
+    }),
     rollback: (label, fn) => queue.run(label, fn, { aheadOfQueue: true })
-      .then(() => true, error => failed({ kind: 'rollback', label, error })),
+      .then(() => true, error => failed({ kind: 'rollback', label, error, retrying: false })),
     setListeners(next) {
       listeners = next;
     },

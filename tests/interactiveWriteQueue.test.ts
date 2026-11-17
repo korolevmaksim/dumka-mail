@@ -717,6 +717,7 @@ describe('mail action journal under a held database lock', () => {
     const { database, guard, lock, release } = await fixture();
     const { createLocalWrites } = await import('../main/localWrites');
     const { runLocalLabelAction } = await import('../main/localLabelAction');
+    const { LabelRollbacks } = await import('../main/labelRollback');
     const accountId = 'alex.morgan@northwind.example';
     database.ThreadsRepo.save([{
       id: 'thread-1',
@@ -740,6 +741,7 @@ describe('mail action journal under a held database lock', () => {
     const action = runLocalLabelAction({
       writes,
       threads: database.ThreadsRepo,
+      rollbacks: LabelRollbacks,
       actionLog: database.ActionLogRepo,
       isRetryableRemoteError: () => false,
     }, {

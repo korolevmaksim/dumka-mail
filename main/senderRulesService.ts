@@ -17,6 +17,7 @@ import crypto from 'crypto';
 import { ActionLogRepo, SettingsRepo, ThreadsRepo, getDatabase } from './database';
 import { runRollbackTransaction } from './sqliteWriteGuard';
 import { localWrites } from './localWrites';
+import { LabelRollbacks } from './labelRollback';
 import { SenderRulesRepo } from './senderRulesRepository';
 import { isRetryableRemoteError } from './actionReconciler';
 import { getSenderRules, getSenderSections, normalizeAccountId, normalizeAccountOverrides, resolveAccountSetting, type AccountSettingsSource } from '../shared/accountSettings';
@@ -307,6 +308,7 @@ export const SenderRulesService = {
           ruleId: rule.id,
           archivedAt: createdAt,
         });
+        LabelRollbacks.track(actionId, change);
         return change;
       });
     } catch (error) {
@@ -326,7 +328,7 @@ export const SenderRulesService = {
         return archivedThread;
       }
       await localWrites.rollback('senderRule:rollback', () => {
-        ThreadsRepo.rollbackLabels(accountId, thread.id, applied.removed, applied.added, { actionId });
+        LabelRollbacks.rollback({ id: actionId, accountId, threadId: thread.id }, { add: applied.removed, remove: applied.added });
         SenderRulesRepo.forgetArchive(actionId);
         ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
       });
@@ -335,6 +337,7 @@ export const SenderRulesService = {
     }
     // Gmail archived it. Recording that waits for the database and is not
     // part of the attempt: a failed write here must not undo the archive.
+    LabelRollbacks.forget(actionId);
     await localWrites.settle('senderRule:completed', () => {
       ActionLogRepo.save({ ...log, status: 'completed', completedAt: now().toISOString() });
     });
@@ -393,7 +396,7 @@ export const SenderRulesService = {
           ActionLogRepo.save({ ...stored, status: 'failed', completedAt: now().toISOString(), failureMessage: `Sender rule archive not sent: ${reason}` });
         }
         if (options.rollbackLocal && action.threadId) {
-          ThreadsRepo.rollbackLabels(action.accountId, action.threadId, ['INBOX'], [], { actionId: action.id });
+          LabelRollbacks.rollback({ id: action.id, accountId: action.accountId, threadId: action.threadId }, { add: ['INBOX'], remove: [] });
         }
         if (options.forgetRecord) SenderRulesRepo.forgetArchive(action.id);
       });

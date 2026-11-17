@@ -49,7 +49,11 @@ function harness(options: { heldWaits?: boolean } = {}) {
     }),
   });
   const resume = () => { for (const next of held.splice(0)) next(); };
-  const writes = createLocalWrites(queue, { onFailure: failure => failures.push(failure) });
+  // The pauses before a kept outcome is tried again end only when the test says so.
+  const pauses: Array<() => void> = [];
+  const writes = createLocalWrites(queue, { onFailure: failure => failures.push(failure) }, {
+    pause: () => new Promise<void>(resolve => { pauses.push(resolve); }),
+  });
   const steps: string[] = [];
   // While true every write finds the database locked.
   const lock = { held: false };
@@ -58,13 +62,17 @@ function harness(options: { heldWaits?: boolean } = {}) {
     writes,
     threads: {
       updateLabels: (_account, _thread, add, remove) => { guard(); steps.push(`labels +[${add}] -[${remove}]`); },
-      rollbackLabels: (_account, _thread, add, remove) => { guard(); steps.push(`rollback +[${add}] -[${remove}]`); },
+    },
+    rollbacks: {
+      track: (actionId, change) => { steps.push(`track ${actionId} +[${change.added}] -[${change.removed}]`); },
+      forget: actionId => { steps.push(`forget ${actionId}`); },
+      rollback: (action, plan) => { guard(); steps.push(`rollback ${action.id} +[${plan.add}] -[${plan.remove}]`); },
     },
     actionLog: { save: log => { guard(); steps.push(`journal:${log.status}`); } },
     isRetryableRemoteError: error => error === NETWORK_ERROR,
     now: () => new Date('2026-11-17T19:24:14.000Z'),
   };
-  return { db, clock, failures, queue, writes, steps, lock, deps, held, resume };
+  return { db, clock, failures, queue, writes, steps, lock, deps, held, resume, pauses };
 }
 
 function archive(runRemote: () => Promise<unknown>, onLocalChange?: () => void) {
@@ -88,7 +96,10 @@ describe('runLocalLabelAction', () => {
 
     await expect(runLocalLabelAction(h.deps, archive(gmail, changed))).resolves.toBe('completed');
 
-    expect(h.steps).toEqual(['labels +[] -[INBOX]', 'journal:running', 'gmail', 'journal:completed']);
+    expect(h.steps).toEqual([
+      'labels +[] -[INBOX]', 'journal:running', 'track action-1 +[] -[INBOX]',
+      'gmail', 'forget action-1', 'journal:completed',
+    ]);
     expect(gmail).toHaveBeenCalledTimes(1);
     expect(changed).toHaveBeenCalledTimes(1);
     h.db.close();
@@ -107,7 +118,7 @@ describe('runLocalLabelAction', () => {
     h.resume();
 
     await expect(running).resolves.toBe('completed');
-    expect(h.steps).toEqual(['labels +[] -[INBOX]', 'journal:running', 'gmail', 'journal:completed']);
+    expect(h.steps.filter(step => !/^(track|forget) /.test(step))).toEqual(['labels +[] -[INBOX]', 'journal:running', 'gmail', 'journal:completed']);
     expect(h.queue.size).toBe(0);
     h.db.close();
   });
@@ -129,7 +140,8 @@ describe('runLocalLabelAction', () => {
 
     await expect(runLocalLabelAction(h.deps, archive(async () => { throw NETWORK_ERROR; }))).resolves.toBe('parked');
 
-    expect(h.steps).toEqual(['labels +[] -[INBOX]', 'journal:running', 'journal:pending_sync']);
+    // The plan is kept: a parked action can still be rejected when it is replayed.
+    expect(h.steps).toEqual(['labels +[] -[INBOX]', 'journal:running', 'track action-1 +[] -[INBOX]', 'journal:pending_sync']);
     h.db.close();
   });
 
@@ -139,21 +151,22 @@ describe('runLocalLabelAction', () => {
 
     await expect(runLocalLabelAction(h.deps, archive(async () => { throw PERMANENT_ERROR; }, changed))).resolves.toBe('failed');
 
-    expect(h.steps).toEqual(['labels +[] -[INBOX]', 'journal:running', 'rollback +[INBOX] -[]', 'journal:failed']);
+    expect(h.steps).toEqual([
+      'labels +[] -[INBOX]', 'journal:running', 'track action-1 +[] -[INBOX]',
+      'rollback action-1 +[INBOX] -[]', 'journal:failed',
+    ]);
     expect(changed).toHaveBeenCalledTimes(2);
     h.db.close();
   });
 
   sqliteIt('rolls back only what the action changed, and names the action so newer ones are respected', async () => {
     const h = harness();
-    const rollbacks: unknown[][] = [];
     // The thread was already out of the inbox: the archive changed nothing.
     h.deps.threads.updateLabels = () => ({ added: [], removed: [] });
-    h.deps.threads.rollbackLabels = (...args) => { rollbacks.push(args); };
 
     await expect(runLocalLabelAction(h.deps, archive(async () => { throw PERMANENT_ERROR; }))).resolves.toBe('failed');
 
-    expect(rollbacks).toEqual([['alex.morgan@northwind.example', 'thread-1', [], [], { actionId: 'action-1' }]]);
+    expect(h.steps).toEqual(['journal:running', 'track action-1 +[] -[]', 'rollback action-1 +[] -[]', 'journal:failed']);
     h.db.close();
   });
 
@@ -170,7 +183,17 @@ describe('runLocalLabelAction', () => {
     expect(gmail).toHaveBeenCalledTimes(1);
     // It kept trying for the long settle deadline, not the short one.
     expect(h.clock.now).toBeGreaterThanOrEqual(SETTLE_DEADLINE_MS);
-    expect(h.failures.map(failure => [failure.kind, failure.label])).toEqual([['settle', 'notification:completed']]);
+    expect(h.failures.map(failure => [failure.kind, failure.label, failure.retrying])).toEqual([['settle', 'notification:completed', true]]);
+    expect(h.steps).not.toContain('journal:completed');
+
+    // The outcome was not dropped: once the database can be written again it
+    // is stored, so the row does not stay `running` and get replayed.
+    await vi.waitFor(() => expect(h.pauses).toHaveLength(1));
+    h.lock.held = false;
+    h.pauses.shift()!();
+    await vi.waitFor(() => expect(h.steps).toContain('journal:completed'));
+    expect(gmail).toHaveBeenCalledTimes(1);
+    expect(h.pauses).toHaveLength(0);
     errors.mockRestore();
     h.db.close();
   });
@@ -206,7 +229,9 @@ describe('createLocalWrites', () => {
     await expect(h.writes.rollback('undo', () => { throw new Error('disk full'); })).resolves.toBe(false);
     await expect(h.writes.begin('first', () => { throw new Error('disk full'); })).rejects.toThrow('disk full');
 
-    expect(h.failures.map(failure => [failure.kind, failure.label])).toEqual([['settle', 'outcome'], ['rollback', 'undo']]);
+    // Not a lock: there is nothing to wait for, so nothing is tried again.
+    expect(h.failures.map(failure => [failure.kind, failure.label, failure.retrying])).toEqual([['settle', 'outcome', false], ['rollback', 'undo', false]]);
+    expect(h.pauses).toHaveLength(0);
     errors.mockRestore();
     h.db.close();
   });

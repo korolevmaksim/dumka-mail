@@ -13,7 +13,12 @@ export interface LocalLabelActionDeps {
   threads: {
     /** May return the labels it really changed; the rollback then puts back exactly those. */
     updateLabels(accountId: string, threadId: string, add: string[], remove: string[]): { added: string[]; removed: string[] } | void;
-    rollbackLabels(accountId: string, threadId: string, add: string[], remove: string[], options?: { actionId?: string | null }): unknown;
+  };
+  /** What the action must put back if it fails (see labelRollback.ts). */
+  rollbacks: {
+    track(actionId: string, change: { added: string[]; removed: string[] }): void;
+    forget(actionId: string): void;
+    rollback(action: { id: string; accountId: string; threadId: string }, fallback: { add: string[]; remove: string[] }): unknown;
   };
   actionLog: { save(log: MailActionLog): void };
   isRetryableRemoteError(error: unknown): boolean;
@@ -48,9 +53,11 @@ export async function runLocalLabelAction(deps: LocalLabelActionDeps, action: Lo
   // One write: a label change without its journal entry could never be
   // synced or undone, and an entry without the change would replay it.
   const applied = await deps.writes.begin(action.label, () => {
-    const change = deps.threads.updateLabels(log.accountId, log.threadId, addLabelIds, removeLabelIds);
+    const change = deps.threads.updateLabels(log.accountId, log.threadId, addLabelIds, removeLabelIds)
+      || { added: addLabelIds, removed: removeLabelIds };
     deps.actionLog.save({ ...log, status: 'running' });
-    return change || { added: addLabelIds, removed: removeLabelIds };
+    deps.rollbacks.track(log.id, change);
+    return change;
   });
   action.onLocalChange?.();
 
@@ -67,13 +74,14 @@ export async function runLocalLabelAction(deps: LocalLabelActionDeps, action: Lo
     }
     await deps.writes.rollback(`${action.label}:rollback`, () => {
       // Only what this action changed, and not a label a newer action took over.
-      deps.threads.rollbackLabels(log.accountId, log.threadId, applied.removed, applied.added, { actionId: log.id });
+      deps.rollbacks.rollback(log, { add: applied.removed, remove: applied.added });
       deps.actionLog.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: messageOf(error) });
     });
     action.onLocalChange?.();
     return 'failed';
   }
 
+  deps.rollbacks.forget(log.id);
   await deps.writes.settle(`${action.label}:completed`, () => {
     deps.actionLog.save({ ...log, status: 'completed', completedAt: now().toISOString() });
   });

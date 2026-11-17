@@ -85,6 +85,7 @@ import { databaseWorkerClient } from './databaseWorkerClient';
 import { runRollbackTransaction, withBusyTimeout } from './sqliteWriteGuard';
 import { localWrites } from './localWrites';
 import { runLocalLabelAction, type LocalLabelActionDeps } from './localLabelAction';
+import { LabelRollbacks } from './labelRollback';
 import { semanticSearchWorkerClient } from './semanticSearchWorkerClient';
 import {
   applyPendingRestoreIfAny,
@@ -940,7 +941,9 @@ app.whenReady().then(async () => {
       get: (accountId, threadId) => ThreadsRepo.get(accountId, threadId),
       // The reconciler writes labels only to roll back an action Gmail
       // rejected for good: ahead of the writes waiting in the queue.
-      updateLabels: (accountId, threadId, add, remove, actionId) => ThreadsRepo.rollbackLabels(accountId, threadId, add, remove, { actionId }),
+      updateLabels: (accountId, threadId, add, remove, actionId) => {
+        LabelRollbacks.rollback({ id: actionId, accountId, threadId }, { add, remove });
+      },
     },
     // The failed status and the rollback are one write: saved on its own
     // first, the status would land the waiting (newer) label writes.
@@ -2468,7 +2471,11 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   // What this call really changed: a rollback puts back exactly that.
   let applied: LabelChange;
   try {
-    applied = await localWrites.begin('api:modifyLabels', () => ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds));
+    applied = await localWrites.begin('api:modifyLabels', () => {
+      const change = ThreadsRepo.updateLabels(email, threadId, addLabelIds, removeLabelIds);
+      LabelRollbacks.track(actionId, change);
+      return change;
+    });
   } catch (localError) {
     throw localSaveFailure('api:modifyLabels', localError, { accountId: email, actionKind: resolvedKind });
   }
@@ -2476,6 +2483,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
   try {
     // 2. Perform the actual remote Gmail API sync
     await runRemoteLabelAction(email, threadId, addLabelIds, removeLabelIds, resolvedKind);
+    LabelRollbacks.forget(actionId);
     noteSenderRuleLearning();
     return { offline: false };
   } catch (err: any) {
@@ -2515,7 +2523,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
         }, {
           aheadOfQueue: true,
           // Not parked means it would never sync: undo the local change instead.
-          onRejected: () => { rollback = rollbackLocalLabels(email, threadId, applied, actionId); },
+          onRejected: () => { rollback = rollbackLocalLabels(email, threadId, applied, actionId, err); },
         });
       } catch (parkError) {
         // The renderer reloads from SQLite when this rejects: after the rollback.
@@ -2527,7 +2535,7 @@ registerSecureHandler('api:modifyLabels', async (_, email, threadId, addLabelIds
       return { offline: true };
     }
     // 3. Roll back local database state on remote network/API failure
-    await rollbackLocalLabels(email, threadId, applied, actionId);
+    await rollbackLocalLabels(email, threadId, applied, actionId, err);
     throw err;
   }
 });
@@ -2592,11 +2600,13 @@ localWrites.setListeners({
       console.error('[Local Database] A local write gave up waiting for the database lock.', details);
     }
   },
-  onFailure: ({ kind, label, error }) => {
+  onFailure: ({ kind, label, error, retrying }) => {
     logLocalDatabase(() => {
       SystemLogger.error('Local Database', kind === 'rollback'
         ? 'A local change could not be rolled back.'
-        : 'The outcome of an action could not be recorded.', error, { channel: label });
+        : retrying
+          ? 'The outcome of an action is not recorded yet; it is kept and tried again.'
+          : 'The outcome of an action could not be recorded.', error, { channel: label });
     });
   },
 });
@@ -2605,6 +2615,7 @@ localWrites.setListeners({
 const localLabelActionDeps: LocalLabelActionDeps = {
   writes: localWrites,
   threads: ThreadsRepo,
+  rollbacks: LabelRollbacks,
   actionLog: ActionLogRepo,
   isRetryableRemoteError,
 };
@@ -2616,10 +2627,22 @@ const localLabelActionDeps: LocalLabelActionDeps = {
 // waits for a held lock instead of leaving the optimistic change in place.
 // Never rejects; if it could not be stored the next sync repairs the labels.
 // It puts back only what the action really changed, and not a label that a
-// newer action of the thread has set or cleared since (see rollbackLabels).
-function rollbackLocalLabels(email: string, threadId: string, applied: LabelChange, actionId?: string): Promise<boolean> {
+// newer action of the thread has set or cleared since (see labelRollback.ts).
+function rollbackLocalLabels(email: string, threadId: string, applied: LabelChange, actionId: string | undefined, cause: unknown): Promise<boolean> {
   return localWrites.rollback('api:modifyLabels:rollback', () => {
-    ThreadsRepo.rollbackLabels(email, threadId, applied.removed, applied.added, { actionId });
+    LabelRollbacks.rollback({ id: actionId, accountId: email, threadId }, { add: applied.removed, remove: applied.added });
+    // The window records the failure as well, a moment later. Written here
+    // too, in the same write, so that no other rollback in between takes
+    // this action for one that may still succeed.
+    const stored = actionId ? ActionLogRepo.get(actionId) : null;
+    if (stored && stored.status !== 'failed' && stored.status !== 'completed') {
+      ActionLogRepo.save({
+        ...stored,
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+        failureMessage: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
   });
 }
 registerSecureHandler('api:sendDraft', async (_, email, draft, actionId?: string) => {
