@@ -5,10 +5,12 @@ export function MailboxEmptyState({
   icon: Icon,
   copy,
   onClearSearch,
+  onRetryLoad,
 }: {
   icon: LucideIcon;
   copy: MailboxEmptyCopy;
   onClearSearch: () => void;
+  onRetryLoad?: () => void;
 }) {
   return (
     <div role="status" aria-live="polite" className="flex flex-col items-center justify-center flex-1 p-6 text-center text-[var(--text-secondary)]">
@@ -24,6 +26,15 @@ export function MailboxEmptyState({
           className="mt-3 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-90"
         >
           Clear search
+        </button>
+      )}
+      {copy.action === 'retryLoad' && onRetryLoad && (
+        <button
+          type="button"
+          onClick={onRetryLoad}
+          className="mt-3 rounded-md bg-[var(--accent-fill)] px-3 py-1.5 text-[calc(11px*var(--font-scale))] font-semibold text-[var(--on-accent)] hover:opacity-90"
+        >
+          Try again
         </button>
       )}
     </div>

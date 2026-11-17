@@ -1,4 +1,5 @@
 import { mailboxFocusAfterListUpdate } from '../lib/mailboxFocus';
+import { mailboxListStatus as resolveMailboxListStatus } from '../lib/mailboxListStatus';
 import { startTransition, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Account, GmailSignatureSyncResult, MailThread, MailMessage, MailActionLog, MailActionExecutionResult, AppSettings, TabCategory, MailboxView, ThreadAgentInsights, MailLabelDefinition, FollowUpRadarResult, FollowUpRadarItem, MailboxDelta, NavigationActivity } from '../../../shared/types';
 import { SplitInboxKind } from '../../../shared/classifier';
@@ -154,6 +155,10 @@ export function useMailState({
   const [threads, setThreads] = useState<MailThread[]>([]);
   const [mailboxIndex, setMailboxIndex] = useState<MailboxIndex | null>(null);
   const [loadedThreadScopeKey, setLoadedThreadScopeKey] = useState<string | null>(null);
+  /** The scope that has never been read and whose last read failed. */
+  const [failedThreadScopeKey, setFailedThreadScopeKey] = useState<string | null>(null);
+  const loadedThreadScopeKeyRef = useRef<string | null>(loadedThreadScopeKey);
+  loadedThreadScopeKeyRef.current = loadedThreadScopeKey;
   const [navigationActivity, setNavigationActivity] = useState<NavigationActivity>(IDLE_NAVIGATION_ACTIVITY);
   const [visibleThreads, setVisibleThreads] = useState<MailThread[]>([]);
   const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
@@ -193,6 +198,8 @@ export function useMailState({
   const navigationOrderRef = useRef<MailThread[] | null>(null);
   const actionLogRef = useRef<MailActionLog[]>([]);
   const waitingThreadsRef = useRef<MailThread[]>([]);
+  const mailboxViewRef = useRef<MailboxView>(mailboxView);
+  mailboxViewRef.current = mailboxView;
   const sentSyncAtRef = useRef<Map<string, number>>(new Map());
   const activeScopeKey = accountScopeKey(activeAccount, accounts);
   const mailboxIndexConfigKey = JSON.stringify({
@@ -418,31 +425,42 @@ export function useMailState({
     loadAccounts();
   }, [loadAccounts]);
 
-  const setActiveAccount = useCallback((account: Account | null) => {
-    mailboxLoadGenerationRef.current += 1;
+  // `view`: the mailbox the caller switches to in the same update (defaults to the one on screen).
+  const setActiveAccount = useCallback((account: Account | null, view: MailboxView = mailboxViewRef.current) => {
     const nextScopeKey = accountScopeKey(account, accounts);
     const cachedCandidate = nextScopeKey ? mailboxSnapshotCacheRef.current.get(nextScopeKey) : null;
     const cached = cachedCandidate?.indexConfigKey === mailboxIndexConfigKey ? cachedCandidate : null;
     setActiveAccountState(account);
-    setThreads(cached?.threads || []);
-    setMailboxIndex(cached?.index || null);
-    setLoadedThreadScopeKey(cached ? nextScopeKey : null);
-    setVisibleThreads([]);
-    if (cached) {
-      setSplitCounts(cached.index.splitCounts);
-      setSplitUnreadCounts(cached.index.splitUnreadCounts);
-      setMailboxCounts(cached.index.mailboxCounts);
-      setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
-    } else {
-      setSplitCounts({});
-      setSplitUnreadCounts({});
-      setMailboxCounts(emptyMailboxCounts());
-      setNavigationActivity(account ? {
-        phase: 'loadingAccount',
-        label: 'Loading account…',
-        scopeKey: nextScopeKey,
-        startedAt: performance.now(),
-      } : IDLE_NAVIGATION_ACTIVITY);
+    // Choosing the scope that is already on screen before it has a snapshot
+    // (its read is running, failed, or its index is being built) starts no new
+    // read: the same account object reruns no effect. Its load state must then
+    // stay as it is, or the list would wait for ever for a read nobody started.
+    const keepLoadState = !cached && Boolean(nextScopeKey) && nextScopeKey === activeScopeKeyRef.current;
+    if (!keepLoadState) {
+      mailboxLoadGenerationRef.current += 1;
+      setThreads(cached?.threads || []);
+      setMailboxIndex(cached?.index || null);
+      setLoadedThreadScopeKey(cached ? nextScopeKey : null);
+      setFailedThreadScopeKey(null);
+      // A cached scope shows its rows in the same render; otherwise the list
+      // would be empty until the filtering effect publishes them.
+      setVisibleThreads(cached ? threadsForMailboxIndex(cached.index, view, null) : []);
+      if (cached) {
+        setSplitCounts(cached.index.splitCounts);
+        setSplitUnreadCounts(cached.index.splitUnreadCounts);
+        setMailboxCounts(cached.index.mailboxCounts);
+        setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
+      } else {
+        setSplitCounts({});
+        setSplitUnreadCounts({});
+        setMailboxCounts(emptyMailboxCounts());
+        setNavigationActivity(account ? {
+          phase: 'loadingAccount',
+          label: 'Loading account…',
+          scopeKey: nextScopeKey,
+          startedAt: performance.now(),
+        } : IDLE_NAVIGATION_ACTIVITY);
+      }
     }
     setOpenedThread(null);
     resetOpenedThreadMessages();
@@ -470,7 +488,7 @@ export function useMailState({
       if (!acc) return;
 
       prepareNotificationThreadNavigation();
-      setActiveAccount(acc);
+      setActiveAccount(acc, 'inbox');
       setMailboxViewState('inbox');
       resetOpenedThreadMessages();
 
@@ -547,6 +565,7 @@ export function useMailState({
 
     const generation = ++mailboxLoadGenerationRef.current;
     const start = performance.now();
+    setFailedThreadScopeKey(null);
     setNavigationActivity({
       phase: cached ? 'refreshing' : 'loadingAccount',
       label: cached ? 'Refreshing…' : 'Loading account…',
@@ -566,10 +585,18 @@ export function useMailState({
       if (generation !== mailboxLoadGenerationRef.current || activeScopeKeyRef.current !== scopeKey) return;
       console.error('Failed to load mailbox threads:', error);
       setNavigationActivity(IDLE_NAVIGATION_ACTIVITY);
-      emitToast({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Could not load the mailbox.',
-      });
+      // A scope that was never read has nothing to show: the list reports the
+      // failure itself and offers to try again. A failed refresh of a scope
+      // that was read keeps that read (its rows, or its empty mailbox, kept
+      // current by sync deltas), so only a toast reports it.
+      if (loadedThreadScopeKeyRef.current !== scopeKey) {
+        setFailedThreadScopeKey(scopeKey);
+      } else {
+        emitToast({
+          type: 'error',
+          message: error instanceof Error ? error.message : 'Could not load the mailbox.',
+        });
+      }
       return;
     }
     
@@ -586,6 +613,10 @@ export function useMailState({
 
   useEffect(() => {
     loadThreadsFromDB();
+  }, [loadThreadsFromDB]);
+
+  const retryMailboxLoad = useCallback(() => {
+    void loadThreadsFromDB(true);
   }, [loadThreadsFromDB]);
 
   useEffect(() => {
@@ -921,6 +952,21 @@ export function useMailState({
     () => ({ ...mailboxCounts, waiting: waitingThreads.length }),
     [mailboxCounts, waitingThreads.length],
   );
+  // An empty list is "nothing here" only once the rows are read, indexed and published.
+  const mailboxListStatus = resolveMailboxListStatus({
+    activeScopeKey: activeAccount ? activeScopeKey : null,
+    loadedScopeKey: loadedThreadScopeKey,
+    failedScopeKey: failedThreadScopeKey,
+    mailboxView,
+    hasSearchQuery: Boolean(searchQuery.trim()),
+    searchRunning: searchStatus.phase === 'searching',
+    threadCount: threads.length,
+    visibleCount: visibleThreads.length,
+    indexed: Boolean(mailboxIndex),
+    expectedCount: mailboxView === 'waiting'
+      ? waitingThreads.length
+      : mailboxIndex ? threadsForMailboxIndex(mailboxIndex, mailboxView, null).length : 0,
+  });
 
   const publishVisibleThreads = useCallback((filtered: MailThread[]) => {
     startTransition(() => {
@@ -1879,6 +1925,8 @@ export function useMailState({
     navigationOrderRef,
     undoMailActionBatch,
     navigationActivity,
+    mailboxListStatus,
+    retryMailboxLoad,
     activeSplit,
     setActiveSplit,
     splitCounts,

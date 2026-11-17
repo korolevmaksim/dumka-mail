@@ -722,6 +722,41 @@ select:not([multiple]):not([size]) {
   100% { transform: translateX(100%); }
 }
 
+/* Placeholder rows while a mailbox list is not known yet (MailboxListSkeleton).
+   They fade in after a short delay, so a list that is ready within it never
+   flashes them, and one highlight sweeps the whole block instead of every bar
+   blinking on its own. With reduced motion the rows show at once and stay still. */
+.mailbox-skeleton {
+  position: relative;
+  overflow: hidden;
+  animation: mailboxSkeletonIn 0.18s ease-out 0.12s both;
+  mask-image: linear-gradient(to bottom, #000 45%, transparent 96%);
+}
+.mailbox-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--panel-bg) 72%, transparent) 50%,
+    transparent 70%
+  );
+  animation: skeletonShimmer 1.6s ease-in-out 0.12s infinite;
+}
+.mailbox-skeleton-bar {
+  display: block;
+  height: calc(8px * var(--font-scale));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 17%, transparent);
+}
+@keyframes mailboxSkeletonIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @keyframes scaleIn {
   from {
     opacity: 0;

@@ -80,7 +80,10 @@ export function MailboxListHeader({ onOpenCommandPalette }: MailboxListHeaderPro
   };
 
   const inboxCount = store.mailboxCounts.inbox || 0;
-  const subtitle = view === 'inbox' && !store.searchQuery.trim()
+  // No count while the list is not known yet: "clear" or "0" would be a guess.
+  const subtitle = view !== 'drafts' && store.mailboxListStatus !== 'ready'
+    ? ''
+    : view === 'inbox' && !store.searchQuery.trim()
     ? store.fetchingInbox && inboxCount === 0
       ? 'fetching…'
       : inboxCount === 0 ? 'clear' : `${inboxCount} left`

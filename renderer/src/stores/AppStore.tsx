@@ -76,6 +76,7 @@ import { useCalendarState, type CalendarEventRange } from './useCalendarState';
 import { DUMKA_MUTED_LABEL_NAME } from '../../../shared/mailboxView';
 import type { ThreadHeaderMessagesStatus } from '../lib/threadHeader';
 import type { MailSearchState } from './mailSearchStatus';
+import type { MailboxListStatus } from '../lib/mailboxListStatus';
 import { emitToast } from '../lib/toastBus';
 
 export const UNIFIED_ACCOUNT: Account = {
@@ -446,6 +447,10 @@ interface AppStoreContextType extends ProductivityState, InboxSectionsState, Sen
   setMailboxView: (view: MailboxView) => void;
   mailboxCounts: Record<MailboxView, number>;
   navigationActivity: NavigationActivity;
+  /** `loading` while the list's rows are not known yet; only `ready` may show an empty mailbox. */
+  mailboxListStatus: MailboxListStatus;
+  /** Reads the active scope from the local cache again after a failed read. */
+  retryMailboxLoad: () => void;
   activeSplit: SplitInboxKind;
   setActiveSplit: (s: SplitInboxKind) => void;
   splitCounts: Record<string, number>;

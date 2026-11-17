@@ -98,7 +98,7 @@ State is centralized in one React context store, `stores/AppStore.tsx`, composed
 - **Reader** (`components/reader/`): `ThreadReader` with `ThreadHeader`, the summary block for long threads, and `ReplyDock`, the docked editor where a prepared draft appears. "Ask Dumka" (`⌘J` / palette) opens a floating panel over the reading area.
 - **Settings**: per-account values resolve through `shared/accountSettings.ts` (`settings.accountOverrides[accountId]`, falling back to the app value) and are edited on the account page (`components/settings/AccountSettingsPage.tsx`).
 
-Mailbox navigation is cache-first: `stores/mailboxIndex.ts` indexes a loaded scope once into mailbox buckets rather than rescanning the archive. Thread reading initially expands the latest three messages, reveals earlier history in batches, and defers offscreen HTML iframes; preserve these responsiveness boundaries when extending the list or reader.
+Mailbox navigation is cache-first: `stores/mailboxIndex.ts` indexes a loaded scope once into mailbox buckets rather than rescanning the archive. An empty list may say "nothing here" only when `store.mailboxListStatus` (`lib/mailboxListStatus.ts`) is `ready`: while the rows are being read, indexed or published it is `loading` and the list shows placeholder rows (`MailboxListSkeleton`, which appear after a short delay so a fast load never flashes them), and after a failed read it is `failed` with `Try again`. The header count and the idle reading pane follow the same status. Thread reading initially expands the latest three messages, reveals earlier history in batches, and defers offscreen HTML iframes; preserve these responsiveness boundaries when extending the list or reader.
 
 ## Configuration & secrets (no `.env` in repo)
 
