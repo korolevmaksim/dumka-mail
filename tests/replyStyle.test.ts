@@ -16,6 +16,7 @@ import {
   type ReplyStyleSample,
 } from '../shared/replyStyle';
 import { replyRecipients } from '../shared/compose';
+import { renderComposeSignaturePlain } from '../shared/draftHtml';
 import type { MailMessage } from '../shared/types';
 
 const ME = 'alex.morgan@northwind.example';
@@ -306,13 +307,32 @@ describe('settings', () => {
     expect(replyStyleEnabled({ ai: { replyStyleFromSent: false } })).toBe(false);
   });
 
-  it('finds the signature the account signs with', () => {
-    const settings = { compose: { defaultSignature: 'Default sig', signaturesByAccount: { [ME]: { signaturePlain: 'Alex Morgan' }, 'other@x.example': { signaturePlain: ' ' } } } };
+  it('finds the signature the account signs with, as the composer renders it', () => {
+    const settings = { compose: { defaultSignature: 'Default sig', signaturesByAccount: { [ME]: { signaturePlain: 'Alex Morgan' } } } };
     expect(accountSignaturePlain(settings, ME.toUpperCase())).toBe('Alex Morgan');
-    expect(accountSignaturePlain(settings, 'other@x.example')).toBe('Default sig');
     expect(accountSignaturePlain(settings, 'unknown@x.example')).toBe('Default sig');
     expect(accountSignaturePlain({ compose: { signaturesByAccount: 'junk' } }, ME)).toBe('');
+    expect(accountSignaturePlain({ compose: { signaturesByAccount: { [ME]: 'junk', other: null } } }, ME)).toBe('');
+    expect(accountSignaturePlain({ compose: 'junk' } as never, ME)).toBe('');
     expect(accountSignaturePlain(null, ME)).toBe('');
+  });
+
+  it('fills in the profile tokens, so a templated signature is cut from the examples', () => {
+    const settings = {
+      profile: { fullName: 'Alex Morgan', role: 'Head of Rollouts', company: 'Northwind', timezone: 'Europe/Berlin' },
+      compose: { signaturesByAccount: { [ME]: { signaturePlain: '{full_name}\n{role} at {company}' } } },
+    };
+    const signature = accountSignaturePlain(settings, ME);
+    expect(signature).toBe(renderComposeSignaturePlain(settings.compose as never, settings.profile, ME));
+    expect(signature).toBe('Alex Morgan\nHead of Rollouts at Northwind');
+    // The sent message carries the rendered signature: with it cut, this short answer teaches nothing.
+    const sent = 'Thanks!\n\nAlex Morgan\nHead of Rollouts at Northwind';
+    expect(replyStyleText({ bodyPlain: sent, bodyHtml: null, snippet: '' }, signature)).toBe('Thanks!');
+    expect(select([own(PRIYA, sent)], PRIYA, { signaturePlain: signature })).toEqual([]);
+    // An HTML-only signature is turned into text the same way.
+    const htmlOnly = { profile: settings.profile, compose: { signaturesByAccount: { [ME]: { signaturePlain: '', signatureHtml: '<div>{full_name}</div><div>Northwind</div>', signatureFormat: 'html' } } } };
+    expect(accountSignaturePlain(htmlOnly, ME)).toBe(renderComposeSignaturePlain(htmlOnly.compose as never, htmlOnly.profile, ME));
+    expect(accountSignaturePlain(htmlOnly, ME)).toContain('Alex Morgan');
   });
 });
 

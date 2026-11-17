@@ -21,7 +21,8 @@ import { boundText } from './agentPrompts';
 import { redactSecrets } from './aiContext';
 import { replyRecipients, type ReplyRecipientSource } from './compose';
 import { isFreeMailDomain, registrableDomain } from './decision';
-import type { MailMessage, Recipient } from './types';
+import { renderComposeSignaturePlain } from './draftHtml';
+import type { ComposeSettings, ComposeSignatureSettings, MailMessage, ProfileSettings, Recipient } from './types';
 
 export const REPLY_STYLE_MAX_SAMPLES = 3;
 export const REPLY_STYLE_SAMPLE_MAX = 600;
@@ -279,18 +280,53 @@ export function selectReplyStyleSamples(messages: readonly OwnMessage[], selecti
   return chosen;
 }
 
-/** The plain-text signature an account signs with (its own, else the default one). */
+/**
+ * The plain-text signature the account's sent mail carries: exactly what the
+ * composer puts under a message (`renderComposeSignaturePlain`), with the
+ * profile tokens (`{full_name}`, …) filled in and an HTML-only signature
+ * turned into text. `settings` is stored JSON and is not trusted for shape.
+ */
 export function accountSignaturePlain(
-  settings: { compose?: { defaultSignature?: unknown; signaturesByAccount?: unknown } | null } | null | undefined,
+  settings: {
+    compose?: { defaultSignature?: unknown; defaultSignatureHtml?: unknown; signatureFormat?: unknown; signaturesByAccount?: unknown } | null;
+    profile?: { fullName?: unknown; role?: unknown; company?: unknown; timezone?: unknown } | null;
+  } | null | undefined,
   accountId: string,
 ): string {
-  const compose = settings?.compose;
-  const byAccount = compose?.signaturesByAccount;
-  const key = normalize(accountId);
-  if (byAccount && typeof byAccount === 'object' && !Array.isArray(byAccount)) {
-    const entry = (byAccount as Record<string, unknown>)[key];
-    const own = entry && typeof entry === 'object' ? (entry as { signaturePlain?: unknown }).signaturePlain : undefined;
-    if (typeof own === 'string' && own.trim()) return own;
+  const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+  const format = (value: unknown): 'plain' | 'html' | undefined => (value === 'plain' || value === 'html' ? value : undefined);
+  const rawCompose = settings?.compose;
+  if (!rawCompose || typeof rawCompose !== 'object') return '';
+  const signaturesByAccount: Record<string, ComposeSignatureSettings> = {};
+  const rawByAccount = rawCompose.signaturesByAccount;
+  if (rawByAccount && typeof rawByAccount === 'object' && !Array.isArray(rawByAccount)) {
+    for (const [key, entry] of Object.entries(rawByAccount as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const raw = entry as Record<string, unknown>;
+      const signatureHtml = text(raw.signatureHtml);
+      signaturesByAccount[normalize(key)] = {
+        ...(raw as Partial<ComposeSignatureSettings>),
+        signaturePlain: text(raw.signaturePlain),
+        signatureHtml,
+        signatureFormat: format(raw.signatureFormat) ?? (signatureHtml.trim() ? 'html' : 'plain'),
+      };
+    }
   }
-  return typeof compose?.defaultSignature === 'string' ? compose.defaultSignature : '';
+  const compose = {
+    defaultSignature: text(rawCompose.defaultSignature),
+    defaultSignatureHtml: text(rawCompose.defaultSignatureHtml),
+    signatureFormat: format(rawCompose.signatureFormat) ?? 'plain',
+    signaturesByAccount,
+  } as ComposeSettings;
+  const profile: ProfileSettings = {
+    fullName: text(settings?.profile?.fullName),
+    role: text(settings?.profile?.role),
+    company: text(settings?.profile?.company),
+    timezone: text(settings?.profile?.timezone),
+  };
+  try {
+    return renderComposeSignaturePlain(compose, profile, normalize(accountId));
+  } catch {
+    return '';
+  }
 }

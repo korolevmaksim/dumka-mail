@@ -887,8 +887,13 @@ describe('agent prep: reply drafts in the person\'s own style', () => {
   it('uses the account signature to cut signatures from the examples', async () => {
     const { h, thread, asked } = styleHarness();
     const readSettings = h.deps.readSettings;
-    h.deps.readSettings = () => ({ ...readSettings(), compose: { signaturesByAccount: { [ACCOUNT]: { signaturePlain: 'Alex Morgan\nNorthwind' } } } });
+    h.deps.readSettings = () => ({
+      ...readSettings(),
+      profile: { fullName: 'Alex Morgan', company: 'Northwind' },
+      compose: { signaturesByAccount: { [ACCOUNT]: { signaturePlain: '{full_name}\n{company}' } } },
+    });
     await service(h).requestAgentDraft(ACCOUNT, thread.id, 'req-1');
+    // As the composer renders it: the profile tokens are filled in.
     expect(asked[0].signaturePlain).toBe('Alex Morgan\nNorthwind');
   });
 

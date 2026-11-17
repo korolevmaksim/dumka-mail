@@ -81,7 +81,8 @@ const RETRY_MAX_MS = 15 * 60_000;
 const ATTEMPT_MEMORY_LIMIT = 20_000;
 
 export interface StoredAgentSettings {
-  compose?: { afterSend?: unknown; defaultSignature?: unknown; signaturesByAccount?: unknown } | null;
+  compose?: { afterSend?: unknown; defaultSignature?: unknown; defaultSignatureHtml?: unknown; signatureFormat?: unknown; signaturesByAccount?: unknown } | null;
+  profile?: { fullName?: unknown; role?: unknown; company?: unknown; timezone?: unknown } | null;
   ai?: SortingSettingsSource & SummarySettingsSource & {
     allowMailBodyContext?: unknown;
     provider?: unknown;
