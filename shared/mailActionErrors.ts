@@ -1,7 +1,10 @@
+import type { MailActionExecutionResult } from './types';
+
 // Human-readable mail-action failures. Raw IPC / SQLite / HTTP text
 // ("Error invoking remote method 'api:modifyLabels': SqliteError: database is
 // locked") must never reach a toast; it stays in the action log and system log.
 
+export const MISSING_GMAIL_THREAD_MESSAGE = 'This conversation is no longer in Gmail. The local copy was removed.';
 export const LOCAL_SAVE_FAILED_MESSAGE = "Couldn't save that change. Try again.";
 export const REMOTE_ACTION_FAILED_MESSAGE = "Couldn't complete that change in Gmail. Try again.";
 export const SEND_FAILED_MESSAGE = "Couldn't send the message. Try again.";
@@ -55,4 +58,12 @@ export function mailActionFailureMessage(error: unknown, kind?: string): string 
   const isSend = kind === 'send' || kind === 'sendDraft';
   if (!text || looksTechnical(text)) return isSend ? SEND_FAILED_MESSAGE : REMOTE_ACTION_FAILED_MESSAGE;
   return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+export function failedMailActionResult(error: unknown, kind: string, actionId: string): MailActionExecutionResult {
+  const errorMessage = mailActionFailureMessage(error, kind);
+  return {
+    accepted: false, offline: false, actionId, errorMessage,
+    ...(errorMessage === MISSING_GMAIL_THREAD_MESSAGE ? { retryable: false } : {}),
+  };
 }

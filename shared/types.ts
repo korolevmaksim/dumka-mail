@@ -528,6 +528,7 @@ export interface MailActionLog {
 }
 
 export interface MailActionExecutionResult {
+  retryable?: boolean;
   accepted: boolean;
   offline: boolean;
   actionId?: string;

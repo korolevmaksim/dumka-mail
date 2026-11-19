@@ -76,3 +76,14 @@ describe('Gmail quota transport and backfill', () => {
     await expect(pending).resolves.toEqual({ threads: [], messages: [], nextPageToken: 'next' });
   });
 });
+
+it.each([[200, true], [404, false]] as const)('checks the requested thread without fetching message bodies (%i)', async (status, exists) => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(json({ access_token: 'fixture-access' }))
+    .mockResolvedValueOnce(json({}, status));
+  vi.stubGlobal('fetch', fetchMock);
+  const { GmailSyncService } = await import('../main/gmail');
+  await expect(GmailSyncService.threadExists('me@example.com', 'test-id')).resolves.toBe(exists);
+  expect(fetchMock.mock.calls[1][0]).toBe('https://gmail.googleapis.com/gmail/v1/users/me/threads/test-id?format=minimal&fields=id');
+  expect(fetchMock.mock.calls[1][1].method).toBe('GET');
+});

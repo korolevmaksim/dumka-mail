@@ -40,6 +40,7 @@ import {
   shouldReloadAfterRendererCrash,
 } from './rendererCrashPolicy';
 import { isNetworkError, isRetryableRemoteError, scheduledAtForRetry, startBackgroundSyncWorker } from './actionReconciler';
+import { MissingGmailThreadError, MissingGmailThreads } from './missingGmailThreads';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
 import { completeHistoryBackfillPage, ensureHistoryCoverage, sameHistoryBackfillRun } from './mailboxHistoryRecovery';
@@ -955,7 +956,7 @@ app.whenReady().then(async () => {
     // state may still be waiting for the database, so it is not forgotten yet.
     onCompleted: action => LabelRollbacks.accept(action.id),
     drafts: DraftsRepo,
-    gmail: GmailSyncService,
+    gmail: reconciledGmail,
     buildForwardDraft: buildForwardDraftFromThread,
     buildAutoReplyDraft: buildAutoReplyDraftFromRule,
     shouldDeferAccount: accountId => googleAuthState.requiresReauthorization(accountId),
@@ -997,6 +998,7 @@ app.whenReady().then(async () => {
       });
     },
     onPermanentFailure: action => {
+      LabelRollbacks.forget(action.id);
       // A rejected rule archive: the reconciler already put INBOX back locally;
       // remove it from "Handled for you" and show the thread in the inbox again.
       const thread = SenderRulesService.afterReplayRejected(action);
@@ -2319,16 +2321,35 @@ function assertLabelProposalReadyForMutation(
   throw new Error('The requested mailbox mutation does not match the reviewed AI proposal.');
 }
 
+const missingGmailThreads = new MissingGmailThreads({
+  exists: (accountId, threadId) => GmailSyncService.threadExists(accountId, threadId),
+  loggedCandidates: accountId => databaseWorkerClient.loggedMissingThreadIds(accountId),
+  removeCached: async (accountId, threadId) => {
+    await databaseWorkerClient.deleteThread(accountId, threadId);
+    publishMailboxDelta(accountId, [], [threadId]);
+  },
+});
+
+const reconciledGmail = {
+  ...GmailSyncService,
+  modifyLabels: (email: string, id: string, add: string[], remove: string[]) =>
+    missingGmailThreads.mutate(email, id, () => GmailSyncService.modifyLabels(email, id, add, remove)),
+  trashThread: (email: string, id: string) =>
+    missingGmailThreads.mutate(email, id, () => GmailSyncService.trashThread(email, id)),
+  untrashThread: (email: string, id: string) =>
+    missingGmailThreads.mutate(email, id, () => GmailSyncService.untrashThread(email, id)),
+};
+
 async function runRemoteLabelAction(email: string, threadId: string, addLabelIds: string[], removeLabelIds: string[], kind?: string) {
   if (kind === 'moveToTrash') {
-    await GmailSyncService.trashThread(email, threadId);
+    await reconciledGmail.trashThread(email, threadId);
     return;
   }
   if (kind === 'restoreFromTrash') {
-    await GmailSyncService.untrashThread(email, threadId);
+    await reconciledGmail.untrashThread(email, threadId);
     return;
   }
-  await GmailSyncService.modifyLabels(email, threadId, addLabelIds, removeLabelIds);
+  await reconciledGmail.modifyLabels(email, threadId, addLabelIds, removeLabelIds);
 }
 
 function labelMutationForRuleAction(action: MailRuleAction): { kind: 'markDone' | 'applyLabel' | 'moveToLabel'; addLabelIds: string[]; removeLabelIds: string[] } | null {
@@ -2642,7 +2663,8 @@ const localLabelActionDeps: LocalLabelActionDeps = {
 // newer action of the thread has set or cleared since (see labelRollback.ts).
 function rollbackLocalLabels(email: string, threadId: string, applied: LabelChange, actionId: string | undefined, cause: unknown): Promise<boolean> {
   return localWrites.rollback('api:modifyLabels:rollback', () => {
-    LabelRollbacks.rollback({ id: actionId, accountId: email, threadId }, { add: applied.removed, remove: applied.added });
+    if (cause instanceof MissingGmailThreadError) LabelRollbacks.forget(actionId);
+    else LabelRollbacks.rollback({ id: actionId, accountId: email, threadId }, { add: applied.removed, remove: applied.added });
     // The window records the failure as well, a moment later. Written here
     // too, in the same write, so that no other rollback in between takes
     // this action for one that may still succeed.
@@ -3367,6 +3389,9 @@ function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
         lastSuccessAt: delta.completedAt,
         lastError: null,
         completedAt: delta.completedAt,
+      });
+      void missingGmailThreads.repairLoggedFailures(email).catch(error => {
+        SystemLogger.warning('Mailbox Sync', 'Could not verify previously missing conversations.', { accountId: email, error });
       });
       // First sync done (or Gmail reachable again): continue older-mail indexing.
       requestHistoryBackfill(email);

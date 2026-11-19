@@ -102,7 +102,9 @@ export function aggregateMailActionResults(results: MailActionExecutionResult[])
   return {
     accepted: failed === 0 && results.length > 0,
     offline: results.some(result => result.accepted && result.offline),
-    errorMessage: results.find(result => !result.accepted)?.errorMessage,
+    ...(failed > 0 && results.every(result => result.accepted || result.retryable === false) ? { retryable: false } : {}),
+    errorMessage: results.find(result => !result.accepted && result.retryable !== false)?.errorMessage
+      || results.find(result => !result.accepted)?.errorMessage,
     actionId: results.find(result => result.actionId)?.actionId,
     succeeded,
     failed,
@@ -165,23 +167,23 @@ export function resolveMailActionFeedback(input: ResolveMailActionFeedbackInput)
         silent: false,
         tone: 'error',
         message: result.errorMessage || `Could not complete ${count} actions.`,
-        action: 'retry',
+        action: result.retryable === false ? null : 'retry',
       };
     }
     return {
       silent: false,
       tone: 'warning',
       message: `${kindTitle(kind)} ${succeeded} of ${count}, ${failed} failed.`,
-      action: 'retry',
+      action: result.retryable === false ? null : 'retry',
     };
   }
 
   if (!result.accepted) {
     return {
       silent: false,
-      tone: 'error',
+      tone: result.retryable === false ? 'info' : 'error',
       message: errorMessage(kind, result),
-      action: 'retry',
+      action: result.retryable === false ? null : 'retry',
     };
   }
 

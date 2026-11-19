@@ -2467,6 +2467,16 @@ export const SyncStateRepo = {
 
 // === Action Log Repository ===
 export const ActionLogRepo = {
+  loggedMissingThreadIds(accountId: string): string[] {
+    const rows = getDatabase().prepare<[string], { thread_id: string }>(`
+      SELECT DISTINCT a.thread_id FROM mail_action_log a
+      JOIN threads t ON t.account_id = a.account_id AND t.id = a.thread_id
+      WHERE a.account_id = ? AND a.status = 'failed'
+        AND a.failure_message LIKE '%thread ' || a.thread_id || ': HTTP 404%'
+    `).all(accountId);
+    return rows.map(row => row.thread_id);
+  },
+
   get(id: string): MailActionLog | null {
     const db = getDatabase();
     const r = db.prepare('SELECT * FROM mail_action_log WHERE id = ?').get(id) as any;

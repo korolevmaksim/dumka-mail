@@ -630,6 +630,14 @@ export const GmailSyncService = {
     return { threads, messages, nextPageToken };
   },
 
+  async threadExists(email: string, threadId: string): Promise<boolean> {
+    const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=minimal&fields=id`;
+    const response = await interactiveGmailRequest(email, url, { method: 'GET' });
+    if (response.status === 404) return false;
+    if (!response.ok) await throwGoogleApiFailure(email, response, 'Thread existence check failed');
+    return true;
+  },
+
   // Hydrate thread details lazily from Gmail
   async fetchThreadDetail(email: string, threadId: string): Promise<MailMessage[]> {
     const accessToken = await getAccessToken(email);

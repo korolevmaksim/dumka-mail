@@ -19,6 +19,7 @@ import { runRollbackTransaction } from './sqliteWriteGuard';
 import { localWrites } from './localWrites';
 import { LabelRollbacks } from './labelRollback';
 import { SenderRulesRepo } from './senderRulesRepository';
+import { MissingGmailThreadError } from './missingGmailThreads';
 import { isRetryableRemoteError } from './actionReconciler';
 import { getSenderRules, getSenderSections, normalizeAccountId, normalizeAccountOverrides, resolveAccountSetting, type AccountSettingsSource } from '../shared/accountSettings';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
@@ -266,14 +267,14 @@ export const SenderRulesService = {
       }
       const archived = await this.archiveByRule(thread, rule);
       if (archived !== thread) changed = true;
-      result.push(archived);
+      if (archived) result.push(archived);
     }
     if (changed) safePublish({ accountId: normalizeAccountId(accountId) });
     return result;
   },
 
   /** The user's `E` path, run by the main process with rule provenance. */
-  async archiveByRule(thread: MailThread, rule: SenderRule): Promise<MailThread> {
+  async archiveByRule(thread: MailThread, rule: SenderRule): Promise<MailThread | null> {
     const accountId = thread.accountId;
     const actionId = crypto.randomUUID();
     const createdAt = now().toISOString();
@@ -327,11 +328,14 @@ export const SenderRulesService = {
         });
         return archivedThread;
       }
+      const missing = error instanceof MissingGmailThreadError;
       await localWrites.rollback('senderRule:rollback', () => {
-        LabelRollbacks.rollback({ id: actionId, accountId, threadId: thread.id }, { add: applied.removed, remove: applied.added });
+        if (missing) LabelRollbacks.forget(actionId);
+        else LabelRollbacks.rollback({ id: actionId, accountId, threadId: thread.id }, { add: applied.removed, remove: applied.added });
         SenderRulesRepo.forgetArchive(actionId);
         ActionLogRepo.save({ ...log, status: 'failed', completedAt: now().toISOString(), failureMessage: message });
       });
+      if (missing) return null;
       deps?.logError('Sender rule archive was rejected by Gmail and rolled back.', error, { accountId, threadId: thread.id });
       return thread;
     }

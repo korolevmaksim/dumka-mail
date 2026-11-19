@@ -141,3 +141,13 @@ Validate with an inbox whose newest thread belongs to collapsed Clear, scroll
 deeply and switch accounts/folders, return to Inbox, and use keyboard navigation.
 `tests/mailboxFocus.test.ts` covers initial focus and viewport identity;
 `tests/variableVirtualList.test.ts` covers explicit target positioning.
+
+## Missing conversations during inbox actions
+
+When a Gmail thread mutation returns HTTP 404, Dumka checks the same account
+and thread with a minimal GET. A second 404 removes the cached conversation
+and publishes a deletion to the reader and mailbox lists. The action is
+recorded as failed and offers no retry. An existing thread survives a missing
+label, and an inconclusive check preserves the cache. Offline replay uses the
+same verification. After successful mailbox syncs, Dumka also verifies up to
+three cached conversations per pass from older failed thread actions.

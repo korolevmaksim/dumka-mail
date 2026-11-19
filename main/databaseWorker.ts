@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { attachWritePrioritySignal } from './sqliteWriteGuard';
-import { getDatabase, initializeDatabase, MessagesRepo, ThreadDecisionsRepo, ThreadsRepo } from './database';
+import { ActionLogRepo, getDatabase, initializeDatabase, MessagesRepo, ThreadDecisionsRepo, ThreadsRepo } from './database';
 import {
   collectBriefingThreadBatch,
   collectPendingEmbeddingCandidates,
@@ -58,6 +58,17 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
 
     if (request.type === 'countInboxThreads') {
       send({ id: request.id, ok: true, result: ThreadsRepo.countInbox(request.accountIds, request.nowIso) });
+      return;
+    }
+
+    if (request.type === 'deleteThread') {
+      ThreadsRepo.delete(request.accountId, request.threadId);
+      send({ id: request.id, ok: true, result: null });
+      return;
+    }
+
+    if (request.type === 'loggedMissingThreadIds') {
+      send({ id: request.id, ok: true, result: ActionLogRepo.loggedMissingThreadIds(request.accountId) });
       return;
     }
 

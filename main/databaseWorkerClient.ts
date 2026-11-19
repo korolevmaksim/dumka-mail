@@ -212,6 +212,14 @@ class DatabaseWorkerClient {
     return this.request<ThreadMaintenanceResult>({ type: 'runThreadMaintenance', chunkSize });
   }
 
+  deleteThread(accountId: string, threadId: string): Promise<void> {
+    return this.request({ type: 'deleteThread', accountId, threadId });
+  }
+
+  loggedMissingThreadIds(accountId: string): Promise<string[]> {
+    return this.request({ type: 'loggedMissingThreadIds', accountId });
+  }
+
   listThreads(accountIds: string[]): Promise<MailThread[]> {
     return this.request<MailThread[]>({ type: 'listThreads', accountIds });
   }

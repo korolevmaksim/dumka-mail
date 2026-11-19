@@ -162,3 +162,25 @@ describe('mailbox repository hot paths', () => {
     });
   });
 });
+
+repositoryIt('finds old thread 404s only for conversations still cached in the same account', async () => {
+  await withDatabase(({ ActionLogRepo, ThreadsRepo }) => {
+    const account = 'first@example.com';
+    const other = 'second@example.com';
+    ThreadsRepo.save([thread('stale', account, ['INBOX'], 1), thread('live', account, ['INBOX'], 2),
+      thread('stale', other, ['INBOX'], 1)]);
+    const record = (id: string, threadId: string, status: number) => ActionLogRepo.save({
+      id, accountId: account, threadId, kind: 'markDone', status: 'failed', createdAt: new Date().toISOString(),
+      failureMessage: `Error invoking remote method 'api:modifyLabels': Error: Label modification failed for thread ${threadId}: HTTP ${status} — {}`,
+    });
+    record('1', 'stale', 404);
+    record('2', 'stale', 404);
+    record('3', 'gone', 404);
+    record('4', 'live', 403);
+    expect(ActionLogRepo.loggedMissingThreadIds(account)).toEqual(['stale']);
+    ThreadsRepo.delete(account, 'stale');
+    expect(ActionLogRepo.loggedMissingThreadIds(account)).toEqual([]);
+    expect(ThreadsRepo.get(other, 'stale')).not.toBeNull();
+    expect(ThreadsRepo.get(account, 'live')).not.toBeNull();
+  });
+});
