@@ -40,6 +40,7 @@ import {
   shouldReloadAfterRendererCrash,
 } from './rendererCrashPolicy';
 import { isNetworkError, isRetryableRemoteError, scheduledAtForRetry, startBackgroundSyncWorker } from './actionReconciler';
+import type { MailboxRead } from './mailboxRead';
 import { MissingGmailThreadError, MissingGmailThreads } from './missingGmailThreads';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
@@ -1151,18 +1152,19 @@ app.on('window-all-closed', () => {
   }
 });
 
-async function saveThreadsToDatabase(threads: MailThread[]) {
-  await databaseWorkerClient.saveThreads(threads);
-  void runMailRulesForThreads(threads).catch(err => {
+async function saveThreadsToDatabase(threads: MailThread[], read?: MailboxRead) {
+  await databaseWorkerClient.saveThreads(threads, read);
+  void runMailRulesForThreads(read ? read.threads(threads) : threads).catch(err => {
     SystemLogger.error('Mail Rules', 'Failed to apply mail rules to synchronized threads.', err);
   });
 }
 
-async function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }) {
+async function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }, read?: MailboxRead) {
   const { newMessages } = await databaseWorkerClient.saveMessages(messages, {
     ...options,
     indexBodies: readIncludeBodiesInSearchIndex()
-  });
+  }, read);
+  if (read) messages = read.messages(messages);
 
   try {
     for (const state of ReplyPipelineService.processNewMessages(messages)) {
@@ -2078,7 +2080,14 @@ registerSecureHandler('api:syncMailboxNow', async (_, accountIds: string[]): Pro
   }
   return results;
 });
-registerSecureHandler('api:syncSent', (_, email) => GmailSyncService.syncSent(email));
+registerSecureHandler('api:syncSent', (_, email) => missingGmailThreads.duringRead(email, async read => {
+  const result = await GmailSyncService.syncSent(email);
+  await saveThreadsToDatabase(result.threads, read);
+  await saveMessagesToDatabase(result.messages, undefined, read);
+  const threads = read.threads(result.threads);
+  publishMailboxDelta(email, threads, [], 'backfill');
+  return { ...result, threads, messages: read.messages(result.messages) };
+}));
 registerSecureHandler('api:syncIncremental', (_, email, startHistoryId) => GmailSyncService.syncIncremental(email, startHistoryId));
 registerSecureHandler('api:syncBackfillPage', (_, email, pageToken) => GmailSyncService.syncBackfillPage(email, pageToken));
 // Manual "Resume Older Mail Indexing": nudges the main-process loop and
@@ -2095,7 +2104,11 @@ registerSecureHandler('api:runBackfillPage', (_, email: string) => {
   };
 });
 registerSecureHandler('api:syncGmailSignature', (_, email) => GmailSyncService.fetchDefaultSignature(email));
-registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => GmailSyncService.fetchThreadDetail(email, threadId));
+registerSecureHandler('api:fetchThreadDetail', (_, email, threadId) => missingGmailThreads.duringRead(email, async read => {
+  const messages = await GmailSyncService.fetchThreadDetail(email, threadId);
+  await saveMessagesToDatabase(messages, undefined, read);
+  return read.messages(messages);
+}));
 registerSecureHandler('api:fetchRawMessage', (_, email, messageId) => GmailSyncService.fetchRawMessage(email, messageId));
 registerSecureHandler('api:fetchAttachmentData', (_, email, messageId, attachmentId) => GmailSyncService.fetchAttachment(email, messageId, attachmentId));
 
@@ -2323,6 +2336,7 @@ function assertLabelProposalReadyForMutation(
 
 const missingGmailThreads = new MissingGmailThreads({
   exists: (accountId, threadId) => GmailSyncService.threadExists(accountId, threadId),
+  warnCleanupFailure: (accountId, error) => SystemLogger.warning('Mailbox Sync', 'Will retry removing a missing conversation.', { accountId, error }),
   loggedCandidates: accountId => databaseWorkerClient.loggedMissingThreadIds(accountId),
   removeCached: async (accountId, threadId) => {
     await databaseWorkerClient.deleteThread(accountId, threadId);
@@ -3023,7 +3037,7 @@ function nextSyncState(accountId: string, base: SyncState | null, historyId: str
   };
 }
 
-async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexed: number; pageThreadsIndexed: number; completed: boolean; busy: boolean }> {
+async function runBackfillPageForAccount(email: string, read: MailboxRead): Promise<{ threadsIndexed: number; pageThreadsIndexed: number; completed: boolean; busy: boolean }> {
   if (activeBackfillAccounts.has(email)) {
     const state = SyncStateRepo.get(email);
     return {
@@ -3056,15 +3070,15 @@ async function runBackfillPageForAccount(email: string): Promise<{ threadsIndexe
       return { threadsIndexed: SyncStateRepo.get(email)?.historyBackfillThreadsSynced || 0,
         pageThreadsIndexed: 0, completed: false, busy: true };
     }
-    await saveThreadsToDatabase(page.threads);
-    await saveMessagesToDatabase(page.messages);
+    await saveThreadsToDatabase(page.threads, read);
+    await saveMessagesToDatabase(page.messages, undefined, read);
     if (!accountStillConfigured(email)) {
       // Removed during the worker writes: take this page's rows back out.
       for (const thread of page.threads) ThreadsRepo.delete(email, thread.id);
       throw new BackfillAccountRemovedError(email);
     }
     if (page.threads.length > 0) {
-      publishMailboxDelta(email, page.threads, [], 'backfill');
+      publishMailboxDelta(email, read.threads(page.threads), [], 'backfill');
     }
 
     const now = new Date().toISOString();
@@ -3233,7 +3247,7 @@ async function runHistoryBackfillLoop(email: string): Promise<void> {
 
     let result: Awaited<ReturnType<typeof runBackfillPageForAccount>>;
     try {
-      result = await runBackfillPageForAccount(email);
+      result = await missingGmailThreads.duringRead(email, read => runBackfillPageForAccount(email, read));
     } catch (error) {
       if (error instanceof BackfillAccountRemovedError || !accountStillConfigured(email)) return;
       noteHistoryBackfillFailure(email);
@@ -3321,8 +3335,10 @@ async function publishMaintainedThreads(updated: { accountId: string; threadId: 
   }
   for (const [accountId, threadIds] of byAccount) {
     if (!accountStillConfigured(accountId)) continue;
-    const threads = await databaseWorkerClient.getThreads(accountId, threadIds);
-    if (threads.length > 0) publishMailboxDelta(accountId, threads, [], 'backfill');
+    await missingGmailThreads.duringRead(accountId, async read => {
+      const threads = read.threads(await databaseWorkerClient.getThreads(accountId, threadIds));
+      if (threads.length > 0) publishMailboxDelta(accountId, threads, [], 'backfill');
+    });
     AgentPrepService.onMailboxSynced(accountId);
   }
 }
@@ -3344,7 +3360,7 @@ function mergeActionPayload(payloadJson: string | null | undefined, extra: Recor
   });
 }
 
-async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
+async function performMailboxSyncForAccount(email: string, read: MailboxRead): Promise<MailboxDelta> {
   return runMailboxSyncPass(email, {
     getSyncState: accountId => SyncStateRepo.get(accountId),
     saveSyncState: state => SyncStateRepo.save(state),
@@ -3352,12 +3368,12 @@ async function performMailboxSyncForAccount(email: string): Promise<MailboxDelta
     syncInbox: accountId => GmailSyncService.syncInbox(accountId),
     syncIncremental: (accountId, historyId) => GmailSyncService.syncIncremental(accountId, historyId),
     fetchThreadDetail: (accountId, threadId) => GmailSyncService.fetchThreadDetail(accountId, threadId),
-    saveThreads: saveThreadsToDatabase,
-    saveMessages: saveMessagesToDatabase,
+    saveThreads: threads => saveThreadsToDatabase(threads, read),
+    saveMessages: (messages, options) => saveMessagesToDatabase(messages, options, read),
     deleteThread: (accountId, threadId) => ThreadsRepo.delete(accountId, threadId),
     listPendingActions: accountId => ActionLogRepo.listOpenMutations(accountId),
-    publishDelta: publishMailboxDelta,
-    afterPersist: (accountId, threads) => SenderRulesService.applyToPersistedThreads(accountId, threads),
+    publishDelta: (accountId, threads, deleted) => publishMailboxDelta(accountId, read.threads(threads), deleted),
+    afterPersist: (accountId, threads) => SenderRulesService.applyToPersistedThreads(accountId, read.threads(threads)),
     revalidateParked: (accountId, threads) => { SenderRulesService.revalidateParkedArchives(accountId, threads); },
     logger: {
       warning: (scope, message, extra) => SystemLogger.warning(scope, message, extra),
@@ -3374,7 +3390,7 @@ function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
 
   const startedAt = Date.now();
   const mode = SyncStateRepo.get(email)?.historyId ? 'incremental' : 'initial';
-  const task = performMailboxSyncForAccount(email)
+  const task = missingGmailThreads.duringRead(email, read => performMailboxSyncForAccount(email, read))
     .then(delta => {
       SystemLogger.info('Mailbox Sync', 'Mailbox sync completed.', {
         accountId: email,

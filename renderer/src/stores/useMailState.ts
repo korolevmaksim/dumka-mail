@@ -784,22 +784,7 @@ export function useMailState({
         setSyncHealth('syncing');
         setSyncStatusText('Syncing sent mail...');
 
-        const sentResults = await Promise.all(targetAccounts.map(async account => {
-          const result = await window.electronAPI.syncSent(account.email);
-          await window.electronAPI.saveThreads(result.threads);
-          await window.electronAPI.saveMessages(result.messages);
-          return { accountId: account.email, threads: result.threads };
-        }));
-
-        for (const result of sentResults) {
-          applyMailboxDelta({
-            accountId: result.accountId,
-            upserts: result.threads,
-            deletedThreadIds: [],
-            revision: 0,
-            completedAt: new Date().toISOString(),
-          });
-        }
+        await Promise.all(targetAccounts.map(account => window.electronAPI.syncSent(account.email)));
         sentSyncAtRef.current.set(syncKey, Date.now());
         if (cancelled) return;
         setSyncHealth('ready');
@@ -818,7 +803,7 @@ export function useMailState({
     return () => {
       cancelled = true;
     };
-  }, [mailboxView, activeAccount, accounts, applyMailboxDelta, setSyncHealth, setSyncStatusText]);
+  }, [mailboxView, activeAccount, accounts, setSyncHealth, setSyncStatusText]);
 
   // Sync Action Log
   const loadActionLog = useCallback(async () => {
@@ -1176,7 +1161,6 @@ export function useMailState({
       void (async () => {
         try {
           const freshMessages = await window.electronAPI.fetchThreadDetail(thread.accountId, thread.id);
-          await window.electronAPI.saveMessages(freshMessages);
           if (openedThreadKeyRef.current === nextThreadKey) {
             acceptOpenedThreadMessages(nextThreadKey, freshMessages);
             void refreshThreadAgentInsights(thread);
@@ -1641,8 +1625,7 @@ export function useMailState({
     const targets = visibleThreads.slice(0, 25);
     try {
       await Promise.all(targets.map(async t => {
-        const msgs = await window.electronAPI.fetchThreadDetail(activeAccount.email, t.id);
-        await window.electronAPI.saveMessages(msgs);
+        await window.electronAPI.fetchThreadDetail(t.accountId, t.id);
       }));
       await loadThreadsFromDB();
       setSyncHealth('ready');

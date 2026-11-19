@@ -10,6 +10,8 @@ function fixture() {
   const deps = {
     exists: vi.fn(async (_account: string, _thread: string) => false),
     removeCached: vi.fn(async (_account: string, _thread: string) => {}),
+    warnCleanupFailure: vi.fn(),
+    retryLater: vi.fn<(_: () => void) => void>(),
     loggedCandidates: vi.fn(async (_account: string): Promise<string[]> => []),
   };
   return { ...deps, repair: new MissingGmailThreads(deps) };
@@ -29,6 +31,28 @@ describe('reconciling missing Gmail conversations', () => {
     for (const result of results.slice(0, 2)) {
       if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(MissingGmailThreadError);
     }
+  });
+
+  it('keeps a confirmed deletion through a worker lock and excludes stale reads across the commit', async () => {
+    const f = fixture();
+    f.removeCached.mockRejectedValueOnce(new Error('database is locked'));
+    await f.repair.duringRead('other', async other => {
+      await f.repair.duringRead('account', async olderSync => {
+        await expect(f.repair.mutate('account', 'gone', missing)).rejects.toBeInstanceOf(MissingGmailThreadError);
+        expect(f.retryLater).toHaveBeenCalledTimes(1);
+        await f.repair.duringRead('account', async overlappingBackfill => {
+          f.retryLater.mock.calls[0][0]();
+          await vi.waitFor(() => expect(f.removeCached).toHaveBeenCalledTimes(2));
+          expect(overlappingBackfill.excluded.has('gone')).toBe(true);
+        });
+        expect(olderSync.excluded.has('gone')).toBe(true);
+        expect(other.excluded.has('gone')).toBe(false);
+        await f.repair.duringRead('account', async fresh => {
+          expect(fresh.excluded.has('gone')).toBe(false);
+        });
+      });
+    });
+    expect(f.exists).toHaveBeenCalledTimes(1);
   });
 
   it('preserves a live conversation when the missing resource was a label', async () => {

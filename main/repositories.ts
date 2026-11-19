@@ -1,3 +1,4 @@
+import { MISSING_GMAIL_THREAD_MESSAGE } from '../shared/mailActionErrors';
 import crypto from 'crypto';
 import { getDatabase } from './database';
 import {
@@ -2468,12 +2469,13 @@ export const SyncStateRepo = {
 // === Action Log Repository ===
 export const ActionLogRepo = {
   loggedMissingThreadIds(accountId: string): string[] {
-    const rows = getDatabase().prepare<[string], { thread_id: string }>(`
+    const rows = getDatabase().prepare<[string, string], { thread_id: string }>(`
       SELECT DISTINCT a.thread_id FROM mail_action_log a
       JOIN threads t ON t.account_id = a.account_id AND t.id = a.thread_id
       WHERE a.account_id = ? AND a.status = 'failed'
-        AND a.failure_message LIKE '%thread ' || a.thread_id || ': HTTP 404%'
-    `).all(accountId);
+        AND (a.failure_message LIKE '%thread ' || a.thread_id || ': HTTP 404%'
+          OR a.failure_message LIKE '%' || ?)
+    `).all(accountId, MISSING_GMAIL_THREAD_MESSAGE);
     return rows.map(row => row.thread_id);
   },
 

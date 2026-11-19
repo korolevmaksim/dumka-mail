@@ -151,3 +151,6 @@ recorded as failed and offers no retry. An existing thread survives a missing
 label, and an inconclusive check preserves the cache. Offline replay uses the
 same verification. After successful mailbox syncs, Dumka also verifies up to
 three cached conversations per pass from older failed thread actions.
+A busy database defers confirmed cleanup and the action journal allows it to
+resume after restart. Mailbox reads that overlap a confirmed deletion exclude
+the thread from subsequent writes and from their final delta.

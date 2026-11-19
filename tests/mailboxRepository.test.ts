@@ -1,3 +1,4 @@
+import { MISSING_GMAIL_THREAD_MESSAGE } from '../shared/mailActionErrors';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -173,13 +174,17 @@ repositoryIt('finds old thread 404s only for conversations still cached in the s
       id, accountId: account, threadId, kind: 'markDone', status: 'failed', createdAt: new Date().toISOString(),
       failureMessage: `Error invoking remote method 'api:modifyLabels': Error: Label modification failed for thread ${threadId}: HTTP ${status} — {}`,
     });
+    ActionLogRepo.save({
+      id: 'confirmed', accountId: account, threadId: 'live', kind: 'markRead', status: 'failed',
+      createdAt: new Date().toISOString(), failureMessage: "Error invoking remote method 'api:modifyLabels': Error: " + MISSING_GMAIL_THREAD_MESSAGE,
+    });
     record('1', 'stale', 404);
     record('2', 'stale', 404);
     record('3', 'gone', 404);
     record('4', 'live', 403);
-    expect(ActionLogRepo.loggedMissingThreadIds(account)).toEqual(['stale']);
+    expect(ActionLogRepo.loggedMissingThreadIds(account).sort()).toEqual(['live', 'stale']);
     ThreadsRepo.delete(account, 'stale');
-    expect(ActionLogRepo.loggedMissingThreadIds(account)).toEqual([]);
+    expect(ActionLogRepo.loggedMissingThreadIds(account)).toEqual(['live']);
     expect(ThreadsRepo.get(other, 'stale')).not.toBeNull();
     expect(ThreadsRepo.get(account, 'live')).not.toBeNull();
   });

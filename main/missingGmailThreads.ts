@@ -1,3 +1,4 @@
+import { MailboxRead } from './mailboxRead';
 import { MISSING_GMAIL_THREAD_MESSAGE } from '../shared/mailActionErrors';
 
 export class MissingGmailThreadError extends Error {
@@ -8,6 +9,8 @@ interface MissingThreadDeps {
   exists(accountId: string, threadId: string): Promise<boolean>;
   removeCached(accountId: string, threadId: string): Promise<void>;
   loggedCandidates(accountId: string): Promise<string[]>;
+  warnCleanupFailure(accountId: string, error: unknown): void;
+  retryLater?(run: () => void): void;
 }
 
 /** Gmail can return 404 for a missing label as well as a missing conversation. */
@@ -16,7 +19,45 @@ export class MissingGmailThreads {
   private readonly remaining = new Map<string, string[]>();
   private readonly repairing = new Set<string>();
 
+  private readonly reads = new Map<string, Set<MailboxRead>>();
+  private readonly removing = new Map<string, Set<string>>();
+
   constructor(private readonly deps: MissingThreadDeps) {}
+
+  async duringRead<T>(accountId: string, operation: (read: MailboxRead) => Promise<T>): Promise<T> {
+    const read = new MailboxRead(new Set(this.removing.get(accountId)));
+    const active = this.reads.get(accountId) ?? new Set<MailboxRead>();
+    this.reads.set(accountId, active);
+    active.add(read);
+    try {
+      return await operation(read);
+    } finally {
+      active.delete(read);
+      if (!active.size) this.reads.delete(accountId);
+    }
+  }
+
+  private async removeConfirmed(accountId: string, threadId: string): Promise<void> {
+    const ids = this.removing.get(accountId) ?? new Set<string>();
+    if (ids.has(threadId)) return;
+    ids.add(threadId);
+    this.removing.set(accountId, ids);
+    for (const read of this.reads.get(accountId) ?? []) read.excluded.add(threadId);
+
+    const attempt = async () => {
+      try {
+        await this.deps.removeCached(accountId, threadId);
+        ids.delete(threadId);
+        if (!ids.size) this.removing.delete(accountId);
+      } catch (error) {
+        this.deps.warnCleanupFailure(accountId, error);
+        const retry = () => { void attempt(); };
+        if (this.deps.retryLater) this.deps.retryLater(retry);
+        else setTimeout(retry, 30_000).unref();
+      }
+    };
+    await attempt();
+  }
 
   private verify(accountId: string, threadId: string): Promise<boolean> {
     const key = JSON.stringify([accountId, threadId]);
@@ -24,7 +65,7 @@ export class MissingGmailThreads {
     if (pending) return pending;
     const check = this.deps.exists(accountId, threadId).then(async exists => {
       if (exists) return false;
-      await this.deps.removeCached(accountId, threadId);
+      await this.removeConfirmed(accountId, threadId);
       return true;
     }).finally(() => this.checks.delete(key));
     this.checks.set(key, check);

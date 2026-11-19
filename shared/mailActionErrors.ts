@@ -4,7 +4,7 @@ import type { MailActionExecutionResult } from './types';
 // ("Error invoking remote method 'api:modifyLabels': SqliteError: database is
 // locked") must never reach a toast; it stays in the action log and system log.
 
-export const MISSING_GMAIL_THREAD_MESSAGE = 'This conversation is no longer in Gmail. The local copy was removed.';
+export const MISSING_GMAIL_THREAD_MESSAGE = 'This conversation is no longer in Gmail.';
 export const LOCAL_SAVE_FAILED_MESSAGE = "Couldn't save that change. Try again.";
 export const REMOTE_ACTION_FAILED_MESSAGE = "Couldn't complete that change in Gmail. Try again.";
 export const SEND_FAILED_MESSAGE = "Couldn't send the message. Try again.";
