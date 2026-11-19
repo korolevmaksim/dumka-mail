@@ -41,7 +41,7 @@ import {
   type MailboxIndex,
 } from './mailboxIndex';
 import { applyDeltaToThreads } from './mailboxDelta';
-import { LOCAL_SAVE_FAILED_MESSAGE, mailActionFailureMessage } from '../../../shared/mailActionErrors';
+import { LOCAL_SAVE_FAILED_MESSAGE, failedMailActionResult } from '../../../shared/mailActionErrors';
 import { runJournaledMailAction } from '../lib/mailActionJournal';
 import {
   isArchivableAfterUnsubscribe,
@@ -690,6 +690,15 @@ export function useMailState({
 
   const applyMailboxDelta = useCallback((delta: MailboxDelta) => {
     if (delta.upserts.length === 0 && delta.deletedThreadIds.length === 0) return;
+    const removedFromReader = delta.deletedThreadIds.find(id =>
+      threadStateKey({ accountId: delta.accountId, id }) === openedThreadKeyRef.current
+      && !delta.upserts.some(thread => thread.id === id));
+    if (removedFromReader) {
+      openedThreadKeyRef.current = null;
+      setOpenedThread(null);
+      resetOpenedThreadMessages();
+      setFocusedThreadId(current => current === removedFromReader ? null : current);
+    }
     for (const [scopeKey, snapshot] of mailboxSnapshotCacheRef.current) {
       if (!snapshot.accountIds.includes(delta.accountId)) continue;
       const nextThreads = applyDeltaToThreads(snapshot.threads, delta);
@@ -775,22 +784,7 @@ export function useMailState({
         setSyncHealth('syncing');
         setSyncStatusText('Syncing sent mail...');
 
-        const sentResults = await Promise.all(targetAccounts.map(async account => {
-          const result = await window.electronAPI.syncSent(account.email);
-          await window.electronAPI.saveThreads(result.threads);
-          await window.electronAPI.saveMessages(result.messages);
-          return { accountId: account.email, threads: result.threads };
-        }));
-
-        for (const result of sentResults) {
-          applyMailboxDelta({
-            accountId: result.accountId,
-            upserts: result.threads,
-            deletedThreadIds: [],
-            revision: 0,
-            completedAt: new Date().toISOString(),
-          });
-        }
+        await Promise.all(targetAccounts.map(account => window.electronAPI.syncSent(account.email)));
         sentSyncAtRef.current.set(syncKey, Date.now());
         if (cancelled) return;
         setSyncHealth('ready');
@@ -809,7 +803,7 @@ export function useMailState({
     return () => {
       cancelled = true;
     };
-  }, [mailboxView, activeAccount, accounts, applyMailboxDelta, setSyncHealth, setSyncStatusText]);
+  }, [mailboxView, activeAccount, accounts, setSyncHealth, setSyncStatusText]);
 
   // Sync Action Log
   const loadActionLog = useCallback(async () => {
@@ -1167,7 +1161,6 @@ export function useMailState({
       void (async () => {
         try {
           const freshMessages = await window.electronAPI.fetchThreadDetail(thread.accountId, thread.id);
-          await window.electronAPI.saveMessages(freshMessages);
           if (openedThreadKeyRef.current === nextThreadKey) {
             acceptOpenedThreadMessages(nextThreadKey, freshMessages);
             void refreshThreadAgentInsights(thread);
@@ -1226,11 +1219,12 @@ export function useMailState({
     const payload = payloadJson ? JSON.parse(payloadJson) : {};
     const propagateReviewedFailure = Boolean(payload.proposalValidationItem);
     const payloadAccountId = typeof payload.accountId === 'string' ? payload.accountId : null;
+    const readerTarget = openedThread?.id === targetThreadId ? openedThread : null;
     const actionId = crypto.randomUUID();
     const thread = targetThreadId
       ? payloadAccountId
         ? threads.find(t => t.id === targetThreadId && t.accountId === payloadAccountId) || null
-        : threads.find(t => t.id === targetThreadId) || null
+        : readerTarget || threads.find(t => t.id === targetThreadId) || null
       : null;
     if (targetThreadId && payloadAccountId && !thread) {
       return presentMailActionFeedback({
@@ -1258,7 +1252,7 @@ export function useMailState({
 
     // OPTIMISTIC UI STATE TRANSITIONS
     const orderedThreads = navigationOrderRef.current || visibleThreads;
-    const currentIdx = targetThreadId ? orderedThreads.findIndex(t => t.id === targetThreadId) : -1;
+    const currentIdx = targetThreadId ? orderedThreads.findIndex(t => t.id === targetThreadId && t.accountId === targetAccountId) : -1;
     let nextThread: MailThread | null = null;
     if (currentIdx !== -1) {
       if (currentIdx + 1 < orderedThreads.length) {
@@ -1488,7 +1482,7 @@ export function useMailState({
       // Roll back the optimistic change from what SQLite actually holds.
       loadThreadsFromDB(true);
       if (propagateReviewedFailure) throw outcome.error;
-      return { accepted: false, offline: false, actionId, errorMessage: mailActionFailureMessage(outcome.error, kind) };
+      return failedMailActionResult(outcome.error, kind, actionId);
     })();
 
     return presentMailActionFeedback({
@@ -1505,7 +1499,7 @@ export function useMailState({
           if (result.offline) {
             await cancelPendingMailAction(log);
           }
-          await executeMailAction(reverseKind, targetThreadId, draftId, undefined, undoPayloadJson(payloadJson));
+          await executeMailAction(reverseKind, targetThreadId, draftId, undefined, undoPayloadJson(payloadJson, { accountId: targetAccountId }));
         })().catch(error => {
           console.error('Failed to undo mail action:', error);
           emitToast({ type: 'error', message: 'Could not undo.' });
@@ -1631,8 +1625,7 @@ export function useMailState({
     const targets = visibleThreads.slice(0, 25);
     try {
       await Promise.all(targets.map(async t => {
-        const msgs = await window.electronAPI.fetchThreadDetail(activeAccount.email, t.id);
-        await window.electronAPI.saveMessages(msgs);
+        await window.electronAPI.fetchThreadDetail(t.accountId, t.id);
       }));
       await loadThreadsFromDB();
       setSyncHealth('ready');
@@ -1790,12 +1783,9 @@ export function useMailState({
         results.push({ accepted: true, offline: false, actionId });
       } else {
         console.error(`Batch action item failed for thread ${targetThreadId}:`, outcome.error);
-        results.push({
-          accepted: false,
-          offline: false,
-          actionId,
-          errorMessage: outcome.status === 'notSaved' ? LOCAL_SAVE_FAILED_MESSAGE : mailActionFailureMessage(outcome.error, kind),
-        });
+        results.push(outcome.status === 'notSaved'
+          ? { accepted: false, offline: false, actionId, errorMessage: LOCAL_SAVE_FAILED_MESSAGE }
+          : failedMailActionResult(outcome.error, kind, actionId));
       }
       logs.push(log);
     });

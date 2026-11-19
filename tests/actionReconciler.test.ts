@@ -10,6 +10,7 @@ import {
   startBackgroundSyncWorker,
   type ReconcilerDeps,
 } from '../main/actionReconciler';
+import { MissingGmailThreadError } from '../main/missingGmailThreads';
 import { GoogleReauthorizationRequiredError } from '../main/googleAuthState';
 import type { MailActionLog, MailThread } from '../shared/types';
 
@@ -366,6 +367,14 @@ describe('reconcilePendingActions permanent failure', () => {
     await expect(reconcilePendingActions(h.deps)).rejects.toThrow('rollback write failed');
 
     expect(h.saved.at(-1)).toMatchObject({ id: 'a1', status: 'failed', failureMessage: 'HTTP 400: invalid label' });
+  });
+
+  it('settles a queued archive without restoring INBOX after confirmed cache removal', async () => {
+    const error = new MissingGmailThreadError();
+    const h = makeDeps({ pending: [makeAction({ kind: 'markDone' })], gmailError: error });
+    await reconcilePendingActions(h.deps);
+    expect(h.saved.at(-1)).toMatchObject({ status: 'failed', failureMessage: error.message });
+    expect(h.rollbacks).toEqual([]);
   });
 
   const ROLLBACKS: Array<{ kind: MailActionLog['kind']; payloadJson?: string; add: string[]; remove: string[] }> = [

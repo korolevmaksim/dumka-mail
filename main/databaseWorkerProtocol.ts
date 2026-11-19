@@ -18,6 +18,8 @@ import type { MailMessage, MailThread } from '../shared/types';
 export type DatabaseWorkerPayload =
   | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { type: 'saveThreads'; threads: MailThread[] }
+  | { type: 'deleteThread'; accountId: string; threadId: string }
+  | { type: 'loggedMissingThreadIds'; accountId: string }
   | { type: 'listThreads'; accountIds: string[] }
   | { type: 'countInboxThreads'; accountIds: string[]; nowIso: string }
   | { type: 'unreadInboxThreads'; accountId: string; nowIso: string; limit: number }

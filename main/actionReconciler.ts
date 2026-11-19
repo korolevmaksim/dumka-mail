@@ -1,3 +1,4 @@
+import { MissingGmailThreadError } from './missingGmailThreads';
 import { isTransientHttpError, scheduledAtForRetry } from './remoteRetry';
 export { isTransientHttpError, parseRetryAfterMs, scheduledAtForRetry } from './remoteRetry';
 import { isSqliteBusyError } from './sqliteWriteGuard';
@@ -367,8 +368,8 @@ export async function reconcilePendingActions(deps: ReconcilerDeps): Promise<voi
           runRollback(() => {
             deps.actionLog.save(action);
 
-            // Roll back local DB changes for labels on permanent failure
-            if (action.threadId) {
+            // A confirmed missing thread has already been removed from the cache.
+            if (action.threadId && !(err instanceof MissingGmailThreadError)) {
               if (action.kind === 'markDone') {
                 deps.threads.updateLabels(action.accountId, action.threadId, ['INBOX'], [], action.id);
               } else if (action.kind === 'restoreInbox') {

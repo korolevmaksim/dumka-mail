@@ -1,4 +1,5 @@
 import path from 'path';
+import type { MailboxRead } from './mailboxRead';
 import { Worker } from 'worker_threads';
 import { createWritePrioritySignal } from './sqliteWriteGuard';
 import type { MailEmbeddingRow } from './database';
@@ -154,14 +155,14 @@ class DatabaseWorkerClient {
     });
   }
 
-  async saveMessages(messages: MailMessage[], options?: { notifyOfNew?: boolean; indexBodies?: boolean }): Promise<{ newMessages: MailMessage[] }> {
+  async saveMessages(messages: MailMessage[], options?: { notifyOfNew?: boolean; indexBodies?: boolean }, read?: MailboxRead): Promise<{ newMessages: MailMessage[] }> {
     const newMessages: MailMessage[] = [];
     const batches = chunk(messages, MESSAGE_BATCH_SIZE);
 
     for (let index = 0; index < batches.length; index += 1) {
       const result = await this.request<{ newMessages: MailMessage[] }>({
         type: 'saveMessages',
-        messages: batches[index],
+        messages: read ? read.messages(batches[index]) : batches[index],
         notifyOfNew: options?.notifyOfNew,
         indexBodies: options?.indexBodies
       });
@@ -172,16 +173,16 @@ class DatabaseWorkerClient {
       }
     }
 
-    return { newMessages };
+    return { newMessages: read ? read.messages(newMessages) : newMessages };
   }
 
-  async saveThreads(threads: MailThread[]): Promise<void> {
+  async saveThreads(threads: MailThread[], read?: MailboxRead): Promise<void> {
     const batches = chunk(threads, THREAD_BATCH_SIZE);
 
     for (let index = 0; index < batches.length; index += 1) {
       await this.request<null>({
         type: 'saveThreads',
-        threads: batches[index]
+        threads: read ? read.threads(batches[index]) : batches[index]
       });
 
       if (index < batches.length - 1) {
@@ -210,6 +211,14 @@ class DatabaseWorkerClient {
   /** One committed chunk of the `in_inbox` / signals maintenance pass. */
   runThreadMaintenance(chunkSize?: number): Promise<ThreadMaintenanceResult> {
     return this.request<ThreadMaintenanceResult>({ type: 'runThreadMaintenance', chunkSize });
+  }
+
+  deleteThread(accountId: string, threadId: string): Promise<void> {
+    return this.request({ type: 'deleteThread', accountId, threadId });
+  }
+
+  loggedMissingThreadIds(accountId: string): Promise<string[]> {
+    return this.request({ type: 'loggedMissingThreadIds', accountId });
   }
 
   listThreads(accountIds: string[]): Promise<MailThread[]> {
