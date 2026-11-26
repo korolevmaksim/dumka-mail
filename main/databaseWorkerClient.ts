@@ -20,6 +20,7 @@ import {
   databaseWorkerTimeoutMessage,
 } from '../shared/databaseWorkerTimeout';
 import type { ThreadMaintenanceResult } from './migrations';
+import type { DeletedConversationMessages, DeletedMessagesOutcome } from '../shared/gmailHistory';
 import type { ReplyStyleSample } from '../shared/replyStyle';
 import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat, ThreadDecisionRecord } from '../shared/types';
 
@@ -229,6 +230,24 @@ class DatabaseWorkerClient {
         await yieldToEventLoop();
       }
     }
+  }
+
+  /** Removes the messages Gmail deleted for good, in short worker tasks (`ThreadsRepo.removeDeletedMessages`). */
+  async removeDeletedMessages(accountId: string, deletions: DeletedConversationMessages[]): Promise<DeletedMessagesOutcome> {
+    const outcome: DeletedMessagesOutcome = { removedThreadIds: [], remainingThreadIds: [], shortenedThreads: [] };
+    const batches = chunk(deletions, THREAD_DELETE_BATCH_SIZE);
+
+    for (let index = 0; index < batches.length; index += 1) {
+      const result = await this.request<DeletedMessagesOutcome>({ type: 'removeDeletedMessages', accountId, deletions: batches[index] });
+      outcome.removedThreadIds.push(...result.removedThreadIds);
+      outcome.remainingThreadIds.push(...result.remainingThreadIds);
+      outcome.shortenedThreads.push(...result.shortenedThreads);
+
+      if (index < batches.length - 1) {
+        await yieldToEventLoop();
+      }
+    }
+    return outcome;
   }
 
   loggedMissingThreadIds(accountId: string): Promise<string[]> {

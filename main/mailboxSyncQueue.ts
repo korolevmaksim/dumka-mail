@@ -36,13 +36,11 @@ export const MailboxSyncQueueRepo = {
    */
   advance(state: SyncState, threadIds: string[], now: Date = new Date()): void {
     const db = getDatabase();
+    // Replacing the row also gives it a new place in the order of this list:
+    // `due` hands out the latest of a batch first.
     const queue = db.prepare(`
-      INSERT INTO mailbox_sync_queue (account_id, thread_id, queued_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(account_id, thread_id) DO UPDATE SET
-        queued_at = excluded.queued_at,
-        attempts = 0,
-        retry_at = NULL
+      INSERT OR REPLACE INTO mailbox_sync_queue (account_id, thread_id, queued_at, attempts, retry_at)
+      VALUES (?, ?, ?, 0, NULL)
     `);
     const queuedAt = now.toISOString();
     db.transaction(() => {

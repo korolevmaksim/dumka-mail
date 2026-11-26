@@ -3373,6 +3373,7 @@ async function performMailboxSyncForAccount(email: string, read: MailboxRead): P
     saveThreads: threads => saveThreadsToDatabase(threads, read),
     saveMessages: (messages, options) => saveMessagesToDatabase(messages, options, read),
     deleteThreads: (accountId, threadIds) => databaseWorkerClient.deleteThreads(accountId, threadIds),
+    removeDeletedMessages: (accountId, deletions) => databaseWorkerClient.removeDeletedMessages(accountId, deletions),
     queueThreadReads: (state, threadIds) => MailboxSyncQueueRepo.advance(state, threadIds),
     dueThreadReads: (accountId, limit) => MailboxSyncQueueRepo.due(accountId, limit),
     settleThreadReads: (accountId, done, failed) => MailboxSyncQueueRepo.settle(accountId, done, failed),

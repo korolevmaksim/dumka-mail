@@ -117,6 +117,17 @@ describe('the queue of changed conversations', () => {
     });
   });
 
+  repositoryIt('reads a conversation that changed again in the order of its newest report', async () => {
+    await withDatabase(({ queue }) => {
+      const { MailboxSyncQueueRepo } = queue;
+      MailboxSyncQueueRepo.advance(state(WORK, '20'), ['a', 'b', 'c'], at(0));
+      // `a` changes again: Gmail lists it last, so it is the newest change.
+      MailboxSyncQueueRepo.advance(state(WORK, '30'), ['d', 'a'], at(0));
+      expect(MailboxSyncQueueRepo.due(WORK, 10, at(0))).toEqual(['a', 'd', 'c', 'b']);
+      expect(MailboxSyncQueueRepo.count(WORK)).toBe(4);
+    });
+  });
+
   repositoryIt('is purged with the account cache', async () => {
     await withDatabase(({ database, queue }) => {
       const { MailboxSyncQueueRepo } = queue;
@@ -136,7 +147,7 @@ describe('the queue of changed conversations', () => {
       database.SyncStateRepo.save(state(WORK, '10'));
       const changed = Array.from({ length: 60 }, (_, index) => `t${index + 1}`);
       const fetched: string[] = [];
-      let history = [{ updatedThreadIds: changed, deletedThreadIds: [] as string[], historyId: '20' }];
+      let history = [{ updatedThreadIds: changed, deletedMessageIds: {} as Record<string, string[]>, historyId: '20' }];
       const message = (threadId: string): MailMessage => ({
         id: `${threadId}-m`, threadId, accountId: WORK, senderName: 'Sender', senderEmail: 'sender@example.com', subject: threadId,
         snippet: '', receivedAt: '2026-11-26T22:00:00.000Z', labelIds: ['INBOX'], hasAttachments: false, isUnread: false,
@@ -147,7 +158,7 @@ describe('the queue of changed conversations', () => {
         saveSyncState: next => database.SyncStateRepo.save(next),
         nextSyncState: (accountId, base, historyId) => ({ ...state(accountId, historyId), ...base, historyId }),
         syncInbox: async () => { throw new Error('not used'); },
-        syncIncremental: async (_email, historyId) => history.shift() ?? { updatedThreadIds: [], deletedThreadIds: [], historyId },
+        syncIncremental: async (_email, historyId) => history.shift() ?? { updatedThreadIds: [], deletedMessageIds: {}, historyId },
         fetchThreadDetail: async (_email, threadId) => {
           fetched.push(threadId);
           // One conversation Gmail keeps failing on.
@@ -157,6 +168,7 @@ describe('the queue of changed conversations', () => {
         saveThreads: async (threads: MailThread[]) => database.ThreadsRepo.save(threads),
         saveMessages: async messages => database.MessagesRepo.save(messages),
         deleteThreads: async (accountId, threadIds) => database.ThreadsRepo.deleteMany(accountId, threadIds),
+        removeDeletedMessages: async (accountId, deletions) => database.ThreadsRepo.removeDeletedMessages(accountId, deletions),
         queueThreadReads: (next, threadIds) => MailboxSyncQueueRepo.advance(next, threadIds),
         dueThreadReads: (accountId, limit) => MailboxSyncQueueRepo.due(accountId, limit),
         settleThreadReads: (accountId, done, failed) => MailboxSyncQueueRepo.settle(accountId, done, failed),
@@ -172,7 +184,7 @@ describe('the queue of changed conversations', () => {
       expect(MailboxSyncQueueRepo.count(WORK)).toBe(60 - MAX_THREAD_READS_PER_PASS);
 
       // New mail arrives while the old list is still being worked off: it is read first.
-      history = [{ updatedThreadIds: ['fresh'], deletedThreadIds: [], historyId: '30' }];
+      history = [{ updatedThreadIds: ['fresh'], deletedMessageIds: {}, historyId: '30' }];
       await pass();
       expect(fetched[MAX_THREAD_READS_PER_PASS]).toBe('fresh');
       await pass();

@@ -13,6 +13,7 @@ import type {
   EmbeddingCandidateSource,
   ThreadSecurityMode,
 } from './mailAnalysisJobs';
+import type { DeletedConversationMessages } from '../shared/gmailHistory';
 import type { MailMessage, MailThread } from '../shared/types';
 
 export type DatabaseWorkerPayload =
@@ -20,6 +21,7 @@ export type DatabaseWorkerPayload =
   | { type: 'saveThreads'; threads: MailThread[] }
   | { type: 'deleteThread'; accountId: string; threadId: string }
   | { type: 'deleteThreads'; accountId: string; threadIds: string[] }
+  | { type: 'removeDeletedMessages'; accountId: string; deletions: DeletedConversationMessages[] }
   | { type: 'loggedMissingThreadIds'; accountId: string }
   | { type: 'listThreads'; accountIds: string[] }
   | { type: 'countInboxThreads'; accountIds: string[]; nowIso: string }

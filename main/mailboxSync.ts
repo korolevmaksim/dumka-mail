@@ -1,6 +1,7 @@
 import { applyPendingLabelDeltas } from '../shared/mailActions';
 import type { MailActionLog, MailboxDelta, MailMessage, MailThread, SyncState } from '../shared/types';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
+import type { DeletedConversationMessages, DeletedMessageIds, DeletedMessagesOutcome } from '../shared/gmailHistory';
 import { restartHistoryBackfill } from './mailboxHistoryRecovery';
 import { isGoogleReauthorizationRequiredError } from './googleAuthState';
 import { isRateLimitError } from './remoteRetry';
@@ -15,12 +16,17 @@ export interface MailboxSyncDeps {
   saveSyncState(state: SyncState): void;
   nextSyncState(accountId: string, base: SyncState | null, historyId: string, lastFullSyncAt?: string | null): SyncState;
   syncInbox(email: string): Promise<{ threads: MailThread[]; messages: MailMessage[]; historyId: string }>;
-  syncIncremental(email: string, historyId: string): Promise<{ updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string }>;
+  syncIncremental(email: string, historyId: string): Promise<{ updatedThreadIds: string[]; deletedMessageIds: DeletedMessageIds; historyId: string }>;
   fetchThreadDetail(email: string, threadId: string): Promise<MailMessage[]>;
   saveThreads(threads: MailThread[]): Promise<void>;
   saveMessages(messages: MailMessage[], options?: { notifyOfNew?: boolean }): Promise<void>;
   /** Removes conversations from the local cache, off the main event loop. */
   deleteThreads(accountId: string, threadIds: string[]): Promise<void>;
+  /**
+   * Removes the messages Gmail deleted for good, off the main event loop, and
+   * says which conversations went with them and which still have messages.
+   */
+  removeDeletedMessages(accountId: string, deletions: DeletedConversationMessages[]): Promise<DeletedMessagesOutcome>;
   /**
    * Stores the history cursor (`state`) together with the conversations the
    * history up to it reported as changed, in one write.
@@ -204,7 +210,6 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
         failuresInARow = 0;
         done.push(threadId);
         if (outcome === 'missing') deletedThreadIds.add(threadId);
-        // Stored again: Gmail still has a conversation this pass removed for a deleted message.
         else deletedThreadIds.delete(threadId);
       }
     } catch (err: unknown) {
@@ -229,25 +234,43 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     throw err;
   }
 
-  // Deletions first: they cost no Gmail request, and a conversation that was
-  // changed as well is queued below and read again as Gmail has it now. One
-  // that an earlier pass queued stays queued for the same reason: Gmail
-  // reports a single deleted message in the same way, and the read shows
-  // whether the conversation is gone.
-  if (incrementalSync.deletedThreadIds.length > 0) {
-    await deps.deleteThreads(email, incrementalSync.deletedThreadIds);
-    for (const threadId of incrementalSync.deletedThreadIds) deletedThreadIds.add(threadId);
+  // Deleted messages first: removing them costs no Gmail request. Gmail names
+  // the message, not the conversation, so a conversation goes only when
+  // nothing of it is left here. One that still has messages is read again
+  // like a changed one, which also shows if Gmail no longer has it at all.
+  const changed = new Set(incrementalSync.updatedThreadIds);
+  const deletions = Object.entries(incrementalSync.deletedMessageIds).map(([threadId, messageIds]) => ({
+    threadId,
+    messageIds,
+    alsoChanged: changed.has(threadId),
+  }));
+  let toReadAgain: string[] = [];
+  let shortened: MailThread[] = [];
+  if (deletions.length > 0) {
+    const outcome = await deps.removeDeletedMessages(email, deletions);
+    for (const threadId of outcome.removedThreadIds) deletedThreadIds.add(threadId);
+    toReadAgain = outcome.remainingThreadIds.filter(threadId => !changed.has(threadId));
+    shortened = outcome.shortenedThreads;
   }
 
   // The cursor moves past this stretch of history in the same write that
   // queues what it changed, so the conversations Gmail's quota does not allow
   // now are read by later passes instead of being listed again from the start.
+  // The last id is read first: changed conversations before shortened ones.
   deps.queueThreadReads(
     deps.nextSyncState(email, deps.getSyncState(email), incrementalSync.historyId),
-    incrementalSync.updatedThreadIds,
+    [...toReadAgain, ...incrementalSync.updatedThreadIds],
   );
 
   await readQueuedThreads();
+
+  // A conversation that lost a message and was not read again in this pass
+  // is published as it is stored, so a window showing it drops the message
+  // now and not when its turn on the queue comes.
+  const stored = new Set(upserts.map(thread => thread.id));
+  for (const thread of shortened) {
+    if (!stored.has(thread.id) && !deletedThreadIds.has(thread.id)) upserts.push(thread);
+  }
 
   return deps.publishDelta(email, upserts, Array.from(deletedThreadIds));
 }

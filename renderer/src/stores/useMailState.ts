@@ -40,7 +40,7 @@ import {
   threadsForMailboxIndex,
   type MailboxIndex,
 } from './mailboxIndex';
-import { applyDeltaToThreads } from './mailboxDelta';
+import { applyDeltaToThreads, readerMessagesAfterSync } from './mailboxDelta';
 import { LOCAL_SAVE_FAILED_MESSAGE, failedMailActionResult } from '../../../shared/mailActionErrors';
 import { runJournaledMailAction } from '../lib/mailActionJournal';
 import {
@@ -167,6 +167,12 @@ export function useMailState({
   const [openedThreadMessages, setOpenedThreadMessagesState] = useState<MailMessage[]>([]);
   const [openedThreadMessagesKey, setOpenedThreadMessagesKey] = useState<string | null>(null);
   const [openedThreadMessagesStatus, setOpenedThreadMessagesStatus] = useState<ThreadHeaderMessagesStatus>('idle');
+  // What the reader shows right now, for callbacks that outlive a render.
+  const openedThreadMessagesRef = useRef<{ key: string | null; messages: MailMessage[] }>({ key: null, messages: [] });
+  openedThreadMessagesRef.current = {
+    key: openedThreadMessagesStatus === 'ready' ? openedThreadMessagesKey : null,
+    messages: openedThreadMessages,
+  };
   const [threadAgentInsights, setThreadAgentInsights] = useState<ThreadAgentInsights | null>(null);
   const [agentInsightsLoading, setAgentInsightsLoading] = useState(false);
   const openedThreadKeyRef = useRef<string | null>(null);
@@ -688,6 +694,27 @@ export function useMailState({
     return unsubscribe;
   }, [loadThreadsFromDB]);
 
+  /**
+   * A sync stored the open conversation again. If one of the messages on
+   * screen was deleted for good in Gmail, show the conversation as it is
+   * stored now; otherwise leave the reader alone.
+   */
+  const dropDeletedReaderMessages = useCallback(async (thread: MailThread) => {
+    const key = threadStateKey(thread);
+    if (!key || openedThreadMessagesRef.current.key !== key) return;
+    try {
+      const payload = await window.electronAPI.getThreadReaderPayload(thread.accountId, thread.id);
+      const shown = openedThreadMessagesRef.current;
+      if (openedThreadKeyRef.current !== key || shown.key !== key) return;
+      const next = readerMessagesAfterSync(shown.messages, payload.messages);
+      if (!next) return;
+      setOpenedThreadMessagesState(next);
+      setThreadAgentInsights(payload.insights);
+    } catch (error) {
+      console.error('Failed to refresh the open conversation after a sync:', error);
+    }
+  }, []);
+
   const applyMailboxDelta = useCallback((delta: MailboxDelta) => {
     if (delta.upserts.length === 0 && delta.deletedThreadIds.length === 0) return;
     const removedFromReader = delta.deletedThreadIds.find(id =>
@@ -698,6 +725,9 @@ export function useMailState({
       setOpenedThread(null);
       resetOpenedThreadMessages();
       setFocusedThreadId(current => current === removedFromReader ? null : current);
+    } else {
+      const storedAgain = delta.upserts.find(thread => threadStateKey(thread) === openedThreadKeyRef.current);
+      if (storedAgain) void dropDeletedReaderMessages(storedAgain);
     }
     for (const [scopeKey, snapshot] of mailboxSnapshotCacheRef.current) {
       if (!snapshot.accountIds.includes(delta.accountId)) continue;
@@ -729,7 +759,7 @@ export function useMailState({
     if (activeScopeKey && mailboxSnapshotCacheRef.current.has(activeScopeKey)) return;
     setThreads(current => applyDeltaToThreads(current, delta));
     setMailboxIndex(null);
-  }, [activeAccount, accounts, getThreadCategory, mutedLabelIdsByAccount, tabCategories]);
+  }, [activeAccount, accounts, dropDeletedReaderMessages, getThreadCategory, mutedLabelIdsByAccount, tabCategories]);
 
   const {
     syncHealth,

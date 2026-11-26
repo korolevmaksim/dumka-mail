@@ -42,6 +42,7 @@ import { parseStoredThreadSignals } from '../shared/threadSignals';
 import { inboxThreadPredicate, inInboxValue, runThreadMaintenanceChunk, type ThreadMaintenanceResult } from './migrations';
 import { chunked, guardRepositoryWrites, runRollbackTransaction, runWriteTransaction } from './sqliteWriteGuard';
 import { mailSearchRowRemover } from './mailSearchIndex';
+import type { DeletedConversationMessages, DeletedMessagesOutcome } from '../shared/gmailHistory';
 
 // Bulk writers commit in chunks this size so the write lock is held briefly
 // and an interactive write on the other connection can get in between.
@@ -540,6 +541,76 @@ export const ThreadsRepo = {
     for (const chunk of chunked(threadIds, BULK_THREAD_DELETE_CHUNK)) runWriteTransaction(db, () => {
       for (const threadId of chunk) remove(accountId, threadId);
     });
+  },
+
+  /**
+   * Removes the messages Gmail deleted for good. For the database worker.
+   *
+   * A conversation is removed as a whole only when its last message went
+   * here. It stays, and the caller reads it again from Gmail, when it still
+   * has messages, when the history also reported it as changed, or when it is
+   * stored without any message, so nothing is known about what Gmail has left
+   * of it.
+   *
+   * A deleted message used to remove its whole conversation, which then stayed
+   * missing until something else in it changed.
+   */
+  removeDeletedMessages(accountId: string, deletions: DeletedConversationMessages[]): DeletedMessagesOutcome {
+    const db = getDatabase();
+    const removeThread = threadRemover(db);
+    const removeSearchRow = mailSearchRowRemover(db, 'message_id');
+    const message = db.prepare('DELETE FROM messages WHERE account_id = ? AND id = ?');
+    const embeddings = db.prepare('DELETE FROM mail_embeddings WHERE account_id = ? AND message_id = ?');
+    const security = db.prepare('DELETE FROM message_security WHERE account_id = ? AND message_id = ?');
+    // What was prepared for the deleted message itself. Decisions and
+    // summaries name the last message and expire on their own when it changes.
+    const preparedDrafts = db.prepare('DELETE FROM agent_drafts WHERE account_id = ? AND thread_id = ? AND message_id = ?');
+    const replyPipeline = db.prepare('DELETE FROM reply_pipeline_state WHERE account_id = ? AND thread_id = ? AND source_message_id = ?');
+    const followUps = db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ? AND thread_id = ? AND sent_message_id = ?');
+    const anyMessageLeft = db.prepare('SELECT 1 FROM messages WHERE account_id = ? AND thread_id = ? LIMIT 1');
+    const threadStored = db.prepare('SELECT 1 FROM threads WHERE account_id = ? AND id = ?');
+    const outcome: DeletedMessagesOutcome = { removedThreadIds: [], remainingThreadIds: [], shortenedThreads: [] };
+
+    for (const chunk of chunked(deletions, BULK_THREAD_DELETE_CHUNK)) {
+      const removed: string[] = [];
+      const remaining: string[] = [];
+      const shortened: string[] = [];
+      runWriteTransaction(db, () => {
+        // A busy retry runs this again from the start.
+        removed.length = 0;
+        remaining.length = 0;
+        shortened.length = 0;
+        for (const { threadId, messageIds, alsoChanged } of chunk) {
+          let removedMessages = 0;
+          for (const messageId of messageIds) {
+            removedMessages += message.run(accountId, messageId).changes;
+            embeddings.run(accountId, messageId);
+            security.run(accountId, messageId);
+            preparedDrafts.run(accountId, threadId, messageId);
+            replyPipeline.run(accountId, threadId, messageId);
+            followUps.run(accountId, threadId, messageId);
+            removeSearchRow(accountId, messageId);
+          }
+          const stays = alsoChanged
+            || Boolean(anyMessageLeft.get(accountId, threadId))
+            || (removedMessages === 0 && Boolean(threadStored.get(accountId, threadId)));
+          if (!stays) {
+            removeThread(accountId, threadId);
+            removed.push(threadId);
+            continue;
+          }
+          remaining.push(threadId);
+          if (removedMessages > 0) shortened.push(threadId);
+        }
+      });
+      outcome.removedThreadIds.push(...removed);
+      outcome.remainingThreadIds.push(...remaining);
+      for (const threadId of shortened) {
+        const thread = ThreadsRepo.get(accountId, threadId);
+        if (thread) outcome.shortenedThreads.push(thread);
+      }
+    }
+    return outcome;
   },
 
   /**
