@@ -463,6 +463,18 @@ export function runMigrations(db: Database.Database) {
         history_backfill_threads_synced INTEGER NOT NULL DEFAULT 0
     );
 
+    -- Conversations the Gmail history reported as changed and that are still
+    -- to be read from Gmail (mailboxSyncQueue.ts). sync_state.history_id has
+    -- already moved past the history that listed them.
+    CREATE TABLE IF NOT EXISTS mailbox_sync_queue (
+        account_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        queued_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        retry_at TEXT,
+        PRIMARY KEY (account_id, thread_id)
+    );
+
     CREATE TABLE IF NOT EXISTS thread_reminders (
         account_id TEXT NOT NULL,
         thread_id TEXT NOT NULL,

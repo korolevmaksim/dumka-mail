@@ -65,6 +65,33 @@ describe('Gmail quota transport and backfill', () => {
     expect(calls.find(call => call.url.endsWith('/threads/t1'))?.at).toBe(Date.parse('2026-11-13T14:00:06Z'));
   });
 
+  it('waits while the mailbox sync is catching up and then continues with a fresh access token', async () => {
+    const calls: string[] = [];
+    let tokens = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, options?: { headers?: Record<string, string> }) => {
+      calls.push(url.includes('/token') ? 'token' : `${url.split('/v1/users/me/')[1].split('?')[0]} ${options?.headers?.Authorization}`);
+      if (url.includes('/token')) return json({ access_token: `access-${++tokens}` });
+      if (url.includes('maxResults=')) return json({ threads: [{ id: 't1' }] });
+      return json({ id: 't1', messages: [] });
+    }));
+    const { GmailSyncService } = await import('../main/gmail');
+    const { gmailBackgroundTraffic } = await import('../main/gmailBackgroundTraffic');
+    const page = GmailSyncService.syncBackfillPage('me@example.com');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['token', 'threads Bearer access-1']);
+
+    // The sync reads ten conversations a minute for 25 minutes.
+    for (let minute = 0; minute < 25; minute += 1) {
+      for (let read = 0; read < 10; read += 1) gmailBackgroundTraffic.takeSyncThreadRead('me@example.com');
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+    expect(calls).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(page).resolves.toMatchObject({ threads: [] });
+    expect(calls.slice(2)).toEqual(['token', 'threads/t1 Bearer access-2']);
+  });
+
   it('skips a deleted thread but finishes the page', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(json({ access_token: 'fixture-access' }))

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GmailBackgroundTraffic } from '../main/gmailBackgroundTraffic';
+import { GmailBackgroundTraffic, SYNC_THREAD_READS_PER_MINUTE } from '../main/gmailBackgroundTraffic';
 
 const quota = (reason = 'rateLimitExceeded') => Object.assign(
   new Error(`HTTP 403 — {"error":{"errors":[{"reason":"${reason}"}]}}`), { status: 403 },
@@ -86,5 +86,43 @@ describe('Gmail background traffic', () => {
     traffic.noteFailure('me@example.com', quota());
     await vi.advanceTimersByTimeAsync(2000);
     await waiting;
+  });
+
+  it('gives the scheduled sync a share of full conversation reads per minute and account', async () => {
+    const traffic = new GmailBackgroundTraffic();
+    const take = (email: string) => Array.from({ length: SYNC_THREAD_READS_PER_MINUTE + 5 }, () => traffic.takeSyncThreadRead(email))
+      .filter(Boolean).length;
+    expect(take('me@example.com')).toBe(SYNC_THREAD_READS_PER_MINUTE);
+    expect(take('ME@example.com')).toBe(0);
+    expect(take('other@example.com')).toBe(SYNC_THREAD_READS_PER_MINUTE);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(traffic.takeSyncThreadRead('me@example.com')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(take('me@example.com')).toBe(SYNC_THREAD_READS_PER_MINUTE);
+  });
+
+  it('gives the sync no conversation reads during a quota cooldown', async () => {
+    const traffic = new GmailBackgroundTraffic(Date.now, undefined, () => 0);
+    traffic.noteFailure('me@example.com', quota());
+    expect(traffic.takeSyncThreadRead('me@example.com')).toBe(false);
+    expect(traffic.takeSyncThreadRead('other@example.com')).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(traffic.takeSyncThreadRead('me@example.com')).toBe(true);
+  });
+
+  it('holds older-mail indexing back while the sync is catching up, not for a few new messages', async () => {
+    const traffic = new GmailBackgroundTraffic();
+    for (let read = 0; read < 9; read += 1) traffic.takeSyncThreadRead('me@example.com');
+    await traffic.waitForSlot('me@example.com');
+
+    traffic.takeSyncThreadRead('me@example.com');
+    const ready = vi.fn();
+    const waiting = traffic.waitForSlot('me@example.com').then(ready);
+    await vi.advanceTimersByTimeAsync(55_000);
+    expect(ready).not.toHaveBeenCalled();
+    // A minute after the sync's reads its share is free again.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await waiting;
+    expect(ready).toHaveBeenCalledOnce();
   });
 });

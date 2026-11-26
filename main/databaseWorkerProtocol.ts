@@ -19,6 +19,7 @@ export type DatabaseWorkerPayload =
   | { type: 'saveMessages'; messages: MailMessage[]; notifyOfNew?: boolean; indexBodies?: boolean }
   | { type: 'saveThreads'; threads: MailThread[] }
   | { type: 'deleteThread'; accountId: string; threadId: string }
+  | { type: 'deleteThreads'; accountId: string; threadIds: string[] }
   | { type: 'loggedMissingThreadIds'; accountId: string }
   | { type: 'listThreads'; accountIds: string[] }
   | { type: 'countInboxThreads'; accountIds: string[]; nowIso: string }

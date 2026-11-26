@@ -11,6 +11,7 @@
 // `./database`, `./repositories` types and `../shared/*`. No Electron, no
 // network, no `./ai`.
 import {
+  getDatabase,
   MailEmbeddingsRepo,
   MessagesRepo,
   MessageSecurityRepo,
@@ -220,7 +221,11 @@ export function collectPendingEmbeddingCandidates(
 }
 
 export function saveEmbeddingVectors(rows: MailEmbeddingRow[]): void {
-  MailEmbeddingsRepo.saveMany(rows);
+  // The vectors were computed outside the database, and the conversation may
+  // have been removed meanwhile. A vector without its message would outlive
+  // it: removing a conversation finds its vectors through its messages.
+  const stored = getDatabase().prepare('SELECT 1 FROM messages WHERE account_id = ? AND id = ?');
+  MailEmbeddingsRepo.saveMany(rows.filter(row => stored.get(row.accountId, row.messageId) !== undefined));
 }
 
 // === Daily briefing context ===

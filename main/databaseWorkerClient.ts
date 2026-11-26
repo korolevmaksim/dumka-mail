@@ -40,6 +40,7 @@ export { DATABASE_WORKER_REQUEST_TIMEOUT_MS };
 
 const MESSAGE_BATCH_SIZE = 5;
 const THREAD_BATCH_SIZE = 50;
+const THREAD_DELETE_BATCH_SIZE = 50;
 // Briefing threads carry full message bodies; keep each worker task short so
 // interactive requests are never stuck behind the whole selection.
 const BRIEFING_THREAD_BATCH_SIZE = 20;
@@ -215,6 +216,19 @@ class DatabaseWorkerClient {
 
   deleteThread(accountId: string, threadId: string): Promise<void> {
     return this.request({ type: 'deleteThread', accountId, threadId });
+  }
+
+  /** Removes conversations Gmail reported as deleted, in short worker tasks. */
+  async deleteThreads(accountId: string, threadIds: string[]): Promise<void> {
+    const batches = chunk(threadIds, THREAD_DELETE_BATCH_SIZE);
+
+    for (let index = 0; index < batches.length; index += 1) {
+      await this.request<null>({ type: 'deleteThreads', accountId, threadIds: batches[index] });
+
+      if (index < batches.length - 1) {
+        await yieldToEventLoop();
+      }
+    }
   }
 
   loggedMissingThreadIds(accountId: string): Promise<string[]> {

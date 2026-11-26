@@ -41,10 +41,12 @@ import { isDecision } from '../shared/decision';
 import { parseStoredThreadSignals } from '../shared/threadSignals';
 import { inboxThreadPredicate, inInboxValue, runThreadMaintenanceChunk, type ThreadMaintenanceResult } from './migrations';
 import { chunked, guardRepositoryWrites, runRollbackTransaction, runWriteTransaction } from './sqliteWriteGuard';
+import { mailSearchRowRemover } from './mailSearchIndex';
 
 // Bulk writers commit in chunks this size so the write lock is held briefly
 // and an interactive write on the other connection can get in between.
 const BULK_THREAD_CHUNK = 100;
+const BULK_THREAD_DELETE_CHUNK = 25;
 const BULK_MESSAGE_CHUNK = 40;
 const BULK_EMBEDDING_CHUNK = 100;
 import { buildFollowUpRadarResult, normalizeFollowUpAgeWindow } from '../shared/followUpRadar';
@@ -163,6 +165,7 @@ export const AccountsRepo = {
       db.prepare('DELETE FROM calendar_notification_log WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM drafts WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(id);
+      db.prepare('DELETE FROM mailbox_sync_queue WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM thread_reminders WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM reply_pipeline_state WHERE account_id = ?').run(id);
@@ -315,6 +318,50 @@ function mapThreadRow(r: any): MailThread {
 }
 
 // === Threads Repository ===
+/**
+ * Returns a function that removes one conversation and everything stored for
+ * it. Call it inside a write transaction.
+ *
+ * Every statement finds its rows through an index, so removing a conversation
+ * that is already gone costs a few lookups. `tests/threadDeletePlan.test.ts`
+ * fails if one of them goes back to reading a whole table.
+ */
+function threadRemover(db: ReturnType<typeof getDatabase>): (accountId: string, threadId: string) => void {
+  const removeSearchRows = mailSearchRowRemover(db, 'thread_id');
+  // The embeddings of a conversation are found through its messages: the table
+  // is keyed by message, and comparing `thread_id` alone read every stored
+  // vector of the account. It has to run while the messages are still there.
+  const embeddings = db.prepare(`
+    DELETE FROM mail_embeddings
+    WHERE account_id = ? AND message_id IN (
+      SELECT id FROM messages WHERE account_id = ? AND thread_id = ?
+    )
+  `);
+  const byThread = THREAD_OWNED_TABLES.map(table => db.prepare(`DELETE FROM ${table} WHERE account_id = ? AND thread_id = ?`));
+  const thread = db.prepare('DELETE FROM threads WHERE account_id = ? AND id = ?');
+  const summaries = db.prepare('DELETE FROM thread_summaries WHERE account_id IN (?, ?) AND thread_id = ?');
+  const ruleArchives = db.prepare('DELETE FROM sender_rule_archives WHERE account_id = ? AND thread_id = ?');
+  return (accountId, threadId) => {
+    embeddings.run(accountId, accountId, threadId);
+    thread.run(accountId, threadId);
+    for (const statement of byThread) statement.run(accountId, threadId);
+    removeSearchRows(accountId, threadId);
+    summaries.run(accountId, accountId.toLowerCase(), threadId);
+    ruleArchives.run(accountId.trim().toLowerCase(), threadId);
+  };
+}
+
+/** Tables whose rows of one conversation are found by `(account_id, thread_id)`. */
+const THREAD_OWNED_TABLES = [
+  'messages',
+  'thread_reminders',
+  'follow_up_radar_state',
+  'reply_pipeline_state',
+  'agent_drafts',
+  'message_security',
+  'thread_decisions',
+] as const;
+
 export const ThreadsRepo = {
   list(accountId: string): MailThread[] {
     const db = getDatabase();
@@ -479,20 +526,20 @@ export const ThreadsRepo = {
 
   delete(accountId: string, threadId: string) {
     const db = getDatabase();
-    db.transaction(() => {
-      db.prepare('DELETE FROM threads WHERE account_id = ? AND id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM messages WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM thread_reminders WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM follow_up_radar_state WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM reply_pipeline_state WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM mail_search WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM agent_drafts WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM message_security WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM mail_embeddings WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM thread_decisions WHERE account_id = ? AND thread_id = ?').run(accountId, threadId);
-      db.prepare('DELETE FROM thread_summaries WHERE account_id IN (?, ?) AND thread_id = ?').run(accountId, accountId.toLowerCase(), threadId);
-      db.prepare('DELETE FROM sender_rule_archives WHERE account_id = ? AND thread_id = ?').run(accountId.trim().toLowerCase(), threadId);
-    })();
+    const remove = threadRemover(db);
+    db.transaction(() => remove(accountId, threadId))();
+  },
+
+  /**
+   * Removes many conversations of one account, a few per transaction. For the
+   * database worker: a sync pass can be told about hundreds of deletions.
+   */
+  deleteMany(accountId: string, threadIds: string[]) {
+    const db = getDatabase();
+    const remove = threadRemover(db);
+    for (const chunk of chunked(threadIds, BULK_THREAD_DELETE_CHUNK)) runWriteTransaction(db, () => {
+      for (const threadId of chunk) remove(accountId, threadId);
+    });
   },
 
   /**
@@ -787,7 +834,7 @@ export const MessagesRepo = {
       INSERT INTO mail_search (account_id, thread_id, message_id, subject, sender, snippet, body_plain)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const deleteSearch = db.prepare('DELETE FROM mail_search WHERE account_id = ? AND message_id = ?');
+    const deleteSearch = mailSearchRowRemover(db, 'message_id');
 
     for (const chunk of chunked(messages, BULK_MESSAGE_CHUNK)) runWriteTransaction(db, () => {
       for (const m of chunk) {
@@ -816,7 +863,7 @@ export const MessagesRepo = {
         );
 
         // Update search FTS index: delete old index entry and insert new
-        deleteSearch.run(m.accountId, m.id);
+        deleteSearch(m.accountId, m.id);
         insertSearch.run(
           m.accountId,
           m.threadId,

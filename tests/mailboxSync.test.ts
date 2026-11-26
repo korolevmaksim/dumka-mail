@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { performMailboxSyncForAccount, type MailboxSyncDeps } from '../main/mailboxSync';
+import { GoogleReauthorizationRequiredError } from '../main/googleAuthState';
+import { MAX_THREAD_READS_PER_PASS, performMailboxSyncForAccount, type MailboxSyncDeps } from '../main/mailboxSync';
 import type { MailActionLog, MailMessage, MailThread, SyncState } from '../shared/types';
 
 function thread(id: string, labels: string[] = ['INBOX']): MailThread {
@@ -43,11 +44,18 @@ function makeDeps(options: {
   incremental?: { updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string };
   fetchError?: Error;
   pending?: MailActionLog[];
+  /** Conversations left on the queue by earlier passes, most urgent first. */
+  queued?: string[];
 } = {}) {
   const savedStates: SyncState[] = [];
   const savedThreads: MailThread[][] = [];
   const savedMessages: MailMessage[][] = [];
   const deleted: string[] = [];
+  const deleteCalls: string[][] = [];
+  const fetched: string[] = [];
+  const queue: string[] = [...(options.queued || [])];
+  const postponed: string[] = [];
+  let quotaAllows = true;
   const deltas: Array<{ upserts: MailThread[]; deletedThreadIds: string[] }> = [];
   let pending = options.pending || [];
   const deps: MailboxSyncDeps = {
@@ -73,12 +81,31 @@ function makeDeps(options: {
     syncInbox: async () => ({ threads: [thread('inbox')], messages: [message('inbox')], historyId: '100' }),
     syncIncremental: async () => options.incremental || { updatedThreadIds: [], deletedThreadIds: [], historyId: '20' },
     fetchThreadDetail: async (_email, threadId) => {
+      fetched.push(threadId);
       if (options.fetchError) throw options.fetchError;
       return [message(threadId)];
     },
     saveThreads: async threads => { savedThreads.push(threads); },
     saveMessages: async messages => { savedMessages.push(messages); },
-    deleteThread: (_accountId, threadId) => { deleted.push(threadId); },
+    deleteThreads: async (_accountId, threadIds) => {
+      deleteCalls.push(threadIds);
+      deleted.push(...threadIds);
+    },
+    queueThreadReads: (state, threadIds) => {
+      savedStates.push(state);
+      // Newly reported conversations go in front of what was already waiting.
+      for (const threadId of threadIds) {
+        const at = queue.indexOf(threadId);
+        if (at >= 0) queue.splice(at, 1);
+      }
+      queue.unshift(...[...threadIds].reverse());
+    },
+    dueThreadReads: (_accountId, limit) => queue.filter(threadId => !postponed.includes(threadId)).slice(0, limit),
+    settleThreadReads: (_accountId, done, failed) => {
+      for (const threadId of done) queue.splice(queue.indexOf(threadId), 1);
+      postponed.push(...failed);
+    },
+    takeThreadRead: () => quotaAllows,
     listPendingActions: () => pending,
     publishDelta: (_accountId, upserts, deletedThreadIds) => {
       deltas.push({ upserts, deletedThreadIds });
@@ -93,8 +120,13 @@ function makeDeps(options: {
     savedThreads,
     savedMessages,
     deleted,
+    deleteCalls,
+    fetched,
+    queue,
+    postponed,
     deltas,
     setPending(next: MailActionLog[]) { pending = next; },
+    setQuotaAllows(next: boolean) { quotaAllows = next; },
   };
 }
 
@@ -111,8 +143,9 @@ describe('performMailboxSyncForAccount', () => {
       return threads.map(item => item.id === 't1' ? { ...item, labelIds: [] } : item);
     };
     await performMailboxSyncForAccount('me@example.com', h.deps);
-    expect(calls).toEqual([['t1'], ['t2']]);
-    expect(h.deltas[0].upserts.map(item => [item.id, item.labelIds])).toEqual([['t1', []], ['t2', ['INBOX']]]);
+    // The most recently changed conversation is read first.
+    expect(calls).toEqual([['t2'], ['t1']]);
+    expect(h.deltas[0].upserts.map(item => [item.id, item.labelIds])).toEqual([['t2', ['INBOX']], ['t1', []]]);
   });
 
   it('runs the post-persist step after messages on a full sync and survives its failure', async () => {
@@ -125,14 +158,16 @@ describe('performMailboxSyncForAccount', () => {
     expect(h.deltas[0].upserts.map(item => item.id)).toEqual(['inbox']);
   });
 
-  it('does not advance the history cursor when a thread fetch fails', async () => {
+  it('keeps a conversation queued when its fetch fails, with the cursor already moved on', async () => {
     const h = makeDeps({
       historyId: '10',
       incremental: { updatedThreadIds: ['18f2c404b7e3d012'], deletedThreadIds: [], historyId: '20' },
       fetchError: Object.assign(new Error('fetchThreadDetail error for 18f2c404b7e3d012: HTTP 503 — backend'), { status: 503 }),
     });
     await performMailboxSyncForAccount('me@example.com', h.deps);
-    expect(h.savedStates).toHaveLength(0);
+    expect(h.savedStates.map(state => state.historyId)).toEqual(['20']);
+    expect(h.queue).toEqual(['18f2c404b7e3d012']);
+    expect(h.postponed).toEqual(['18f2c404b7e3d012']);
     expect(h.deleted).toHaveLength(0);
     expect(h.deltas[0].upserts).toHaveLength(0);
   });
@@ -203,19 +238,172 @@ describe('performMailboxSyncForAccount', () => {
     expect(h.deltas[0].upserts.map(thread => thread.id)).toEqual(['inbox']);
   });
 
-  it('preserves backfill progress committed during an incremental thread fetch', async () => {
-    const h = makeDeps({ historyId: '10', incremental: { updatedThreadIds: ['t1'], deletedThreadIds: [], historyId: '20' } });
+  it('preserves backfill progress committed while the history was being listed', async () => {
+    const h = makeDeps({ historyId: '10' });
     const current = h.deps.getSyncState('me@example.com');
     if (!current) throw new Error('Expected initial sync state');
     h.deps.getSyncState = () => current;
-    h.deps.fetchThreadDetail = async () => {
+    h.deps.syncIncremental = async () => {
       current.historyBackfillPageToken = 'new-page';
       current.historyBackfillPagesSynced = 2;
       current.historyBackfillThreadsSynced = 40;
-      return [message('t1')];
+      return { updatedThreadIds: ['t1'], deletedThreadIds: [], historyId: '20' };
     };
     await performMailboxSyncForAccount('me@example.com', h.deps);
     expect(h.savedStates[0]).toMatchObject({ historyId: '20', historyBackfillPageToken: 'new-page',
       historyBackfillPagesSynced: 2, historyBackfillThreadsSynced: 40 });
+  });
+});
+
+const quotaError = () => Object.assign(
+  new Error('fetchThreadDetail error for t: HTTP 403 — {"error":{"status":"RESOURCE_EXHAUSTED","errors":[{"reason":"rateLimitExceeded"}]}}'),
+  { status: 403, rateLimited: true },
+);
+
+describe('mailbox sync under the Gmail quota', () => {
+  const ids = (count: number, prefix = 't') => Array.from({ length: count }, (_, index) => `${prefix}${index + 1}`);
+
+  it('stops at the first quota error instead of trying every remaining conversation', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ids(10), deletedThreadIds: [], historyId: '20' },
+    });
+    h.deps.fetchThreadDetail = async (_email, threadId) => {
+      h.fetched.push(threadId);
+      if (h.fetched.length > 3) throw quotaError();
+      return [message(threadId)];
+    };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toHaveLength(4);
+    expect(h.deltas[0].upserts).toHaveLength(3);
+    expect(h.queue).toHaveLength(7);
+    // The conversation Gmail refused is not at fault and is not postponed.
+    expect(h.postponed).toEqual([]);
+    expect(h.savedStates.map(state => state.historyId)).toEqual(['20']);
+    expect(vi.mocked(h.deps.logger!.warning).mock.calls.map(call => call[1])).toEqual([
+      'Gmail quota reached; the remaining conversations wait for a later pass.',
+    ]);
+  });
+
+  it('works a long list off across passes without listing or reading anything twice', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ids(60), deletedThreadIds: [], historyId: '20' },
+    });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toHaveLength(MAX_THREAD_READS_PER_PASS);
+    expect(h.queue).toHaveLength(60 - MAX_THREAD_READS_PER_PASS);
+
+    // Later passes: Gmail has nothing new, the queue is all there is to do.
+    h.deps.syncIncremental = async () => ({ updatedThreadIds: [], deletedThreadIds: [], historyId: '20' });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.queue).toEqual([]);
+    expect([...h.fetched].sort()).toEqual(ids(60).sort());
+    expect(h.deltas.map(delta => delta.upserts.length)).toEqual([25, 25, 10]);
+  });
+
+  it('reads nothing while the quota does not allow it and keeps everything queued', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ids(3), deletedThreadIds: ['gone'], historyId: '20' },
+    });
+    h.setQuotaAllows(false);
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toEqual([]);
+    expect(h.queue).toHaveLength(3);
+    // Deletions need no Gmail request and are applied all the same.
+    expect(h.deltas[0].deletedThreadIds).toEqual(['gone']);
+  });
+
+  it('reads the conversations of an earlier pass when Gmail reports nothing new', async () => {
+    const h = makeDeps({ historyId: '20', queued: ['old1', 'old2'] });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toEqual(['old1', 'old2']);
+    expect(h.queue).toEqual([]);
+  });
+
+  it('removes all reported deletions in one request before reading anything', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ['t1'], deletedThreadIds: ids(184, 'd'), historyId: '20' },
+    });
+    const order: string[] = [];
+    const deleteThreads = h.deps.deleteThreads;
+    h.deps.deleteThreads = async (accountId, threadIds) => { order.push('delete'); await deleteThreads(accountId, threadIds); };
+    const fetchThreadDetail = h.deps.fetchThreadDetail;
+    h.deps.fetchThreadDetail = async (email, threadId) => { order.push('fetch'); return fetchThreadDetail(email, threadId); };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(order).toEqual(['delete', 'fetch']);
+    expect(h.deleteCalls).toHaveLength(1);
+    expect(h.deltas[0].deletedThreadIds).toHaveLength(184);
+  });
+
+  it('does not report a conversation as deleted when it was read again in the same pass', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ['both'], deletedThreadIds: ['both', 'gone'], historyId: '20' },
+    });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.deleted).toEqual(['both', 'gone']);
+    expect(h.deltas[0].upserts.map(item => item.id)).toEqual(['both']);
+    expect(h.deltas[0].deletedThreadIds).toEqual(['gone']);
+  });
+
+  it('gives up for this pass after three failed reads in a row', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ids(10), deletedThreadIds: [], historyId: '20' },
+      fetchError: Object.assign(new Error('fetchThreadDetail error: HTTP 503 — backend'), { status: 503 }),
+    });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toHaveLength(3);
+    expect(h.postponed).toHaveLength(3);
+    expect(h.queue).toHaveLength(10);
+  });
+
+  it('stops without postponing anything when the account has to sign in again', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ids(5), deletedThreadIds: [], historyId: '20' },
+      fetchError: new GoogleReauthorizationRequiredError('me@example.com', 'credentials_rejected'),
+    });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toHaveLength(1);
+    expect(h.postponed).toEqual([]);
+    expect(h.queue).toHaveLength(5);
+  });
+
+  it('publishes the deletions even when the queue could not be read', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ['t1'], deletedThreadIds: ['gone'], historyId: '20' },
+    });
+    h.deps.dueThreadReads = () => { throw new Error('disk I/O error'); };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.deltas[0].deletedThreadIds).toEqual(['gone']);
+    expect(h.queue).toEqual(['t1']);
+  });
+
+  it('publishes what it stored even when the queue could not be updated', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ['t1'], deletedThreadIds: [], historyId: '20' },
+    });
+    h.deps.settleThreadReads = () => { throw new Error('database is locked'); };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.deltas[0].upserts.map(item => item.id)).toEqual(['t1']);
+  });
+
+  it('keeps a conversation queued when Gmail no longer has it but the local removal failed', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: ['gone'], deletedThreadIds: [], historyId: '20' },
+      fetchError: Object.assign(new Error('fetchThreadDetail error for gone: HTTP 404 — notFound'), { status: 404 }),
+    });
+    h.deps.deleteThreads = async () => { throw new Error('Database worker did not answer'); };
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.queue).toEqual(['gone']);
+    expect(h.deltas[0].deletedThreadIds).toEqual([]);
   });
 });

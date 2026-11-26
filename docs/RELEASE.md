@@ -60,11 +60,19 @@ during cooldown are queued locally without another remote request. A failed
 backfill detail request leaves the page cursor unchanged; only HTTP 404 threads
 may be skipped.
 
+The scheduled mailbox sync reads changed conversations in full too. It may start
+at most 25 such reads per account and minute (half the quota) and reads at most
+25 conversations per pass; the rest wait in `mailbox_sync_queue` for the next
+pass, with the history cursor already moved on. A quota response ends the pass
+at once, because Gmail charges rejected requests as well. Older-mail indexing
+pauses while the sync has used ten or more reads in the last minute.
+
 References: [Gmail quotas](https://developers.google.com/workspace/gmail/api/reference/quota)
 and [Gmail error handling](https://developers.google.com/workspace/gmail/api/guides/handle-errors).
 
-Run `tests/actionReconciler.test.ts`, `tests/gmailBackgroundTraffic.test.ts`, and
-`tests/gmailBackfillQuota.test.ts` before the full test suite and production build.
+Run `tests/actionReconciler.test.ts`, `tests/gmailBackgroundTraffic.test.ts`,
+`tests/gmailBackfillQuota.test.ts`, `tests/mailboxSync.test.ts`, and
+`tests/mailboxSyncQueue.test.ts` before the full test suite and production build.
 They cover quota parking/replay, permanent permission failures, cooldowns,
 foreground priority, and preserving pagination after incomplete backfill pages.
 
