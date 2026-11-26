@@ -73,6 +73,11 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
       return;
     }
 
+    if (request.type === 'removeDeletedMessages') {
+      send({ id: request.id, ok: true, result: ThreadsRepo.removeDeletedMessages(request.accountId, request.deletions) });
+      return;
+    }
+
     if (request.type === 'loggedMissingThreadIds') {
       send({ id: request.id, ok: true, result: ActionLogRepo.loggedMissingThreadIds(request.accountId) });
       return;

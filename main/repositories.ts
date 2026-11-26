@@ -42,6 +42,7 @@ import { parseStoredThreadSignals } from '../shared/threadSignals';
 import { inboxThreadPredicate, inInboxValue, runThreadMaintenanceChunk, type ThreadMaintenanceResult } from './migrations';
 import { chunked, guardRepositoryWrites, runRollbackTransaction, runWriteTransaction } from './sqliteWriteGuard';
 import { mailSearchRowRemover } from './mailSearchIndex';
+import type { DeletedConversationMessages, DeletedMessagesOutcome } from '../shared/gmailHistory';
 
 // Bulk writers commit in chunks this size so the write lock is held briefly
 // and an interactive write on the other connection can get in between.
@@ -540,6 +541,53 @@ export const ThreadsRepo = {
     for (const chunk of chunked(threadIds, BULK_THREAD_DELETE_CHUNK)) runWriteTransaction(db, () => {
       for (const threadId of chunk) remove(accountId, threadId);
     });
+  },
+
+  /**
+   * Removes the messages Gmail deleted for good. A conversation is removed as
+   * a whole only when none of its messages is left here and the history did
+   * not also report it as changed; otherwise it stays and the caller reads it
+   * again from Gmail. For the database worker.
+   *
+   * A deleted message used to remove its whole conversation, which then stayed
+   * missing until something else in it changed.
+   */
+  removeDeletedMessages(accountId: string, deletions: DeletedConversationMessages[]): DeletedMessagesOutcome {
+    const db = getDatabase();
+    const removeThread = threadRemover(db);
+    const removeSearchRow = mailSearchRowRemover(db, 'message_id');
+    const message = db.prepare('DELETE FROM messages WHERE account_id = ? AND id = ?');
+    const embeddings = db.prepare('DELETE FROM mail_embeddings WHERE account_id = ? AND message_id = ?');
+    const security = db.prepare('DELETE FROM message_security WHERE account_id = ? AND message_id = ?');
+    const anyMessageLeft = db.prepare('SELECT 1 FROM messages WHERE account_id = ? AND thread_id = ? LIMIT 1');
+    const outcome: DeletedMessagesOutcome = { removedThreadIds: [], remainingThreadIds: [] };
+
+    for (const chunk of chunked(deletions, BULK_THREAD_DELETE_CHUNK)) {
+      const removed: string[] = [];
+      const remaining: string[] = [];
+      runWriteTransaction(db, () => {
+        // A busy retry runs this again from the start.
+        removed.length = 0;
+        remaining.length = 0;
+        for (const { threadId, messageIds, alsoChanged } of chunk) {
+          for (const messageId of messageIds) {
+            message.run(accountId, messageId);
+            embeddings.run(accountId, messageId);
+            security.run(accountId, messageId);
+            removeSearchRow(accountId, messageId);
+          }
+          if (alsoChanged || anyMessageLeft.get(accountId, threadId)) {
+            remaining.push(threadId);
+          } else {
+            removeThread(accountId, threadId);
+            removed.push(threadId);
+          }
+        }
+      });
+      outcome.removedThreadIds.push(...removed);
+      outcome.remainingThreadIds.push(...remaining);
+    }
+    return outcome;
   },
 
   /**

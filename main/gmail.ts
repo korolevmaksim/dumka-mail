@@ -2,7 +2,7 @@ import { gmailBackgroundTraffic } from './gmailBackgroundTraffic';
 import { isRateLimitError } from './remoteRetry';
 import crypto from 'crypto';
 import { GmailSignatureSyncResult, MailLabelDefinition, MailThread, MailMessage, Recipient, AttachmentMetadata } from '../shared/types';
-import { paginateGmailHistory } from '../shared/gmailHistory';
+import { paginateGmailHistory, type HistoryChanges } from '../shared/gmailHistory';
 import { rfc822MessageIdQuery } from '../shared/rfcMessageId';
 import { getRefreshToken } from './keychain';
 import { compileMarkdownToHtml } from '../shared/markdown';
@@ -532,7 +532,7 @@ export const GmailSyncService = {
   },
 
   // Incremental history sync: pages through History until exhausted or the page cap.
-  async syncIncremental(email: string, startHistoryId: string): Promise<{ updatedThreadIds: string[]; deletedThreadIds: string[]; historyId: string }> {
+  async syncIncremental(email: string, startHistoryId: string): Promise<HistoryChanges & { historyId: string }> {
     const accessToken = await getAccessToken(email);
     return paginateGmailHistory({
       startHistoryId,

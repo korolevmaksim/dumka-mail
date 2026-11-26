@@ -206,6 +206,50 @@ describe('removing a conversation from the local cache', () => {
   });
 });
 
+describe('removing the messages Gmail deleted for good', () => {
+  repositoryIt('removes one message and keeps the conversation and its other message', async () => {
+    await withDatabase(database => {
+      seed(database);
+      const outcome = database.ThreadsRepo.removeDeletedMessages(WORK, [
+        { threadId: '18f2c404b7e3d012', messageIds: ['18f2c404b7e3d0a1'], alsoChanged: false },
+      ]);
+      expect(outcome).toEqual({ removedThreadIds: [], remainingThreadIds: ['18f2c404b7e3d012'] });
+      expect(counts(database, WORK, '18f2c404b7e3d012')).toEqual({ threads: 1, messages: 1, search: 1, embeddings: 1, reminders: 1 });
+      expect(database.MessagesRepo.listForThread(WORK, '18f2c404b7e3d012').map(item => item.id)).toEqual(['18f2c404b7e3d0a2']);
+      // The same message id in the other account is another message.
+      expect(counts(database, HOME, '18f2c404b7e3d012')).toMatchObject({ threads: 1, messages: 1, search: 1, embeddings: 1 });
+    });
+  });
+
+  repositoryIt('removes the conversation with its last message, unless it was changed as well', async () => {
+    await withDatabase(database => {
+      seed(database);
+      const outcome = database.ThreadsRepo.removeDeletedMessages(WORK, [
+        { threadId: '18f2c404b7e3d012', messageIds: ['18f2c404b7e3d0a1', '18f2c404b7e3d0a2'], alsoChanged: false },
+        { threadId: '18f2c404b7e3d099', messageIds: ['18f2c404b7e3d0b1'], alsoChanged: true },
+        { threadId: 'never-stored', messageIds: ['unknown'], alsoChanged: false },
+      ]);
+      expect(outcome).toEqual({
+        removedThreadIds: ['18f2c404b7e3d012', 'never-stored'],
+        remainingThreadIds: ['18f2c404b7e3d099'],
+      });
+      expect(counts(database, WORK, '18f2c404b7e3d012')).toEqual({ threads: 0, messages: 0, search: 0, embeddings: 0, reminders: 0 });
+      expect(counts(database, WORK, '18f2c404b7e3d099')).toMatchObject({ threads: 1, messages: 0, search: 0, embeddings: 0 });
+    });
+  });
+
+  repositoryIt('finds every row through an index', async () => {
+    await withDatabase(database => {
+      seed(database);
+      const plans = plansOf(database, () => database.ThreadsRepo.removeDeletedMessages(WORK, [
+        { threadId: '18f2c404b7e3d012', messageIds: ['18f2c404b7e3d0a1'], alsoChanged: false },
+      ]));
+      expect(plans.length).toBeGreaterThanOrEqual(5);
+      expect(plans.filter(entry => entry.plan.some(readsWholeTable))).toEqual([]);
+    });
+  });
+});
+
 describe('storing search vectors', () => {
   repositoryIt('drops the vector of a message whose conversation was removed meanwhile', async () => {
     await withDatabase(async database => {

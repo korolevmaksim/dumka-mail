@@ -14,6 +14,19 @@ describe('collectHistoryThreadIds', () => {
     ])).toEqual({
       updatedThreadIds: ['t1', 't2'],
       deletedThreadIds: ['t3'],
+      deletedMessageIds: { t3: [] },
+    });
+  });
+
+  it('names the deleted messages of each conversation once', () => {
+    expect(collectHistoryThreadIds([
+      { messagesDeleted: [{ message: { id: 'm1', threadId: 't1' } }, { message: { id: 'm2', threadId: 't1' } }] },
+      { messagesDeleted: [{ message: { id: 'm1', threadId: 't1' } }, { message: { id: 'm9', threadId: 't2' } }, { message: { id: 'lost' } }] },
+      { messagesAdded: [{ message: { threadId: 't2' } }] },
+    ])).toEqual({
+      updatedThreadIds: ['t2'],
+      deletedThreadIds: ['t1', 't2'],
+      deletedMessageIds: { t1: ['m1', 'm2'], t2: ['m9'] },
     });
   });
 });
@@ -58,5 +71,18 @@ describe('paginateGmailHistory', () => {
     });
     expect(result.updatedThreadIds.sort()).toEqual(['a', 'b']);
     expect(result.historyId).toBe('12');
+  });
+
+  it('merges the deleted messages of one conversation across pages', async () => {
+    const pages = [
+      { history: [{ messagesDeleted: [{ message: { id: 'm1', threadId: 't' } }] }], historyId: '11', nextPageToken: 'p2' },
+      { history: [{ messagesDeleted: [{ message: { id: 'm2', threadId: 't' } }] }], historyId: '12' },
+    ];
+    const result = await paginateGmailHistory({
+      startHistoryId: '10',
+      fetchPage: async (token) => token === 'p2' ? pages[1] : pages[0],
+    });
+    expect(result.deletedMessageIds).toEqual({ t: ['m1', 'm2'] });
+    expect(result.deletedThreadIds).toEqual(['t']);
   });
 });
