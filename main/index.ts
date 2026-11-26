@@ -1497,7 +1497,7 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
   const result = shouldRefreshSearchBodyIndex
     ? SearchRepo.saveAppSettingsStartingBodyIndexUpdate(storedValue)
     : SettingsRepo.set(key, storedValue);
-  if (shouldRefreshSearchBodyIndex) searchBodyIndexJob.resume();
+  if (shouldRefreshSearchBodyIndex) searchBodyIndexJob.recorded();
 
   try {
     const parsed = JSON.parse(storedValue);

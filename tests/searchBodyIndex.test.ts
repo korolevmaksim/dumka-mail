@@ -225,27 +225,28 @@ describe('bringing the search index in line with "search the text of messages"',
 });
 
 describe('SearchBodyIndexJob', () => {
-  function makeJob(options: { steps?: number; failAt?: number } = {}) {
+  function makeJob(options: { steps?: number; failAt?: number[]; unreadable?: boolean } = {}) {
     let pending = false;
     let left = 0;
     let calls = 0;
-    let duringChunk: (() => void) | null = null;
+    let afterLastStep: (() => void) | null = null;
     const published: SearchIndexStatus[] = [];
     const warnings: string[] = [];
     const retries: Array<() => void> = [];
-    /** What the settings handler does: one write records the update. */
-    const record = () => { pending = true; left = options.steps ?? 3; };
     const job = new SearchBodyIndexJob({
-      pending: () => pending,
+      pending: () => {
+        if (options.unreadable) throw new Error('disk I/O error');
+        return pending;
+      },
       runChunk: async () => {
         calls += 1;
-        if (options.failAt === calls) throw new Error('Database worker did not answer');
+        if (options.failAt?.includes(calls)) throw new Error('Database worker did not answer');
         if (!pending) return { done: true };
         left -= 1;
         if (left > 0) return { done: false };
         pending = false;
-        const interleave = duringChunk;
-        duringChunk = null;
+        const interleave = afterLastStep;
+        afterLastStep = null;
         interleave?.();
         return { done: true };
       },
@@ -254,10 +255,16 @@ describe('SearchBodyIndexJob', () => {
       sleep: async () => undefined,
       retryLater: run => { retries.push(run); },
     });
+    /** What the database holds: an update with `steps` steps left. */
+    const store = () => { pending = true; left = options.steps ?? 3; };
     return {
-      job, published, warnings, retries, record, calls: () => calls,
+      job, published, warnings, retries, store, calls: () => calls,
+      /** What the settings handler does: one write records the update, then the job is told. */
+      record: () => { store(); job.recorded(); },
       /** Runs `action` after the worker committed the last step, before the loop hears of it. */
-      whenLastStepCommitted: (action: () => void) => { duringChunk = action; },
+      whenLastStepCommitted: (action: () => void) => { afterLastStep = action; },
+      /** The worker commits the step that ends the update, and its answer is lost. */
+      finishInDatabase: () => { pending = false; },
     };
   }
 
@@ -266,7 +273,6 @@ describe('SearchBodyIndexJob', () => {
   it('runs steps until the update is done and reports the start and the end', async () => {
     const h = makeJob();
     h.record();
-    h.job.resume();
     expect(h.job.status()).toEqual({ updating: true });
     await settle();
     expect(h.calls()).toBe(3);
@@ -274,18 +280,26 @@ describe('SearchBodyIndexJob', () => {
     expect(h.job.status()).toEqual({ updating: false });
   });
 
-  it('does nothing when no update is recorded', async () => {
+  it('reports nothing at startup when no update was left unfinished', async () => {
     const h = makeJob();
     h.job.resume();
     await settle();
-    expect(h.calls()).toBe(0);
+    expect(h.calls()).toBe(1);
     expect(h.published).toEqual([]);
+  });
+
+  it('continues an update that was interrupted by quitting', async () => {
+    const h = makeJob({ steps: 3 });
+    h.store();
+    h.job.resume();
+    await settle();
+    expect(h.calls()).toBe(3);
+    expect(h.published).toEqual([{ updating: true }, { updating: false }]);
   });
 
   it('keeps one loop when the setting changes while it runs', async () => {
     const h = makeJob({ steps: 2 });
     h.record();
-    h.job.resume();
     // The first step is under way; the new record starts the count again.
     h.record();
     h.job.resume();
@@ -296,23 +310,18 @@ describe('SearchBodyIndexJob', () => {
 
   it('runs an update that was recorded while the last step of the previous one was on its way back', async () => {
     const h = makeJob({ steps: 2 });
+    h.whenLastStepCommitted(() => h.record());
     h.record();
-    h.whenLastStepCommitted(() => {
-      h.record();
-      // The loop is still running, so this call returns at once.
-      h.job.resume();
-    });
-    h.job.resume();
     await settle();
+    // Two steps each, and one more that finds nothing left.
     expect(h.calls()).toBe(4);
     expect(h.published).toEqual([{ updating: true }, { updating: false }]);
     expect(h.job.status()).toEqual({ updating: false });
   });
 
   it('tries again later after a failed step and stays "updating" meanwhile', async () => {
-    const h = makeJob({ failAt: 2 });
+    const h = makeJob({ failAt: [2] });
     h.record();
-    h.job.resume();
     await settle();
     expect(h.warnings).toHaveLength(1);
     expect(h.job.status()).toEqual({ updating: true });
@@ -323,53 +332,58 @@ describe('SearchBodyIndexJob', () => {
     expect(h.published).toEqual([{ updating: true }, { updating: false }]);
   });
 
-  it('reports the end when the last step finished the update but its answer was lost', async () => {
-    let pending = true;
-    const retries: Array<() => void> = [];
-    const published: SearchIndexStatus[] = [];
-    const job = new SearchBodyIndexJob({
-      pending: () => pending,
-      runChunk: async () => {
-        // The worker commits the last step, then the request times out.
-        pending = false;
-        throw new Error('Database worker request timed out');
-      },
-      publish: status => { published.push(status); },
-      warn: () => undefined,
-      sleep: async () => undefined,
-      retryLater: run => { retries.push(run); },
-    });
-    job.resume();
+  it('says "updating" from the moment an update is recorded, even when its first step fails', async () => {
+    const h = makeJob({ failAt: [1], unreadable: true });
+    h.record();
+    expect(h.job.status()).toEqual({ updating: true });
     await settle();
-    expect(job.status()).toEqual({ updating: true });
-    retries[0]();
-    await settle();
-    expect(published).toEqual([{ updating: true }, { updating: false }]);
-    expect(job.status()).toEqual({ updating: false });
-    expect(retries).toHaveLength(1);
+    expect(h.job.status()).toEqual({ updating: true });
+    expect(h.published).toEqual([{ updating: true }]);
   });
 
-  it('looks again later when the record could not be read', async () => {
-    let locked = true;
-    let pending = true;
-    const retries: Array<() => void> = [];
-    const published: SearchIndexStatus[] = [];
-    const job = new SearchBodyIndexJob({
-      pending: () => {
-        if (locked) throw new Error('database is locked');
-        return pending;
-      },
-      runChunk: async () => { pending = false; return { done: true }; },
-      publish: status => { published.push(status); },
-      warn: () => undefined,
-      sleep: async () => undefined,
-      retryLater: run => { retries.push(run); },
-    });
-    job.resume();
-    expect(published).toEqual([]);
-    locked = false;
-    retries[0]();
+  it('learns of an interrupted update from the record when the first step after a start fails', async () => {
+    const h = makeJob({ failAt: [1] });
+    h.store();
+    h.job.resume();
     await settle();
-    expect(published).toEqual([{ updating: true }, { updating: false }]);
+    expect(h.job.status()).toEqual({ updating: true });
+    h.retries[0]();
+    await settle();
+    expect(h.published).toEqual([{ updating: true }, { updating: false }]);
+  });
+
+  it('claims no update at startup when neither a step nor the record can say', async () => {
+    const h = makeJob({ failAt: [1], unreadable: true });
+    h.job.resume();
+    await settle();
+    expect(h.job.status()).toEqual({ updating: false });
+    expect(h.warnings).toHaveLength(2);
+    expect(h.retries).toHaveLength(1);
+  });
+
+  it('reports the end when the last step finished the update but its answer was lost', async () => {
+    const h = makeJob({ steps: 1, failAt: [1] });
+    h.record();
+    h.finishInDatabase();
+    await settle();
+    expect(h.job.status()).toEqual({ updating: true });
+    h.retries[0]();
+    await settle();
+    expect(h.published).toEqual([{ updating: true }, { updating: false }]);
+    expect(h.retries).toHaveLength(1);
+  });
+
+  it('starts at once when an update is recorded while a retry is waiting', async () => {
+    const h = makeJob({ steps: 2, failAt: [1] });
+    h.record();
+    await settle();
+    expect(h.retries).toHaveLength(1);
+    h.record();
+    await settle();
+    expect(h.published).toEqual([{ updating: true }, { updating: false }]);
+    // The retry that was waiting finds nothing to do and reports nothing.
+    h.retries[0]();
+    await settle();
+    expect(h.published).toEqual([{ updating: true }, { updating: false }]);
   });
 });
