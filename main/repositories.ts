@@ -871,9 +871,14 @@ export const MessagesRepo = {
     return messagesByThread;
   },
 
+  /**
+   * `indexBodies` is for tests. Left out, each write follows the "search the
+   * text of messages" setting as it is stored at that moment: the caller's
+   * copy of the setting can be older than a change that is already being
+   * applied to the rest of the index.
+   */
   save(messages: MailMessage[], options: { indexBodies?: boolean } = {}) {
     const db = getDatabase();
-    const indexBodies = options.indexBodies !== false;
     const insertMsg = db.prepare(`
       INSERT INTO messages (
         id, thread_id, account_id, sender_name, sender_email, subject, snippet, received_at,
@@ -908,6 +913,7 @@ export const MessagesRepo = {
     const deleteSearch = mailSearchRowRemover(db, 'message_id');
 
     for (const chunk of chunked(messages, BULK_MESSAGE_CHUNK)) runWriteTransaction(db, () => {
+      const indexBodies = options.indexBodies ?? searchBodiesSettingEnabled();
       for (const m of chunk) {
         insertMsg.run(
           m.id,
@@ -1591,14 +1597,25 @@ export const SearchRepo = {
   },
 
   /**
-   * Starts bringing every search row in line with the "search the text of
-   * messages" setting, replacing an update that is still running. The work
-   * itself is done by `runBodyIndexUpdateChunk` on the database worker: one
-   * statement over the whole table kept the main process busy for minutes on a
-   * large cache and held the write lock all that time.
+   * Records that every search row has to be brought in line with the "search
+   * the text of messages" setting, replacing an update that is still running.
+   * The work itself is done by `runBodyIndexUpdateChunk` on the database
+   * worker: one statement over the whole table kept the main process busy for
+   * minutes on a large cache and held the write lock all that time.
    */
   startBodyIndexUpdate(enabled: boolean): void {
     SettingsRepo.set(SEARCH_BODY_INDEX_JOB_KEY, JSON.stringify({ enabled, afterRowid: 0 }));
+  },
+
+  /**
+   * Stores the app settings and records the search index update their
+   * "search the text of messages" value asks for, in one write. Stored
+   * separately, a failure of the second write would leave the setting saying
+   * one thing and the index doing the other, with nothing left to notice it.
+   */
+  saveAppSettingsStartingBodyIndexUpdate(appSettings: string): void {
+    SettingsRepo.set('appSettings', appSettings);
+    SearchRepo.startBodyIndexUpdate(searchBodiesSettingEnabled());
   },
 
   /** True while search rows are still being brought in line with the setting. */
@@ -1666,13 +1683,22 @@ function readSearchBodyIndexJob(): { enabled: boolean; afterRowid: number } | nu
   }
 }
 
+let parsedSearchBodiesSetting: { stored: string; enabled: boolean } | null = null;
+
+/** The stored "search the text of messages" setting. Inside a write transaction it is the value that write is ordered against. */
 function searchBodiesSettingEnabled(): boolean {
+  const stored = SettingsRepo.get('appSettings') || '';
+  // Read with every chunk of saved messages: parse the settings only when they changed.
+  if (parsedSearchBodiesSetting?.stored === stored) return parsedSearchBodiesSetting.enabled;
+  let enabled = true;
   try {
-    const settings = JSON.parse(SettingsRepo.get('appSettings') || '{}') as { privacy?: { includeBodiesInSearchIndex?: boolean } };
-    return settings?.privacy?.includeBodiesInSearchIndex !== false;
+    const settings = JSON.parse(stored || '{}') as { privacy?: { includeBodiesInSearchIndex?: boolean } };
+    enabled = settings?.privacy?.includeBodiesInSearchIndex !== false;
   } catch {
-    return true;
+    enabled = true;
   }
+  parsedSearchBodiesSetting = { stored, enabled };
+  return enabled;
 }
 
 // === Agent Drafts Repository ===
@@ -3003,7 +3029,7 @@ guardRepositoryWrites(ThreadsRepo, ['delete', 'updateLabels'], getDatabase);
 guardRepositoryWrites(ThreadDecisionsRepo, ['upsertMany', 'deleteForThread', 'purgeAccount'], getDatabase);
 guardRepositoryWrites(ContactsRepo, ['saveMany', 'updateLocal'], getDatabase);
 guardRepositoryWrites(ContactGroupsRepo, ['save', 'delete'], getDatabase);
-guardRepositoryWrites(SearchRepo, ['startBodyIndexUpdate'], getDatabase);
+guardRepositoryWrites(SearchRepo, ['startBodyIndexUpdate', 'saveAppSettingsStartingBodyIndexUpdate'], getDatabase);
 guardRepositoryWrites(AgentDraftsRepo, ['save', 'setStatus'], getDatabase);
 guardRepositoryWrites(MessageSecurityRepo, ['save', 'saveMany'], getDatabase);
 guardRepositoryWrites(MailEmbeddingsRepo, ['deleteByModel', 'deleteOtherModels', 'migrateVectorJsonBatch'], getDatabase);

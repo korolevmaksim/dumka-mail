@@ -124,6 +124,44 @@ describe('bringing the search index in line with "search the text of messages"',
     });
   });
 
+  repositoryIt('records the update in the same write as the settings that ask for it', async () => {
+    await withDatabase(database => {
+      const { MessagesRepo, SearchRepo, SettingsRepo } = database;
+      MessagesRepo.save([message(1), message(2)]);
+      const settings = (includeBodiesInSearchIndex: boolean) => JSON.stringify({ privacy: { includeBodiesInSearchIndex } });
+      SearchRepo.saveAppSettingsStartingBodyIndexUpdate(settings(false));
+      expect(SettingsRepo.get('appSettings')).toBe(settings(false));
+      expect(SearchRepo.bodyIndexUpdatePending()).toBe(true);
+      runToEnd(database, 10);
+      expect(hits(database, 'budget')).toBe(0);
+      SearchRepo.saveAppSettingsStartingBodyIndexUpdate(settings(true));
+      runToEnd(database, 10);
+      expect(hits(database, 'budget')).toBe(2);
+    });
+  });
+
+  repositoryIt('indexes a message that is saved during an update as the stored setting says', async () => {
+    await withDatabase(database => {
+      const { MessagesRepo, SearchRepo } = database;
+      MessagesRepo.save([message(1), message(2)]);
+      SearchRepo.saveAppSettingsStartingBodyIndexUpdate(JSON.stringify({ privacy: { includeBodiesInSearchIndex: false } }));
+      // Mail that was fetched before the switch and is written after it.
+      MessagesRepo.save([message(3)]);
+      expect(hits(database, 'budget')).toBe(2);
+      runToEnd(database, 10);
+      // Written after the update finished, it is still left out.
+      MessagesRepo.save([message(4)]);
+      expect(hits(database, 'budget')).toBe(0);
+      expect(hits(database, 'invoice')).toBe(4);
+
+      SearchRepo.saveAppSettingsStartingBodyIndexUpdate(JSON.stringify({ privacy: { includeBodiesInSearchIndex: true } }));
+      MessagesRepo.save([message(5)]);
+      expect(hits(database, 'budget')).toBe(1);
+      runToEnd(database, 10);
+      expect(hits(database, 'budget')).toBe(5);
+    });
+  });
+
   repositoryIt('leaves rows alone that are already as the setting wants them', async () => {
     await withDatabase(database => {
       const { MessagesRepo, SearchRepo } = database;
@@ -189,21 +227,26 @@ describe('bringing the search index in line with "search the text of messages"',
 describe('SearchBodyIndexJob', () => {
   function makeJob(options: { steps?: number; failAt?: number } = {}) {
     let pending = false;
-    let left = options.steps ?? 3;
+    let left = 0;
     let calls = 0;
+    let duringChunk: (() => void) | null = null;
     const published: SearchIndexStatus[] = [];
     const warnings: string[] = [];
     const retries: Array<() => void> = [];
-    const started: boolean[] = [];
+    /** What the settings handler does: one write records the update. */
+    const record = () => { pending = true; left = options.steps ?? 3; };
     const job = new SearchBodyIndexJob({
-      start: enabled => { started.push(enabled); pending = true; left = options.steps ?? 3; },
       pending: () => pending,
       runChunk: async () => {
         calls += 1;
         if (options.failAt === calls) throw new Error('Database worker did not answer');
+        if (!pending) return { done: true };
         left -= 1;
         if (left > 0) return { done: false };
         pending = false;
+        const interleave = duringChunk;
+        duringChunk = null;
+        interleave?.();
         return { done: true };
       },
       publish: status => { published.push(status); },
@@ -211,17 +254,21 @@ describe('SearchBodyIndexJob', () => {
       sleep: async () => undefined,
       retryLater: run => { retries.push(run); },
     });
-    return { job, published, warnings, retries, started, calls: () => calls, setPending: (value: boolean) => { pending = value; } };
+    return {
+      job, published, warnings, retries, record, calls: () => calls,
+      /** Runs `action` after the worker committed the last step, before the loop hears of it. */
+      whenLastStepCommitted: (action: () => void) => { duringChunk = action; },
+    };
   }
 
   const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
   it('runs steps until the update is done and reports the start and the end', async () => {
     const h = makeJob();
-    h.job.request(false);
+    h.record();
+    h.job.resume();
     expect(h.job.status()).toEqual({ updating: true });
     await settle();
-    expect(h.started).toEqual([false]);
     expect(h.calls()).toBe(3);
     expect(h.published).toEqual([{ updating: true }, { updating: false }]);
     expect(h.job.status()).toEqual({ updating: false });
@@ -235,58 +282,37 @@ describe('SearchBodyIndexJob', () => {
     expect(h.published).toEqual([]);
   });
 
-  it('continues an update that was recorded before the app was quit', async () => {
-    const h = makeJob({ steps: 2 });
-    h.setPending(true);
-    h.job.resume();
-    await settle();
-    expect(h.calls()).toBe(2);
-    expect(h.started).toEqual([]);
-  });
-
   it('keeps one loop when the setting changes while it runs', async () => {
     const h = makeJob({ steps: 2 });
-    h.job.request(false);
-    h.job.request(true);
+    h.record();
+    h.job.resume();
+    // The first step is under way; the new record starts the count again.
+    h.record();
     h.job.resume();
     await settle();
-    expect(h.started).toEqual([false, true]);
+    expect(h.calls()).toBe(3);
     expect(h.published).toEqual([{ updating: true }, { updating: false }]);
   });
 
-  it('records the update later when it could not be recorded, unless the choice changed meanwhile', async () => {
-    const published: SearchIndexStatus[] = [];
-    const retries: Array<() => void> = [];
-    const started: boolean[] = [];
-    let locked = true;
-    let pending = false;
-    const job = new SearchBodyIndexJob({
-      start: enabled => {
-        if (locked) throw new Error('database is locked');
-        started.push(enabled);
-        pending = true;
-      },
-      pending: () => pending,
-      runChunk: async () => { pending = false; return { done: true }; },
-      publish: status => { published.push(status); },
-      warn: () => undefined,
-      sleep: async () => undefined,
-      retryLater: run => { retries.push(run); },
+  it('runs an update that was recorded while the last step of the previous one was on its way back', async () => {
+    const h = makeJob({ steps: 2 });
+    h.record();
+    h.whenLastStepCommitted(() => {
+      h.record();
+      // The loop is still running, so this call returns at once.
+      h.job.resume();
     });
-    job.request(false);
-    job.request(true);
-    expect(started).toEqual([]);
-    locked = false;
-    for (const retry of retries.splice(0)) retry();
+    h.job.resume();
     await settle();
-    // Only the latest choice is recorded.
-    expect(started).toEqual([true]);
-    expect(published).toEqual([{ updating: true }, { updating: false }]);
+    expect(h.calls()).toBe(4);
+    expect(h.published).toEqual([{ updating: true }, { updating: false }]);
+    expect(h.job.status()).toEqual({ updating: false });
   });
 
   it('tries again later after a failed step and stays "updating" meanwhile', async () => {
     const h = makeJob({ failAt: 2 });
-    h.job.request(true);
+    h.record();
+    h.job.resume();
     await settle();
     expect(h.warnings).toHaveLength(1);
     expect(h.job.status()).toEqual({ updating: true });
@@ -295,5 +321,29 @@ describe('SearchBodyIndexJob', () => {
     h.retries[0]();
     await settle();
     expect(h.published).toEqual([{ updating: true }, { updating: false }]);
+  });
+
+  it('looks again later when the record could not be read', async () => {
+    let locked = true;
+    let pending = true;
+    const retries: Array<() => void> = [];
+    const published: SearchIndexStatus[] = [];
+    const job = new SearchBodyIndexJob({
+      pending: () => {
+        if (locked) throw new Error('database is locked');
+        return pending;
+      },
+      runChunk: async () => { pending = false; return { done: true }; },
+      publish: status => { published.push(status); },
+      warn: () => undefined,
+      sleep: async () => undefined,
+      retryLater: run => { retries.push(run); },
+    });
+    job.resume();
+    expect(published).toEqual([]);
+    locked = false;
+    retries[0]();
+    await settle();
+    expect(published).toEqual([{ updating: true }, { updating: false }]);
   });
 });

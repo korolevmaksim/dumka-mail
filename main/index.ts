@@ -283,18 +283,6 @@ function readAccountNotificationSource(): AccountSettingsSource {
   }
 }
 
-function readIncludeBodiesInSearchIndex(): boolean {
-  try {
-    const rawSettings = SettingsRepo.get('appSettings');
-    if (!rawSettings) return true;
-    const parsed = JSON.parse(rawSettings);
-    return parsed?.privacy?.includeBodiesInSearchIndex !== false;
-  } catch (err) {
-    console.error('Failed to read search indexing privacy setting:', err);
-    return true;
-  }
-}
-
 function readOpenLinksInBackground(): boolean {
   try {
     const rawSettings = SettingsRepo.get('appSettings');
@@ -1165,10 +1153,7 @@ async function saveThreadsToDatabase(threads: MailThread[], read?: MailboxRead) 
 }
 
 async function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }, read?: MailboxRead) {
-  const { newMessages } = await databaseWorkerClient.saveMessages(messages, {
-    ...options,
-    indexBodies: readIncludeBodiesInSearchIndex()
-  }, read);
+  const { newMessages } = await databaseWorkerClient.saveMessages(messages, options, read);
   if (read) messages = read.messages(messages);
 
   try {
@@ -1507,14 +1492,16 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
   const storedValue = shouldRefreshMCP
     ? await prepareAppSettingsForStorage(value)
     : value;
-  const result = SettingsRepo.set(key, storedValue);
+  // A change of "search the text of messages" is recorded in the same write
+  // as the settings, so the two cannot disagree, and applied in the background.
+  const result = shouldRefreshSearchBodyIndex
+    ? SearchRepo.saveAppSettingsStartingBodyIndexUpdate(storedValue)
+    : SettingsRepo.set(key, storedValue);
+  if (shouldRefreshSearchBodyIndex) searchBodyIndexJob.resume();
 
   try {
     const parsed = JSON.parse(storedValue);
     SystemLogger.updateSettings(parsed?.logging, parsed?.privacy?.redactLogs !== false);
-    if (shouldRefreshSearchBodyIndex) {
-      searchBodyIndexJob.request(parsed?.privacy?.includeBodiesInSearchIndex !== false);
-    }
     if (shouldRefreshMCP) {
       void resolveAppSettingsSecrets(parsed)
         .then(resolved => MCPManager.initialize(resolved as any))
@@ -2343,7 +2330,6 @@ function assertLabelProposalReadyForMutation(
 const SEARCH_INDEX_RESUME_DELAY_MS = 5_000;
 
 const searchBodyIndexJob = new SearchBodyIndexJob({
-  start: enabled => SearchRepo.startBodyIndexUpdate(enabled),
   pending: () => SearchRepo.bodyIndexUpdatePending(),
   runChunk: () => databaseWorkerClient.runSearchBodyIndexChunk(),
   publish: status => {

@@ -7,19 +7,21 @@
 // to the database meanwhile. Now the database worker does it in short steps,
 // the progress is stored with each step, and an update that was interrupted
 // by quitting continues at the next start.
+//
+// What has to be done is recorded in the database, in the same write that
+// stores the setting (`SearchRepo.saveAppSettingsStartingBodyIndexUpdate`).
+// This class only keeps one loop running while such a record exists.
 import type { SearchIndexStatus } from '../shared/types';
 
 export interface SearchBodyIndexJobDeps {
-  /** Records that every search row has to be brought in line with `enabled`. */
-  start(enabled: boolean): void;
-  /** True while such an update is recorded and not finished. */
+  /** True while an update is recorded and not finished. */
   pending(): boolean;
-  /** One committed step on the database worker. */
+  /** One committed step on the database worker. `done` means it found no update left. */
   runChunk(): Promise<{ done: boolean }>;
   publish(status: SearchIndexStatus): void;
   warn(message: string, error: unknown): void;
   sleep?(ms: number): Promise<void>;
-  /** Calls `run` later, after a step or the recording of an update failed. */
+  /** Calls `run` later, after a step or a look at the record failed. */
   retryLater?(run: () => void): void;
 }
 
@@ -31,7 +33,6 @@ export class SearchBodyIndexJob {
   private running = false;
   /** An update is recorded and not finished, also while it waits to try again. */
   private unfinished = false;
-  private latestRequest = 0;
 
   constructor(private readonly deps: SearchBodyIndexJobDeps) {}
 
@@ -39,38 +40,22 @@ export class SearchBodyIndexJob {
     return { updating: this.unfinished };
   }
 
-  /** The setting changed: start over towards `enabled`. A running update picks the new target up with its next step. */
-  request(enabled: boolean): void {
-    const request = ++this.latestRequest;
-    try {
-      this.deps.start(enabled);
-    } catch (error) {
-      // The setting itself is saved. Without a record the index would stay as
-      // it was until the setting is changed again, so recording is tried again,
-      // unless a newer choice has replaced this one by then.
-      this.deps.warn('Could not record the search index update; it is tried again later.', error);
-      this.later(() => {
-        if (request === this.latestRequest) this.request(enabled);
-      });
-      return;
-    }
-    this.resume();
-  }
-
-  private later(run: () => void): void {
-    if (this.deps.retryLater) this.deps.retryLater(run);
-    else setTimeout(run, RETRY_MS).unref();
-  }
-
-  /** Continues an update that is recorded, if none is running. Safe to call at any time. */
+  /**
+   * Runs the recorded update, if there is one and none is running. Call it at
+   * startup and whenever an update was recorded; a running loop picks a new
+   * record up with its next step.
+   */
   resume(): void {
     if (this.running) return;
+    let pending: boolean;
     try {
-      if (!this.deps.pending()) return;
+      pending = this.deps.pending();
     } catch (error) {
-      this.deps.warn('Could not check for an unfinished search index update.', error);
+      this.deps.warn('Could not check for an unfinished search index update; it is checked again later.', error);
+      this.later(() => this.resume());
       return;
     }
+    if (!pending) return;
     this.running = true;
     if (!this.unfinished) {
       this.unfinished = true;
@@ -79,25 +64,33 @@ export class SearchBodyIndexJob {
     void this.run();
   }
 
+  private later(run: () => void): void {
+    if (this.deps.retryLater) this.deps.retryLater(run);
+    else setTimeout(run, RETRY_MS).unref();
+  }
+
   private async run(): Promise<void> {
     const sleep = this.deps.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
-    let failed = false;
     try {
       for (;;) {
         const { done } = await this.deps.runChunk();
-        if (done) break;
-        await sleep(STEP_PAUSE_MS);
+        if (!done) {
+          await sleep(STEP_PAUSE_MS);
+          continue;
+        }
+        // The setting can change while the last step is on its way back: that
+        // record was written after the step saw none. Without this look it
+        // would wait for the next start of the app.
+        if (!this.deps.pending()) break;
       }
     } catch (error) {
-      failed = true;
+      this.running = false;
       this.deps.warn('The search index update paused; it continues later.', error);
-    }
-    this.running = false;
-    if (!failed) {
-      this.unfinished = false;
-      this.deps.publish(this.status());
+      this.later(() => this.resume());
       return;
     }
-    this.later(() => this.resume());
+    this.running = false;
+    this.unfinished = false;
+    this.deps.publish(this.status());
   }
 }

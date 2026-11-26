@@ -1010,10 +1010,15 @@ export function PrivacyTab() {
 
   useEffect(() => {
     let mounted = true;
+    // An event is newer than the answer to the question asked on opening this page.
+    let heardEvent = false;
     void window.electronAPI.getSearchIndexStatus()
-      .then(status => { if (mounted) setSearchUpdating(status.updating); })
+      .then(status => { if (mounted && !heardEvent) setSearchUpdating(status.updating); })
       .catch(() => undefined);
-    const unsubscribe = window.electronAPI.onSearchIndexStatus(status => setSearchUpdating(status.updating));
+    const unsubscribe = window.electronAPI.onSearchIndexStatus(status => {
+      heardEvent = true;
+      setSearchUpdating(status.updating);
+    });
     return () => {
       mounted = false;
       unsubscribe();
