@@ -2,6 +2,13 @@ import { applyPendingLabelDeltas } from '../shared/mailActions';
 import type { MailActionLog, MailboxDelta, MailMessage, MailThread, SyncState } from '../shared/types';
 import { buildMailThreadFromMessages } from '../shared/mailThread';
 import { restartHistoryBackfill } from './mailboxHistoryRecovery';
+import { isGoogleReauthorizationRequiredError } from './googleAuthState';
+import { isRateLimitError } from './remoteRetry';
+
+/** Conversations one pass reads from Gmail at most; the rest stay queued for the next pass. */
+export const MAX_THREAD_READS_PER_PASS = 25;
+/** A pass stops reading after this many failures in a row: Gmail or the network is not answering. */
+const MAX_CONSECUTIVE_READ_FAILURES = 3;
 
 export interface MailboxSyncDeps {
   getSyncState(email: string): SyncState | null;
@@ -12,7 +19,19 @@ export interface MailboxSyncDeps {
   fetchThreadDetail(email: string, threadId: string): Promise<MailMessage[]>;
   saveThreads(threads: MailThread[]): Promise<void>;
   saveMessages(messages: MailMessage[], options?: { notifyOfNew?: boolean }): Promise<void>;
-  deleteThread(accountId: string, threadId: string): void;
+  /** Removes conversations from the local cache, off the main event loop. */
+  deleteThreads(accountId: string, threadIds: string[]): Promise<void>;
+  /**
+   * Stores the history cursor (`state`) together with the conversations the
+   * history up to it reported as changed, in one write.
+   */
+  queueThreadReads(state: SyncState, threadIds: string[]): void;
+  /** The queued conversations to read now, most urgent first. */
+  dueThreadReads(accountId: string, limit: number): string[];
+  /** Takes the conversations that were read off the queue and makes the failed ones wait. */
+  settleThreadReads(accountId: string, done: string[], failed: string[]): void;
+  /** False while the account's Gmail quota does not allow another full conversation read. */
+  takeThreadRead(accountId: string): boolean;
   listPendingActions(email: string): MailActionLog[];
   publishDelta(accountId: string, upserts: MailThread[], deletedThreadIds: string[]): MailboxDelta;
   /**
@@ -67,7 +86,7 @@ export function isMissingThreadError(error: unknown): boolean {
 export async function performMailboxSyncForAccount(email: string, deps: MailboxSyncDeps): Promise<MailboxDelta> {
   const syncState = deps.getSyncState(email);
   const upserts: MailThread[] = [];
-  const deletedThreadIds: string[] = [];
+  const deletedThreadIds = new Set<string>();
   const now = deps.now || (() => new Date());
 
   const persistThreads = async (threads: MailThread[]) => {
@@ -102,65 +121,133 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     }
   };
 
-  if (!syncState?.historyId) {
-    const fullSync = await deps.syncInbox(email);
-    revalidateParked(fullSync.threads);
-    const saved = await persistThreads(fullSync.threads);
-    await persistMessages(fullSync.messages);
-    deps.saveSyncState(restartHistoryBackfill(deps.nextSyncState(email, deps.getSyncState(email), fullSync.historyId, now().toISOString())));
+  const fullSync = async (): Promise<MailboxDelta> => {
+    const inbox = await deps.syncInbox(email);
+    revalidateParked(inbox.threads);
+    const saved = await persistThreads(inbox.threads);
+    await persistMessages(inbox.messages);
+    deps.saveSyncState(restartHistoryBackfill(deps.nextSyncState(email, deps.getSyncState(email), inbox.historyId, now().toISOString())));
     upserts.push(...await afterPersist(saved));
-    return deps.publishDelta(email, upserts, deletedThreadIds);
-  }
+    return deps.publishDelta(email, upserts, Array.from(deletedThreadIds));
+  };
 
-  try {
-    const incrementalSync = await deps.syncIncremental(email, syncState.historyId);
-    let threadFetchFailed = false;
-
-    for (const threadId of incrementalSync.updatedThreadIds) {
-      try {
-        const messages = await deps.fetchThreadDetail(email, threadId);
-        const thread = buildMailThreadFromMessages(email, threadId, messages);
-        if (thread) revalidateParked([thread]);
-        await persistMessages(messages, { notifyOfNew: true });
-        if (thread) {
-          const saved = await persistThreads([thread]);
-          upserts.push(...await afterPersist(saved));
-        }
-      } catch (err: unknown) {
-        deps.logger?.warning('Mailbox Sync', 'Failed to fetch synchronized thread details.', {
+  /**
+   * Reads one changed conversation from Gmail and stores it. `stop` means the
+   * account cannot be read at the moment, which is not this conversation's
+   * fault: it keeps its place in the queue.
+   */
+  const readThread = async (threadId: string): Promise<'stored' | 'missing' | 'stop' | 'failed'> => {
+    try {
+      const messages = await deps.fetchThreadDetail(email, threadId);
+      const thread = buildMailThreadFromMessages(email, threadId, messages);
+      if (thread) revalidateParked([thread]);
+      await persistMessages(messages, { notifyOfNew: true });
+      if (thread) {
+        const saved = await persistThreads([thread]);
+        upserts.push(...await afterPersist(saved));
+      }
+      return 'stored';
+    } catch (err: unknown) {
+      if (isRateLimitError(err)) {
+        deps.logger?.warning('Mailbox Sync', 'Gmail quota reached; the remaining conversations wait for a later pass.', {
           accountId: email,
-          threadId,
           error: err,
         });
-        if (isMissingThreadError(err)) {
-          deps.deleteThread(email, threadId);
-          deletedThreadIds.push(threadId);
-        } else {
-          threadFetchFailed = true;
-        }
+        return 'stop';
       }
+      if (isGoogleReauthorizationRequiredError(err)) {
+        deps.logger?.warning('Mailbox Sync', 'Google sign-in is needed; the remaining conversations wait for it.', {
+          accountId: email,
+          error: err,
+        });
+        return 'stop';
+      }
+      deps.logger?.warning('Mailbox Sync', 'Failed to fetch synchronized thread details.', {
+        accountId: email,
+        threadId,
+        error: err,
+      });
+      if (!isMissingThreadError(err)) return 'failed';
     }
+    try {
+      await deps.deleteThreads(email, [threadId]);
+      return 'missing';
+    } catch (err: unknown) {
+      deps.logger?.warning('Mailbox Sync', 'Could not remove a conversation Gmail no longer has.', {
+        accountId: email,
+        threadId,
+        error: err,
+      });
+      return 'failed';
+    }
+  };
 
-    for (const threadId of incrementalSync.deletedThreadIds) {
-      deps.deleteThread(email, threadId);
-      deletedThreadIds.push(threadId);
+  /**
+   * Works off the queue of changed conversations: at most one pass's share,
+   * and only while the Gmail quota allows. Whatever is left stays queued.
+   */
+  const readQueuedThreads = async (): Promise<void> => {
+    const done: string[] = [];
+    const failed: string[] = [];
+    let failuresInARow = 0;
+    try {
+      for (const threadId of deps.dueThreadReads(email, MAX_THREAD_READS_PER_PASS)) {
+        if (!deps.takeThreadRead(email)) break;
+        const outcome = await readThread(threadId);
+        if (outcome === 'stop') break;
+        if (outcome === 'failed') {
+          failed.push(threadId);
+          failuresInARow += 1;
+          if (failuresInARow >= MAX_CONSECUTIVE_READ_FAILURES) break;
+          continue;
+        }
+        failuresInARow = 0;
+        done.push(threadId);
+        if (outcome === 'missing') deletedThreadIds.add(threadId);
+        // Stored again: Gmail still has a conversation this pass removed for a deleted message.
+        else deletedThreadIds.delete(threadId);
+      }
+    } catch (err: unknown) {
+      // What this pass stored and removed is still published below.
+      deps.logger?.warning('Mailbox Sync', 'Could not read the queue of changed conversations.', { accountId: email, error: err });
     }
+    try {
+      deps.settleThreadReads(email, done, failed);
+    } catch (err: unknown) {
+      // The conversations stay queued and are read once more; nothing is lost.
+      deps.logger?.warning('Mailbox Sync', 'Could not update the queue of changed conversations.', { accountId: email, error: err });
+    }
+  };
 
-    if (!threadFetchFailed) {
-      deps.saveSyncState(deps.nextSyncState(email, deps.getSyncState(email), incrementalSync.historyId));
-    }
+  if (!syncState?.historyId) return fullSync();
+
+  let incrementalSync: Awaited<ReturnType<MailboxSyncDeps['syncIncremental']>>;
+  try {
+    incrementalSync = await deps.syncIncremental(email, syncState.historyId);
   } catch (err: unknown) {
-    if (err instanceof Error && err.message === 'HISTORY_EXPIRED') {
-      const fullSync = await deps.syncInbox(email);
-      revalidateParked(fullSync.threads);
-      const saved = await persistThreads(fullSync.threads);
-      await persistMessages(fullSync.messages);
-      deps.saveSyncState(restartHistoryBackfill(deps.nextSyncState(email, deps.getSyncState(email), fullSync.historyId, now().toISOString())));
-      upserts.push(...await afterPersist(saved));
-      return deps.publishDelta(email, upserts, deletedThreadIds);
-    }
+    if (err instanceof Error && err.message === 'HISTORY_EXPIRED') return fullSync();
     throw err;
   }
 
-  return deps.publishDelta(email, upserts, deletedThreadIds);
+  // Deletions first: they cost no Gmail request, and a conversation that was
+  // changed as well is queued below and read again as Gmail has it now. One
+  // that an earlier pass queued stays queued for the same reason: Gmail
+  // reports a single deleted message in the same way, and the read shows
+  // whether the conversation is gone.
+  if (incrementalSync.deletedThreadIds.length > 0) {
+    await deps.deleteThreads(email, incrementalSync.deletedThreadIds);
+    for (const threadId of incrementalSync.deletedThreadIds) deletedThreadIds.add(threadId);
+  }
+
+  // The cursor moves past this stretch of history in the same write that
+  // queues what it changed, so the conversations Gmail's quota does not allow
+  // now are read by later passes instead of being listed again from the start.
+  deps.queueThreadReads(
+    deps.nextSyncState(email, deps.getSyncState(email), incrementalSync.historyId),
+    incrementalSync.updatedThreadIds,
+  );
+
+  await readQueuedThreads();
+
+  return deps.publishDelta(email, upserts, Array.from(deletedThreadIds));
 }

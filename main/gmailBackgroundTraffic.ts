@@ -3,6 +3,16 @@ import { isRateLimitError, parseRetryAfterMs } from './remoteRetry';
 // Full threads cost 120 units against a 6,000 unit/user/minute quota. Reserve
 // most of that budget for foreground sync, reading and the user's mail actions.
 export const BACKFILL_REQUEST_INTERVAL_MS = 3_000;
+// The scheduled sync reads changed conversations in full as well. It may use
+// half of the minute's quota, so catching up after a long break never leaves
+// the person's own actions waiting for a quota cooldown. Requests Gmail
+// rejects are charged too, so running into the limit only prolongs it.
+export const SYNC_THREAD_READS_PER_MINUTE = 25;
+// Older-mail indexing waits while the sync is catching up: together they
+// would use the whole quota.
+const SYNC_THREAD_READS_BACKFILL_YIELDS_AT = 10;
+const SYNC_BUSY_RECHECK_MS = 5_000;
+const QUOTA_WINDOW_MS = 60_000;
 const INTERACTIVE_QUIET_MS = 5_000;
 const QUOTA_BACKOFF_MAX_MS = 15 * 60_000;
 
@@ -13,6 +23,8 @@ interface AccountTraffic {
   blockedUntil: number;
   quotaFailures: number;
   lastQuotaFailureAt: number;
+  /** When the scheduled sync started its full-thread reads of the last minute. */
+  syncThreadReads: number[];
 }
 
 export class GmailBackgroundTraffic {
@@ -28,7 +40,7 @@ export class GmailBackgroundTraffic {
     const key = email.trim().toLowerCase();
     let state = this.accounts.get(key);
     if (!state) {
-      state = { activeInteractive: 0, nextRequestAt: 0, interactiveUntil: 0, blockedUntil: 0, quotaFailures: 0, lastQuotaFailureAt: 0 };
+      state = { activeInteractive: 0, nextRequestAt: 0, interactiveUntil: 0, blockedUntil: 0, quotaFailures: 0, lastQuotaFailureAt: 0, syncThreadReads: [] };
       this.accounts.set(key, state);
     }
     return state;
@@ -76,6 +88,27 @@ export class GmailBackgroundTraffic {
     state.blockedUntil = now + Math.max(retryAfter ?? 0, delay) + Math.floor(this.random() * 1000);
   }
 
+  private recentSyncThreadReads(state: AccountTraffic): number {
+    const since = this.now() - QUOTA_WINDOW_MS;
+    if (state.syncThreadReads.length > 0 && state.syncThreadReads[0] <= since) {
+      state.syncThreadReads = state.syncThreadReads.filter(at => at > since);
+    }
+    return state.syncThreadReads.length;
+  }
+
+  /**
+   * Asks for one full-thread read on behalf of the scheduled sync. False while
+   * Gmail's quota says to wait, or once this minute's share is used; the
+   * conversation then stays queued for a later pass.
+   */
+  takeSyncThreadRead(email: string): boolean {
+    const state = this.account(email);
+    if (state.blockedUntil > this.now()) return false;
+    if (this.recentSyncThreadReads(state) >= SYNC_THREAD_READS_PER_MINUTE) return false;
+    state.syncThreadReads.push(this.now());
+    return true;
+  }
+
   /** One paced request per account; waking waiters recheck activity and quota. */
   async waitForSlot(email: string): Promise<void> {
     for (;;) {
@@ -83,6 +116,10 @@ export class GmailBackgroundTraffic {
       const state = this.account(email);
       if (state.activeInteractive > 0) {
         await this.sleep(250);
+        continue;
+      }
+      if (this.recentSyncThreadReads(state) >= SYNC_THREAD_READS_BACKFILL_YIELDS_AT) {
+        await this.sleep(SYNC_BUSY_RECHECK_MS);
         continue;
       }
       const wait = Math.max(state.nextRequestAt, state.interactiveUntil) - this.now();

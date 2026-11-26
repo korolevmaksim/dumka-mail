@@ -67,6 +67,12 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
       return;
     }
 
+    if (request.type === 'deleteThreads') {
+      ThreadsRepo.deleteMany(request.accountId, request.threadIds);
+      send({ id: request.id, ok: true, result: null });
+      return;
+    }
+
     if (request.type === 'loggedMissingThreadIds') {
       send({ id: request.id, ok: true, result: ActionLogRepo.loggedMissingThreadIds(request.accountId) });
       return;

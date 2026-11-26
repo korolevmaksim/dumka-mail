@@ -128,6 +128,9 @@ export function buildGoogleTokenRevokeRequest(refreshToken: string): { url: stri
   };
 }
 
+/** A page of older mail asks for a new access token once its own is this old. */
+const BACKFILL_ACCESS_TOKEN_REUSE_MS = 20 * 60_000;
+
 // Bounded Concurrency Task Loader (size = 8)
 async function poolConcurrentTasks<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
@@ -574,7 +577,8 @@ export const GmailSyncService = {
   // Backfill: pages through all mail
   async syncBackfillPage(email: string, pageToken?: string): Promise<{ threads: MailThread[]; messages: MailMessage[]; nextPageToken?: string }> {
     await gmailBackgroundTraffic.waitForSlot(email);
-    const accessToken = await getAccessToken(email);
+    let accessToken = await getAccessToken(email);
+    let accessTokenIssuedAt = Date.now();
     let endpoint = 'https://gmail.googleapis.com/gmail/v1/users/me/threads?maxResults=20&q=-in:spam+-in:trash';
     if (pageToken) {
       endpoint += `&pageToken=${pageToken}`;
@@ -596,6 +600,13 @@ export const GmailSyncService = {
     const threadDetailsRaw = await poolConcurrentTasks(threadSummaries, 1, async (tSummary: any) => {
       try {
         await gmailBackgroundTraffic.waitForSlot(email);
+        // The wait can be long while the mailbox sync is catching up. A token
+        // that expired meanwhile would be answered with 401, which reads as
+        // "sign in again".
+        if (Date.now() - accessTokenIssuedAt > BACKFILL_ACCESS_TOKEN_REUSE_MS) {
+          accessToken = await getAccessToken(email);
+          accessTokenIssuedAt = Date.now();
+        }
         const detailRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${tSummary.id}`, {
           headers: { 'Authorization': `Bearer ${accessToken}` }
         });

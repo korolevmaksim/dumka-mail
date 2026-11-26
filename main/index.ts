@@ -44,6 +44,8 @@ import type { MailboxRead } from './mailboxRead';
 import { MissingGmailThreadError, MissingGmailThreads } from './missingGmailThreads';
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
+import { MailboxSyncQueueRepo } from './mailboxSyncQueue';
+import { gmailBackgroundTraffic } from './gmailBackgroundTraffic';
 import { completeHistoryBackfillPage, ensureHistoryCoverage, sameHistoryBackfillRun } from './mailboxHistoryRecovery';
 import { createRfcMessageId } from '../shared/rfcMessageId';
 import { parseMailActionPayload } from '../shared/mailActionFeedback';
@@ -3074,7 +3076,7 @@ async function runBackfillPageForAccount(email: string, read: MailboxRead): Prom
     await saveMessagesToDatabase(page.messages, undefined, read);
     if (!accountStillConfigured(email)) {
       // Removed during the worker writes: take this page's rows back out.
-      for (const thread of page.threads) ThreadsRepo.delete(email, thread.id);
+      await databaseWorkerClient.deleteThreads(email, page.threads.map(thread => thread.id));
       throw new BackfillAccountRemovedError(email);
     }
     if (page.threads.length > 0) {
@@ -3370,7 +3372,11 @@ async function performMailboxSyncForAccount(email: string, read: MailboxRead): P
     fetchThreadDetail: (accountId, threadId) => GmailSyncService.fetchThreadDetail(accountId, threadId),
     saveThreads: threads => saveThreadsToDatabase(threads, read),
     saveMessages: (messages, options) => saveMessagesToDatabase(messages, options, read),
-    deleteThread: (accountId, threadId) => ThreadsRepo.delete(accountId, threadId),
+    deleteThreads: (accountId, threadIds) => databaseWorkerClient.deleteThreads(accountId, threadIds),
+    queueThreadReads: (state, threadIds) => MailboxSyncQueueRepo.advance(state, threadIds),
+    dueThreadReads: (accountId, limit) => MailboxSyncQueueRepo.due(accountId, limit),
+    settleThreadReads: (accountId, done, failed) => MailboxSyncQueueRepo.settle(accountId, done, failed),
+    takeThreadRead: accountId => gmailBackgroundTraffic.takeSyncThreadRead(accountId),
     listPendingActions: accountId => ActionLogRepo.listOpenMutations(accountId),
     publishDelta: (accountId, threads, deleted) => publishMailboxDelta(accountId, read.threads(threads), deleted),
     afterPersist: (accountId, threads) => SenderRulesService.applyToPersistedThreads(accountId, read.threads(threads)),
@@ -3379,6 +3385,15 @@ async function performMailboxSyncForAccount(email: string, read: MailboxRead): P
       warning: (scope, message, extra) => SystemLogger.warning(scope, message, extra),
     },
   });
+}
+
+/** Changed conversations still waiting to be read from Gmail, for the log. */
+function queuedThreadReads(email: string): number | null {
+  try {
+    return MailboxSyncQueueRepo.count(email);
+  } catch {
+    return null;
+  }
 }
 
 function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
@@ -3397,6 +3412,7 @@ function runMailboxSyncForAccount(email: string): Promise<MailboxDelta> {
         mode,
         updatedThreads: delta.upserts.length,
         deletedThreads: delta.deletedThreadIds.length,
+        queuedThreads: queuedThreadReads(email),
         durationMs: Date.now() - startedAt,
       });
       publishMailboxSyncHealth({
