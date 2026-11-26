@@ -55,7 +55,16 @@ export class SearchBodyIndexJob {
       this.later(() => this.resume());
       return;
     }
-    if (!pending) return;
+    if (!pending) {
+      // A step can finish the update and lose its answer on the way back
+      // (the worker timed out or was restarted). The next look finds nothing
+      // left; without this the window would be told "updating" for good.
+      if (this.unfinished) {
+        this.unfinished = false;
+        this.deps.publish(this.status());
+      }
+      return;
+    }
     this.running = true;
     if (!this.unfinished) {
       this.unfinished = true;

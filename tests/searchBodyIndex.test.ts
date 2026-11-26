@@ -323,6 +323,32 @@ describe('SearchBodyIndexJob', () => {
     expect(h.published).toEqual([{ updating: true }, { updating: false }]);
   });
 
+  it('reports the end when the last step finished the update but its answer was lost', async () => {
+    let pending = true;
+    const retries: Array<() => void> = [];
+    const published: SearchIndexStatus[] = [];
+    const job = new SearchBodyIndexJob({
+      pending: () => pending,
+      runChunk: async () => {
+        // The worker commits the last step, then the request times out.
+        pending = false;
+        throw new Error('Database worker request timed out');
+      },
+      publish: status => { published.push(status); },
+      warn: () => undefined,
+      sleep: async () => undefined,
+      retryLater: run => { retries.push(run); },
+    });
+    job.resume();
+    await settle();
+    expect(job.status()).toEqual({ updating: true });
+    retries[0]();
+    await settle();
+    expect(published).toEqual([{ updating: true }, { updating: false }]);
+    expect(job.status()).toEqual({ updating: false });
+    expect(retries).toHaveLength(1);
+  });
+
   it('looks again later when the record could not be read', async () => {
     let locked = true;
     let pending = true;
