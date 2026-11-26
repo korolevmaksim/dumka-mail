@@ -44,7 +44,10 @@ export type DatabaseWorkerPayload =
   | { type: 'briefingThreadBatch'; accountId: string; threadIds: string[] }
   | { type: 'agentPrepInbox'; accountId: string; limit: number }
   | { type: 'getThreads'; accountId: string; threadIds: string[] }
-  | { type: 'runThreadMaintenance'; chunkSize?: number };
+  | { type: 'runThreadMaintenance'; chunkSize?: number }
+  | { type: 'searchMail'; accountId: string; ftsQuery: string }
+  | { type: 'searchMailDetailed'; accountId: string; ftsQuery: string; limit: number }
+  | { type: 'runSearchBodyIndexChunk' };
 
 /** A payload as the worker receives it, correlated back to its pending promise. */
 export type DatabaseWorkerRequest = DatabaseWorkerPayload & { id: number };

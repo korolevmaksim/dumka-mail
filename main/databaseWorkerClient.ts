@@ -22,7 +22,7 @@ import {
 import type { ThreadMaintenanceResult } from './migrations';
 import type { DeletedConversationMessages, DeletedMessagesOutcome } from '../shared/gmailHistory';
 import type { ReplyStyleSample } from '../shared/replyStyle';
-import type { MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat, ThreadDecisionRecord } from '../shared/types';
+import type { MailboxSearchSource, MailMessage, MailThread, MessageSecurityInsight, SenderCleanupStat, ThreadDecisionRecord } from '../shared/types';
 
 /** What one agent-prep pass reads: the newest inbox threads and their cached decisions. */
 export interface AgentPrepInboxSnapshot {
@@ -342,6 +342,23 @@ class DatabaseWorkerClient {
     }
 
     return { threads, latestMessageByThreadId, securityByThreadId };
+  }
+
+  // Full-text search ranks every match before it returns the best ones, which
+  // takes long for a common word on a large cache. It runs here so the window
+  // stays responsive meanwhile.
+
+  searchMail(accountId: string, ftsQuery: string): Promise<{ threadId: string; messageId: string }[]> {
+    return this.request({ type: 'searchMail', accountId, ftsQuery });
+  }
+
+  searchMailDetailed(accountId: string, ftsQuery: string, limit: number): Promise<MailboxSearchSource[]> {
+    return this.request({ type: 'searchMailDetailed', accountId, ftsQuery, limit });
+  }
+
+  /** One committed step of bringing the search index in line with the "search the text of messages" setting. */
+  runSearchBodyIndexChunk(): Promise<{ done: boolean }> {
+    return this.request({ type: 'runSearchBodyIndexChunk' });
   }
 
   shutdown() {

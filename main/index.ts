@@ -45,6 +45,7 @@ import { MissingGmailThreadError, MissingGmailThreads } from './missingGmailThre
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
 import { MailboxSyncQueueRepo } from './mailboxSyncQueue';
+import { SearchBodyIndexJob } from './searchBodyIndexJob';
 import { gmailBackgroundTraffic } from './gmailBackgroundTraffic';
 import { completeHistoryBackfillPage, ensureHistoryCoverage, sameHistoryBackfillRun } from './mailboxHistoryRecovery';
 import { createRfcMessageId } from '../shared/rfcMessageId';
@@ -1035,6 +1036,8 @@ app.whenReady().then(async () => {
   startBackgroundMailboxSyncWorker();
   startHistoryBackfillAtLaunch();
   scheduleThreadMaintenance(THREAD_MAINTENANCE_STARTUP_DELAY_MS);
+  // A search index update that was interrupted by quitting continues.
+  setTimeout(() => searchBodyIndexJob.resume(), SEARCH_INDEX_RESUME_DELAY_MS);
   startBackgroundAgenticWorker();
   // Agent preparation (decisions, prepared drafts): first pass shortly after launch.
   AgentPrepService.start({
@@ -1477,7 +1480,8 @@ registerSecureHandler('db:getConversationMessages', (_, id) => AIConversationsRe
 registerSecureHandler('db:saveConversation', (_, conv, messages) => AIConversationsRepo.saveConversation(conv, messages));
 registerSecureHandler('db:deleteConversation', (_, id) => AIConversationsRepo.deleteConversation(id));
 
-registerSecureHandler('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
+registerSecureHandler('db:searchFTS', (_, accountId, query) => databaseWorkerClient.searchMail(accountId, query));
+registerSecureHandler('api:getSearchIndexStatus', () => searchBodyIndexJob.status());
 
 registerSecureHandler('db:getSetting', (_, key) => SettingsRepo.get(key));
 // Messages held because their send time was missed. A notice stays stored
@@ -1509,7 +1513,7 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
     const parsed = JSON.parse(storedValue);
     SystemLogger.updateSettings(parsed?.logging, parsed?.privacy?.redactLogs !== false);
     if (shouldRefreshSearchBodyIndex) {
-      SearchRepo.setBodyIndexEnabled(parsed?.privacy?.includeBodiesInSearchIndex !== false);
+      searchBodyIndexJob.request(parsed?.privacy?.includeBodiesInSearchIndex !== false);
     }
     if (shouldRefreshMCP) {
       void resolveAppSettingsSecrets(parsed)
@@ -2335,6 +2339,20 @@ function assertLabelProposalReadyForMutation(
   }
   throw new Error('The requested mailbox mutation does not match the reviewed AI proposal.');
 }
+
+const SEARCH_INDEX_RESUME_DELAY_MS = 5_000;
+
+const searchBodyIndexJob = new SearchBodyIndexJob({
+  start: enabled => SearchRepo.startBodyIndexUpdate(enabled),
+  pending: () => SearchRepo.bodyIndexUpdatePending(),
+  runChunk: () => databaseWorkerClient.runSearchBodyIndexChunk(),
+  publish: status => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('api:searchIndexStatus', status);
+    }
+  },
+  warn: (message, error) => SystemLogger.warning('Search Index', message, { error }),
+});
 
 const missingGmailThreads = new MissingGmailThreads({
   exists: (accountId, threadId) => GmailSyncService.threadExists(accountId, threadId),

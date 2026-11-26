@@ -1,4 +1,5 @@
-import { AccountsRepo, SearchRepo, ThreadsRepo } from './database';
+import { AccountsRepo, ThreadsRepo } from './database';
+import { databaseWorkerClient } from './databaseWorkerClient';
 import { AgenticService } from './agentic';
 import { buildFtsMatchQuery, parseSearchQuery, searchTextQuery } from '../shared/search';
 import {
@@ -77,7 +78,7 @@ export async function executeMailboxSearchTool(args: MailboxSearchToolArgs): Pro
   for (const accountId of accountIds) {
     if (ftsQuery) {
       try {
-        const ftsResults = SearchRepo.searchDetailed(accountId, ftsQuery, perAccountLimit) as MailboxSearchSourceCandidate[];
+        const ftsResults = await databaseWorkerClient.searchMailDetailed(accountId, ftsQuery, perAccountLimit) as MailboxSearchSourceCandidate[];
         if (ftsResults.length > 0) {
           candidates.push(...ftsResults);
           rankedLists.push({
