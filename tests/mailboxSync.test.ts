@@ -104,12 +104,14 @@ function makeDeps(options: {
     },
     removeDeletedMessages: async (_accountId, deletions) => {
       removalCalls.push(deletions.map(item => item.threadId));
-      const outcome = { removedThreadIds: [] as string[], remainingThreadIds: [] as string[] };
+      const outcome = { removedThreadIds: [] as string[], remainingThreadIds: [] as string[], shortenedThreads: [] as MailThread[] };
       for (const { threadId, messageIds, alsoChanged } of deletions) {
-        const left = stored.get(threadId) || new Set<string>();
-        for (const messageId of messageIds) left.delete(messageId);
-        if (alsoChanged || left.size > 0) {
+        const left = stored.get(threadId);
+        const removedMessages = messageIds.filter(messageId => left?.delete(messageId)).length;
+        // As the repository decides: a conversation goes with its last message.
+        if (alsoChanged || (left && left.size > 0) || (left && removedMessages === 0)) {
           outcome.remainingThreadIds.push(threadId);
+          if (removedMessages > 0) outcome.shortenedThreads.push(thread(threadId));
         } else {
           outcome.removedThreadIds.push(threadId);
           deleted.push(threadId);
@@ -353,6 +355,41 @@ describe('a message Gmail deleted for good', () => {
     h.deps.syncIncremental = async () => ({ updatedThreadIds: [], deletedMessageIds: {}, historyId: '20' });
     await performMailboxSyncForAccount('me@example.com', h.deps);
     expect(h.fetched).toEqual(['new-mail', 'kept']);
+  });
+
+  it('tells the window about a shortened conversation at once, before its turn to be read', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: [], deletedThreadIds: ['kept', 'emptied'], historyId: '20' },
+      stored: { kept: ['kept-m1', 'kept-m2'], emptied: ['emptied-m1'] },
+    });
+    h.setQuotaAllows(false);
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.fetched).toEqual([]);
+    expect(h.deltas[0].upserts.map(item => item.id)).toEqual(['kept']);
+    expect(h.deltas[0].deletedThreadIds).toEqual(['emptied']);
+  });
+
+  it('publishes a shortened conversation once when it was read in the same pass', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: [], deletedThreadIds: ['kept'], historyId: '20' },
+      stored: { kept: ['kept-m1', 'kept-m2'] },
+    });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.deltas[0].upserts.map(item => item.id)).toEqual(['kept']);
+  });
+
+  it('reads a conversation stored without messages instead of removing it', async () => {
+    const h = makeDeps({
+      historyId: '10',
+      incremental: { updatedThreadIds: [], deletedThreadIds: ['bare'], historyId: '20' },
+      stored: { bare: [] },
+    });
+    await performMailboxSyncForAccount('me@example.com', h.deps);
+    expect(h.deleted).toEqual([]);
+    expect(h.fetched).toEqual(['bare']);
+    expect(h.deltas[0].deletedThreadIds).toEqual([]);
   });
 
   it('reads a conversation again when Gmail did not name the deleted message', async () => {

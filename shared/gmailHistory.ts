@@ -1,3 +1,5 @@
+import type { MailThread } from './types';
+
 export const MAX_INCREMENTAL_HISTORY_PAGES = 20;
 
 export interface GmailHistoryRecord {
@@ -29,10 +31,15 @@ export interface DeletedConversationMessages {
 }
 
 export interface DeletedMessagesOutcome {
-  /** Conversations with no message left: removed from the cache as a whole. */
+  /** Conversations whose last message went: removed from the cache as a whole. */
   removedThreadIds: string[];
-  /** Conversations that still have messages: to be read again from Gmail. */
+  /** Conversations that stay in the cache: to be read again from Gmail. */
   remainingThreadIds: string[];
+  /**
+   * The remaining conversations that lost a message here, as they are stored
+   * now, so a window that shows one of them can drop that message at once.
+   */
+  shortenedThreads: MailThread[];
 }
 
 export interface HistoryChanges {

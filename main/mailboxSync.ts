@@ -245,10 +245,12 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
     alsoChanged: changed.has(threadId),
   }));
   let toReadAgain: string[] = [];
+  let shortened: MailThread[] = [];
   if (deletions.length > 0) {
     const outcome = await deps.removeDeletedMessages(email, deletions);
     for (const threadId of outcome.removedThreadIds) deletedThreadIds.add(threadId);
     toReadAgain = outcome.remainingThreadIds.filter(threadId => !changed.has(threadId));
+    shortened = outcome.shortenedThreads;
   }
 
   // The cursor moves past this stretch of history in the same write that
@@ -261,6 +263,14 @@ export async function performMailboxSyncForAccount(email: string, deps: MailboxS
   );
 
   await readQueuedThreads();
+
+  // A conversation that lost a message and was not read again in this pass
+  // is published as it is stored, so a window showing it drops the message
+  // now and not when its turn on the queue comes.
+  const stored = new Set(upserts.map(thread => thread.id));
+  for (const thread of shortened) {
+    if (!stored.has(thread.id) && !deletedThreadIds.has(thread.id)) upserts.push(thread);
+  }
 
   return deps.publishDelta(email, upserts, Array.from(deletedThreadIds));
 }

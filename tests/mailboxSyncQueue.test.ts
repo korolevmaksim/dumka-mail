@@ -117,6 +117,17 @@ describe('the queue of changed conversations', () => {
     });
   });
 
+  repositoryIt('reads a conversation that changed again in the order of its newest report', async () => {
+    await withDatabase(({ queue }) => {
+      const { MailboxSyncQueueRepo } = queue;
+      MailboxSyncQueueRepo.advance(state(WORK, '20'), ['a', 'b', 'c'], at(0));
+      // `a` changes again: Gmail lists it last, so it is the newest change.
+      MailboxSyncQueueRepo.advance(state(WORK, '30'), ['d', 'a'], at(0));
+      expect(MailboxSyncQueueRepo.due(WORK, 10, at(0))).toEqual(['a', 'd', 'c', 'b']);
+      expect(MailboxSyncQueueRepo.count(WORK)).toBe(4);
+    });
+  });
+
   repositoryIt('is purged with the account cache', async () => {
     await withDatabase(({ database, queue }) => {
       const { MailboxSyncQueueRepo } = queue;
