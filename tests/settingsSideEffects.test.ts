@@ -89,6 +89,15 @@ describe('app settings side effects', () => {
     expect(settingsAffectSearchBodyIndexing(previous, next)).toBe(false);
   });
 
+  it('has nothing to rebuild on a first save that keeps message text in search', () => {
+    const next = baseSettings();
+    expect(settingsAffectSearchBodyIndexing(null, next)).toBe(false);
+    expect(settingsAffectSearchBodyIndexing(null, {
+      ...next,
+      privacy: { ...next.privacy, includeBodiesInSearchIndex: false } as AppSettings['privacy'],
+    })).toBe(true);
+  });
+
   it('rebuilds the search body index when the privacy setting changes', () => {
     const previous = baseSettings();
     const next = {

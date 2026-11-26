@@ -878,6 +878,11 @@ export interface MailboxDelta {
   source?: 'sync' | 'backfill';
 }
 
+/** Whether the search index is being rewritten after "search the text of messages" changed (`api:searchIndexStatus`). */
+export interface SearchIndexStatus {
+  updating: boolean;
+}
+
 /** Main-process history backfill progress for one account (`api:backfillProgress`). */
 export interface MailboxBackfillProgressEvent {
   accountId: AccountID;

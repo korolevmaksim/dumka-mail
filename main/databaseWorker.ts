@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { attachWritePrioritySignal } from './sqliteWriteGuard';
-import { ActionLogRepo, getDatabase, initializeDatabase, MessagesRepo, ThreadDecisionsRepo, ThreadsRepo } from './database';
+import { ActionLogRepo, getDatabase, initializeDatabase, MessagesRepo, SearchRepo, ThreadDecisionsRepo, ThreadsRepo } from './database';
 import {
   collectBriefingThreadBatch,
   collectPendingEmbeddingCandidates,
@@ -202,6 +202,21 @@ parentPort?.on('message', (request: DatabaseWorkerRequest) => {
 
     if (request.type === 'runThreadMaintenance') {
       send({ id: request.id, ok: true, result: ThreadsRepo.runMaintenanceChunk(request.chunkSize) });
+      return;
+    }
+
+    if (request.type === 'searchMail') {
+      send({ id: request.id, ok: true, result: SearchRepo.search(request.accountId, request.ftsQuery) });
+      return;
+    }
+
+    if (request.type === 'searchMailDetailed') {
+      send({ id: request.id, ok: true, result: SearchRepo.searchDetailed(request.accountId, request.ftsQuery, request.limit) });
+      return;
+    }
+
+    if (request.type === 'runSearchBodyIndexChunk') {
+      send({ id: request.id, ok: true, result: SearchRepo.runBodyIndexUpdateChunk() });
       return;
     }
 

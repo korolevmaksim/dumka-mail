@@ -871,9 +871,14 @@ export const MessagesRepo = {
     return messagesByThread;
   },
 
+  /**
+   * `indexBodies` is for tests. Left out, each write follows the "search the
+   * text of messages" setting as it is stored at that moment: the caller's
+   * copy of the setting can be older than a change that is already being
+   * applied to the rest of the index.
+   */
   save(messages: MailMessage[], options: { indexBodies?: boolean } = {}) {
     const db = getDatabase();
-    const indexBodies = options.indexBodies !== false;
     const insertMsg = db.prepare(`
       INSERT INTO messages (
         id, thread_id, account_id, sender_name, sender_email, subject, snippet, received_at,
@@ -908,6 +913,7 @@ export const MessagesRepo = {
     const deleteSearch = mailSearchRowRemover(db, 'message_id');
 
     for (const chunk of chunked(messages, BULK_MESSAGE_CHUNK)) runWriteTransaction(db, () => {
+      const indexBodies = options.indexBodies ?? searchBodiesSettingEnabled();
       for (const m of chunk) {
         insertMsg.run(
           m.id,
@@ -1590,24 +1596,110 @@ export const SearchRepo = {
     }));
   },
 
-  setBodyIndexEnabled(enabled: boolean, accountId?: string) {
-    const db = getDatabase();
-    const nextBodySql = enabled
-      ? `COALESCE((
-          SELECT messages.body_plain
-          FROM messages
-          WHERE messages.account_id = mail_search.account_id
-            AND messages.id = mail_search.message_id
-        ), '')`
-      : `''`;
+  /**
+   * Records that every search row has to be brought in line with the "search
+   * the text of messages" setting, replacing an update that is still running.
+   * The work itself is done by `runBodyIndexUpdateChunk` on the database
+   * worker: one statement over the whole table kept the main process busy for
+   * minutes on a large cache and held the write lock all that time.
+   */
+  startBodyIndexUpdate(enabled: boolean): void {
+    SettingsRepo.set(SEARCH_BODY_INDEX_JOB_KEY, JSON.stringify({ enabled, afterRowid: 0 }));
+  },
 
-    if (accountId) {
-      db.prepare(`UPDATE mail_search SET body_plain = ${nextBodySql} WHERE account_id = ?`).run(accountId);
-      return;
-    }
-    db.prepare(`UPDATE mail_search SET body_plain = ${nextBodySql}`).run();
+  /**
+   * Stores the app settings and records the search index update their
+   * "search the text of messages" value asks for, in one write. Stored
+   * separately, a failure of the second write would leave the setting saying
+   * one thing and the index doing the other, with nothing left to notice it.
+   */
+  saveAppSettingsStartingBodyIndexUpdate(appSettings: string): void {
+    SettingsRepo.set('appSettings', appSettings);
+    SearchRepo.startBodyIndexUpdate(searchBodiesSettingEnabled());
+  },
+
+  /** True while search rows are still being brought in line with the setting. */
+  bodyIndexUpdatePending(): boolean {
+    return readSearchBodyIndexJob() !== null;
+  },
+
+  /**
+   * One committed step of the update: the next `limit` search rows by rowid.
+   * Progress is stored with the step, so the update continues after a restart,
+   * and it is read inside the write, so a restart of the update that lands
+   * between two steps is never overwritten by the older one.
+   */
+  runBodyIndexUpdateChunk(limit = SEARCH_BODY_INDEX_CHUNK): { done: boolean } {
+    const db = getDatabase();
+    return runWriteTransaction(db, () => {
+      const job = readSearchBodyIndexJob();
+      if (!job) return { done: true };
+      // The next rows are taken from the table that stores the indexed text
+      // (FTS5 keeps it under this name), and each one is then addressed by its
+      // rowid: a rowid range on the search table itself is answered by reading
+      // the table from its start, every time.
+      const rows = db.prepare('SELECT id FROM mail_search_content WHERE id > ? ORDER BY id LIMIT ?')
+        .all(job.afterRowid, Math.max(1, Math.floor(limit))) as Array<{ id: number }>;
+      if (rows.length === 0) {
+        db.prepare('DELETE FROM settings WHERE key = ?').run(SEARCH_BODY_INDEX_JOB_KEY);
+        return { done: true };
+      }
+      const lastRowid = rows[rows.length - 1].id;
+      // Rows that are already as the setting wants them are left alone:
+      // rewriting a row indexes its whole text again.
+      const update = job.enabled
+        ? db.prepare(`
+            UPDATE mail_search SET body_plain = (
+              SELECT messages.body_plain FROM messages
+              WHERE messages.account_id = mail_search.account_id AND messages.id = mail_search.message_id
+            )
+            WHERE rowid = ? AND body_plain = '' AND EXISTS (
+              SELECT 1 FROM messages
+              WHERE messages.account_id = mail_search.account_id AND messages.id = mail_search.message_id
+                AND messages.body_plain IS NOT NULL AND messages.body_plain <> ''
+            )
+          `)
+        : db.prepare(`UPDATE mail_search SET body_plain = '' WHERE rowid = ? AND body_plain <> ''`);
+      for (const row of rows) update.run(row.id);
+      SettingsRepo.set(SEARCH_BODY_INDEX_JOB_KEY, JSON.stringify({ enabled: job.enabled, afterRowid: lastRowid }));
+      return { done: false };
+    });
   }
 };
+
+const SEARCH_BODY_INDEX_JOB_KEY = 'search.bodyIndexJob';
+const SEARCH_BODY_INDEX_CHUNK = 200;
+
+function readSearchBodyIndexJob(): { enabled: boolean; afterRowid: number } | null {
+  const stored = SettingsRepo.get(SEARCH_BODY_INDEX_JOB_KEY);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as { enabled?: unknown; afterRowid?: unknown };
+    const afterRowid = Number(parsed.afterRowid);
+    return { enabled: parsed.enabled !== false, afterRowid: Number.isFinite(afterRowid) && afterRowid > 0 ? afterRowid : 0 };
+  } catch {
+    // Unreadable progress: start over, towards what the setting says now.
+    return { enabled: searchBodiesSettingEnabled(), afterRowid: 0 };
+  }
+}
+
+let parsedSearchBodiesSetting: { stored: string; enabled: boolean } | null = null;
+
+/** The stored "search the text of messages" setting. Inside a write transaction it is the value that write is ordered against. */
+function searchBodiesSettingEnabled(): boolean {
+  const stored = SettingsRepo.get('appSettings') || '';
+  // Read with every chunk of saved messages: parse the settings only when they changed.
+  if (parsedSearchBodiesSetting?.stored === stored) return parsedSearchBodiesSetting.enabled;
+  let enabled = true;
+  try {
+    const settings = JSON.parse(stored || '{}') as { privacy?: { includeBodiesInSearchIndex?: boolean } };
+    enabled = settings?.privacy?.includeBodiesInSearchIndex !== false;
+  } catch {
+    enabled = true;
+  }
+  parsedSearchBodiesSetting = { stored, enabled };
+  return enabled;
+}
 
 // === Agent Drafts Repository ===
 export const AgentDraftsRepo = {
@@ -2937,7 +3029,7 @@ guardRepositoryWrites(ThreadsRepo, ['delete', 'updateLabels'], getDatabase);
 guardRepositoryWrites(ThreadDecisionsRepo, ['upsertMany', 'deleteForThread', 'purgeAccount'], getDatabase);
 guardRepositoryWrites(ContactsRepo, ['saveMany', 'updateLocal'], getDatabase);
 guardRepositoryWrites(ContactGroupsRepo, ['save', 'delete'], getDatabase);
-guardRepositoryWrites(SearchRepo, ['setBodyIndexEnabled'], getDatabase);
+guardRepositoryWrites(SearchRepo, ['startBodyIndexUpdate', 'saveAppSettingsStartingBodyIndexUpdate'], getDatabase);
 guardRepositoryWrites(AgentDraftsRepo, ['save', 'setStatus'], getDatabase);
 guardRepositoryWrites(MessageSecurityRepo, ['save', 'saveMany'], getDatabase);
 guardRepositoryWrites(MailEmbeddingsRepo, ['deleteByModel', 'deleteOtherModels', 'migrateVectorJsonBatch'], getDatabase);

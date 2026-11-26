@@ -13,6 +13,7 @@ import {
   offlineCoverageText,
   optionFor,
   privacyCopy,
+  searchUpdatingCopy,
   shortcutPresetSummary,
   shortcutSwitches,
   textSizeOption,
@@ -51,6 +52,7 @@ function allVisibleCopy(): string[] {
       const copy = privacyCopy(key, on);
       texts.push(copy.title, copy.description);
     }
+    texts.push(searchUpdatingCopy(on));
   }
   for (const mode of ['superhuman', 'gmail', 'appleMail'] as const) {
     for (const singleKeyShortcuts of [true, false]) {

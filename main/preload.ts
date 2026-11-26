@@ -24,6 +24,7 @@ import {
   SenderRulesChangedEvent,
   MailboxSyncHealthEvent,
   MailboxBackfillProgressEvent,
+  SearchIndexStatus,
   Draft,
   SyncState,
   MailActionLog,
@@ -327,6 +328,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('api:scheduledSendHeld', listener);
     return () => {
       ipcRenderer.off('api:scheduledSendHeld', listener);
+    };
+  },
+  getSearchIndexStatus: (): Promise<SearchIndexStatus> => ipcRenderer.invoke('api:getSearchIndexStatus'),
+  onSearchIndexStatus: (callback: (status: SearchIndexStatus) => void) => {
+    const listener = (_: unknown, status: SearchIndexStatus) => callback(status);
+    ipcRenderer.on('api:searchIndexStatus', listener);
+    return () => {
+      ipcRenderer.off('api:searchIndexStatus', listener);
     };
   },
   getLoginItemState: () => ipcRenderer.invoke('api:getLoginItemState'),

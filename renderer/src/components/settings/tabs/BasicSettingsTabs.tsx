@@ -6,7 +6,7 @@ import { SETTINGS_BUTTON_CLASS, SETTINGS_SELECT_CLASS, Toggle } from '../Setting
 import { ShortcutGuideOverlay } from '../../layout/ShortcutGuideOverlay';
 import { useEscapeLayer } from '../../../hooks/useEscapeLayer';
 import { KeyCaps, SettingRow, SettingToggleRow, SettingsCard, SettingsGroup, SettingsPage } from './SettingsPageParts';
-import { PRIVACY_KEYS, privacyCopy, shortcutPresetSummary, shortcutSwitches } from './settingsCopy';
+import { PRIVACY_KEYS, privacyCopy, searchUpdatingCopy, shortcutPresetSummary, shortcutSwitches } from './settingsCopy';
 import { shortcutGuideSections } from '../../../../../shared/shortcutGuide';
 import { KEYMAP_GROUP_LABELS, shortcutPresetLabel, type KeymapGroup } from '../../../../../shared/appKeymap';
 import { useConfirmDisconnectAccount } from '../accountActions';
@@ -1006,6 +1006,24 @@ export function NotificationsTab() {
 
 export function PrivacyTab() {
   const store = useAppStore();
+  const [searchUpdating, setSearchUpdating] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    // An event is newer than the answer to the question asked on opening this page.
+    let heardEvent = false;
+    void window.electronAPI.getSearchIndexStatus()
+      .then(status => { if (mounted && !heardEvent) setSearchUpdating(status.updating); })
+      .catch(() => undefined);
+    const unsubscribe = window.electronAPI.onSearchIndexStatus(status => {
+      heardEvent = true;
+      setSearchUpdating(status.updating);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   return (
     <SettingsPage
@@ -1022,7 +1040,7 @@ export function PrivacyTab() {
               key={key}
               rowKey={key}
               title={copy.title}
-              description={copy.description}
+              description={key === 'includeBodiesInSearchIndex' && searchUpdating ? searchUpdatingCopy(on) : copy.description}
               checked={on}
               onChange={value => store.updateSettings(settings => { settings.privacy[key] = value; })}
             />

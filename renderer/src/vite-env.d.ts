@@ -279,6 +279,9 @@ export interface IElectronAPI {
   onMailboxSyncHealth: (callback: (event: MailboxSyncHealthEvent) => void) => () => void;
   /** Main-process history backfill progress (`api:backfillProgress`). */
   onBackfillProgress: (callback: (event: MailboxBackfillProgressEvent) => void) => () => void;
+  /** Whether search is being updated after "Search the text of messages" changed. */
+  getSearchIndexStatus: () => Promise<import('../../shared/types').SearchIndexStatus>;
+  onSearchIndexStatus: (callback: (status: import('../../shared/types').SearchIndexStatus) => void) => () => void;
   onActionLogChanged: (callback: () => void) => () => void;
   /** Scheduled messages held because their time was missed; each stays listed until it is acknowledged as shown. */
   listHeldScheduledSends: () => Promise<import('../../shared/scheduledSend').HeldScheduledSend[]>;

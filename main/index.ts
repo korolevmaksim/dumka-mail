@@ -45,6 +45,7 @@ import { MissingGmailThreadError, MissingGmailThreads } from './missingGmailThre
 import { startOAuthFlow, GmailSyncService } from './gmail';
 import { performMailboxSyncForAccount as runMailboxSyncPass } from './mailboxSync';
 import { MailboxSyncQueueRepo } from './mailboxSyncQueue';
+import { SearchBodyIndexJob } from './searchBodyIndexJob';
 import { gmailBackgroundTraffic } from './gmailBackgroundTraffic';
 import { completeHistoryBackfillPage, ensureHistoryCoverage, sameHistoryBackfillRun } from './mailboxHistoryRecovery';
 import { createRfcMessageId } from '../shared/rfcMessageId';
@@ -279,18 +280,6 @@ function readAccountNotificationSource(): AccountSettingsSource {
   } catch (err) {
     console.error('Failed to read account notification settings:', err);
     return {};
-  }
-}
-
-function readIncludeBodiesInSearchIndex(): boolean {
-  try {
-    const rawSettings = SettingsRepo.get('appSettings');
-    if (!rawSettings) return true;
-    const parsed = JSON.parse(rawSettings);
-    return parsed?.privacy?.includeBodiesInSearchIndex !== false;
-  } catch (err) {
-    console.error('Failed to read search indexing privacy setting:', err);
-    return true;
   }
 }
 
@@ -1035,6 +1024,8 @@ app.whenReady().then(async () => {
   startBackgroundMailboxSyncWorker();
   startHistoryBackfillAtLaunch();
   scheduleThreadMaintenance(THREAD_MAINTENANCE_STARTUP_DELAY_MS);
+  // A search index update that was interrupted by quitting continues.
+  setTimeout(() => searchBodyIndexJob.resume(), SEARCH_INDEX_RESUME_DELAY_MS);
   startBackgroundAgenticWorker();
   // Agent preparation (decisions, prepared drafts): first pass shortly after launch.
   AgentPrepService.start({
@@ -1162,10 +1153,7 @@ async function saveThreadsToDatabase(threads: MailThread[], read?: MailboxRead) 
 }
 
 async function saveMessagesToDatabase(messages: MailMessage[], options?: { notifyOfNew?: boolean }, read?: MailboxRead) {
-  const { newMessages } = await databaseWorkerClient.saveMessages(messages, {
-    ...options,
-    indexBodies: readIncludeBodiesInSearchIndex()
-  }, read);
+  const { newMessages } = await databaseWorkerClient.saveMessages(messages, options, read);
   if (read) messages = read.messages(messages);
 
   try {
@@ -1477,7 +1465,8 @@ registerSecureHandler('db:getConversationMessages', (_, id) => AIConversationsRe
 registerSecureHandler('db:saveConversation', (_, conv, messages) => AIConversationsRepo.saveConversation(conv, messages));
 registerSecureHandler('db:deleteConversation', (_, id) => AIConversationsRepo.deleteConversation(id));
 
-registerSecureHandler('db:searchFTS', (_, accountId, query) => SearchRepo.search(accountId, query));
+registerSecureHandler('db:searchFTS', (_, accountId, query) => databaseWorkerClient.searchMail(accountId, query));
+registerSecureHandler('api:getSearchIndexStatus', () => searchBodyIndexJob.status());
 
 registerSecureHandler('db:getSetting', (_, key) => SettingsRepo.get(key));
 // Messages held because their send time was missed. A notice stays stored
@@ -1503,14 +1492,16 @@ registerSecureHandler('db:setSetting', async (_, key, value) => {
   const storedValue = shouldRefreshMCP
     ? await prepareAppSettingsForStorage(value)
     : value;
-  const result = SettingsRepo.set(key, storedValue);
+  // A change of "search the text of messages" is recorded in the same write
+  // as the settings, so the two cannot disagree, and applied in the background.
+  const result = shouldRefreshSearchBodyIndex
+    ? SearchRepo.saveAppSettingsStartingBodyIndexUpdate(storedValue)
+    : SettingsRepo.set(key, storedValue);
+  if (shouldRefreshSearchBodyIndex) searchBodyIndexJob.recorded();
 
   try {
     const parsed = JSON.parse(storedValue);
     SystemLogger.updateSettings(parsed?.logging, parsed?.privacy?.redactLogs !== false);
-    if (shouldRefreshSearchBodyIndex) {
-      SearchRepo.setBodyIndexEnabled(parsed?.privacy?.includeBodiesInSearchIndex !== false);
-    }
     if (shouldRefreshMCP) {
       void resolveAppSettingsSecrets(parsed)
         .then(resolved => MCPManager.initialize(resolved as any))
@@ -2335,6 +2326,19 @@ function assertLabelProposalReadyForMutation(
   }
   throw new Error('The requested mailbox mutation does not match the reviewed AI proposal.');
 }
+
+const SEARCH_INDEX_RESUME_DELAY_MS = 5_000;
+
+const searchBodyIndexJob = new SearchBodyIndexJob({
+  pending: () => SearchRepo.bodyIndexUpdatePending(),
+  runChunk: () => databaseWorkerClient.runSearchBodyIndexChunk(),
+  publish: status => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('api:searchIndexStatus', status);
+    }
+  },
+  warn: (message, error) => SystemLogger.warning('Search Index', message, { error }),
+});
 
 const missingGmailThreads = new MissingGmailThreads({
   exists: (accountId, threadId) => GmailSyncService.threadExists(accountId, threadId),

@@ -92,6 +92,16 @@ export const PRIVACY_KEYS: ReadonlyArray<keyof PrivacySettings> = [
   'clearCacheOnDisconnect',
 ];
 
+/**
+ * Shown under "Search the text of messages" while the change is still being
+ * applied to mail that is already on this Mac.
+ */
+export function searchUpdatingCopy(on: boolean): string {
+  return on
+    ? 'Adding the text of your messages to search… Until this is done, some messages are found by subject and sender only'
+    : 'Removing the text of your messages from search… Until this is done, search still finds words inside some messages';
+}
+
 export function privacyCopy(key: keyof PrivacySettings, on: boolean): { title: string; description: string } {
   switch (key) {
     case 'loadRemoteImages':

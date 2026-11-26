@@ -50,6 +50,7 @@ export function settingsAffectSearchBodyIndexing(
   previous: Partial<AppSettings> | null | undefined,
   next: Partial<AppSettings> | null | undefined,
 ): boolean {
-  if (!previous) return true;
+  // Without stored settings the index was built with the default, which
+  // includes the text: only a first save that turns it off has work to do.
   return includeBodiesInSearchIndex(previous) !== includeBodiesInSearchIndex(next);
 }
