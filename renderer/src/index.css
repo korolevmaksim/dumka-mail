@@ -173,27 +173,29 @@
 }
 
 [data-interface-style="soft"][data-theme="dark"] {
-  --app-bg: #0D1524;
-  --rail-bg: #121E30;
-  --panel-bg: #111B2B;
-  --raised-surface: #182438;
-  --control-bg: #182438;
-  --inset-surface: #162236;
-  --selected-row: color-mix(in srgb, var(--accent) 27%, #182438);
-  --hover-row: rgba(151, 181, 231, 0.11);
+  /* Neutral graphite: the same lightness steps as the earlier navy set, with the
+     blue taken out of the surfaces, borders and text. Blue belongs to --accent only. */
+  --app-bg: #131519;
+  --rail-bg: #1C1E22;
+  --panel-bg: #191B1F;
+  --raised-surface: #222428;
+  --control-bg: #222428;
+  --inset-surface: #202227;
+  --selected-row: color-mix(in srgb, var(--accent) 27%, #222428);
+  --hover-row: rgba(214, 220, 232, 0.09);
   --focus-row: color-mix(in srgb, var(--accent) 32%, transparent);
-  --accent-surface: color-mix(in srgb, var(--accent) 25%, #182438);
+  --accent-surface: color-mix(in srgb, var(--accent) 25%, #222428);
   --accent-solid: color-mix(in srgb, var(--accent) 72%, #111827);
   --ai-solid: #684AAA;
   --success-solid: #176B3F;
   --warning-solid: #895400;
   --danger-solid: #A9343A;
-  --border: #2E3D54;
-  --strong-border: #51647E;
-  --control-border: #5F7390;
-  --text-primary: #F3F6FB;
-  --text-secondary: #BAC5D5;
-  --text-tertiary: #9DABC0;
+  --border: #3A3C42;
+  --strong-border: #606369;
+  --control-border: #6F7278;
+  --text-primary: #F4F6FA;
+  --text-secondary: #C2C4C8;
+  --text-tertiary: #A8AAAE;
   --ai-accent: #C1A7FF;
   --info: #69D8EE;
   --success: #79D99D;

@@ -21,7 +21,7 @@ const THEMES: Array<{ name: string; appBg: string; primary: { color: string; alp
   { name: 'light', appBg: '#FBFCFE', primary: { color: '#000000', alpha: 0.86 } },
   { name: 'dark', appBg: '#0E0F12', primary: { color: '#FFFFFF', alpha: 0.9 } },
   { name: 'soft light', appBg: '#F5F8FC', primary: { color: '#161D2D', alpha: 1 } },
-  { name: 'soft dark', appBg: '#0D1524', primary: { color: '#F3F6FB', alpha: 1 } },
+  { name: 'soft dark', appBg: '#131519', primary: { color: '#F4F6FA', alpha: 1 } },
 ];
 
 // Every palette colour plus the extremes a Google calendar could carry.
